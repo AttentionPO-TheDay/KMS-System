@@ -101,11 +101,11 @@ kms-code/
 ### 当前代码对应来源
 
 1. Go 侧
-   - `kms-go/cmd/main.go`
-   - `kms-go/controllers/request_controller.go` 中 `EnrollKey`、`ReenrollKey`
-   - `kms-go/service/key_service.go` 中生成逻辑
-   - `kms-go/service/generator/*`
-   - `kms-go/utils/kafka_producer.go`
+   - `legacy-kms-go/cmd/main.go`
+   - `legacy-kms-go/controllers/request_controller.go` 中 `EnrollKey`、`ReenrollKey`
+   - `legacy-kms-go/service/key_service.go` 中生成逻辑
+   - `legacy-kms-go/service/generator/*`
+   - `legacy-kms-go/utils/kafka_producer.go`
 2. Java 侧
    - `KafkaConsumer` 中 `ENROLL_KEY` 处理
    - `keymanageServiceImpl` 中新增入库与新增上链逻辑
@@ -137,8 +137,8 @@ kms-code/
 ### 当前代码对应来源
 
 1. Go 侧
-   - `kms-go/controllers/request_controller.go` 中 `UpdateKey`、`RevokeKey`
-   - `kms-go/service/key_service.go` 中更新/回收 Kafka 投递逻辑
+   - `legacy-kms-go/controllers/request_controller.go` 中 `UpdateKey`、`RevokeKey`
+   - `legacy-kms-go/service/key_service.go` 中更新/回收 Kafka 投递逻辑
 2. Java 侧
    - `RequestController` 中 `UPDATE_KEY`、`REVOKE_KEY`
    - `keymanageServiceImpl.rotateKeyById`

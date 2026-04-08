@@ -1,5 +1,7 @@
 # KMS 代码迁移映射表
 
+> 说明：本文中的迁移来源目录已在仓库中重命名为 `legacy-kms/` 和 `legacy-kms-go/`，以下路径均已按当前仓库名称更新。
+
 ## 一、系统边界概述
 
 ### kms-generate（密钥生成系统）
@@ -16,31 +18,31 @@
 
 | 源文件路径 | 归属系统 | 归属模块 | 说明 |
 |-----------|---------|---------|------|
-| `kms-go/cmd/main.go` | kms-generate | go-backend | 高并发接入服务入口（生成专用） |
-| `kms-go/controllers/request_controller.go` | **kms-generate**：`EnrollKey`、`ReenrollKey`<br>**kms-updatedel**：`UpdateKey`、`RevokeKey` | 共享控制器 | 需要拆分到各自系统 |
-| `kms-go/service/key_service.go` | **kms-generate**：`EnrollKey`方法<br>**kms-updatedel**：`UpdateKey`、`RevokeKey`方法 | 共享Service | 需要拆分到各自系统 |
-| `kms-go/service/generator/sscl_generator.go` | kms-generate | go-backend | SSCL密钥生成算法 |
-| `kms-go/service/generator/sm2_generator.go` | kms-generate | go-backend | SM2密钥生成算法（如果存在） |
-| `kms-go/utils/kafka_producer.go` | kms-generate | go-backend | Kafka异步生产者（生成专用topic） |
-| `kms-go/models/keymanage.go` | 共享 | 共享 | 数据模型定义 |
+| `legacy-kms-go/cmd/main.go` | kms-generate | go-backend | 高并发接入服务入口（生成专用） |
+| `legacy-kms-go/controllers/request_controller.go` | **kms-generate**：`EnrollKey`、`ReenrollKey`<br>**kms-updatedel**：`UpdateKey`、`RevokeKey` | 共享控制器 | 需要拆分到各自系统 |
+| `legacy-kms-go/service/key_service.go` | **kms-generate**：`EnrollKey`方法<br>**kms-updatedel**：`UpdateKey`、`RevokeKey`方法 | 共享Service | 需要拆分到各自系统 |
+| `legacy-kms-go/service/generator/sscl_generator.go` | kms-generate | go-backend | SSCL密钥生成算法 |
+| `legacy-kms-go/service/generator/sm2_generator.go` | kms-generate | go-backend | SM2密钥生成算法（如果存在） |
+| `legacy-kms-go/utils/kafka_producer.go` | kms-generate | go-backend | Kafka异步生产者（生成专用topic） |
+| `legacy-kms-go/models/keymanage.go` | 共享 | 共享 | 数据模型定义 |
 
 **不再使用的冗余模块：**
-- 无（当前 kms-go 结构清晰，无冗余）
+- 无（当前 legacy-kms-go 结构清晰，无冗余）
 
 ### 2.2 Java 后端文件归属
 
 | 源文件路径 | 归属系统 | 归属模块 | 说明 |
 |-----------|---------|---------|------|
-| `kms/ruoyi-admin/.../controller/RequestController.java` | **kms-generate**：`Register`、`ENROLL_KEY`<br>**kms-updatedel**：`UPDATE_KEY`、`REVOKE_KEY` | 共享Controller | 需要拆分 |
-| `kms/ruoyi-admin/.../controller/KeymanageController.java` | kms-generate | java-backend | 密钥查询接口（生成结果查询） |
-| `kms/ruoyi-admin/.../service/impl/KafkaConsumer.java` | **kms-generate**：`ENROLL_KEY` 消费处理<br>**kms-updatedel**：`UPDATE_KEY`、`REVOKE_KEY` 消费处理 | 共享Consumer | 需要拆分为两个独立的Consumer |
-| `kms/ruoyi-admin/.../service/impl/keymanageServiceImpl.java` | **kms-generate**：`insertkeymanage`（新增入库）<br>**kms-updatedel**：`rotateKeyById`、`deletekeymanageByKeyId`（更新/回收） | 共享Service | 需要拆分或重构 |
-| `kms/ruoyi-admin/.../service/impl/ChainConsumer.java` | 共享 | 共享 | 上链任务消费（ENROLL/ROTATE/REVOKE） |
-| `kms/ruoyi-admin/.../service/impl/FiscoBcosService.java` | 共享 | 共享 | 区块链上链服务 |
-| `kms/ruoyi-admin/.../service/impl/generator/SSCLGenerator.java` | kms-generate | java-backend | SSCL生成器（Java侧，如需要） |
-| `kms/ruoyi-admin/.../service/impl/generator/ECCGenerator.java` | kms-generate | java-backend | SM2生成器（Java侧，如需要） |
-| `kms/ruoyi-system/.../permission/service/*` | kms-updatedel | java-backend | 权限申请/审批/回退模块 |
-| `kms/ruoyi-system/.../permission/task/PermissionRevokeTask.java` | kms-updatedel | java-backend | 权限自动回退定时任务 |
+| `legacy-kms/ruoyi-admin/.../controller/RequestController.java` | **kms-generate**：`Register`、`ENROLL_KEY`<br>**kms-updatedel**：`UPDATE_KEY`、`REVOKE_KEY` | 共享Controller | 需要拆分 |
+| `legacy-kms/ruoyi-admin/.../controller/KeymanageController.java` | kms-generate | java-backend | 密钥查询接口（生成结果查询） |
+| `legacy-kms/ruoyi-admin/.../service/impl/KafkaConsumer.java` | **kms-generate**：`ENROLL_KEY` 消费处理<br>**kms-updatedel**：`UPDATE_KEY`、`REVOKE_KEY` 消费处理 | 共享Consumer | 需要拆分为两个独立的Consumer |
+| `legacy-kms/ruoyi-admin/.../service/impl/keymanageServiceImpl.java` | **kms-generate**：`insertkeymanage`（新增入库）<br>**kms-updatedel**：`rotateKeyById`、`deletekeymanageByKeyId`（更新/回收） | 共享Service | 需要拆分或重构 |
+| `legacy-kms/ruoyi-admin/.../service/impl/ChainConsumer.java` | 共享 | 共享 | 上链任务消费（ENROLL/ROTATE/REVOKE） |
+| `legacy-kms/ruoyi-admin/.../service/impl/FiscoBcosService.java` | 共享 | 共享 | 区块链上链服务 |
+| `legacy-kms/ruoyi-admin/.../service/impl/generator/SSCLGenerator.java` | kms-generate | java-backend | SSCL生成器（Java侧，如需要） |
+| `legacy-kms/ruoyi-admin/.../service/impl/generator/ECCGenerator.java` | kms-generate | java-backend | SM2生成器（Java侧，如需要） |
+| `legacy-kms/ruoyi-system/.../permission/service/*` | kms-updatedel | java-backend | 权限申请/审批/回退模块 |
+| `legacy-kms/ruoyi-system/.../permission/task/PermissionRevokeTask.java` | kms-updatedel | java-backend | 权限自动回退定时任务 |
 
 **不再使用的冗余模块：**
 - 无明确冗余模块，但部分模块需拆分
@@ -49,15 +51,15 @@
 
 | 源文件路径 | 归属系统 | 说明 |
 |-----------|---------|------|
-| `kms/RuoYi-Vue3-master/src/views/keygenerate/*` | kms-generate | 密钥生成页面 |
-| `kms/RuoYi-Vue3-master/src/views/register.vue` | kms-generate | 用户注册页面 |
-| `kms/RuoYi-Vue3-master/src/views/userKeys.vue` | kms-generate | 生成结果展示与查询页面 |
-| `kms/RuoYi-Vue3-master/src/views/keyupdate/*` | kms-updatedel | 密钥更新页面 |
-| `kms/RuoYi-Vue3-master/src/views/keydelete/*` | kms-updatedel | 密钥回收页面 |
-| `kms/RuoYi-Vue3-master/src/views/keyautoupdate/*` | kms-updatedel | 自动更新配置页面 |
-| `kms/RuoYi-Vue3-master/src/views/permission/*` | kms-updatedel | 权限申请/审批页面 |
-| `kms/RuoYi-Vue3-master/src/api/keyuser/*` | kms-generate | 用户注册API |
-| `kms/RuoYi-Vue3-master/src/views/keymanage/*` | kms-generate | 密钥管理页面 |
+| `legacy-kms/RuoYi-Vue3-master/src/views/keygenerate/*` | kms-generate | 密钥生成页面 |
+| `legacy-kms/RuoYi-Vue3-master/src/views/register.vue` | kms-generate | 用户注册页面 |
+| `legacy-kms/RuoYi-Vue3-master/src/views/userKeys.vue` | kms-generate | 生成结果展示与查询页面 |
+| `legacy-kms/RuoYi-Vue3-master/src/views/keyupdate/*` | kms-updatedel | 密钥更新页面 |
+| `legacy-kms/RuoYi-Vue3-master/src/views/keydelete/*` | kms-updatedel | 密钥回收页面 |
+| `legacy-kms/RuoYi-Vue3-master/src/views/keyautoupdate/*` | kms-updatedel | 自动更新配置页面 |
+| `legacy-kms/RuoYi-Vue3-master/src/views/permission/*` | kms-updatedel | 权限申请/审批页面 |
+| `legacy-kms/RuoYi-Vue3-master/src/api/keyuser/*` | kms-generate | 用户注册API |
+| `legacy-kms/RuoYi-Vue3-master/src/views/keymanage/*` | kms-generate | 密钥管理页面 |
 
 **不再使用的冗余模块：**
 - 无
