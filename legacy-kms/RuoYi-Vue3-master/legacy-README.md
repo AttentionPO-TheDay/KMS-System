@@ -1,3 +1,6 @@
+> 该文档对应拆分前保留的历史前端工程，当前仅用于追溯旧页面来源。
+> 当前开发请优先查看：`../../doc/project_overview.md`、`../../kms-generate/README.md`、`../../kms-updatedel/README.md`。
+
 <p align="center">
 	<img alt="logo" src="https://oscimg.oschina.net/oscnet/up-d3d0a9303e11d522a06cd263f3079027715.png">
 </p>

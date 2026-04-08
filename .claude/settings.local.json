@@ -3,7 +3,10 @@
     "allow": [
       "Bash(dir \"E:\\\\java_project\\\\kms-code - 副本\\\\kms-ops\\\\\")",
       "Bash(chmod +x:*)",
-      "Bash(dir \"E:\\\\java_project\\\\kms-code - 副本\\\\kms-ops\\\\front\\\\\")"
+      "Bash(dir \"E:\\\\java_project\\\\kms-code - 副本\\\\kms-ops\\\\front\\\\\")",
+      "Bash(mv \"E:/java_project/kms-updatedel/\" \"E:/java_project/kms-updatedel-java-backend-temp/\")",
+      "Bash(mv \"E:/java_project/kms-updatedel-java-backend-temp/java-backend\" \"E:/java_project/kms-code - 副本/kms-updatedel/\")",
+      "Bash(rmdir \"E:/java_project/kms-updatedel-java-backend-temp\")"
     ]
   }
 }

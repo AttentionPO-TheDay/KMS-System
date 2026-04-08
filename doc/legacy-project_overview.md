@@ -1,4 +1,8 @@
-# KMS（密钥管理系统）项目整体概览
+# KMS（密钥管理系统）项目整体概览（历史版）
+
+> 本文档描述的是拆分前的混合架构，用于历史追溯和迁移参考。
+> 当前开发请优先参考：`doc/project_overview.md`、`doc/kms-split-implementation-plan.md`、`kms-generate/README.md`、`kms-updatedel/README.md`。
+> 仓库中的旧目录已重命名为 `legacy-kms/` 和 `legacy-kms-go/`。
 
 ## 项目简介
 
@@ -10,8 +14,8 @@
 
 ```
 kms-code/
-├── kms/              ← Java 后端（若依框架 + 自定义业务模块）
-├── kms-go/          ← Go 高性能前置服务（密钥生成 + Kafka 转发）
+├── legacy-kms/      ← 历史 Java 后端（若依框架 + 自定义业务模块）
+├── legacy-kms-go/   ← 历史 Go 前置服务（密钥生成 + Kafka 转发）
 ├── kms-ops/         ← 运维部署配置（Docker Compose + 各组件挂载）
 ├── kmsops存档/       ← 存档文件（FISCO 节点、jmeter、wrk 压测工具）
 └── kms-ops.tar      ← 整体运维目录的归档包（~1.1GB）
@@ -21,7 +25,7 @@ kms-code/
 
 ## 各子项目详解
 
-### 1. `kms/` — Java 后端（主业务服务）
+### 1. `legacy-kms/` — 历史 Java 后端（主业务服务）
 
 **技术栈**：Spring Boot 2.5.15 + RuoYi 3.8.8 + MyBatis + Redis + Kafka + FISCO BCOS Java SDK
 
@@ -56,7 +60,7 @@ kms-code/
   - `IPermissionRequestService` / `PermissionRequestServiceImpl` — 业务逻辑
   - `PermissionRevokeTask` — 定时任务：权限到期自动回收
 
-**数据库初始化脚本**（`kms/sql/`）：
+**数据库初始化脚本**（`legacy-kms/sql/`）：
 
 | 脚本 | 说明 |
 |------|------|
@@ -69,7 +73,7 @@ kms-code/
 
 ---
 
-### 2. `kms-go/` — Go 高性能前置服务
+### 2. `legacy-kms-go/` — 历史 Go 高性能前置服务
 
 **技术栈**：Go 1.25.5 + Fiber v2（高性能HTTP框架）+ Kafka（IBM/sarama）+ 国密 SM2（tjfoc/gmsm）+ Sonic（快速JSON）
 
@@ -170,7 +174,7 @@ kms-code/
 
 ## 开发/部署说明
 
-1. **数据库初始化**：按顺序执行 `kms/sql/1.sql` → `5.sql`（共5个）
+1. **数据库初始化**：按顺序执行 `legacy-kms/sql/1.sql` → `5.sql`（共5个）
 2. **区块链环境**：使用 `kms-ops/fisco/build_chain.sh` 搭建 FISCO 节点
 3. **完整部署**：使用 `kms-ops/docker-compose.yml` 一键启动所有服务
-4. **参考文档**：`kms/doc/若依环境使用手册.docx`
+4. **参考文档**：`legacy-kms/doc/若依环境使用手册.docx`

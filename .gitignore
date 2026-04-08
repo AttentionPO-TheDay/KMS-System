@@ -30,10 +30,10 @@ out/
 *.so
 
 # Go Backend specifics
-kms-go/key-service-v1
+legacy-kms-go/key-service-v1
 key-service-v1
-kms-go/**/*.exe
-kms-go/**/*.test
+legacy-kms-go/**/*.exe
+legacy-kms-go/**/*.test
 
 # Node.js / Frontend specifics
 node_modules/
@@ -52,4 +52,3 @@ yarn-error.log
 /kms-ops/kafka/kafka_data/
 /kms-ops/fisco/nodes/
 /kms-ops/nginx/logs/
-
