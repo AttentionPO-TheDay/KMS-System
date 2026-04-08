@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir \"E:\\\\java_project\\\\kms-code - 副本\\\\kms-ops\\\\\")",
+      "Bash(chmod +x:*)",
+      "Bash(dir \"E:\\\\java_project\\\\kms-code - 副本\\\\kms-ops\\\\front\\\\\")"
+    ]
+  }
+}

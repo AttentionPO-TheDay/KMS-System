@@ -1,34 +1,13 @@
+# KMS-OPS 双系统并存部署配置
+# 支持 kms-generate 和 kms-updatedel 两系统同时运行
+
 services:
-  # -----------------------
-  # 1. 区块链服务 (直接运行，假设数据已存在)
-  # -----------------------
-  fisco-node:
-    image: ubuntu:22.04
-    container_name: fisco_node0
-    dns:
-      - 8.8.8.8
-    volumes:
-      # 挂载父目录
-      - ./fisco/nodes/127.0.0.1:/data
-    
-    working_dir: /data/node0
-    
-    command: >
-      bash -c "chmod +x /data/fisco-bcos && \
-      /data/fisco-bcos -c config.ini"
-      
-    ports:
-      - "20200:20200"
-      - "8545:8545"
-    restart: always
-    networks:
-      - app_net
-  # -----------------------
-  # 2. 基础设施 (MySQL, Redis, Kafka) - 保持不变
-  # -----------------------
+  # ========================================
+  # 1. 共享中间件 (基础设施层)
+  # ========================================
   mysql:
     image: mysql:8.0
-    container_name: mysql_server
+    container_name: kms_mysql
     environment:
       - "MYSQL_ROOT_PASSWORD=root"
       - "MYSQL_DATABASE=ry_vue"
@@ -40,11 +19,11 @@ services:
       - ./mysql/my.cnf:/etc/mysql/my.cnf
     restart: always
     networks:
-      - app_net
+      - kms_net
 
   redis:
     image: redis:6.2
-    container_name: redis_server
+    container_name: kms_redis
     ports:
       - "6379:6379"
     command: redis-server --appendonly yes
@@ -52,11 +31,11 @@ services:
       - ./redis/data:/data
     restart: always
     networks:
-      - app_net
+      - kms_net
 
   kafka:
     image: apache/kafka:latest
-    container_name: kafka_server
+    container_name: kms_kafka
     ports:
       - "9092:9092"
     environment:
@@ -77,46 +56,36 @@ services:
       - ./kafka/kafka_data:/var/lib/kafka/data
     restart: always
     networks:
-      - app_net
+      - kms_net
     ulimits:
       nofile:
         soft: 65535
         hard: 65535
 
-  # -----------------------
-  # 3. 业务后端 (Console 已移除)
-  # -----------------------
-  java-app:
-    image: eclipse-temurin:8-jdk
-    container_name: java_backend
+  fisco-node:
+    image: ubuntu:22.04
+    container_name: kms_fisco
+    dns:
+      - 8.8.8.8
     volumes:
-      - ./kms-java-backend:/app
-    working_dir: /app
-    command: java -jar ruoyi-admin.jar
+      - ./fisco/nodes/127.0.0.1:/data
+    working_dir: /data/node0
+    command: bash -c "chmod +x /data/fisco-bcos && /data/fisco-bcos -c config.ini"
     ports:
-      - "8080:8080"
-    environment:
-      - DB_HOST=mysql
-      - KAFKA_HOST=kafka
-      - FISCO_HOST=fisco-node
-    depends_on:
-      mysql:
-        condition: service_started
-      redis:
-        condition: service_started
-      kafka:
-        condition: service_started
-      fisco-node:
-        condition: service_started
+      - "20200:20200"
+      - "8545:8545"
     restart: always
     networks:
-      - app_net
+      - kms_net
 
-  go-app:
+  # ========================================
+  # 2. kms-generate 系统 (密钥生成)
+  # ========================================
+  generate-go:
     image: ubuntu:22.04
-    container_name: go_backend
+    container_name: kms_generate_go
     volumes:
-      - ./kms-go-backend:/app
+      - ./kms-generate/go-backend:/app
     working_dir: /app
     command: sh -c "chmod +x ./key-service && ./key-service"
     ports:
@@ -129,29 +98,100 @@ services:
         condition: service_started
     restart: always
     networks:
-      - app_net
+      - kms_net
 
-  # -----------------------
-  # 4. 前端与网关
-  # -----------------------
+  generate-java:
+    image: eclipse-temurin:8-jdk
+    container_name: kms_generate_java
+    volumes:
+      - ./kms-generate/java-backend:/app
+    working_dir: /app
+    command: java -jar ruoyi-admin.jar
+    ports:
+      - "8080:8080"
+    environment:
+      - DB_HOST=mysql
+      - KAFKA_HOST=kafka
+      - FISCO_HOST=fisco-node
+    depends_on:
+      mysql:
+        condition: service_started
+      kafka:
+        condition: service_started
+      fisco-node:
+        condition: service_started
+    restart: always
+    networks:
+      - kms_net
+
+  # ========================================
+  # 3. kms-updatedel 系统 (密钥更新与回收)
+  # ========================================
+  updatedel-go:
+    image: ubuntu:22.04
+    container_name: kms_updatedel_go
+    volumes:
+      - ./kms-updatedel/go-backend:/app
+    working_dir: /app
+    command: sh -c "chmod +x ./key-service && ./key-service"
+    ports:
+      - "8082:8082"
+    environment:
+      - KAFKA_HOST=kafka
+      - GOGC=500
+    depends_on:
+      kafka:
+        condition: service_started
+    restart: always
+    networks:
+      - kms_net
+
+  updatedel-java:
+    image: eclipse-temurin:8-jdk
+    container_name: kms_updatedel_java
+    volumes:
+      - ./kms-updatedel/java-backend:/app
+    working_dir: /app
+    command: java -jar ruoyi-admin.jar
+    ports:
+      - "8083:8080"
+    environment:
+      - DB_HOST=mysql
+      - KAFKA_HOST=kafka
+      - FISCO_HOST=fisco-node
+    depends_on:
+      mysql:
+        condition: service_started
+      kafka:
+        condition: service_started
+      fisco-node:
+        condition: service_started
+    restart: always
+    networks:
+      - kms_net
+
+  # ========================================
+  # 4. 网关层 (Nginx)
+  # ========================================
   nginx:
     image: nginx:alpine
-    container_name: gateway
+    container_name: kms_gateway
     ports:
       - "80:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/logs:/var/log/nginx
-      - ./front/dist:/usr/share/nginx/html
+      - ./front/generate:/usr/share/nginx/html/generate
+      - ./front/updatedel:/usr/share/nginx/html/lifecycle
     depends_on:
-      java-app:
-        condition: service_started
-      go-app:
-        condition: service_started
+      - generate-go
+      - generate-java
+      - updatedel-go
+      - updatedel-java
     restart: always
     networks:
-      - app_net
+      - kms_net
 
 networks:
-  app_net:
+  kms_net:
     driver: bridge

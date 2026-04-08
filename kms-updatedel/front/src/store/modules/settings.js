@@ -1,3 +1,4 @@
+import Cookies from 'js-cookie'
 import defaultSettings from '@/settings'
 
 const useSettingsStore = defineStore('settings', {

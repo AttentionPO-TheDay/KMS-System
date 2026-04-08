@@ -1,0 +1,18 @@
+.fade-transform-leave-active,
+.fade-transform-enter-active {
+  transition: all .28s;
+}
+
+.fade-transform-enter-from {
+  opacity: 0;
+  transform: translateX(-100%);
+}
+
+.fade-transform-leave-to {
+  opacity: 0;
+  transform: translateX(100%);
+}
+
+.fade-transform-leave-active {
+  position: absolute;
+}
