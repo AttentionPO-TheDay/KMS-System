@@ -30,6 +30,8 @@ import java.math.BigInteger;
 public class GenerateChainServiceImpl implements GenerateChainService {
 
     private static final Logger log = LoggerFactory.getLogger(GenerateChainServiceImpl.class);
+    private static final BigInteger SM2_GX = new BigInteger("32C4AE2C1F1981195F9904466A39C9948FE30BBFF2660BE1715A4589334C74C7", 16);
+    private static final BigInteger SM2_GY = new BigInteger("BC3736A2F4F6779C59BDCEE36B692153D0A9877CC62A474002DF32E52139F0A0", 16);
 
     @Autowired
     private GenerateKeyService generateKeyService;
@@ -148,6 +150,11 @@ public class GenerateChainServiceImpl implements GenerateChainService {
             if (km.getKeyValue() == null) return null;
             JSONObject kv = JSON.parseObject(km.getKeyValue());
 
+            String ssclKey = kv.getString("SSCLKey");
+            if (ssclKey != null) {
+                return calculateSSCLPublicKey(km, kv, ssclKey);
+            }
+
             // SM2 算法分支
             String wA = kv.getString("finalPublicKey");
             if (wA == null) wA = kv.getString("publicKey");
@@ -164,6 +171,54 @@ public class GenerateChainServiceImpl implements GenerateChainService {
     }
 
     /**
+     * SSCL 无证书公钥计算。
+     * 公式: PA = uA + (eA * m mod n) * G
+     *
+     * eA 由 Go 生成服务随 SSCLKey 一并写入 keyValue，避免分布式部署下的随机参数不一致。
+     */
+    private String calculateSSCLPublicKey(Keymanage km, JSONObject kv, String ssclKey) {
+        try {
+            if (ssclKey.length() != 130 || !ssclKey.startsWith("04")) {
+                log.error("SSCLKey 格式无效: {}", ssclKey);
+                return null;
+            }
+
+            String eAHex = kv.getString("SSCLEA");
+            if (eAHex == null || eAHex.length() != 64) {
+                log.error("SSCL 上链缺少 SSCLEA 参数, keyId={}", km.getKeyId());
+                return null;
+            }
+
+            String uAStr = km.getuA();
+            if (uAStr == null || uAStr.length() != 130 || !uAStr.startsWith("04")) {
+                log.error("用户部分公钥 uA 格式无效: {}", uAStr);
+                return null;
+            }
+
+            org.bouncycastle.math.ec.custom.gm.SM2P256V1Curve curve =
+                    new org.bouncycastle.math.ec.custom.gm.SM2P256V1Curve();
+            BigInteger n = curve.getOrder();
+            ECPoint g = curve.createPoint(SM2_GX, SM2_GY);
+
+            BigInteger m = new BigInteger(ssclKey.substring(2, 66), 16);
+            BigInteger eA = new BigInteger(eAHex, 16);
+            ECPoint uA = parseUncompressedPoint(curve, uAStr, "uA");
+            if (uA == null) {
+                return null;
+            }
+
+            BigInteger scalar = eA.multiply(m).mod(n);
+            ECPoint part2 = g.multiply(scalar).normalize();
+            ECPoint pa = uA.add(part2).normalize();
+
+            return Hex.toHexString(pa.getEncoded(false)).toUpperCase();
+        } catch (Exception e) {
+            log.error("SSCL 公钥计算异常", e);
+            return null;
+        }
+    }
+
+    /**
      * SM2 无证书公钥计算
      */
     private String calculateSM2FinalPublicKey(String userId, String uAStr) {
@@ -172,10 +227,7 @@ public class GenerateChainServiceImpl implements GenerateChainService {
                     new org.bouncycastle.math.ec.custom.gm.SM2P256V1Curve();
             BigInteger n = curve.getOrder();
 
-            ECPoint G = curve.createPoint(
-                    new BigInteger("32C4AE2C1F1981195F9904466A39C9948FE30BBFF2660BE1715A4589334C74C7", 16),
-                    new BigInteger("BC3736A2F4F6779C59BDCEE36B692153D0A9877CC62A474002DF32E52139F0A0", 16)
-            );
+            ECPoint G = curve.createPoint(SM2_GX, SM2_GY);
 
             String msHex = "6BDD93B210F79415FE0F6388C1C932C208319FF7D7E99C972B3535C9F19A9FF9";
             BigInteger ms = new BigInteger(msHex, 16);
@@ -185,12 +237,10 @@ public class GenerateChainServiceImpl implements GenerateChainService {
             if (uAStr.startsWith("04")) {
                 uAStr = uAStr.substring(2);
             }
-            byte[] uABytes = Hex.decode(uAStr);
-            byte[] xBytes = new byte[32];
-            byte[] yBytes = new byte[32];
-            System.arraycopy(uABytes, 0, xBytes, 0, 32);
-            System.arraycopy(uABytes, 32, yBytes, 0, 32);
-            ECPoint WA = curve.createPoint(new BigInteger(1, xBytes), new BigInteger(1, yBytes));
+            ECPoint WA = parseUncompressedPoint(curve, "04" + uAStr, "wA");
+            if (WA == null) {
+                return null;
+            }
 
             // SM3 digest 计算
             org.bouncycastle.crypto.digests.SM3Digest digest = new org.bouncycastle.crypto.digests.SM3Digest();
@@ -225,6 +275,24 @@ public class GenerateChainServiceImpl implements GenerateChainService {
             log.error("SM2 公钥计算异常", e);
             return null;
         }
+    }
+
+    private ECPoint parseUncompressedPoint(org.bouncycastle.math.ec.custom.gm.SM2P256V1Curve curve,
+                                           String pointHex,
+                                           String fieldName) {
+        if (pointHex == null || pointHex.length() != 130 || !pointHex.startsWith("04")) {
+            log.error("{} 格式无效: {}", fieldName, pointHex);
+            return null;
+        }
+
+        BigInteger x = new BigInteger(pointHex.substring(2, 66), 16);
+        BigInteger y = new BigInteger(pointHex.substring(66, 130), 16);
+        ECPoint point = curve.createPoint(x, y);
+        if (!point.isValid()) {
+            log.error("{} 不在曲线上", fieldName);
+            return null;
+        }
+        return point;
     }
 
     private byte[] to32Bytes(BigInteger n) {

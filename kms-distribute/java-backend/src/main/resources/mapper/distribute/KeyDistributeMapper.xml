@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.distribute.mapper.KeyDistributeMapper">
+
+    <resultMap type="KeyDistributeRecord" id="KeyDistributeRecordResult">
+        <result property="recordId" column="record_id"/>
+        <result property="keyId" column="key_id"/>
+        <result property="userId" column="user_id"/>
+        <result property="userName" column="user_name"/>
+        <result property="keyName" column="key_name"/>
+        <result property="encrytType" column="encryt_type"/>
+        <result property="encrytName" column="encryt_name"/>
+        <result property="distributeType" column="distribute_type"/>
+        <result property="distributeStatus" column="distribute_status"/>
+        <result property="distributeTime" column="distribute_time"/>
+        <result property="chainHash" column="chain_hash"/>
+        <result property="blockHeight" column="block_height"/>
+        <result property="remark" column="remark"/>
+        <result property="creTime" column="cre_time"/>
+        <result property="updTime" column="upd_time"/>
+    </resultMap>
+
+    <sql id="selectKeyDistributeRecordVo">
+        select record_id, key_id, user_id, user_name, key_name, encryt_type, encryt_name,
+               distribute_type, distribute_status, distribute_time, chain_hash, block_height,
+               remark, cre_time, upd_time
+        from key_distribute_record
+    </sql>
+
+    <select id="selectKeyDistributeRecordList" parameterType="KeyDistributeRecord" resultMap="KeyDistributeRecordResult">
+        <include refid="selectKeyDistributeRecordVo"/>
+        <where>
+            <if test="userId != null"> and user_id = #{userId}</if>
+            <if test="userName != null and userName != ''"> and user_name like concat('%', #{userName}, '%')</if>
+            <if test="keyId != null"> and key_id = #{keyId}</if>
+            <if test="keyName != null and keyName != ''"> and key_name like concat('%', #{keyName}, '%')</if>
+            <if test="encrytType != null and encrytType != ''"> and encryt_type = #{encrytType}</if>
+            <if test="encrytName != null and encrytName != ''"> and encryt_name like concat('%', #{encrytName}, '%')</if>
+            <if test="distributeType != null and distributeType != ''"> and distribute_type = #{distributeType}</if>
+            <if test="distributeStatus != null and distributeStatus != ''"> and distribute_status = #{distributeStatus}</if>
+        </where>
+        order by record_id desc
+    </select>
+
+    <select id="selectKeyDistributeRecordById" parameterType="Long" resultMap="KeyDistributeRecordResult">
+        <include refid="selectKeyDistributeRecordVo"/>
+        where record_id = #{recordId}
+    </select>
+
+    <insert id="insertKeyDistributeRecord" parameterType="KeyDistributeRecord" useGeneratedKeys="true" keyProperty="recordId">
+        insert into key_distribute_record
+        <trim prefix="(" suffix=")" suffixOverrides=",">
+            <if test="keyId != null">key_id,</if>
+            <if test="userId != null">user_id,</if>
+            <if test="userName != null and userName != ''">user_name,</if>
+            <if test="keyName != null and keyName != ''">key_name,</if>
+            <if test="encrytType != null and encrytType != ''">encryt_type,</if>
+            <if test="encrytName != null and encrytName != ''">encryt_name,</if>
+            <if test="distributeType != null and distributeType != ''">distribute_type,</if>
+            <if test="distributeStatus != null and distributeStatus != ''">distribute_status,</if>
+            <if test="distributeTime != null and distributeTime != ''">distribute_time,</if>
+            <if test="chainHash != null and chainHash != ''">chain_hash,</if>
+            <if test="blockHeight != null">block_height,</if>
+            <if test="remark != null and remark != ''">remark,</if>
+            <if test="creTime != null and creTime != ''">cre_time,</if>
+            <if test="updTime != null and updTime != ''">upd_time,</if>
+        </trim>
+        <trim prefix="values (" suffix=")" suffixOverrides=",">
+            <if test="keyId != null">#{keyId},</if>
+            <if test="userId != null">#{userId},</if>
+            <if test="userName != null and userName != ''">#{userName},</if>
+            <if test="keyName != null and keyName != ''">#{keyName},</if>
+            <if test="encrytType != null and encrytType != ''">#{encrytType},</if>
+            <if test="encrytName != null and encrytName != ''">#{encrytName},</if>
+            <if test="distributeType != null and distributeType != ''">#{distributeType},</if>
+            <if test="distributeStatus != null and distributeStatus != ''">#{distributeStatus},</if>
+            <if test="distributeTime != null and distributeTime != ''">#{distributeTime},</if>
+            <if test="chainHash != null and chainHash != ''">#{chainHash},</if>
+            <if test="blockHeight != null">#{blockHeight},</if>
+            <if test="remark != null and remark != ''">#{remark},</if>
+            <if test="creTime != null and creTime != ''">#{creTime},</if>
+            <if test="updTime != null and updTime != ''">#{updTime},</if>
+        </trim>
+    </insert>
+
+    <insert id="insertKeyDistributeRecordBatch" parameterType="java.util.List" useGeneratedKeys="true" keyProperty="recordId">
+        INSERT INTO key_distribute_record (
+            key_id, user_id, user_name, key_name, encryt_type, encryt_name,
+            distribute_type, distribute_status, distribute_time, chain_hash, block_height,
+            remark, cre_time, upd_time
+        ) VALUES
+        <foreach collection="list" item="item" index="index" separator=",">
+            (
+                #{item.keyId},
+                #{item.userId},
+                #{item.userName},
+                #{item.keyName},
+                #{item.encrytType},
+                #{item.encrytName},
+                <choose>
+                    <when test="item.distributeType != null">#{item.distributeType}</when>
+                    <otherwise>'1'</otherwise>
+                </choose>,
+                <choose>
+                    <when test="item.distributeStatus != null">#{item.distributeStatus}</when>
+                    <otherwise>'0'</otherwise>
+                </choose>,
+                #{item.distributeTime},
+                #{item.chainHash},
+                #{item.blockHeight},
+                #{item.remark},
+                #{item.creTime},
+                #{item.updTime}
+            )
+        </foreach>
+    </insert>
+
+    <update id="updateKeyDistributeRecord" parameterType="KeyDistributeRecord">
+        update key_distribute_record
+        <trim prefix="SET" suffixOverrides=",">
+            <if test="keyId != null">key_id = #{keyId},</if>
+            <if test="userId != null">user_id = #{userId},</if>
+            <if test="userName != null and userName != ''">user_name = #{userName},</if>
+            <if test="keyName != null and keyName != ''">key_name = #{keyName},</if>
+            <if test="encrytType != null and encrytType != ''">encryt_type = #{encrytType},</if>
+            <if test="encrytName != null and encrytName != ''">encryt_name = #{encrytName},</if>
+            <if test="distributeType != null and distributeType != ''">distribute_type = #{distributeType},</if>
+            <if test="distributeStatus != null and distributeStatus != ''">distribute_status = #{distributeStatus},</if>
+            <if test="distributeTime != null and distributeTime != ''">distribute_time = #{distributeTime},</if>
+            <if test="chainHash != null and chainHash != ''">chain_hash = #{chainHash},</if>
+            <if test="blockHeight != null">block_height = #{blockHeight},</if>
+            <if test="remark != null and remark != ''">remark = #{remark},</if>
+            <if test="updTime != null and updTime != ''">upd_time = #{updTime},</if>
+        </trim>
+        where record_id = #{recordId}
+    </update>
+
+    <delete id="deleteKeyDistributeRecordById" parameterType="Long">
+        delete from key_distribute_record where record_id = #{recordId}
+    </delete>
+
+</mapper>

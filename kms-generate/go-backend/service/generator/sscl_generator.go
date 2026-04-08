@@ -1,6 +1,7 @@
 package generator
 
 import (
+	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -17,6 +18,7 @@ import (
 )
 
 type SSCLGenerator struct {
+	curve        elliptic.Curve
 	n            *big.Int
 	ms           *big.Int
 	coefficients []*big.Int
@@ -99,6 +101,7 @@ func newSSCLGenerator() *SSCLGenerator {
 	}
 
 	gen := &SSCLGenerator{
+		curve:        c,
 		n:            n,
 		ms:           ms,
 		coefficients: coefficients,
@@ -141,6 +144,9 @@ func (gen *SSCLGenerator) GenPartialKey(identityData string, uAStr string, keyDo
 
 	ctx.ux.SetString(uAStr[2:66], 16)
 	ctx.uy.SetString(uAStr[66:130], 16)
+	if !gen.curve.IsOnCurve(ctx.ux, ctx.uy) {
+		return models.Keymanage{}, errors.New("uA is not on curve")
+	}
 
 	ctx.ux.FillBytes(ctx.temp32)
 	ctx.hasher.Write(ctx.temp32)
@@ -163,6 +169,12 @@ func (gen *SSCLGenerator) GenPartialKey(identityData string, uAStr string, keyDo
 	hex.Encode(ctx.buffer[startIdx:], ctx.temp32)
 
 	ctx.my.FillBytes(ctx.temp32)
+	startIdx = len(ctx.buffer)
+	ctx.buffer = append(ctx.buffer, make([]byte, 64)...)
+	hex.Encode(ctx.buffer[startIdx:], ctx.temp32)
+
+	ctx.buffer = append(ctx.buffer, `","SSCLEA":"`...)
+	gen.coefficients[0].FillBytes(ctx.temp32)
 	startIdx = len(ctx.buffer)
 	ctx.buffer = append(ctx.buffer, make([]byte, 64)...)
 	hex.Encode(ctx.buffer[startIdx:], ctx.temp32)
@@ -216,9 +228,9 @@ func makePointStr(x, y *big.Int) string {
 
 func (gen *SSCLGenerator) GetComParam() map[string]interface{} {
 	return map[string]interface{}{
-		"n":      gen.n,
-		"G":      gen.gStr,
-		"PPub":   gen.pPubStr,
+		"n":       gen.n,
+		"G":       gen.gStr,
+		"PPub":    gen.pPubStr,
 		"xIndexs": gen.xIndexs,
 		"yIndexs": gen.yIndexs,
 	}
