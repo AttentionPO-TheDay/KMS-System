@@ -119,8 +119,8 @@ func (s *KeyLifecycleService) EnqueueRevoke(payload *models.KeyLifecyclePayload)
 }
 
 // GetMetrics returns a copy of the current metrics.
-func GetMetrics() Models {
-	return Models{
+func GetMetrics() Metrics {
+	return Metrics{
 		UpdateRequests:    atomic.LoadUint64(&globalMetrics.UpdateRequests),
 		UpdateSuccess:      atomic.LoadUint64(&globalMetrics.UpdateSuccess),
 		UpdateQueueFull:    atomic.LoadUint64(&globalMetrics.UpdateQueueFull),
@@ -133,8 +133,10 @@ func GetMetrics() Models {
 	}
 }
 
-// Models is the exported metrics type (capital M to avoid conflict with models package).
-type Models Metrics
+// IncrementDuplicate increments the duplicate requests counter.
+func IncrementDuplicate() {
+	atomic.AddUint64(&globalMetrics.DuplicateRequests, 1)
+}
 
 // Close shuts down the service and its workers.
 func (s *KeyLifecycleService) Close() {

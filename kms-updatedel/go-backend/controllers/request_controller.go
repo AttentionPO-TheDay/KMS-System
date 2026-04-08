@@ -63,7 +63,7 @@ func (c *RequestController) UpdateKey(ctx *fiber.Ctx) error {
 		fmt.Printf("[WARN][%s] Idempotency check error: %v\n", traceId, err)
 	} else if !ok {
 		// Duplicate detected
-		service.GetMetrics() // update duplicate counter
+		service.IncrementDuplicate()
 		return c.failResponse(ctx, fiber.StatusAccepted, models.StatusDuplicate,
 			"更新请求已接收，请勿重复提交", traceId)
 	}
