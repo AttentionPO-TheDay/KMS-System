@@ -6,7 +6,12 @@
       "Bash(dir \"E:\\\\java_project\\\\kms-code - 副本\\\\kms-ops\\\\front\\\\\")",
       "Bash(mv \"E:/java_project/kms-updatedel/\" \"E:/java_project/kms-updatedel-java-backend-temp/\")",
       "Bash(mv \"E:/java_project/kms-updatedel-java-backend-temp/java-backend\" \"E:/java_project/kms-code - 副本/kms-updatedel/\")",
-      "Bash(rmdir \"E:/java_project/kms-updatedel-java-backend-temp\")"
+      "Bash(rmdir \"E:/java_project/kms-updatedel-java-backend-temp\")",
+      "Bash(ls -la E:/java_project/kms-code-copy/kms-generate/go-backend/*.go)",
+      "Bash(ls E:/java_project/kms-code-copy/kms-generate/java-backend/target/*.jar)",
+      "Bash(grep -E \"\\(build|Makefile|\\\\.sh$\\)\")",
+      "Bash(go version:*)",
+      "Bash(go build:*)"
     ]
   }
 }

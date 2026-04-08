@@ -1,7 +1,8 @@
 import { login, logout, getInfo } from '@/api/login'
 import { getToken, setToken, removeToken } from '@/utils/auth'
 import { isHttp, isEmpty } from "@/utils/validate"
-import defAva from '@/assets/images/profile.jpg'
+
+const defAva = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22120%22 height=%22120%22 viewBox=%220 0 120 120%22%3E%3Crect width=%22120%22 height=%22120%22 rx=%2220%22 fill=%22%23dcecff%22/%3E%3Ccircle cx=%2260%22 cy=%2245%22 r=%2220%22 fill=%22%23608fd6%22/%3E%3Cpath d=%22M30 98c6-18 20-28 30-28s24 10 30 28%22 fill=%22none%22 stroke=%22%23608fd6%22 stroke-width=%2212%22 stroke-linecap=%22round%22/%3E%3C/svg%3E'
 
 const useUserStore = defineStore(
   'user',

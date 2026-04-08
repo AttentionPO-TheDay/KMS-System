@@ -3,7 +3,7 @@ services:
     image: nginx:latest
     container_name: high-perf-nginx
     # 核心配置：使用宿主机网络
-    # 这样 Nginx 就相当于直接跑在宿主机上，性能无损耗，且可以直接访问 localhost:8080/8081
+    # 这样 Nginx 就相当于直接跑在宿主机上，性能无损耗，且可以直接访问 localhost:8081/8082/9081/9082
     # 注意：这个模式仅在 Linux 下生效且有效
     network_mode: "host"
     volumes:

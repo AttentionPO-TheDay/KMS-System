@@ -107,16 +107,17 @@
 
 ---
 
-## 六、迁移状态
+## 六、当前落地状态
 
-| 阶段 | 任务 | 状态 |
+| 模块 | 当前状态 | 说明 |
 |-----|------|------|
-| 1 | 理解代码结构与系统边界 | ✅ 已完成 |
-| 2 | 创建迁移映射文档 | ✅ 本文档 |
-| 3 | 创建 kms-generate/go-backend 骨架 | ⏳ 待完成 |
-| 4 | 创建 kms-updatedel/go-backend 骨架 | ⏳ 待完成 |
-| 5 | 创建 kms-generate/java-backend 骨架 | ⏳ 待完成 |
-| 6 | 创建 kms-updatedel/java-backend 骨架 | ⏳ 待完成 |
+| `kms-generate/go-backend` | ✅ 已落地 | 已提供 `/generate/request/*` 接口并投递 `key_generate_log` |
+| `kms-updatedel/go-backend` | ✅ 已落地 | 已提供 `/lifecycle/request/*` 接口并投递更新/回收 topic |
+| `kms-generate/java-backend` | ✅ 已落地 | 已提供生成查询接口，并消费 `key_generate_log` |
+| `kms-updatedel/java-backend` | ✅ 已落地 | 已提供生命周期接口，并消费 `key_update_log` / `key_revoke_log` |
+| `kms-user/front` | ✅ 已建立骨架 | 已提供统一普通用户前台基础路由 |
+| `kms-distribute/java-backend` | ✅ 已落地 | 已提供分发记录 CRUD 接口 |
+| `kms-distribute/front` | ⏳ 部分落地 | 当前仍以页面片段为主，尚未形成完整工程 |
 
 ---
 
@@ -147,5 +148,10 @@ ChainConsumer (共享)
 
 ---
 
+## 七、说明
+
+1. 本文档主要用于说明迁移来源与归属，不再表示“目标骨架尚未创建”。
+2. 当前仓库已经进入多系统并存阶段，实际现状请同时参考 `doc/project_overview.md` 与各模块 `README.md`。
+
 *文档创建日期：2026-04-08*
-*文档版本：v1.0*
+*文档版本：v1.1*

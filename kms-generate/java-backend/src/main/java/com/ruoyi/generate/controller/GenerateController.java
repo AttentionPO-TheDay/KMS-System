@@ -54,6 +54,7 @@ public class GenerateController {
         result.put("code", 200);
         result.put("msg", "查询成功");
         result.put("data", list);
+        result.put("rows", list);
         result.put("total", list.size());
         result.put("pageNum", pageNum);
         result.put("pageSize", pageSize);

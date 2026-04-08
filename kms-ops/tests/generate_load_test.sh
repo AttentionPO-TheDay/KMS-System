@@ -12,7 +12,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # 默认配置
 KAFKA_BROKER="${KAFKA_BROKER:-localhost:9092}"
 KAFKA_TOPIC="key_generate_log"
-JAVA_BACKEND_URL="${JAVA_BACKEND_URL:-http://localhost:8080}"
+JAVA_BACKEND_URL="${JAVA_BACKEND_URL:-http://localhost:9081}"
 THREADS="${THREADS:-4}"
 CONNECTIONS="${CONNECTIONS:-100}"
 DURATION="${DURATION:-30s}"
@@ -269,7 +269,7 @@ OPTIONS:
 
 EXAMPLES:
     $0                                    # Run with defaults
-    $0 -u http://localhost:8080 -t 8     # Custom URL and threads
+    $0 -u http://localhost:9081 -t 8     # Custom URL and threads
     $0 --verify                           # Verify chain only
 
 EOF

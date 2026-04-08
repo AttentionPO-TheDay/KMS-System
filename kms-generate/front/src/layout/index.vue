@@ -66,14 +66,14 @@ function setLayout() {
 </script>
 
 <style lang="scss" scoped>
-@import "@/assets/styles/mixin.scss"
-@import "@/assets/styles/variables.module.scss"
+@import "@/assets/styles/mixin.scss";
+@import "@/assets/styles/variables.module.scss";
 
 .app-wrapper {
   @include clearfix;
   position: relative;
   height: 100%;
-  width: 100%
+  width: 100%;
 }
 
 .drawer-bg {
@@ -91,19 +91,19 @@ function setLayout() {
   top: 0;
   right: 0;
   z-index: 9;
-  width: calc(100% - #{$base-sidebar-width});
-  transition: width 0.28s
+  width: calc(100% - #{$sideBarWidth});
+  transition: width 0.28s;
 }
 
 .hideSidebar .fixed-header {
-  width: calc(100% - 54px)
+  width: calc(100% - 54px);
 }
 
 .sidebarHide .fixed-header {
-  width: 100%
+  width: 100%;
 }
 
 .mobile .fixed-header {
-  width: 100%
+  width: 100%;
 }
 </style>

@@ -136,7 +136,7 @@
 </template>
 
 <script setup name="KeyAutoUpdate">
-import { listKeymanage, getKeymanage, addKeymanage, updateKeymanage } from "@/api/lifecycle/lifecycle";
+import { listKeymanage, getKeymanage, updateKeyAutoUpdate } from "@/api/lifecycle/lifecycle";
 
 const { proxy } = getCurrentInstance();
 
@@ -269,38 +269,19 @@ function submitForm() {
   proxy.$refs["keymanageRef"].validate(valid => {
     if (valid) {
       if (form.value.keyId != null) {
-        if(form.value.encrytType=="无证书非对称加密"){
-          alert("该功能需配合用户系统使用")
-        }
-        else{
-        updateKeymanage(form.value).then(response => {
+        updateKeyAutoUpdate({
+          keyId: form.value.keyId,
+          autoUpdate: form.value.autoUpdate
+        }).then(response => {
           proxy.$modal.msgSuccess("修改成功");
           open.value = false;
           getList();
-        });}
+        });
       } else {
-        if(form.value.encrytType=="无证书非对称加密"){
-          alert("该功能需配合用户系统使用")
-        }
-        else{
-        addKeymanage(form.value).then(response => {
-          proxy.$modal.msgSuccess("新增成功");
-          open.value = false;
-          getList();
-        });}
+        proxy.$modal.msgWarning("请选择已存在的密钥后再修改自动更新状态");
       }
     }
   });
-}
-
-function handleDelete(row) {
-  const _keyIds = row.keyId || ids.value;
-  proxy.$modal.confirm('是否确认删除密钥管理编号为"' + _keyIds + '"的数据项？').then(function() {
-    return delKeymanage(_keyIds);
-  }).then(() => {
-    getList();
-    proxy.$modal.msgSuccess("删除成功");
-  }).catch(() => {});
 }
 
 function handleEncrytTypeChange(value) {

@@ -2,6 +2,7 @@ package com.ruoyi.generate.service.impl;
 
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
+import com.ruoyi.generate.contracts.KeyEvidence;
 import com.ruoyi.generate.domain.Keymanage;
 import com.ruoyi.generate.service.GenerateChainService;
 import com.ruoyi.generate.service.GenerateKeyService;
@@ -312,7 +313,8 @@ public class GenerateChainServiceImpl implements GenerateChainService {
      */
     private static class FiscoBcosWrapper {
         private final String contractAddress;
-        private Object keyEvidence;
+        private KeyEvidence keyEvidence;
+        private Client client;
 
         public FiscoBcosWrapper(String contractAddress) throws Exception {
             this.contractAddress = contractAddress;
@@ -343,32 +345,36 @@ public class GenerateChainServiceImpl implements GenerateChainService {
             java.nio.file.Files.write(tempConfigFile.toPath(), configContent.getBytes());
 
             BcosSDK sdk = BcosSDK.build(tempConfigFile.getAbsolutePath());
-            Client client = sdk.getClient(1);
+            this.client = sdk.getClient(1);
             CryptoKeyPair cryptoKeyPair = client.getCryptoSuite().createKeyPair();
             log.info("FISCO SDK initialized, account: {}", cryptoKeyPair.getAddress());
 
             if (contractAddress != null && !contractAddress.equals("0x0000000000000000000000000000000000000000")) {
-                // 合约加载需要 KeyEvidence 类，这里简化处理
-                log.info("Contract address configured: {}", contractAddress);
+                this.keyEvidence = KeyEvidence.load(contractAddress, client, cryptoKeyPair);
+                log.info("KeyEvidence contract loaded, address: {}", contractAddress);
+            } else {
+                throw new RuntimeException("Contract address not configured");
             }
         }
 
         public TransactionReceipt uploadKey(Long keyId, String user, String pubKey,
                                              String algo, String usage, boolean autoUpdate, Integer version) {
-            // 此方法需要实际的合约调用实现
-            // 简化实现：返回成功回执
-            log.info("uploadKey called: keyId={}, user={}, pubKey={}, algo={}", keyId, user, pubKey, algo);
-            return createSuccessReceipt();
+            checkReady();
+            try {
+                log.info("uploadKey calling contract: keyId={}, user={}, pubKey={}, algo={}", keyId, user, pubKey, algo);
+                BigInteger bKeyId = BigInteger.valueOf(keyId);
+                BigInteger bVersion = BigInteger.valueOf(version);
+                return keyEvidence.uploadKey(bKeyId, user, pubKey, algo, usage, autoUpdate, bVersion);
+            } catch (Exception e) {
+                log.error("uploadKey contract call failed", e);
+                throw new RuntimeException("区块链[uploadKey]调用失败", e);
+            }
         }
 
-        private TransactionReceipt createSuccessReceipt() {
-            // 模拟成功回执
-            TransactionReceipt receipt = new TransactionReceipt();
-            receipt.setStatus("0x0");
-            receipt.setMessage("success");
-            receipt.setTransactionHash("0x" + System.currentTimeMillis());
-            receipt.setBlockNumber("0x100");
-            return receipt;
+        private void checkReady() {
+            if (this.keyEvidence == null) {
+                throw new RuntimeException("合约未加载！请检查 application.yml 中的 fisco.contract-address 配置是否正确。");
+            }
         }
     }
 }

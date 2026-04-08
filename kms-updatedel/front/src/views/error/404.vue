@@ -1,9 +1,6 @@
 <template>
   <div class="wscn-http404-container">
     <div class="wscn-http404">
-      <div class="pic-404">
-        <img class="pic-404__parent" src="@/assets/images/404.png" alt="404">
-      </div>
       <div class="text-404">
         <h1>404</h1>
         <p>抱歉，您访问的页面不存在</p>
@@ -14,6 +11,10 @@
 </template>
 
 <script setup>
+import { useRouter } from 'vue-router'
+
+const router = useRouter()
+
 function goHome() {
   router.push('/')
 }

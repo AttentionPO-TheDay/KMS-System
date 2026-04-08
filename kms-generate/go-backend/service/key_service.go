@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,7 +31,7 @@ func init() {
 	go func() {
 		ticker := time.NewTicker(500 * time.Millisecond)
 		defer ticker.Stop()
-		for range ticker {
+		for range ticker.C {
 			updateTimeStr()
 		}
 	}()
@@ -101,6 +103,22 @@ func (s *KeyManageService) EnrollKey(km *models.Keymanage, rawPassword string) (
 	}
 
 	return km.KeyValue, nil
+}
+
+func (s *KeyManageService) Register(user, password string) error {
+	payload := `{"user":"` + strings.ReplaceAll(user, `"`, `\"`) + `","password":"` + strings.ReplaceAll(password, `"`, `\"`) + `"}`
+	resp, err := http.Post(config.JavaBackendBase+"/generate/user/register", "application/json", strings.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= http.StatusBadRequest {
+		body, _ := io.ReadAll(resp.Body)
+		return errors.New(string(body))
+	}
+
+	return nil
 }
 
 func (s *KeyManageService) sendToKafka(km *models.Keymanage, rawPassword, action string) error {

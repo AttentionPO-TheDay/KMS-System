@@ -35,6 +35,15 @@ export function updateKeymanage(data) {
   })
 }
 
+// 修改密钥自动更新状态
+export function updateKeyAutoUpdate(data) {
+  return request({
+    url: '/lifecycle/keymanage/auto-update',
+    method: 'put',
+    data: data
+  })
+}
+
 // 删除密钥管理
 export function delKeymanage(keyId) {
   return request({

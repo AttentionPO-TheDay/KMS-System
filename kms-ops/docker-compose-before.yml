@@ -14,10 +14,10 @@ services:
       - |
         apt-get update && \
         apt-get install -y --no-install-recommends curl openssl ca-certificates && \
-        bash /scripts/init-fisco.sh
+        bash /scripts/init-FBchain.sh
     volumes:
       # 1. 挂载初始化脚本
-      - ./scripts/init-fisco.sh:/scripts/init-fisco.sh
+      - ./scripts/init-FBchain.sh:/scripts/init-FBchain.sh
       # 2. 挂载数据目录 (脚本会往这里写文件)
       - ./fisco:/data
       # 3. 挂载 Java 证书目标目录 (脚本会把证书分发到这里)

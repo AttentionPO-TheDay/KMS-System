@@ -17,6 +17,36 @@ func NewRequestController(keyService *service.KeyManageService) *RequestControll
 	}
 }
 
+func (c *RequestController) Register(ctx *fiber.Ctx) error {
+	var req struct {
+		User     string `json:"user"`
+		Password string `json:"password"`
+	}
+
+	if err := ctx.BodyParser(&req); err != nil {
+		return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"code": 500, "msg": "参数解析失败: " + err.Error(),
+		})
+	}
+
+	if req.User == "" || req.Password == "" {
+		return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"code": 500, "msg": "必填参数缺失(User/Password)",
+		})
+	}
+
+	if err := c.keyService.Register(req.User, req.Password); err != nil {
+		return ctx.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+			"code": 500, "msg": "注册失败: " + err.Error(),
+		})
+	}
+
+	return ctx.Status(fiber.StatusOK).JSON(fiber.Map{
+		"code": 200,
+		"msg":  "操作成功",
+	})
+}
+
 func (c *RequestController) EnrollKey(ctx *fiber.Ctx) error {
 	var req struct {
 		User       string `json:"user"`

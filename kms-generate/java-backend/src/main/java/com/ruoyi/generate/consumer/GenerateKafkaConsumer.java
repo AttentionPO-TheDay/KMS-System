@@ -3,10 +3,12 @@ package com.ruoyi.generate.consumer;
 import com.alibaba.fastjson2.JSON;
 import com.ruoyi.generate.audit.GenerateAuditService;
 import com.ruoyi.generate.domain.ChainSyncEvent;
+import com.ruoyi.generate.domain.GenerateUser;
 import com.ruoyi.generate.domain.KeyPayload;
 import com.ruoyi.generate.domain.Keymanage;
 import com.ruoyi.generate.service.GenerateChainService;
 import com.ruoyi.generate.service.GenerateKeyService;
+import com.ruoyi.generate.service.GenerateUserService;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,6 +37,9 @@ public class GenerateKafkaConsumer {
 
     @Autowired
     private GenerateAuditService auditService;
+
+    @Autowired
+    private GenerateUserService generateUserService;
 
     @Autowired
     private KafkaTemplate<String, String> kafkaTemplate;
@@ -74,14 +79,32 @@ public class GenerateKafkaConsumer {
                     continue;
                 }
 
-                // 3. 提取密钥数据
+                // 3. 终校验用户身份，避免任何人直接向 Kafka 注入生成消息
+                String rawUser = payload.getRawUser();
+                String rawPassword = payload.getRawPassword();
+                GenerateUser user = generateUserService.selectByUserName(rawUser);
+                if (user == null) {
+                    log.warn("生成消息用户不存在: {}", rawUser);
+                    continue;
+                }
+                if (!generateUserService.matchesPassword(rawPassword, user.getPassword())) {
+                    log.warn("生成消息用户鉴权失败: {}", rawUser);
+                    continue;
+                }
+
+                // 4. 提取密钥数据
                 Keymanage km = payload.getGeneratedKey();
                 if (km == null) {
                     log.warn("ENROLL_KEY 消息缺少 generatedKey");
                     continue;
                 }
 
-                // 4. 设置默认状态
+                km.setUserId(user.getUserId());
+                if (km.getUserName() == null || km.getUserName().trim().isEmpty()) {
+                    km.setUserName(user.getUserName());
+                }
+
+                // 5. 设置默认状态
                 km.setVersion(1);
                 km.setStatus("0"); // ACTIVE
                 if (km.getAutoUpdate() == null) {

@@ -147,19 +147,23 @@ func main() {
 	app.Get("/api/runs/:id", srv.handleRun)
 	app.Post("/api/runs", srv.handleCreateRun)
 
-	port := envOrDefault("PORT", "18090")
+	port := envOrDefault("PORT", "9090")
 	log.Printf("kms-acceptance backend listening on :%s", port)
 	log.Fatal(app.Listen(":" + port))
 }
 
 func defaultScenarios() map[string]Scenario {
+	generateBaseURL := envOrDefault("ACCEPTANCE_GENERATE_BASE_URL", "http://127.0.0.1:8081")
+	lifecycleBaseURL := envOrDefault("ACCEPTANCE_LIFECYCLE_BASE_URL", "http://127.0.0.1:8082")
+	lifecycleMetricURL := envOrDefault("ACCEPTANCE_LIFECYCLE_METRIC_URL", strings.TrimRight(lifecycleBaseURL, "/")+"/lifecycle/metrics")
+
 	return map[string]Scenario{
 		"generate-tps": {
 			ID:              "generate-tps",
 			Name:            "密钥生成 TPS",
 			TargetTPS:       100000,
 			Method:          http.MethodPost,
-			BaseURL:         "http://127.0.0.1:8081",
+			BaseURL:         generateBaseURL,
 			Path:            "/generate/request/ENROLL_KEY",
 			DurationSeconds: 30,
 			Threads:         12,
@@ -176,7 +180,7 @@ func defaultScenarios() map[string]Scenario {
 			Name:            "密钥更新 TPS",
 			TargetTPS:       5000,
 			Method:          http.MethodPost,
-			BaseURL:         "http://127.0.0.1:8082",
+			BaseURL:         lifecycleBaseURL,
 			Path:            "/lifecycle/request/UPDATE_KEY",
 			DurationSeconds: 30,
 			Threads:         12,
@@ -187,7 +191,7 @@ func defaultScenarios() map[string]Scenario {
 			},
 			BodyTemplate: `{"keyId":10001,"user":"acceptance_user","password":"Test@123456"}`,
 			Description:  "使用 wrk 压测更新接入服务，目标 TPS 不低于 5000。",
-			MetricURL:    "http://127.0.0.1:8082/lifecycle/metrics",
+			MetricURL:    lifecycleMetricURL,
 			Notes:        []string{"当前默认 keyId 固定，若幂等开启建议在执行前改成大样本轮换脚本。"},
 		},
 		"revoke-tps": {
@@ -195,7 +199,7 @@ func defaultScenarios() map[string]Scenario {
 			Name:            "密钥回收 TPS",
 			TargetTPS:       5000,
 			Method:          http.MethodPost,
-			BaseURL:         "http://127.0.0.1:8082",
+			BaseURL:         lifecycleBaseURL,
 			Path:            "/lifecycle/request/REVOKE_KEY",
 			DurationSeconds: 30,
 			Threads:         12,
@@ -206,7 +210,7 @@ func defaultScenarios() map[string]Scenario {
 			},
 			BodyTemplate: `{"keyId":20001,"user":"acceptance_user","password":"Test@123456"}`,
 			Description:  "使用 wrk 压测回收接入服务，目标 TPS 不低于 5000。",
-			MetricURL:    "http://127.0.0.1:8082/lifecycle/metrics",
+			MetricURL:    lifecycleMetricURL,
 			Notes:        []string{"回收请求存在业务不可逆影响，正式执行前应准备专用测试数据。"},
 		},
 		"revoke-rate": {
@@ -214,7 +218,7 @@ func defaultScenarios() map[string]Scenario {
 			Name:            "密钥回收率",
 			TargetTPS:       5000,
 			Method:          http.MethodPost,
-			BaseURL:         "http://127.0.0.1:8082",
+			BaseURL:         lifecycleBaseURL,
 			Path:            "/lifecycle/request/REVOKE_KEY",
 			DurationSeconds: 30,
 			Threads:         12,
@@ -224,7 +228,7 @@ func defaultScenarios() map[string]Scenario {
 				"Accept":       "application/json",
 			},
 			BodyTemplate: `{"keyId":30001,"user":"acceptance_user","password":"Test@123456"}`,
-			MetricURL:    "http://127.0.0.1:8082/lifecycle/metrics",
+			MetricURL:    lifecycleMetricURL,
 			MetricKind:   "revoke_accept_rate",
 			MetricTarget: 98,
 			Description:  "先压测回收请求，再从生命周期 metrics 计算受理回收率。后续可替换成最终业务回收率接口。",

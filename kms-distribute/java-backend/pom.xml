@@ -132,7 +132,7 @@
                 </executions>
             </plugin>
         </plugins>
-        <finalName>${project.artifactId}</finalName>
+        <finalName>ruoyi-admin</finalName>
     </build>
 
 </project>

@@ -17,15 +17,15 @@
 
 ### 环境配置
 
-开发环境使用端口 **82**
+开发环境使用端口 **5174**
 
 ```
 VITE_APP_BASE_API = '/lifecycle-api'
 ```
 
 代理配置：
-- `/lifecycle-api` -> `http://localhost:8080` (生命周期系统后端)
-- `/permission-api` -> `http://localhost:8080` (权限系统后端)
+- `/lifecycle-api` -> `http://localhost:9082` (生命周期 Java 后端)
+- `/permission-api` -> `http://localhost:9082` (权限审批 Java 后端)
 
 ## 功能模块
 

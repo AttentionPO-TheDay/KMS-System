@@ -1,10 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"log"
 	"runtime"
 
-	"github.com/bytedance/sonic"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 
@@ -17,8 +17,8 @@ func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	app := fiber.New(fiber.Config{
-		JSONEncoder: sonic.Marshal,
-		JSONDecoder: sonic.Unmarshal,
+		JSONEncoder: json.Marshal,
+		JSONDecoder: json.Unmarshal,
 		Prefork:     false,
 		BodyLimit:   1 * 1024 * 1024,
 	})
@@ -32,6 +32,7 @@ func main() {
 
 	api := app.Group("/generate/request")
 	{
+		api.Post("/Register", reqCtrl.Register)
 		api.Post("/ENROLL_KEY", reqCtrl.EnrollKey)
 		api.Post("/REENROLL_KEY", reqCtrl.ReenrollKey)
 		api.Post("/comparam", reqCtrl.ComParam)

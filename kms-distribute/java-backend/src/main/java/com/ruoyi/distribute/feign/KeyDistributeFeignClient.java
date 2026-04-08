@@ -11,7 +11,7 @@ import java.util.List;
  * 密钥分发系统 Feign 客户端
  * 供其他系统调用密钥分发记录服务
  */
-@FeignClient(name = "kms-distribute", url = "${kms.distribute.url:http://localhost:8082}")
+@FeignClient(name = "kms-distribute", url = "${kms.distribute.url:http://localhost:8083}")
 public interface KeyDistributeFeignClient {
 
     /**

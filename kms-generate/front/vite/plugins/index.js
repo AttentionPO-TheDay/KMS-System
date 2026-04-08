@@ -1,14 +1,14 @@
 import vue from '@vitejs/plugin-vue'
-import { vitePluginCompression } from 'vite-plugin-compression'
-import vitePluginSvgIcons from 'vite-plugin-svg-icons'
+import viteCompression from 'vite-plugin-compression'
+import { createSvgIconsPlugin } from 'vite-plugin-svg-icons'
 import AutoImport from 'unplugin-auto-import/vite'
-import { vitePluginSetupExtend } from 'unplugin-vue-setup-extend-plus'
+import vitePluginSetupExtend from 'unplugin-vue-setup-extend-plus/vite'
 
 export default function createVitePlugins(env, isBuild) {
   const { VITE_BUILD_COMPRESS } = env
   const plugins = [
     vue(),
-    vitePluginSvgIcons({
+    createSvgIconsPlugin({
       iconDirs: [process.cwd() + '/src/assets/icons'],
       symbolId: 'icon-[dir]-[name]'
     }),
@@ -24,7 +24,7 @@ export default function createVitePlugins(env, isBuild) {
 
   if (isBuild) {
     plugins.push(
-      vitePluginCompression({
+      viteCompression({
         ext: '.gz',
         algorithm: 'gzip',
         threshold: 1024 * 50,

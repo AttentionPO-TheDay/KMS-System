@@ -1,9 +1,6 @@
 <template>
   <div class="wscn-http404-container">
     <div class="wscn-http404">
-      <div class="pic-401">
-        <img class="pic-401__parent" src="@/assets/images/401.gif" alt="401">
-      </div>
       <div class="text-401">
         <h1>401</h1>
         <p>抱歉，您没有访问该页面的权限</p>
@@ -14,6 +11,10 @@
 </template>
 
 <script setup>
+import { useRouter } from 'vue-router'
+
+const router = useRouter()
+
 function goHome() {
   router.push('/')
 }

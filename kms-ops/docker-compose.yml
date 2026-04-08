@@ -108,17 +108,21 @@ services:
     working_dir: /app
     command: java -jar ruoyi-admin.jar
     ports:
-      - "8080:8080"
+      - "9081:9081"
     environment:
       - DB_HOST=mysql
       - KAFKA_HOST=kafka
       - FISCO_HOST=fisco-node
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     depends_on:
       mysql:
         condition: service_started
       kafka:
         condition: service_started
       fisco-node:
+        condition: service_started
+      redis:
         condition: service_started
     restart: always
     networks:
@@ -154,11 +158,13 @@ services:
     working_dir: /app
     command: java -jar ruoyi-admin.jar
     ports:
-      - "8083:8080"
+      - "9082:9082"
     environment:
       - DB_HOST=mysql
       - KAFKA_HOST=kafka
       - FISCO_HOST=fisco-node
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     depends_on:
       mysql:
         condition: service_started
@@ -166,12 +172,42 @@ services:
         condition: service_started
       fisco-node:
         condition: service_started
+      redis:
+        condition: service_started
     restart: always
     networks:
       - kms_net
 
   # ========================================
-  # 4. 网关层 (Nginx)
+  # 4. kms-distribute 系统 (密钥分发)
+  # ========================================
+  kms-distribute:
+    image: eclipse-temurin:8-jdk
+    container_name: kms_distribute_java
+    volumes:
+      - ./kms-distribute/java-backend:/app
+    working_dir: /app
+    command: java -jar ruoyi-admin.jar
+    ports:
+      - "8083:8083"
+    environment:
+      - DB_HOST=mysql
+      - KAFKA_HOST=kafka
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      mysql:
+        condition: service_started
+      kafka:
+        condition: service_started
+      redis:
+        condition: service_started
+    restart: always
+    networks:
+      - kms_net
+
+  # ========================================
+  # 5. 网关层 (Nginx)
   # ========================================
   nginx:
     image: nginx:alpine

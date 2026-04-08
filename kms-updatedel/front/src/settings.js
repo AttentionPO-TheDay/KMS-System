@@ -1,4 +1,4 @@
-module.exports = {
+export default {
   title: '生命周期系统',
   /**
    * @type {string}

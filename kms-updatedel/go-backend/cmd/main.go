@@ -14,8 +14,8 @@ import (
 	"runtime"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/gofiber/fiber/v2/middleware/logger"
+	"github.com/gofiber/fiber/v2/middleware/recover"
 
 	"key-service-lifecycle/config"
 	"key-service-lifecycle/controllers"
@@ -90,7 +90,7 @@ func pingHandler(c *fiber.Ctx) error {
 func metricsHandler(c *fiber.Ctx) error {
 	m := service.GetMetrics()
 	return c.JSON(fiber.Map{
-		"update_requests":     m.UpdateRequests,
+		"update_requests":    m.UpdateRequests,
 		"update_success":     m.UpdateSuccess,
 		"update_queue_full":  m.UpdateQueueFull,
 		"update_errors":      m.UpdateErrors,
@@ -98,7 +98,7 @@ func metricsHandler(c *fiber.Ctx) error {
 		"revoke_success":     m.RevokeSuccess,
 		"revoke_queue_full":  m.RevokeQueueFull,
 		"revoke_errors":      m.RevokeErrors,
-		"duplicate_requests":  m.DuplicateRequests,
+		"duplicate_requests": m.DuplicateRequests,
 	})
 }
 

@@ -28,7 +28,7 @@ public class KmsGenerateApplication {
         SpringApplication.run(KmsGenerateApplication.class, args);
         System.out.println("=================================================");
         System.out.println("  kms-generate Java Backend Started Successfully  ");
-        System.out.println("  Port: 8081                                  ");
+        System.out.println("  Port: 9081                                  ");
         System.out.println("  Topic: key_generate_log (consume)           ");
         System.out.println("  Topic: key_chain_task (consume)             ");
         System.out.println("=================================================");

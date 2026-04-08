@@ -78,7 +78,7 @@
 </template>
 
 <script setup name="KeyAutoUpdateUser">
-import { listKeymanage, updateKeymanage } from "@/api/lifecycle/lifecycle";
+import { listKeymanage, updateKeyAutoUpdate } from "@/api/lifecycle/lifecycle";
 import { listPermissionRequests, rollbackPermission as apiRollbackPermission } from "@/api/permission/permission";
 import useUserStore from '@/store/modules/user';
 
@@ -127,7 +127,7 @@ function handleToggleAutoUpdate(row) {
       autoUpdate: newStatus
     };
 
-    updateKeymanage(updateData).then(() => {
+    updateKeyAutoUpdate(updateData).then(() => {
       proxy.$modal.msgSuccess(`已${statusText}自动更新`);
       getList();
     });

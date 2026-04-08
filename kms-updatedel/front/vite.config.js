@@ -23,20 +23,20 @@ export default defineConfig(({ mode, command }) => {
     },
     // vite 相关配置
     server: {
-      port: 82,
+      port: 5174,
       host: true,
       open: true,
       proxy: {
         // https://cn.vitejs.dev/config/#server-proxy
         // 生命周期系统API代理
         '/lifecycle-api': {
-          target: 'http://localhost:8080',
+          target: 'http://localhost:9082',
           changeOrigin: true,
           rewrite: (p) => p.replace(/^\/lifecycle-api/, '')
         },
         // 权限系统API代理
         '/permission-api': {
-          target: 'http://localhost:8080',
+          target: 'http://localhost:9082',
           changeOrigin: true,
           rewrite: (p) => p.replace(/^\/permission-api/, '')
         },

@@ -12,7 +12,8 @@ var (
 
 // Server 配置
 var (
-	ServerPort = getEnv("SERVER_PORT", "8081")
+	ServerPort      = getEnv("SERVER_PORT", "8081")
+	JavaBackendBase = getEnv("JAVA_BACKEND_BASE", "http://localhost:9081")
 )
 
 // App 配置

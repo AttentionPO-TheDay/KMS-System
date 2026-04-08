@@ -36,7 +36,7 @@ func Get() *Config {
 		cfg = &Config{
 			ServerPort:     getEnv("SERVER_PORT", "8082"),
 			KafkaBrokers:   getEnv("KAFKA_BROKERS", "localhost:9092"),
-			UpdateTopic:     getEnv("KAFKA_UPDATE_TOPIC", "key_update_log"),
+			UpdateTopic:    getEnv("KAFKA_UPDATE_TOPIC", "key_update_log"),
 			RevokeTopic:    getEnv("KAFKA_REVOKE_TOPIC", "key_revoke_log"),
 			RedisAddr:      getEnv("REDIS_ADDR", "localhost:6379"),
 			RedisPassword:  getEnv("REDIS_PASSWORD", ""),

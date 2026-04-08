@@ -1,5 +1,6 @@
 package com.ruoyi.generate.service;
 
+import com.ruoyi.generate.domain.ComParam;
 import com.ruoyi.generate.domain.Keymanage;
 import java.util.List;
 
@@ -28,6 +29,14 @@ public interface GenerateKeyService {
      * @return 插入条数
      */
     int insertKeyBatch(List<Keymanage> list);
+
+    int insertKey(Keymanage keymanage);
+
+    int updateKey(Keymanage keymanage);
+
+    int deleteKey(Long keyId);
+
+    ComParam getComParam(String encrytType, String encrytName);
 
     /**
      * 更新密钥上链状态

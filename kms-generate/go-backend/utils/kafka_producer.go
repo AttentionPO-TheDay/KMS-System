@@ -1,11 +1,11 @@
 package utils
 
 import (
+	"encoding/json"
 	"log"
 	"time"
 
 	"github.com/IBM/sarama"
-	"github.com/bytedance/sonic"
 )
 
 // KafkaProducer 封装 Sarama 的异步生产者
@@ -48,7 +48,7 @@ func (k *KafkaProducer) listenErrors() {
 
 // SendAsync 异步发送消息
 func (k *KafkaProducer) SendAsync(data interface{}) {
-	bytesData, err := sonic.Marshal(data)
+	bytesData, err := json.Marshal(data)
 	if err != nil {
 		log.Printf("[Serialization Error] %v\n", err)
 		return

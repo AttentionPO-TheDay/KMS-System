@@ -58,6 +58,7 @@
             <el-button type="primary" @click="$router.push('/generate/keygenerate/index')">密钥生成</el-button>
             <el-button type="success" @click="$router.push('/generate/history/index')">生成历史</el-button>
             <el-button type="info" @click="$router.push('/generate/commonparam/index')">公共参数</el-button>
+            <el-button type="warning" @click="$router.push('/permission/request/index')">权限审批</el-button>
           </div>
         </el-card>
       </el-col>

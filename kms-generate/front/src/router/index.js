@@ -69,6 +69,19 @@ const constantRoutes = [
         meta: { title: '个人中心', icon: 'user' }
       }
     ]
+  },
+  {
+    path: '/permission/request',
+    component: Layout,
+    hidden: false,
+    children: [
+      {
+        path: 'index',
+        component: () => import('@/views/permission/request/index.vue'),
+        name: 'GeneratePermissionRequest',
+        meta: { title: '生成域权限审批', icon: 'edit' }
+      }
+    ]
   }
 ]
 
@@ -111,7 +124,7 @@ const dynamicRoutes = [
         meta: { title: '公共参数', icon: 'param' }
       }
     ]
-  }
+  },
 ]
 
 const router = createRouter({

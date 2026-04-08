@@ -8,6 +8,9 @@ CREATE TABLE IF NOT EXISTS permission_request (
   request_id        BIGINT(20)      NOT NULL AUTO_INCREMENT   COMMENT '申请ID',
   user_id           BIGINT(20)      NOT NULL                  COMMENT '申请用户ID',
   user_name         VARCHAR(30)     NOT NULL                  COMMENT '申请用户名',
+  system_code       VARCHAR(32)     NOT NULL                  COMMENT '所属系统编码(generate/lifecycle/distribute)',
+  feature_code      VARCHAR(64)     NOT NULL                  COMMENT '功能编码',
+  feature_name      VARCHAR(100)    DEFAULT NULL              COMMENT '功能名称',
   original_level    INT             NOT NULL                  COMMENT '原始权限等级',
   request_level     INT             NOT NULL                  COMMENT '申请的权限等级（1中级用户，0管理员）',
   request_reason    VARCHAR(500)    DEFAULT NULL              COMMENT '申请理由',
@@ -23,5 +26,6 @@ CREATE TABLE IF NOT EXISTS permission_request (
   update_time       DATETIME        DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (request_id),
   INDEX idx_user_id (user_id),
-  INDEX idx_status (status)
+  INDEX idx_status (status),
+  INDEX idx_system_code (system_code)
 ) ENGINE=INNODB AUTO_INCREMENT=1 COMMENT = '权限申请表';

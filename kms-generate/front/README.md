@@ -37,7 +37,7 @@ kms-generate/front/
 ## 页面访问说明
 
 ### 开发环境
-访问地址: http://localhost:82
+访问地址: http://localhost:5173
 
 ### 路由映射
 

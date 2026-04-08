@@ -2,6 +2,10 @@ export function isHttp(url) {
   return url && (url.startsWith('http://') || url.startsWith('https://'))
 }
 
+export function isExternal(path) {
+  return /^(https?:|mailto:|tel:)/.test(path)
+}
+
 export function isPathMatch(path, pattern) {
   if (!pattern || !path) {
     return false
