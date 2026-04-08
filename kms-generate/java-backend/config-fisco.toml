@@ -1,0 +1,33 @@
+# FISCO BCOS 配置文件
+# 节点连接配置
+[fisco]
+network_type = "p2p"
+chain_id = 1
+group_id = 1
+
+# P2P连接配置
+[p2p]
+nodes = [
+    "fisco-node:30300"
+]
+
+# 区块链节点配置
+[network]
+peers = [
+    "fisco-node:30300"
+]
+
+# RPC配置
+[rpc]
+listen_ip = "0.0.0.0"
+listen_port = 8545
+
+# AMOP配置
+[amop]
+topic = ["KeyEvidence"]
+
+# 账户配置
+[account]
+keyfile_dir = "conf"
+password = ""
+account_file = ""
