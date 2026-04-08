@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>验证码测试</title>
+</head>
+<body>
+    <h1>验证码测试页面</h1>
+    <div>
+        <h3>API响应:</h3>
+        <pre id="response"></pre>
+    </div>
+    <div>
+        <h3>验证码图片:</h3>
+        <img id="captcha" style="border: 1px solid #ccc; cursor: pointer;" />
+    </div>
+    
+    <script>
+        function loadCaptcha() {
+            fetch('http://localhost:8080/captchaImage')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('response').textContent = JSON.stringify(data, null, 2);
+                    
+                    if (data.captchaEnabled && data.img) {
+                        const imgSrc = 'data:image/jpeg;base64,' + data.img;
+                        document.getElementById('captcha').src = imgSrc;
+                        console.log('验证码加载成功');
+                        console.log('UUID:', data.uuid);
+                        console.log('图片数据长度:', data.img.length);
+                    } else {
+                        console.error('验证码未启用或图片数据为空');
+                    }
+                })
+                .catch(error => {
+                    console.error('加载验证码失败:', error);
+                    document.getElementById('response').textContent = 'Error: ' + error.message;
+                });
+        }
+        
+        // 页面加载时获取验证码
+        loadCaptcha();
+        
+        // 点击图片刷新验证码
+        document.getElementById('captcha').onclick = loadCaptcha;
+    </script>
+</body>
+</html>

@@ -1,0 +1,55 @@
+# IDE & OS
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+*.class
+.DS_Store
+Thumbs.db
+
+# Logs and databases
+*.log
+*.sqlite
+*.db
+
+# Build & Archives
+target/
+bin/
+build/
+dist/
+out/
+*.jar
+*.war
+*.tar
+*.tar.gz
+*.zip
+*.rar
+*.exe
+*.dll
+*.so
+
+# Go Backend specifics
+kms-go/key-service-v1
+key-service-v1
+kms-go/**/*.exe
+kms-go/**/*.test
+
+# Node.js / Frontend specifics
+node_modules/
+dist-ssr/
+npm-debug.log
+yarn-error.log
+
+# Temporary and Swap files
+*.swp
+*~
+*.bak
+*.tmp
+
+# Miscellaneous
+/kms-ops/mysql/data/
+/kms-ops/kafka/kafka_data/
+/kms-ops/fisco/nodes/
+/kms-ops/nginx/logs/
+

@@ -1,0 +1,21 @@
+services:
+  nginx:
+    image: nginx:latest
+    container_name: high-perf-nginx
+    # 核心配置：使用宿主机网络
+    # 这样 Nginx 就相当于直接跑在宿主机上，性能无损耗，且可以直接访问 localhost:8080/8081
+    # 注意：这个模式仅在 Linux 下生效且有效
+    network_mode: "host"
+    volumes:
+      # 挂载配置文件
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      # 挂载日志目录（如果需要看报错）
+      - ./logs:/var/log/nginx
+      # 调整容器时间与宿主机一致
+      - /etc/localtime:/etc/localtime:ro
+    ulimits:
+      # 允许容器打开大量文件句柄 (配合 10万 TPS)
+      nofile:
+        soft: 100000
+        hard: 100000
+    #restart: always
