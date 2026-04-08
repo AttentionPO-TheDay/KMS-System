@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Collections;
 
 @RestController
 @RequestMapping("/generate/keymanage")
@@ -36,14 +37,19 @@ public class GenerateKeymanageCompatController {
                                                     @RequestParam(defaultValue = "1") int pageNum,
                                                     @RequestParam(defaultValue = "10") int pageSize) {
         List<Keymanage> list = generateKeyService.selectKeyList(query);
+        int validPageNum = Math.max(pageNum, 1);
+        int validPageSize = Math.max(pageSize, 1);
+        int fromIndex = Math.min((validPageNum - 1) * validPageSize, list.size());
+        int toIndex = Math.min(fromIndex + validPageSize, list.size());
+        List<Keymanage> pagedList = fromIndex >= toIndex ? Collections.emptyList() : list.subList(fromIndex, toIndex);
         Map<String, Object> result = new HashMap<>();
         result.put("code", 200);
         result.put("msg", "查询成功");
-        result.put("rows", list);
-        result.put("data", list);
+        result.put("rows", pagedList);
+        result.put("data", pagedList);
         result.put("total", list.size());
-        result.put("pageNum", pageNum);
-        result.put("pageSize", pageSize);
+        result.put("pageNum", validPageNum);
+        result.put("pageSize", validPageSize);
         return ResponseEntity.ok(result);
     }
 

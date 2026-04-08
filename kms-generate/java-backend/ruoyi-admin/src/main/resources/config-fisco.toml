@@ -1,0 +1,24 @@
+[cryptoMaterial]
+# 证书目录，这里写的 "conf" 对应 classpath:conf
+certPath = "conf"
+# 是否关闭 SSL，必须为 false
+disableSsl = "false"
+# 是否启用 SSL，必须为 true
+useSsl = "true"
+
+[network]
+# 连接节点的地址
+# 1. 如果连不上，尝试改成 WSL 的实际 IP，例如 "172.28.169.155:20200"
+# 2. 确保你的 WSL 里的节点已经启动 (ps -ef | grep fisco)
+peers=["fisco-node:20200"]
+
+[account]
+# 生成的私钥文件存储目录
+keyStoreDir = "account"
+type = "pem"
+
+[threadPool]
+# 线程池配置，默认即可
+channelProcessorThreadSize = "16"
+receiptProcessorThreadSize = "16"
+maxBlockingQueueSize = "102400"

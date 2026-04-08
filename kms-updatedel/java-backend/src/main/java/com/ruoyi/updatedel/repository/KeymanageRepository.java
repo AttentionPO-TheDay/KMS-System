@@ -56,6 +56,12 @@ public class KeymanageRepository {
         return jdbcTemplate.update("update keymanage set status = ?, upd_time = now(), chain_status = '0' where key_id = ?", status, keyId);
     }
 
+    public int updateChainStatus(Long keyId, String chainStatus, String chainHash, Long blockHeight) {
+        return jdbcTemplate.update(
+            "update keymanage set chain_status = coalesce(?, chain_status), chain_hash = coalesce(?, chain_hash), block_height = coalesce(?, block_height), upd_time = now() where key_id = ?",
+            chainStatus, chainHash, blockHeight, keyId);
+    }
+
     private void appendFilters(Keymanage query, StringBuilder sql, List<Object> args) {
         if (query == null) {
             return;

@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.updatedel.mapper.PermissionRequestMapper">
+
+    <resultMap id="permissionRequestResult" type="PermissionRequest">
+        <result property="requestId" column="request_id"/>
+        <result property="userId" column="user_id"/>
+        <result property="userName" column="user_name"/>
+        <result property="originalLevel" column="original_level"/>
+        <result property="requestLevel" column="request_level"/>
+        <result property="requestReason" column="request_reason"/>
+        <result property="status" column="status"/>
+        <result property="isTemp" column="is_temp"/>
+        <result property="requestTime" column="request_time"/>
+        <result property="approveBy" column="approve_by"/>
+        <result property="approveTime" column="approve_time"/>
+        <result property="approveNote" column="approve_note"/>
+        <result property="useTime" column="use_time"/>
+        <result property="rollbackTime" column="rollback_time"/>
+        <result property="createTime" column="create_time"/>
+        <result property="updateTime" column="update_time"/>
+    </resultMap>
+
+    <sql id="selectPermissionRequestVo">
+        select request_id, user_id, user_name, original_level, request_level, request_reason, status, is_temp,
+               request_time, approve_by, approve_time, approve_note, use_time, rollback_time, create_time, update_time
+        from permission_request
+    </sql>
+
+    <select id="selectPermissionRequestById" parameterType="Long" resultMap="permissionRequestResult">
+        <include refid="selectPermissionRequestVo"/>
+        where request_id = #{requestId}
+    </select>
+
+    <select id="selectPermissionRequestList" parameterType="PermissionRequest" resultMap="permissionRequestResult">
+        <include refid="selectPermissionRequestVo"/>
+        <where>
+            <if test="userId != null">and user_id = #{userId}</if>
+            <if test="userName != null and userName != ''">and user_name like concat('%', #{userName}, '%')</if>
+            <if test="status != null and status != ''">and status = #{status}</if>
+        </where>
+        order by request_id desc
+    </select>
+
+    <select id="selectApprovedBefore" parameterType="java.util.Date" resultMap="permissionRequestResult">
+        <include refid="selectPermissionRequestVo"/>
+        where status = '1' and approve_time is not null and approve_time &lt; #{beforeTime}
+        order by request_id asc
+    </select>
+
+    <insert id="insertPermissionRequest" parameterType="PermissionRequest" useGeneratedKeys="true" keyProperty="requestId">
+        insert into permission_request (
+            user_id, user_name, original_level, request_level, request_reason, status, is_temp,
+            request_time, create_time, update_time
+        ) values (
+            #{userId}, #{userName}, #{originalLevel}, #{requestLevel}, #{requestReason}, #{status}, #{isTemp},
+            #{requestTime}, now(), now()
+        )
+    </insert>
+
+    <update id="markApproved">
+        update permission_request
+        set status = '1', approve_by = #{approveBy}, approve_time = now(), approve_note = #{approveNote}, update_time = now()
+        where request_id = #{requestId}
+    </update>
+
+    <update id="markRejected">
+        update permission_request
+        set status = '2', approve_by = #{approveBy}, approve_time = now(), approve_note = #{approveNote}, update_time = now()
+        where request_id = #{requestId}
+    </update>
+
+    <update id="markRolledBack" parameterType="Long">
+        update permission_request
+        set status = '3', rollback_time = now(), update_time = now()
+        where request_id = #{requestId}
+    </update>
+</mapper>

@@ -3,6 +3,7 @@ package com.ruoyi.updatedel.consumer;
 import com.alibaba.fastjson2.JSON;
 import com.ruoyi.updatedel.domain.ChainSyncEvent;
 import com.ruoyi.updatedel.domain.Keymanage;
+import com.ruoyi.updatedel.service.UpdatedelChainService;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,6 +21,12 @@ import java.util.List;
 public class UpdatedelChainConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(UpdatedelChainConsumer.class);
+
+    private final UpdatedelChainService updatedelChainService;
+
+    public UpdatedelChainConsumer(UpdatedelChainService updatedelChainService) {
+        this.updatedelChainService = updatedelChainService;
+    }
 
     @KafkaListener(
             topics = "key_chain_task",
@@ -68,9 +75,11 @@ public class UpdatedelChainConsumer {
         for (Keymanage km : keys) {
             try {
                 log.info("处理密钥轮换上链: keyId={}, version={}", km.getKeyId(), km.getVersion());
-                // TODO: 调用具体的上链服务 processChainSync
-                // generateChainService.processChainSync(km);
-                log.info("密钥轮换上链处理完成: keyId={}", km.getKeyId());
+                if (updatedelChainService.processRotateChainSync(km)) {
+                    log.info("密钥轮换上链处理完成: keyId={}", km.getKeyId());
+                } else {
+                    log.warn("密钥轮换上链处理失败: keyId={}", km.getKeyId());
+                }
             } catch (Exception e) {
                 log.error("密钥轮换上链异常: keyId={}", km.getKeyId(), e);
             }
@@ -81,9 +90,11 @@ public class UpdatedelChainConsumer {
         for (Keymanage km : keys) {
             try {
                 log.info("处理密钥回收上链: keyId={}", km.getKeyId());
-                // TODO: 调用具体的上链服务 processChainSync
-                // generateChainService.processChainSync(km);
-                log.info("密钥回收上链处理完成: keyId={}", km.getKeyId());
+                if (updatedelChainService.processRevokeChainSync(km)) {
+                    log.info("密钥回收上链处理完成: keyId={}", km.getKeyId());
+                } else {
+                    log.warn("密钥回收上链处理失败: keyId={}", km.getKeyId());
+                }
             } catch (Exception e) {
                 log.error("密钥回收上链异常: keyId={}", km.getKeyId(), e);
             }

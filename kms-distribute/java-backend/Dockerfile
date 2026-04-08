@@ -1,15 +1,14 @@
 FROM maven:3.8.8-eclipse-temurin-8 AS build
 WORKDIR /build
 
-COPY pom.xml ./
-COPY src ./src
+COPY . ./
 
-RUN mvn -B -DskipTests package
+RUN mvn -B -DskipTests -pl ruoyi-admin -am package
 
 FROM eclipse-temurin:8-jre
 WORKDIR /app
 
-COPY --from=build /build/target/kms-distribute.jar /app/kms-distribute.jar
+COPY --from=build /build/ruoyi-admin/target/kms-distribute.jar /app/kms-distribute.jar
 
 EXPOSE 8083
 

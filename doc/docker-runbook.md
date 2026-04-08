@@ -102,6 +102,21 @@ docker compose up -d
 docker compose down
 ```
 
+## 启动后检查
+
+在 `kms-ops/` 目录执行：
+
+```powershell
+./check.ps1
+```
+
+脚本会检查：
+
+1. `docker compose ps`
+2. `generate-go` 健康接口
+3. `updatedel-go` 健康接口
+4. MySQL 关键表是否存在：`sys_user`、`keymanage`、`permission_request`、`key_distribute_record`
+
 ## 首次排查顺序
 
 1. `docker compose ps`
@@ -117,3 +132,4 @@ docker compose down
 3. 3 个 Java 服务 jar 名已改为各自独立名称，避免都叫 `ruoyi-admin.jar`。
 4. Java 配置已统一改为优先读取环境变量，默认值与 Docker 编排一致。
 5. `legacy-kms/` 仍然保留为历史参考，不参与当前 Docker 编排。
+6. 新增的初始化脚本只对首次建库自动生效；如果数据库卷已经存在，需要手工执行新增 SQL 或重建数据库卷。

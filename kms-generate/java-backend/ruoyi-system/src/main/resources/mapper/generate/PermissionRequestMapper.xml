@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.generate.mapper.PermissionRequestMapper">
+
+    <resultMap id="permissionRequestResult" type="com.ruoyi.generate.domain.PermissionRequest">
+        <id property="requestId" column="request_id"/>
+        <result property="userId" column="user_id"/>
+        <result property="userName" column="user_name"/>
+        <result property="systemCode" column="system_code"/>
+        <result property="featureCode" column="feature_code"/>
+        <result property="featureName" column="feature_name"/>
+        <result property="originalLevel" column="original_level"/>
+        <result property="requestLevel" column="request_level"/>
+        <result property="requestReason" column="request_reason"/>
+        <result property="status" column="status"/>
+        <result property="isTemp" column="is_temp"/>
+        <result property="requestTime" column="request_time"/>
+        <result property="approveBy" column="approve_by"/>
+        <result property="approveTime" column="approve_time"/>
+        <result property="approveNote" column="approve_note"/>
+        <result property="rollbackTime" column="rollback_time"/>
+    </resultMap>
+
+    <sql id="permissionRequestColumns">
+        select request_id, user_id, user_name, system_code, feature_code, feature_name,
+               original_level, request_level, request_reason, status, is_temp,
+               request_time, approve_by, approve_time, approve_note, rollback_time
+        from permission_request
+    </sql>
+
+    <select id="selectPermissionRequestByRequestId" parameterType="Long" resultMap="permissionRequestResult">
+        <include refid="permissionRequestColumns"/>
+        where request_id = #{requestId}
+    </select>
+
+    <select id="selectPermissionRequestList" parameterType="com.ruoyi.generate.domain.PermissionRequest" resultMap="permissionRequestResult">
+        <include refid="permissionRequestColumns"/>
+        <where>
+            <if test="systemCode != null and systemCode != ''">and system_code = #{systemCode}</if>
+            <if test="userId != null">and user_id = #{userId}</if>
+            <if test="status != null and status != ''">and status = #{status}</if>
+        </where>
+        order by request_time desc
+    </select>
+
+    <insert id="insertPermissionRequest" parameterType="com.ruoyi.generate.domain.PermissionRequest" useGeneratedKeys="true" keyProperty="requestId">
+        insert into permission_request (
+            user_id, user_name, system_code, feature_code, feature_name,
+            original_level, request_level, request_reason, status, is_temp,
+            request_time, create_time, update_time
+        ) values (
+            #{userId}, #{userName}, #{systemCode}, #{featureCode}, #{featureName},
+            #{originalLevel}, #{requestLevel}, #{requestReason}, #{status}, #{isTemp},
+            #{requestTime}, now(), now()
+        )
+    </insert>
+
+    <update id="updatePermissionRequest" parameterType="com.ruoyi.generate.domain.PermissionRequest">
+        update permission_request
+        <trim prefix="set" suffixOverrides=",">
+            <if test="userId != null">user_id = #{userId},</if>
+            <if test="userName != null and userName != ''">user_name = #{userName},</if>
+            <if test="systemCode != null and systemCode != ''">system_code = #{systemCode},</if>
+            <if test="featureCode != null and featureCode != ''">feature_code = #{featureCode},</if>
+            <if test="featureName != null and featureName != ''">feature_name = #{featureName},</if>
+            <if test="originalLevel != null">original_level = #{originalLevel},</if>
+            <if test="requestLevel != null">request_level = #{requestLevel},</if>
+            <if test="requestReason != null and requestReason != ''">request_reason = #{requestReason},</if>
+            <if test="status != null and status != ''">status = #{status},</if>
+            <if test="isTemp != null">is_temp = #{isTemp},</if>
+            <if test="requestTime != null">request_time = #{requestTime},</if>
+            <if test="approveBy != null and approveBy != ''">approve_by = #{approveBy},</if>
+            <if test="approveTime != null">approve_time = #{approveTime},</if>
+            <if test="approveNote != null">approve_note = #{approveNote},</if>
+            <if test="rollbackTime != null">rollback_time = #{rollbackTime},</if>
+            update_time = now()
+        </trim>
+        where request_id = #{requestId}
+    </update>
+
+    <select id="selectExpiredApprovedRequests" resultMap="permissionRequestResult">
+        <include refid="permissionRequestColumns"/>
+        where system_code = #{systemCode}
+          and status = '1'
+          and approve_time &lt; DATE_SUB(now(), INTERVAL 30 MINUTE)
+    </select>
+
+    <update id="updateUserRoleLevel">
+        update sys_user
+        set role_level = #{roleLevel}
+        where user_id = #{userId}
+    </update>
+</mapper>

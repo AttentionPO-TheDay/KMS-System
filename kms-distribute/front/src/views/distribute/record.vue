@@ -113,7 +113,7 @@ const queryParams = reactive({
 function getList() {
   loading.value = true
   listKeyDistributeRecord(queryParams).then(res => {
-    recordList.value = res.data || []
+    recordList.value = res.rows || []
     total.value = res.total || 0
     loading.value = false
   })

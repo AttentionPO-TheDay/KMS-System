@@ -37,3 +37,6 @@ kms:
     kafka:
       update-topic: key_update_log
       revoke-topic: key_revoke_log
+
+fisco:
+  contract-address: ${FISCO_CONTRACT_ADDRESS:0xadb09744949bbc4096c8b340303dfed763dae2b7}

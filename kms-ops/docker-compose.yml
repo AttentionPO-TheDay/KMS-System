@@ -178,7 +178,8 @@ services:
     image: eclipse-temurin:8-jre
     container_name: kms_updatedel_java
     volumes:
-      - ../kms-updatedel/java-backend/target/kms-updatedel.jar:/app/kms-updatedel.jar:ro
+      - ../kms-updatedel/java-backend/ruoyi-admin/target/kms-updatedel.jar:/app/kms-updatedel.jar:ro
+      - ../kms-updatedel/java-backend/ruoyi-admin/src/main/resources/config-fisco.toml:/app/config-fisco.toml:ro
     working_dir: /app
     command: ["java", "-jar", "/app/kms-updatedel.jar"]
     ports:
