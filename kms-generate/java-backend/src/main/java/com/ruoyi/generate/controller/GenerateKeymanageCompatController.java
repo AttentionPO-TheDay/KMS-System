@@ -79,6 +79,9 @@ public class GenerateKeymanageCompatController {
         Map<String, Object> result = new HashMap<>();
         result.put("code", rows > 0 ? 200 : 500);
         result.put("msg", rows > 0 ? "操作成功" : "生成失败");
+        if (rows > 0) {
+            result.put("data", keymanage);
+        }
         return ResponseEntity.ok(result);
     }
 
@@ -89,6 +92,9 @@ public class GenerateKeymanageCompatController {
         Map<String, Object> result = new HashMap<>();
         result.put("code", rows > 0 ? 200 : 500);
         result.put("msg", rows > 0 ? "操作成功" : "修改失败");
+        if (rows > 0) {
+            result.put("data", keymanage);
+        }
         return ResponseEntity.ok(result);
     }
 

@@ -138,7 +138,7 @@
                 </executions>
             </plugin>
         </plugins>
-        <finalName>ruoyi-admin</finalName>
+        <finalName>kms-generate</finalName>
     </build>
 
 </project>

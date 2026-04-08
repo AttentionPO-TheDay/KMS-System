@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KMS 技术架构介绍图</title>
+    <style>
+        :root {
+            --bg: #f4efe6;
+            --panel: rgba(255, 252, 247, 0.9);
+            --text: #1d2a2e;
+            --muted: #627277;
+            --line: #d9cbb8;
+            --accent: #b35c2e;
+            --accent-soft: #f2d4bf;
+            --blue: #2f5d7c;
+            --blue-soft: #d6e6f1;
+            --green: #3c7258;
+            --green-soft: #dcebdc;
+            --red: #8d4545;
+            --red-soft: #f2dada;
+            --gold: #8d6a28;
+            --shadow: 0 20px 60px rgba(67, 43, 19, 0.12);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
+            color: var(--text);
+            background:
+                radial-gradient(circle at top left, rgba(179, 92, 46, 0.16), transparent 24%),
+                radial-gradient(circle at right 20%, rgba(47, 93, 124, 0.12), transparent 24%),
+                linear-gradient(180deg, #f7f1e8 0%, #f4efe6 100%);
+        }
+
+        .page {
+            max-width: 1600px;
+            margin: 0 auto;
+            padding: 32px 24px 48px;
+        }
+
+        .hero {
+            position: relative;
+            overflow: hidden;
+            background: linear-gradient(135deg, rgba(255, 250, 243, 0.96), rgba(249, 241, 229, 0.96));
+            border: 1px solid rgba(179, 92, 46, 0.18);
+            border-radius: 28px;
+            box-shadow: var(--shadow);
+            padding: 32px;
+            margin-bottom: 24px;
+        }
+
+        .hero::after {
+            content: "";
+            position: absolute;
+            width: 320px;
+            height: 320px;
+            right: -80px;
+            top: -100px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(179, 92, 46, 0.18), transparent 68%);
+        }
+
+        .eyebrow {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 999px;
+            background: rgba(179, 92, 46, 0.1);
+            color: var(--accent);
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+        }
+
+        h1 {
+            margin: 14px 0 10px;
+            font-size: clamp(30px, 5vw, 56px);
+            line-height: 1.08;
+        }
+
+        .hero p {
+            max-width: 940px;
+            margin: 0;
+            color: var(--muted);
+            font-size: 16px;
+            line-height: 1.8;
+        }
+
+        .hero-metrics {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 14px;
+            margin-top: 24px;
+        }
+
+        .metric {
+            background: rgba(255, 255, 255, 0.72);
+            border: 1px solid rgba(47, 93, 124, 0.12);
+            border-radius: 18px;
+            padding: 18px;
+            backdrop-filter: blur(10px);
+        }
+
+        .metric strong {
+            display: block;
+            font-size: 30px;
+            color: var(--blue);
+            margin-bottom: 6px;
+        }
+
+        .metric span {
+            color: var(--muted);
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .section {
+            background: var(--panel);
+            border: 1px solid rgba(47, 93, 124, 0.12);
+            border-radius: 28px;
+            box-shadow: var(--shadow);
+            padding: 26px;
+            margin-bottom: 24px;
+        }
+
+        .section-title {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 18px;
+        }
+
+        .section-title h2 {
+            margin: 0;
+            font-size: 24px;
+        }
+
+        .section-title span {
+            font-size: 13px;
+            padding: 5px 10px;
+            border-radius: 999px;
+            color: var(--accent);
+            background: var(--accent-soft);
+        }
+
+        .architecture-stack {
+            display: grid;
+            gap: 18px;
+        }
+
+        .layer {
+            border: 1px solid var(--line);
+            border-radius: 24px;
+            padding: 18px;
+            background: linear-gradient(180deg, rgba(255,255,255,0.72), rgba(252,249,244,0.95));
+        }
+
+        .layer-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 14px;
+        }
+
+        .layer-header h3 {
+            margin: 0;
+            font-size: 20px;
+        }
+
+        .layer-tag {
+            font-size: 12px;
+            font-weight: 700;
+            border-radius: 999px;
+            padding: 6px 10px;
+            white-space: nowrap;
+        }
+
+        .cards {
+            display: grid;
+            gap: 14px;
+        }
+
+        .cards.cols-4 {
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+
+        .cards.cols-5 {
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+        }
+
+        .cards.cols-3 {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+
+        .card {
+            border-radius: 20px;
+            padding: 18px;
+            min-height: 160px;
+            border: 1px solid transparent;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(135deg, rgba(255,255,255,0.45), transparent 60%);
+            pointer-events: none;
+        }
+
+        .card h4 {
+            margin: 0 0 10px;
+            font-size: 18px;
+        }
+
+        .card p {
+            margin: 0 0 10px;
+            font-size: 14px;
+            line-height: 1.65;
+            color: #37505b;
+        }
+
+        .pill-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .pill {
+            padding: 6px 10px;
+            font-size: 12px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.7);
+            border: 1px solid rgba(0,0,0,0.08);
+        }
+
+        .tone-blue {
+            background: var(--blue-soft);
+            border-color: rgba(47, 93, 124, 0.2);
+        }
+
+        .tone-green {
+            background: var(--green-soft);
+            border-color: rgba(60, 114, 88, 0.2);
+        }
+
+        .tone-red {
+            background: var(--red-soft);
+            border-color: rgba(141, 69, 69, 0.2);
+        }
+
+        .tone-gold {
+            background: #f3ead1;
+            border-color: rgba(141, 106, 40, 0.2);
+        }
+
+        .flow-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 18px;
+        }
+
+        .flow-column {
+            border: 1px solid var(--line);
+            border-radius: 22px;
+            padding: 18px;
+            background: rgba(255,255,255,0.72);
+        }
+
+        .flow-column h3 {
+            margin: 0 0 14px;
+            font-size: 18px;
+        }
+
+        .step {
+            position: relative;
+            padding: 14px 14px 14px 54px;
+            background: #fffdfa;
+            border: 1px solid rgba(0,0,0,0.07);
+            border-radius: 16px;
+            margin-bottom: 12px;
+            min-height: 84px;
+        }
+
+        .step:last-child {
+            margin-bottom: 0;
+        }
+
+        .step::before {
+            content: attr(data-step);
+            position: absolute;
+            left: 14px;
+            top: 14px;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: grid;
+            place-items: center;
+            font-size: 13px;
+            font-weight: 800;
+            color: white;
+            background: var(--accent);
+        }
+
+        .step strong {
+            display: block;
+            font-size: 15px;
+            margin-bottom: 6px;
+        }
+
+        .step span {
+            display: block;
+            font-size: 13px;
+            color: var(--muted);
+            line-height: 1.6;
+        }
+
+        .bottom-grid {
+            display: grid;
+            grid-template-columns: 1.15fr 0.85fr;
+            gap: 20px;
+        }
+
+        .legend {
+            display: grid;
+            gap: 12px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 14px;
+            border-radius: 16px;
+            background: rgba(255,255,255,0.74);
+            border: 1px solid rgba(0,0,0,0.06);
+        }
+
+        .legend-chip {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .notes {
+            display: grid;
+            gap: 12px;
+        }
+
+        .note {
+            padding: 16px;
+            border-radius: 18px;
+            border: 1px solid rgba(0,0,0,0.06);
+            background: rgba(255,255,255,0.76);
+        }
+
+        .note strong {
+            display: block;
+            margin-bottom: 8px;
+        }
+
+        .footer {
+            margin-top: 10px;
+            text-align: right;
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        @media (max-width: 1280px) {
+            .hero-metrics,
+            .cards.cols-5,
+            .cards.cols-4,
+            .cards.cols-3,
+            .flow-grid,
+            .bottom-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+
+        @media (max-width: 820px) {
+            .page {
+                padding: 18px 14px 28px;
+            }
+
+            .hero,
+            .section {
+                padding: 18px;
+                border-radius: 20px;
+            }
+
+            .hero-metrics,
+            .cards.cols-5,
+            .cards.cols-4,
+            .cards.cols-3,
+            .flow-grid,
+            .bottom-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .layer-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+        }
+    </style>
+</head>
+<body>
+    <main class="page">
+        <section class="hero">
+            <div class="eyebrow">KMS PLATFORM ARCHITECTURE</div>
+            <h1>密钥管理系统技术架构介绍图</h1>
+            <p>
+                该仓库当前已演进为“统一用户入口 + 多业务子系统 + 共享运维底座”的拆分式架构。
+                普通用户经由 <strong>kms-user</strong> 进入工作台，分别触达密钥生成、生命周期管理、分发管理与验收能力；
+                各核心业务再通过 Go 接入层、Java 业务层、Kafka 消息链路、MySQL/Redis 和 FISCO BCOS 区块链完成完整处理闭环。
+            </p>
+            <div class="hero-metrics">
+                <div class="metric">
+                    <strong>6</strong>
+                    <span>当前有效模块：用户入口、生成、生命周期、分发、验收、运维编排</span>
+                </div>
+                <div class="metric">
+                    <strong>3</strong>
+                    <span>核心业务链路：生成、更新/回收、分发记录维护</span>
+                </div>
+                <div class="metric">
+                    <strong>2</strong>
+                    <span>主要双层后端形态：Go 高并发接入层 + Java 业务处理层</span>
+                </div>
+                <div class="metric">
+                    <strong>1</strong>
+                    <span>统一共享底座：Kafka、MySQL、Redis、Nginx、FISCO BCOS、脚本编排</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="section">
+            <div class="section-title">
+                <h2>分层总览</h2>
+                <span>Current Repository Architecture</span>
+            </div>
+
+            <div class="architecture-stack">
+                <div class="layer">
+                    <div class="layer-header">
+                        <h3>接入与展示层</h3>
+                        <div class="layer-tag" style="background: var(--accent-soft); color: var(--accent);">User Facing</div>
+                    </div>
+                    <div class="cards cols-5">
+                        <article class="card tone-gold">
+                            <h4>kms-user</h4>
+                            <p>统一普通用户门户，提供工作台、生成、生命周期、分发、权限申请等统一入口。</p>
+                            <div class="pill-list">
+                                <span class="pill">/workbench</span>
+                                <span class="pill">/generate</span>
+                                <span class="pill">/lifecycle</span>
+                                <span class="pill">/distribute</span>
+                                <span class="pill">/permissions</span>
+                            </div>
+                        </article>
+                        <article class="card tone-blue">
+                            <h4>kms-generate/front</h4>
+                            <p>生成系统前端，面向生成管理员与专项业务操作，围绕注册、公参、生成、查询展开。</p>
+                            <div class="pill-list">
+                                <span class="pill">生成管理</span>
+                                <span class="pill">结果查询</span>
+                            </div>
+                        </article>
+                        <article class="card tone-green">
+                            <h4>kms-updatedel/front</h4>
+                            <p>生命周期前端，承载更新、回收、自动更新配置、权限申请与审批入口。</p>
+                            <div class="pill-list">
+                                <span class="pill">更新</span>
+                                <span class="pill">回收</span>
+                                <span class="pill">审批</span>
+                            </div>
+                        </article>
+                        <article class="card tone-red">
+                            <h4>kms-distribute/front</h4>
+                            <p>当前仍以页面片段为主，主要配合分发记录查询与维护，尚未形成完整独立前端工程。</p>
+                            <div class="pill-list">
+                                <span class="pill">记录维护</span>
+                                <span class="pill">前端待完善</span>
+                            </div>
+                        </article>
+                        <article class="card tone-gold">
+                            <h4>kms-acceptance/front</h4>
+                            <p>验收与压测可视化入口，用于配置生成、更新、回收等指标型测试任务。</p>
+                            <div class="pill-list">
+                                <span class="pill">TPS</span>
+                                <span class="pill">回收率</span>
+                            </div>
+                        </article>
+                    </div>
+                </div>
+
+                <div class="layer">
+                    <div class="layer-header">
+                        <h3>业务服务层</h3>
+                        <div class="layer-tag" style="background: var(--blue-soft); color: var(--blue);">Domain Services</div>
+                    </div>
+                    <div class="cards cols-4">
+                        <article class="card tone-blue">
+                            <h4>kms-generate</h4>
+                            <p>Go 接入层接收 ENROLL_KEY 等请求并写入 Kafka；Java 业务层消费生成消息，执行入库、审计、上链任务投递。</p>
+                            <div class="pill-list">
+                                <span class="pill">8081 / 9081</span>
+                                <span class="pill">key_generate_log</span>
+                            </div>
+                        </article>
+                        <article class="card tone-green">
+                            <h4>kms-updatedel</h4>
+                            <p>Go 接入层接收 UPDATE_KEY / REVOKE_KEY；Java 层完成轮换、回收、生命周期查询、权限审批与回退。</p>
+                            <div class="pill-list">
+                                <span class="pill">8082 / 9082</span>
+                                <span class="pill">key_update_log</span>
+                                <span class="pill">key_revoke_log</span>
+                            </div>
+                        </article>
+                        <article class="card tone-red">
+                            <h4>kms-distribute</h4>
+                            <p>Java 后端已落地，提供分发记录列表、详情、增删改与批量写入能力。</p>
+                            <div class="pill-list">
+                                <span class="pill">8083</span>
+                                <span class="pill">记录服务</span>
+                            </div>
+                        </article>
+                        <article class="card tone-gold">
+                            <h4>kms-acceptance/backend</h4>
+                            <p>轻量后端调用 wrk 和测试脚本，汇总压测结果并保存验收历史，用于验证系统吞吐与稳定性。</p>
+                            <div class="pill-list">
+                                <span class="pill">压测编排</span>
+                                <span class="pill">结果归档</span>
+                            </div>
+                        </article>
+                    </div>
+                </div>
+
+                <div class="layer">
+                    <div class="layer-header">
+                        <h3>共享基础设施层</h3>
+                        <div class="layer-tag" style="background: var(--green-soft); color: var(--green);">Shared Ops Foundation</div>
+                    </div>
+                    <div class="cards cols-5">
+                        <article class="card tone-gold">
+                            <h4>Nginx</h4>
+                            <p>统一路由入口，按 generate / lifecycle 等路径或域名规则进行前后端流量分发。</p>
+                        </article>
+                        <article class="card tone-blue">
+                            <h4>Kafka</h4>
+                            <p>承接高并发业务消息，解耦 Go 接入层与 Java 业务层，并隔离生成、更新、回收、上链任务。</p>
+                        </article>
+                        <article class="card tone-green">
+                            <h4>MySQL + Redis</h4>
+                            <p>MySQL 存储业务记录、权限申请与分发数据；Redis 用于缓存、幂等与链路辅助控制。</p>
+                        </article>
+                        <article class="card tone-red">
+                            <h4>FISCO BCOS</h4>
+                            <p>作为链上信任底座，存储公钥状态、回收状态与关键审计凭据，提升可追溯性与防篡改能力。</p>
+                        </article>
+                        <article class="card tone-gold">
+                            <h4>kms-ops</h4>
+                            <p>统一运维编排目录，集中管理 docker-compose、启动脚本、压测脚本、中间件与链上依赖。</p>
+                        </article>
+                    </div>
+                </div>
+
+                <div class="layer">
+                    <div class="layer-header">
+                        <h3>历史参考层</h3>
+                        <div class="layer-tag" style="background: var(--red-soft); color: var(--red);">Reference Only</div>
+                    </div>
+                    <div class="cards cols-3">
+                        <article class="card tone-red">
+                            <h4>legacy-kms</h4>
+                            <p>拆分前 Java 单体工程，仅用于历史追溯、迁移映射与旧逻辑排查，不再作为当前主开发入口。</p>
+                        </article>
+                        <article class="card tone-red">
+                            <h4>legacy-kms-go</h4>
+                            <p>拆分前 Go 接入服务，主要用于比对旧接口、迁移控制器和生成/更新/回收早期实现。</p>
+                        </article>
+                        <article class="card tone-gold">
+                            <h4>doc</h4>
+                            <p>文档层给出当前项目总览、消息协议、前端角色边界以及拆分实施计划，是理解仓库的导航索引。</p>
+                        </article>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="section">
+            <div class="section-title">
+                <h2>核心业务链路</h2>
+                <span>Three Main Flows</span>
+            </div>
+
+            <div class="flow-grid">
+                <div class="flow-column">
+                    <h3>生成链路</h3>
+                    <div class="step" data-step="1">
+                        <strong>用户或管理员发起生成请求</strong>
+                        <span>入口可来自 kms-user 聚合页或 kms-generate/front 专项页面。</span>
+                    </div>
+                    <div class="step" data-step="2">
+                        <strong>Go 接入层处理高并发请求</strong>
+                        <span>接收 Register、ENROLL_KEY、comparam 等请求并写入 <code>key_generate_log</code>。</span>
+                    </div>
+                    <div class="step" data-step="3">
+                        <strong>Java 业务层消费并执行业务落库</strong>
+                        <span>完成生成记录入库、审计日志写入，并投递链上任务。</span>
+                    </div>
+                    <div class="step" data-step="4">
+                        <strong>区块链记录可信状态</strong>
+                        <span>由链同步消费者完成公钥或关键事件上链，实现后续可追溯查询。</span>
+                    </div>
+                </div>
+
+                <div class="flow-column">
+                    <h3>生命周期链路</h3>
+                    <div class="step" data-step="1">
+                        <strong>发起更新或回收</strong>
+                        <span>统一从生命周期入口提交，包含自动更新配置、审批流程等能力。</span>
+                    </div>
+                    <div class="step" data-step="2">
+                        <strong>Go 层拆分消息管道</strong>
+                        <span>更新消息进入 <code>key_update_log</code>，回收消息进入 <code>key_revoke_log</code>。</span>
+                    </div>
+                    <div class="step" data-step="3">
+                        <strong>Java 层执行轮换、回收与审批</strong>
+                        <span>由 UpdateKafkaConsumer、RevokeKafkaConsumer 等模块分工处理。</span>
+                    </div>
+                    <div class="step" data-step="4">
+                        <strong>链上同步状态变更</strong>
+                        <span>生命周期事件最终同步到区块链，保证吊销、回收等状态可审计。</span>
+                    </div>
+                </div>
+
+                <div class="flow-column">
+                    <h3>分发与验收链路</h3>
+                    <div class="step" data-step="1">
+                        <strong>分发记录服务提供业务台账</strong>
+                        <span>通过 kms-distribute Java 后端维护分发详情、批量新增和状态查询。</span>
+                    </div>
+                    <div class="step" data-step="2">
+                        <strong>验收系统触发压测与回归</strong>
+                        <span>kms-acceptance/backend 调用 wrk 与脚本，验证生成、更新、回收链路指标。</span>
+                    </div>
+                    <div class="step" data-step="3">
+                        <strong>运维底座统一编排</strong>
+                        <span>所有服务与中间件由 kms-ops 统一启动、停止、联调与环境配置。</span>
+                    </div>
+                    <div class="step" data-step="4">
+                        <strong>结果反哺架构治理</strong>
+                        <span>验收数据帮助判断 Kafka 拆分、Go/Java 解耦和链路扩展是否达标。</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="section">
+            <div class="section-title">
+                <h2>架构要点</h2>
+                <span>Design Notes</span>
+            </div>
+
+            <div class="bottom-grid">
+                <div class="legend">
+                    <div class="legend-item">
+                        <span class="legend-chip" style="background: var(--gold);"></span>
+                        <div><strong>统一入口</strong> 普通用户统一进入 <code>kms-user</code>，降低多系统切换成本。</div>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-chip" style="background: var(--blue);"></span>
+                        <div><strong>高并发接入</strong> Go 层负责请求吸收与消息投递，适合承载高吞吐链路。</div>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-chip" style="background: var(--green);"></span>
+                        <div><strong>业务解耦</strong> Java 层专注业务规则、数据库、审计、审批和链上同步。</div>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-chip" style="background: var(--red);"></span>
+                        <div><strong>可信审计</strong> 区块链承担关键状态佐证，适合公钥状态和吊销记录留痕。</div>
+                    </div>
+                </div>
+
+                <div class="notes">
+                    <div class="note">
+                        <strong>推荐阅读顺序</strong>
+                        <div>先看 <code>doc/project_overview.md</code>，再看 <code>doc/message-protocol.md</code>，最后进入各模块 README。</div>
+                    </div>
+                    <div class="note">
+                        <strong>当前边界判断</strong>
+                        <div>当前主开发入口是 <code>kms-user</code>、<code>kms-generate</code>、<code>kms-updatedel</code>、<code>kms-distribute</code>、<code>kms-acceptance</code> 与 <code>kms-ops</code>。</div>
+                    </div>
+                    <div class="note">
+                        <strong>历史目录定位</strong>
+                        <div><code>legacy-kms</code> 和 <code>legacy-kms-go</code> 仅作迁移追溯参考，不建议作为新功能落点。</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="footer">Based on current repository structure in kms-code-copy</div>
+        </section>
+    </main>
+</body>
+</html>

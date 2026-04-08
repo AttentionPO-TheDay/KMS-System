@@ -40,7 +40,7 @@ public class KeyDistributeController {
      */
     @PostMapping
     public R<Void> add(@RequestBody KeyDistributeRecord record) {
-        return R.ok(keyDistributeService.insertKeyDistributeRecord(record) > 0);
+        return keyDistributeService.insertKeyDistributeRecord(record) > 0 ? R.ok() : R.fail("新增失败");
     }
 
     /**
@@ -48,7 +48,7 @@ public class KeyDistributeController {
      */
     @PostMapping("/batch")
     public R<Void> addBatch(@RequestBody List<KeyDistributeRecord> records) {
-        return R.ok(keyDistributeService.insertKeyDistributeRecordBatch(records) > 0);
+        return keyDistributeService.insertKeyDistributeRecordBatch(records) > 0 ? R.ok() : R.fail("批量新增失败");
     }
 
     /**
@@ -56,7 +56,7 @@ public class KeyDistributeController {
      */
     @PutMapping
     public R<Void> edit(@RequestBody KeyDistributeRecord record) {
-        return R.ok(keyDistributeService.updateKeyDistributeRecord(record) > 0);
+        return keyDistributeService.updateKeyDistributeRecord(record) > 0 ? R.ok() : R.fail("更新失败");
     }
 
     /**
@@ -64,6 +64,6 @@ public class KeyDistributeController {
      */
     @DeleteMapping("/{recordId}")
     public R<Void> remove(@PathVariable Long recordId) {
-        return R.ok(keyDistributeService.deleteKeyDistributeRecordById(recordId) > 0);
+        return keyDistributeService.deleteKeyDistributeRecordById(recordId) > 0 ? R.ok() : R.fail("删除失败");
     }
 }

@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -84,10 +85,10 @@ public class DistributeKafkaConsumer {
                 distributeRecord.setEncrytName(key.getEncrytName());
                 distributeRecord.setDistributeType(distributeType);
                 distributeRecord.setDistributeStatus("2"); // 默认成功
-                distributeRecord.setDistributeTime(new Date());
+                distributeRecord.setDistributeTime(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()));
                 distributeRecord.setChainHash(key.getChainHash());
                 distributeRecord.setBlockHeight(key.getBlockHeight());
-                distributeRecord.setCreTime(new Date());
+                distributeRecord.setCreTime(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()));
 
                 recordsToInsert.add(distributeRecord);
                 log.debug("收到分发事件: actionType={}, userName={}, keyName={}",

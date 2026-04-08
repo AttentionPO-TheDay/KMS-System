@@ -9,8 +9,8 @@ services:
     image: mysql:8.0
     container_name: kms_mysql
     environment:
-      - "MYSQL_ROOT_PASSWORD=root"
-      - "MYSQL_DATABASE=ry_vue"
+      - "MYSQL_ROOT_PASSWORD=root123456"
+      - "MYSQL_DATABASE=kms"
     ports:
       - "3306:3306"
     volumes:
@@ -20,6 +20,11 @@ services:
     restart: always
     networks:
       - kms_net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot123456"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   redis:
     image: redis:6.2
@@ -32,6 +37,11 @@ services:
     restart: always
     networks:
       - kms_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   kafka:
     image: apache/kafka:latest
@@ -82,16 +92,19 @@ services:
   # 2. kms-generate 系统 (密钥生成)
   # ========================================
   generate-go:
-    image: ubuntu:22.04
+    image: debian:bookworm-slim
     container_name: kms_generate_go
     volumes:
-      - ./kms-generate/go-backend:/app
+      - ../kms-generate/go-backend/dist/key-service:/app/key-service:ro
     working_dir: /app
-    command: sh -c "chmod +x ./key-service && ./key-service"
+    command: ["/app/key-service"]
     ports:
       - "8081:8081"
     environment:
-      - KAFKA_HOST=kafka
+      - KAFKA_ADDR=kafka:9092
+      - KAFKA_TOPIC=key_generate_log
+      - JAVA_BACKEND_BASE=http://generate-java:9081
+      - SERVER_PORT=8081
       - GOGC=500
     depends_on:
       kafka:
@@ -101,29 +114,34 @@ services:
       - kms_net
 
   generate-java:
-    image: eclipse-temurin:8-jdk
+    image: eclipse-temurin:8-jre
     container_name: kms_generate_java
     volumes:
-      - ./kms-generate/java-backend:/app
+      - ../kms-generate/java-backend/target/kms-generate.jar:/app/kms-generate.jar:ro
+      - ../kms-generate/java-backend/config-fisco.toml:/app/config-fisco.toml:ro
     working_dir: /app
-    command: java -jar ruoyi-admin.jar
+    command: ["java", "-jar", "/app/kms-generate.jar"]
     ports:
       - "9081:9081"
     environment:
       - DB_HOST=mysql
-      - KAFKA_HOST=kafka
+      - DB_PORT=3306
+      - DB_NAME=kms
+      - DB_USERNAME=root
+      - DB_PASSWORD=root123456
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
       - FISCO_HOST=fisco-node
       - REDIS_HOST=redis
       - REDIS_PORT=6379
     depends_on:
       mysql:
-        condition: service_started
+        condition: service_healthy
       kafka:
         condition: service_started
       fisco-node:
         condition: service_started
       redis:
-        condition: service_started
+        condition: service_healthy
     restart: always
     networks:
       - kms_net
@@ -132,48 +150,58 @@ services:
   # 3. kms-updatedel 系统 (密钥更新与回收)
   # ========================================
   updatedel-go:
-    image: ubuntu:22.04
+    image: debian:bookworm-slim
     container_name: kms_updatedel_go
     volumes:
-      - ./kms-updatedel/go-backend:/app
+      - ../kms-updatedel/go-backend/dist/key-service:/app/key-service:ro
     working_dir: /app
-    command: sh -c "chmod +x ./key-service && ./key-service"
+    command: ["/app/key-service"]
     ports:
       - "8082:8082"
     environment:
-      - KAFKA_HOST=kafka
+      - KAFKA_BROKERS=kafka:9092
+      - KAFKA_UPDATE_TOPIC=key_update_log
+      - KAFKA_REVOKE_TOPIC=key_revoke_log
+      - REDIS_ADDR=redis:6379
+      - SERVER_PORT=8082
       - GOGC=500
     depends_on:
       kafka:
         condition: service_started
+      redis:
+        condition: service_healthy
     restart: always
     networks:
       - kms_net
 
   updatedel-java:
-    image: eclipse-temurin:8-jdk
+    image: eclipse-temurin:8-jre
     container_name: kms_updatedel_java
     volumes:
-      - ./kms-updatedel/java-backend:/app
+      - ../kms-updatedel/java-backend/target/kms-updatedel.jar:/app/kms-updatedel.jar:ro
     working_dir: /app
-    command: java -jar ruoyi-admin.jar
+    command: ["java", "-jar", "/app/kms-updatedel.jar"]
     ports:
       - "9082:9082"
     environment:
       - DB_HOST=mysql
-      - KAFKA_HOST=kafka
+      - DB_PORT=3306
+      - DB_NAME=kms
+      - DB_USERNAME=root
+      - DB_PASSWORD=root123456
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
       - FISCO_HOST=fisco-node
       - REDIS_HOST=redis
       - REDIS_PORT=6379
     depends_on:
       mysql:
-        condition: service_started
+        condition: service_healthy
       kafka:
         condition: service_started
       fisco-node:
         condition: service_started
       redis:
-        condition: service_started
+        condition: service_healthy
     restart: always
     networks:
       - kms_net
@@ -182,26 +210,30 @@ services:
   # 4. kms-distribute 系统 (密钥分发)
   # ========================================
   kms-distribute:
-    image: eclipse-temurin:8-jdk
+    image: eclipse-temurin:8-jre
     container_name: kms_distribute_java
     volumes:
-      - ./kms-distribute/java-backend:/app
+      - ../kms-distribute/java-backend/target/kms-distribute.jar:/app/kms-distribute.jar:ro
     working_dir: /app
-    command: java -jar ruoyi-admin.jar
+    command: ["java", "-jar", "/app/kms-distribute.jar"]
     ports:
       - "8083:8083"
     environment:
       - DB_HOST=mysql
-      - KAFKA_HOST=kafka
+      - DB_PORT=3306
+      - DB_NAME=kms
+      - DB_USERNAME=root
+      - DB_PASSWORD=root123456
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
       - REDIS_HOST=redis
       - REDIS_PORT=6379
     depends_on:
       mysql:
-        condition: service_started
+        condition: service_healthy
       kafka:
         condition: service_started
       redis:
-        condition: service_started
+        condition: service_healthy
     restart: always
     networks:
       - kms_net

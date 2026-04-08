@@ -8,6 +8,7 @@ import com.ruoyi.updatedel.repository.SysUserRepository;
 import java.util.Date;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -72,6 +73,25 @@ public class PermissionRequestService {
 
     public List<PermissionRequest> findExpiredApproved(Date expireBefore) {
         return permissionRequestRepository.findApprovedBefore(expireBefore);
+    }
+
+    @Transactional
+    public int rollbackExpiredApprovedRequests() {
+        Date expireBefore = new Date(System.currentTimeMillis() - TimeUnit.MINUTES.toMillis(30));
+        List<PermissionRequest> expiredRequests = permissionRequestRepository.findApprovedBefore(expireBefore);
+        int rollbackCount = 0;
+
+        for (PermissionRequest request : expiredRequests) {
+            if (!Integer.valueOf(1).equals(request.getIsTemp())) {
+                continue;
+            }
+
+            sysUserRepository.updateRoleLevel(request.getUserId(), request.getOriginalLevel());
+            permissionRequestRepository.markRolledBack(request.getRequestId());
+            rollbackCount++;
+        }
+
+        return rollbackCount;
     }
 
     private PermissionRequest requirePendingRequest(Long requestId) {

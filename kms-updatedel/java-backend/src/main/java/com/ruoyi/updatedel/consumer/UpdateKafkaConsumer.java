@@ -61,7 +61,7 @@ public class UpdateKafkaConsumer {
             AjaxResult result = keyRotateService.rotateKeyById(keyId);
             long cost = System.currentTimeMillis() - startTime;
 
-            if (AjaxResult.SUCCESS_CODE.equals(result.get("code"))) {
+            if (AjaxResult.SUCCESS_CODE == (Integer) result.get("code")) {
                 log.info("UPDATE_KEY consumed successfully, keyId={}, traceId={}, cost={}ms",
                         keyId, payload.getTraceId(), cost);
             } else {

@@ -3,6 +3,8 @@ package com.ruoyi.updatedel.common;
 import java.util.HashMap;
 
 public class AjaxResult extends HashMap<String, Object> {
+    public static final int SUCCESS_CODE = 200;
+
     public AjaxResult() {
     }
 

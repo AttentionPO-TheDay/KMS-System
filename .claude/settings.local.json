@@ -11,7 +11,23 @@
       "Bash(ls E:/java_project/kms-code-copy/kms-generate/java-backend/target/*.jar)",
       "Bash(grep -E \"\\(build|Makefile|\\\\.sh$\\)\")",
       "Bash(go version:*)",
-      "Bash(go build:*)"
+      "Bash(go build:*)",
+      "Bash(go mod:*)",
+      "Bash(mvn package:*)",
+      "Bash(java -version)",
+      "Bash(javac -version)",
+      "Bash(mvn dependency:tree)",
+      "Bash(mvn:*)",
+      "Bash(JAVA_HOME=\"/c/Program Files \\(x86\\)/Common Files/Oracle/Java/java8path\" mvn package -DskipTests -f E:/java_project/kms-code-copy/kms-generate/java-backend/pom.xml)",
+      "Bash(export JAVA_HOME=\"/c/Program Files \\(x86\\)/Common Files/Oracle/Java/java8path\")",
+      "Bash(/c/Program Files \\(x86\\)/Common Files/Oracle/Java/java8path/bin/java:*)",
+      "Bash(export JAVA_HOME=\"/c/Program Files \\(x86\\)/Java/jre1.8.0_441\")",
+      "Bash(export PATH=\"$JAVA_HOME/bin:$PATH\")",
+      "Bash(docker --version)",
+      "Bash(docker run:*)",
+      "Bash(cmd.exe:*)",
+      "Bash(MSYS_NO_PATHCONV=1 docker run:*)",
+      "Bash(npm --version)"
     ]
   }
 }
