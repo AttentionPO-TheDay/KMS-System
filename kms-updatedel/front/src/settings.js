@@ -1,13 +1,13 @@
 export default {
-  title: '生命周期系统',
+  title: '更新与回收系统',
   /**
    * @type {string}
    */
-  keywords: '密钥管理,生命周期,更新,回收',
+  keywords: '密钥管理,更新,回收,自动更新',
   /**
    * @type {string}
    */
-  description: '密钥更新与回收生命周期系统',
+  description: '密钥更新与回收系统',
   /**
    * @type {boolean} 是否系统主题
    */

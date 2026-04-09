@@ -1,7 +1,7 @@
 <template>
   <div class="dashboard-container">
     <div class="page-title">
-      <h1>生命周期系统仪表盘</h1>
+      <h1>更新与回收系统仪表盘</h1>
       <p class="subtitle">实时监控密钥更新、轮换与安全回收状态</p>
     </div>
 
@@ -32,7 +32,7 @@
     <el-row :gutter="20" class="chart-section" style="margin-top: 20px;">
       <el-col :span="16">
         <div class="glass-card">
-          <div class="card-header">近7天密钥生命周期活动趋势</div>
+          <div class="card-header">近7天更新与回收活动趋势</div>
           <div class="chart-container" ref="lineChartRef"></div>
         </div>
       </el-col>
@@ -48,13 +48,13 @@
     <el-row :gutter="20" class="action-section" style="margin-top: 20px;">
       <el-col :span="24">
         <div class="glass-card">
-          <div class="card-header">生命周期管理操作</div>
+          <div class="card-header">更新与回收管理操作</div>
           <div class="action-grid">
-            <div class="action-btn primary" @click="$router.push('/lifecycle/keyupdate')">
+            <div class="action-btn primary" @click="$router.push('/updatedel/keyupdate')">
               <el-icon><Refresh /></el-icon>
               <div class="btn-text">密钥更新</div>
             </div>
-            <div class="action-btn success" @click="$router.push('/lifecycle/keyautoupdate')">
+            <div class="action-btn success" @click="$router.push('/updatedel/keyautoupdate')">
               <el-icon><Timer /></el-icon>
               <div class="btn-text">自动更新配置</div>
             </div>
@@ -62,7 +62,7 @@
               <el-icon><Tickets /></el-icon>
               <div class="btn-text">权限审批</div>
             </div>
-            <div class="action-btn danger" @click="$router.push('/lifecycle/keydelete')">
+            <div class="action-btn danger" @click="$router.push('/updatedel/keydelete')">
               <el-icon><Delete /></el-icon>
               <div class="btn-text">临时/永久回收</div>
             </div>
