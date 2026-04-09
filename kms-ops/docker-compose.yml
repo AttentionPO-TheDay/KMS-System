@@ -95,9 +95,9 @@ services:
     image: debian:bookworm-slim
     container_name: kms_generate_go
     volumes:
-      - ../kms-generate/go-backend/dist/key-service:/app/key-service:ro
+      - ./runtime/generate-go/kms-generate-service:/app/kms-generate-service:ro
     working_dir: /app
-    command: ["/app/key-service"]
+    command: ["/app/kms-generate-service"]
     ports:
       - "8081:8081"
     environment:
@@ -117,8 +117,8 @@ services:
     image: eclipse-temurin:8-jre
     container_name: kms_generate_java
     volumes:
-      - ../kms-generate/java-backend/target/kms-generate.jar:/app/kms-generate.jar:ro
-      - ../kms-generate/java-backend/config-fisco.toml:/app/config-fisco.toml:ro
+      - ./runtime/generate-java/kms-generate.jar:/app/kms-generate.jar:ro
+      - ./runtime/generate-java/config-fisco.toml:/app/config-fisco.toml:ro
     working_dir: /app
     command: ["java", "-jar", "/app/kms-generate.jar"]
     ports:
@@ -153,9 +153,9 @@ services:
     image: debian:bookworm-slim
     container_name: kms_updatedel_go
     volumes:
-      - ../kms-updatedel/go-backend/dist/key-service:/app/key-service:ro
+      - ./runtime/updatedel-go/kms-updatedel-service:/app/kms-updatedel-service:ro
     working_dir: /app
-    command: ["/app/key-service"]
+    command: ["/app/kms-updatedel-service"]
     ports:
       - "8082:8082"
     environment:
@@ -178,8 +178,8 @@ services:
     image: eclipse-temurin:8-jre
     container_name: kms_updatedel_java
     volumes:
-      - ../kms-updatedel/java-backend/ruoyi-admin/target/kms-updatedel.jar:/app/kms-updatedel.jar:ro
-      - ../kms-updatedel/java-backend/ruoyi-admin/src/main/resources/config-fisco.toml:/app/config-fisco.toml:ro
+      - ./runtime/updatedel-java/kms-updatedel.jar:/app/kms-updatedel.jar:ro
+      - ./runtime/updatedel-java/config-fisco.toml:/app/config-fisco.toml:ro
     working_dir: /app
     command: ["java", "-jar", "/app/kms-updatedel.jar"]
     ports:
@@ -214,7 +214,7 @@ services:
     image: eclipse-temurin:8-jre
     container_name: kms_distribute_java
     volumes:
-      - ../kms-distribute/java-backend/target/kms-distribute.jar:/app/kms-distribute.jar:ro
+      - ./runtime/distribute-java/kms-distribute.jar:/app/kms-distribute.jar:ro
     working_dir: /app
     command: ["java", "-jar", "/app/kms-distribute.jar"]
     ports:

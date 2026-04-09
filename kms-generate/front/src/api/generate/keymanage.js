@@ -24,7 +24,7 @@ export function getKeymanage(keyId) {
 // 获取公共参数
 export function getComParam(data) {
   return request({
-    url: '/generate/request/comparam',
+    url: '/generate/keymanage/comparam',
     method: 'post',
     data: data
   }).then(res => res.data || res)

@@ -140,7 +140,7 @@
 </template>
 
 <script setup name="KeyDelete">
-import { listKeymanage, getKeymanage, delKeymanage, addKeymanage, updateKeymanage } from "@/api/lifecycle/lifecycle";
+import { listKeymanage, getKeymanage, delKeymanage, updateKeymanage } from "@/api/lifecycle/lifecycle";
 
 const { proxy } = getCurrentInstance();
 
@@ -263,19 +263,15 @@ function handleUpdate(row) {
 function submitForm() {
   proxy.$refs["keymanageRef"].validate(valid => {
     if (valid) {
-      if (form.value.keyId != null) {
-        updateKeymanage(form.value).then(response => {
-          proxy.$modal.msgSuccess("修改成功");
-          open.value = false;
-          getList();
-        });
-      } else {
-        addKeymanage(form.value).then(response => {
-          proxy.$modal.msgSuccess("新增成功");
-          open.value = false;
-          getList();
-        });
+      if (form.value.keyId == null) {
+        proxy.$modal.msgError("生命周期系统仅支持对已有密钥执行回收或更新");
+        return;
       }
+      updateKeymanage(form.value).then(response => {
+        proxy.$modal.msgSuccess("修改成功");
+        open.value = false;
+        getList();
+      });
     }
   });
 }

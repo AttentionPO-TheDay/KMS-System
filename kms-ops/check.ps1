@@ -1,5 +1,8 @@
 $ErrorActionPreference = "Stop"
 
+Push-Location $PSScriptRoot
+try {
+
 function Test-HttpEndpoint {
     param(
         [string]$Name,
@@ -44,3 +47,7 @@ Test-MySqlTable -TableName "permission_request"
 Test-MySqlTable -TableName "key_distribute_record"
 
 Write-Host "`nAll checks passed."
+}
+finally {
+    Pop-Location
+}

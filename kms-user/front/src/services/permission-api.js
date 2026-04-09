@@ -1,18 +1,8 @@
 import { apiBases } from '@/config/api-bases'
+import { requestJson } from '@/services/http'
 
 async function request(base, path, options = {}) {
-  const response = await fetch(`${base}${path}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.headers || {})
-    },
-    ...options
-  })
-  const data = await response.json()
-  if (!response.ok || data.code !== 200) {
-    throw new Error(data.msg || '请求失败')
-  }
-  return data
+  return requestJson(base, path, options)
 }
 
 export const permissionFeatures = {

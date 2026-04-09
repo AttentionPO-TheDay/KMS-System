@@ -6,9 +6,10 @@ import createVitePlugins from './vite/plugins'
 export default defineConfig(({ mode, command }) => {
   const env = loadEnv(mode, process.cwd())
   const { VITE_APP_ENV } = env
+  const isProduction = command === 'build' && VITE_APP_ENV === 'production'
   return {
     // 部署生产环境和开发环境下的URL。
-    base: VITE_APP_ENV === 'production' ? '/' : '/',
+    base: isProduction ? '/lifecycle/' : '/',
     plugins: createVitePlugins(env, command === 'build'),
     resolve: {
       // https://cn.vitejs.dev/config/#resolve-alias

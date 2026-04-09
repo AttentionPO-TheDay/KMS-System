@@ -20,10 +20,19 @@
 </template>
 
 <script>
-import path from 'path'
 import { isExternal } from '@/utils/validate'
 import SvgIcon from '@/components/SvgIcon'
 import sidebarItemLink from './sidebarItemLink'
+
+function resolveMenuPath(basePath, routePath) {
+  if (!basePath || basePath === '/') {
+    return routePath
+  }
+  if (!routePath || routePath === '/') {
+    return basePath
+  }
+  return `/${[basePath, routePath].map(path => path.replace(/^\/+|\/+$/g, '')).filter(Boolean).join('/')}`
+}
 
 export default {
   name: 'SidebarItem',
@@ -80,9 +89,9 @@ export default {
       }
       if (routeQuery) {
         const query = JSON.parse(routeQuery)
-        return { path: path.resolve(this.basePath, routePath), query: query }
+        return { path: resolveMenuPath(this.basePath, routePath), query: query }
       }
-      return path.resolve(this.basePath, routePath)
+      return resolveMenuPath(this.basePath, routePath)
     }
   }
 }

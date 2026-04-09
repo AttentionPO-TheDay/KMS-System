@@ -17,15 +17,6 @@ export function getKeymanage(keyId) {
   })
 }
 
-// 新增密钥管理
-export function addKeymanage(data) {
-  return request({
-    url: '/lifecycle/keymanage',
-    method: 'post',
-    data: data
-  })
-}
-
 // 修改密钥管理
 export function updateKeymanage(data) {
   return request({

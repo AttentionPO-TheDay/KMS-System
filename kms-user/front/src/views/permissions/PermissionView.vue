@@ -11,22 +11,25 @@
       <div class="form-grid">
         <label>
           <span>用户 ID</span>
-          <input v-model="profile.userId" type="number" min="1" />
+          <input :value="profile.userId" type="number" min="1" disabled />
         </label>
         <label>
           <span>用户名</span>
-          <input v-model="profile.userName" type="text" />
+          <input :value="profile.userName" type="text" disabled />
         </label>
         <label>
           <span>当前等级</span>
-          <select v-model.number="profile.originalLevel">
+          <select :value="profile.originalLevel" disabled>
             <option :value="2">普通用户</option>
             <option :value="1">中级用户</option>
             <option :value="0">管理员</option>
           </select>
         </label>
       </div>
-      <p class="muted">当前 `kms-user` 还没有正式登录态，这里先用本地表单模拟普通用户身份，提交后会写入共享申请表。</p>
+      <p class="muted">
+        <template v-if="isAuthenticated">申请人信息来自统一登录态，并随请求透传到各业务系统。</template>
+        <template v-else>请先在左侧完成登录，权限申请会复用同一份用户会话。</template>
+      </p>
     </article>
 
     <div class="card-grid two-col">
@@ -81,22 +84,43 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { authState, refreshProfile } from '@/services/auth'
 import { listPermissionRequests, rollbackPermission, submitPermissionRequest } from '@/services/permission-api'
 
-const profile = reactive(loadProfile())
+const profile = reactive({
+  userId: '',
+  userName: '',
+  originalLevel: 2
+})
+
 const reasons = reactive({
   PUBLIC_KEY_LIST: '',
   AUTO_UPDATE: ''
 })
+
 const loading = reactive({
   PUBLIC_KEY_LIST: false,
   AUTO_UPDATE: false
 })
+
 const records = ref([])
 const errorMessage = ref('')
+const isAuthenticated = computed(() => Boolean(authState.profile && authState.token))
 
-watch(profile, saveProfile, { deep: true })
+watch(
+  () => authState.profile,
+  (value) => {
+    profile.userId = value?.userId || ''
+    profile.userName = value?.userName || ''
+    profile.originalLevel = value?.roleLevel ?? 2
+
+    if (!value) {
+      records.value = []
+    }
+  },
+  { immediate: true }
+)
 
 onMounted(() => {
   loadRecords()
@@ -104,9 +128,14 @@ onMounted(() => {
 
 async function submit(featureCode) {
   errorMessage.value = ''
+  if (!isAuthenticated.value) {
+    errorMessage.value = '请先在左侧登录，再提交权限申请。'
+    return
+  }
+
   const reason = reasons[featureCode]?.trim()
   if (!profile.userId || !profile.userName.trim()) {
-    errorMessage.value = '请先填写用户 ID 和用户名。'
+    errorMessage.value = '当前登录用户信息不完整，请刷新资料后重试。'
     return
   }
   if (!reason || reason.length < 4) {
@@ -133,6 +162,21 @@ async function submit(featureCode) {
 
 async function loadRecords() {
   errorMessage.value = ''
+  if (!isAuthenticated.value) {
+    records.value = []
+    return
+  }
+
+  if (!profile.userId) {
+    try {
+      await refreshProfile()
+    } catch (error) {
+      errorMessage.value = error.message
+      records.value = []
+      return
+    }
+  }
+
   if (!profile.userId) {
     records.value = []
     return
@@ -171,21 +215,5 @@ function systemText(systemCode) {
 
 function statusText(status) {
   return { 0: '待审批', 1: '已通过', 2: '已拒绝', 3: '已回退' }[status] || '未知'
-}
-
-function loadProfile() {
-  const raw = window.localStorage.getItem('kms-user-profile')
-  if (!raw) {
-    return { userId: '2', userName: 'yx', originalLevel: 2 }
-  }
-  try {
-    return JSON.parse(raw)
-  } catch {
-    return { userId: '2', userName: 'yx', originalLevel: 2 }
-  }
-}
-
-function saveProfile() {
-  window.localStorage.setItem('kms-user-profile', JSON.stringify(profile))
 }
 </script>

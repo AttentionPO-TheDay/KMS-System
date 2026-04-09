@@ -52,3 +52,6 @@ yarn-error.log
 /kms-ops/kafka/kafka_data/
 /kms-ops/fisco/nodes/
 /kms-ops/nginx/logs/
+/kms-ops/runtime/
+/kms-ops/front/generate/
+/kms-ops/front/updatedel/

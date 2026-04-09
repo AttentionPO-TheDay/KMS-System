@@ -6,8 +6,9 @@ import createVitePlugins from './vite/plugins'
 export default defineConfig(({ mode, command }) => {
   const env = loadEnv(mode, process.cwd())
   const { VITE_APP_ENV } = env
+  const isProduction = command === 'build' && VITE_APP_ENV === 'production'
   return {
-    base: VITE_APP_ENV === 'production' ? '/' : '/',
+    base: isProduction ? '/generate/' : '/',
     plugins: createVitePlugins(env, command === 'build'),
     resolve: {
       alias: {

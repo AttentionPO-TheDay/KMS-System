@@ -210,7 +210,7 @@ const { queryParams, encrytNameOptions, form, rules } = toRefs(data)
 function handleCommand(command) {
   if (command === "logout") {
     proxy.$confirm('确定注销并退出系统吗？', '提示', { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }).then(() => {
-      userStore.logOut().then(() => { location.href = '/index' })
+      userStore.logOut().then(() => { location.href = `${import.meta.env.BASE_URL}index` })
     }).catch(() => {})
   }
 }

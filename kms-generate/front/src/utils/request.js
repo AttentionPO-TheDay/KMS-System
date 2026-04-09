@@ -9,6 +9,7 @@ import useUserStore from '@/store/modules/user'
 
 let downloadLoadingInstance
 export let isRelogin = { show: false }
+const indexPath = `${import.meta.env.BASE_URL}index`
 
 axios.defaults.headers['Content-Type'] = 'application/json;charset=utf-8'
 const service = axios.create({
@@ -77,7 +78,7 @@ service.interceptors.response.use(res => {
       }).then(() => {
         isRelogin.show = false
         useUserStore().logOut().then(() => {
-          location.href = '/index'
+          location.href = indexPath
         })
       }).catch(() => {
         isRelogin.show = false

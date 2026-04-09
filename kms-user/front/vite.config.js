@@ -13,11 +13,11 @@ export default defineConfig({
     port: 5175,
     proxy: {
       '/generate-api': {
-        target: 'http://localhost:8081',
+        target: 'http://localhost:9081',
         changeOrigin: true
       },
       '/lifecycle-api': {
-        target: 'http://localhost:8082',
+        target: 'http://localhost:9082',
         changeOrigin: true
       },
       '/distribute-api': {

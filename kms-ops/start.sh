@@ -23,8 +23,7 @@ mkdir -p mysql/data mysql/init redis/data kafka/kafka_data
 mkdir -p fisco/nodes/127.0.0.1
 mkdir -p nginx/logs
 mkdir -p front/generate front/updatedel
-mkdir -p kms-generate/go-backend kms-generate/java-backend
-mkdir -p kms-updatedel/go-backend kms-updatedel/java-backend
+mkdir -p runtime/generate-go runtime/generate-java runtime/updatedel-go runtime/updatedel-java runtime/distribute-java
 
 # 启动所有容器
 echo "[INFO] 启动所有容器..."
