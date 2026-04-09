@@ -41,7 +41,6 @@ const useAppStore = defineStore(
         this.sidebar.hide = status
       }
     }
-  }
-)
+  })
 
 export default useAppStore

@@ -5,6 +5,7 @@ import Layout from '@/layout/index'
 import ParentView from '@/components/ParentView'
 import InnerLink from '@/layout/components/InnerLink'
 
+// 匹配views里面所有的.vue文件
 const modules = import.meta.glob('./../../views/**/*.vue')
 
 const usePermissionStore = defineStore(
@@ -33,12 +34,14 @@ const usePermissionStore = defineStore(
       },
       generateRoutes(roles) {
         return new Promise(resolve => {
+          // 向后端请求路由数据
           getRouters().then(res => {
+            // Remove redundant English sidebar items
             if (res.data && res.data.length) {
               res.data = res.data.filter(r => {
-                const title = r.meta && r.meta.title
-                return title !== 'Permission Approval' && title !== 'Permission Request'
-              })
+                const title = r.meta && r.meta.title;
+                return title !== 'Permission Approval' && title !== 'Permission Request';
+              });
             }
             const sdata = JSON.parse(JSON.stringify(res.data))
             const rdata = JSON.parse(JSON.stringify(res.data))
@@ -57,15 +60,16 @@ const usePermissionStore = defineStore(
         })
       }
     }
-  }
-)
+  })
 
+// 遍历后台传来的路由字符串，转换为组件对象
 function filterAsyncRouter(asyncRouterMap, lastRouter = false, type = false) {
   return asyncRouterMap.filter(route => {
     if (type && route.children) {
       route.children = filterChildren(route.children)
     }
     if (route.component) {
+      // Layout ParentView 组件特殊处理
       if (route.component === 'Layout') {
         route.component = Layout
       } else if (route.component === 'ParentView') {
@@ -114,6 +118,7 @@ function filterChildren(childrenMap, lastRouter = false) {
   return children
 }
 
+// 动态路由遍历，验证是否具备权限
 export function filterDynamicRoutes(routes) {
   const res = []
   routes.forEach(route => {
@@ -131,14 +136,14 @@ export function filterDynamicRoutes(routes) {
 }
 
 export const loadView = (view) => {
-  let res
+  let res;
   for (const path in modules) {
-    const dir = path.split('views/')[1].split('.vue')[0]
+    const dir = path.split('views/')[1].split('.vue')[0];
     if (dir === view) {
-      res = () => modules[path]()
+      res = () => modules[path]();
     }
   }
-  return res
+  return res;
 }
 
 export default usePermissionStore

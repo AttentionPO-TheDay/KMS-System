@@ -4,7 +4,7 @@
       <div class="brand">
         <p class="eyebrow">Unified UI</p>
         <h1>kms-user</h1>
-        <p>统一用户界面，聚合生成、更新与回收、分发能力。</p>
+        <p>统一用户界面，聚合生成、动态更新回收、抗量子分发与测试支撑能力。</p>
       </div>
       <section class="auth-panel">
         <h2>统一登录</h2>
@@ -22,13 +22,13 @@
               </span>
             </li>
             <li>
-              更新与回收系统：
+              密钥动态更新与回收系统：
               <span :class="authState.systemAccess.lifecycle.ok ? 'status-ok' : 'status-bad'">
                 {{ authState.systemAccess.lifecycle.message }}
               </span>
             </li>
             <li>
-              分发系统：
+              抗量子密钥分发系统：
               <span :class="authState.systemAccess.distribute.ok ? 'status-ok' : 'status-bad'">
                 {{ authState.systemAccess.distribute.message }}
               </span>
@@ -73,8 +73,8 @@
       <nav class="nav">
         <RouterLink to="/workbench">工作台</RouterLink>
         <RouterLink to="/generate">生成系统</RouterLink>
-        <RouterLink to="/updatedel">更新与回收系统</RouterLink>
-        <RouterLink to="/distribute">分发系统</RouterLink>
+        <RouterLink to="/updatedel">密钥动态更新与回收系统</RouterLink>
+        <RouterLink to="/distribute">抗量子密钥分发系统</RouterLink>
         <RouterLink to="/permissions">权限申请</RouterLink>
       </nav>
       <section class="meta">

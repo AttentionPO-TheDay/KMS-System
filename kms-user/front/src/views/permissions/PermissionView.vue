@@ -210,7 +210,7 @@ function levelText(level) {
 }
 
 function systemText(systemCode) {
-    return { generate: '生成系统', lifecycle: '更新与回收系统' }[systemCode] || systemCode
+    return { generate: '密钥生成系统', lifecycle: '密钥动态更新与回收系统' }[systemCode] || systemCode
 }
 
 function statusText(status) {

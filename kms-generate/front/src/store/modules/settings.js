@@ -25,22 +25,24 @@ const useSettingsStore = defineStore(
       isDark: isDark.value
     }),
     actions: {
+      // 修改布局设置
       changeSetting(data) {
         const { key, value } = data
         if (this.hasOwnProperty(key)) {
           this[key] = value
         }
       },
+      // 设置网页标题
       setTitle(title) {
         this.title = title
         useDynamicTitle()
       },
+      // 切换暗黑模式
       toggleTheme() {
         this.isDark = !this.isDark
         toggleDark()
       }
     }
-  }
-)
+  })
 
 export default useSettingsStore

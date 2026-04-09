@@ -32,7 +32,15 @@
     "vue": "3.4.31",
     "vue-cropper": "1.1.1",
     "vue-router": "4.4.0",
-    "vuedraggable": "4.1.0"
+    "vuedraggable": "4.1.0",
+    "@noble/curves": "^2.0.1",
+    "@noble/hashes": "^2.0.1",
+    "@noble/secp256k1": "^3.0.0",
+    "elliptic": "^6.6.1",
+    "gm-crypto": "^0.1.12",
+    "js-beautify": "1.14.11",
+    "jsbn": "^1.1.0",
+    "jsencrypt": "3.3.2"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "5.0.5",

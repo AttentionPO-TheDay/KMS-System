@@ -1,7 +1,7 @@
 import { login, logout, getInfo } from '@/api/login'
 import { getToken, setToken, removeToken } from '@/utils/auth'
 import { isHttp, isEmpty } from "@/utils/validate"
-const defAva = ''
+import defAva from '@/assets/images/profile.jpg'
 
 const useUserStore = defineStore(
   'user',

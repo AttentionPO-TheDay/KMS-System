@@ -1,8 +1,8 @@
 <template>
   <div class="dashboard-container">
     <div class="page-title">
-      <h1>密钥分发系统仪表盘</h1>
-      <p class="subtitle">实时监控密钥下发网络状态与数据</p>
+      <h1>抗量子密钥分发系统仪表盘</h1>
+      <p class="subtitle">实时监控抗量子密钥下发网络状态与分发数据</p>
     </div>
 
     <!-- 统计卡片区 -->

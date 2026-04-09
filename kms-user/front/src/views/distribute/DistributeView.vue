@@ -3,7 +3,7 @@
     <div class="page-header">
       <p class="eyebrow">Distribute</p>
       <h2>分发记录</h2>
-      <p>统一前端已直接对接分发系统后端，可查看记录列表并展开详情。</p>
+      <p>统一前端已直接对接抗量子密钥分发系统后端，可查看记录列表并展开详情。</p>
     </div>
 
     <article class="panel">

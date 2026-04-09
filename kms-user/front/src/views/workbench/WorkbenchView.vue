@@ -13,14 +13,14 @@
         <RouterLink to="/generate">进入生成系统</RouterLink>
       </article>
       <article class="card">
-        <h3>更新与回收链路</h3>
+        <h3>动态更新与回收链路</h3>
         <p>密钥更新、密钥回收、自动更新、权限申请与审批。</p>
-        <RouterLink to="/updatedel">进入更新与回收系统</RouterLink>
+        <RouterLink to="/updatedel">进入密钥动态更新与回收系统</RouterLink>
       </article>
       <article class="card">
-        <h3>分发查询</h3>
-        <p>分发记录列表、详情查询和后续分发态势展示。</p>
-        <RouterLink to="/distribute">进入分发系统</RouterLink>
+        <h3>抗量子分发查询</h3>
+        <p>抗量子密钥分发记录列表、详情查询和后续分发态势展示。</p>
+        <RouterLink to="/distribute">进入抗量子密钥分发系统</RouterLink>
       </article>
       <article class="card">
         <h3>临时提权</h3>

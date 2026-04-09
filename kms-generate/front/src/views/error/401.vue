@@ -1,32 +1,82 @@
 <template>
-  <div class="wscn-http404-container">
-    <div class="wscn-http404">
-      <div class="pic-401">
-        <div class="pic-401__parent">401</div>
-      </div>
-      <div class="bullshit">
-        <div class="bullshit__oops">401!</div>
-        <div class="bullshit__headline">抱歉，您没有访问权限</div>
-        <div class="bullshit__info">请联系管理员为您分配权限。</div>
-        <a href="/" class="bullshit__return-home">返回首页</a>
-      </div>
-    </div>
+  <div class="errPage-container">
+    <el-button icon="arrow-left" class="pan-back-btn" @click="back">
+      返回
+    </el-button>
+    <el-row>
+      <el-col :span="12">
+        <h1 class="text-jumbo text-ginormous">
+          401错误!
+        </h1>
+        <h2>您没有访问权限！</h2>
+        <h6>对不起，您没有访问权限，请不要进行非法操作！您可以返回主页面</h6>
+        <ul class="list-unstyled">
+          <li class="link-type">
+            <router-link to="/">
+              回首页
+            </router-link>
+          </li>
+        </ul>
+      </el-col>
+      <el-col :span="12">
+        <img :src="errGif" width="313" height="428" alt="Girl has dropped her ice cream.">
+      </el-col>
+    </el-row>
   </div>
 </template>
 
-<script>
-export default { name: 'Page401' }
+<script setup>
+import errImage from "@/assets/401_images/401.gif";
+
+let { proxy } = getCurrentInstance();
+
+const errGif = ref(errImage + "?" + +new Date());
+
+function back() {
+  if (proxy.$route.query.noGoBack) {
+    proxy.$router.push({ path: "/" });
+  } else {
+    proxy.$router.go(-1);
+  }
+}
 </script>
 
 <style lang="scss" scoped>
-.wscn-http404-container { transform: translate(-50%, -50%); position: absolute; top: 40%; left: 50% }
-.wscn-http404 { position: relative; width: 1200px; padding: 0 50px; overflow: hidden }
-.pic-401 { position: relative; float: left; width: 600px; overflow: hidden }
-.pic-401__parent { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 320px; border-radius: 24px; font-size: 120px; font-weight: 700; color: #1482f0; background: linear-gradient(135deg, #eef6ff, #dcecff) }
-.bullshit { position: relative; float: left; width: 300px; padding: 30px 0; overflow: hidden }
-.bullshit__oops { font-size: 32px; font-weight: bold; line-height: 40px; color: #1482f0; opacity: 0; margin-bottom: 20px; animation-name: slideUp; animation-duration: 0.5s; animation-fill-mode: forwards }
-.bullshit__headline { font-size: 20px; line-height: 24px; color: #222; font-weight: bold; margin-bottom: 10px; animation-name: slideUp; animation-duration: 0.5s; animation-delay: 0.1s; animation-fill-mode: forwards }
-.bullshit__info { font-size: 13px; line-height: 21px; color: grey; margin-bottom: 30px; animation-name: slideUp; animation-duration: 0.5s; animation-delay: 0.2s; animation-fill-mode: forwards }
-.bullshit__return-home { display: block; float: none; width: 110px; height: 36px; margin: 0 auto; line-height: 36px; color: #ffffff; background: #1482f0; border-radius: 100px; font-size: 14px; text-align: center; text-decoration: none; animation-name: slideUp; animation-duration: 0.5s; animation-delay: 0.3s; animation-fill-mode: forwards }
-@keyframes slideUp { 0% { transform: translateY(60px); opacity: 0 } 100% { transform: translateY(0); opacity: 1 } }
+.errPage-container {
+  width: 800px;
+  max-width: 100%;
+  margin: 100px auto;
+  .pan-back-btn {
+    background: #008489;
+    color: #fff;
+    border: none !important;
+  }
+  .pan-gif {
+    margin: 0 auto;
+    display: block;
+  }
+  .pan-img {
+    display: block;
+    margin: 0 auto;
+    width: 100%;
+  }
+  .text-jumbo {
+    font-size: 60px;
+    font-weight: 700;
+    color: #484848;
+  }
+  .list-unstyled {
+    font-size: 14px;
+    li {
+      padding-bottom: 5px;
+    }
+    a {
+      color: #008489;
+      text-decoration: none;
+      &:hover {
+        text-decoration: underline;
+      }
+    }
+  }
+}
 </style>

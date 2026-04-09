@@ -51,3 +51,11 @@ export function rollbackPermission(requestId) {
         method: 'put'
     })
 }
+
+// 删除权限申请
+export function delPermissionRequest(requestId) {
+    return request({
+        url: '/permission/request/' + requestId,
+        method: 'delete'
+    })
+}

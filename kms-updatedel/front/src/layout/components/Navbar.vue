@@ -1,46 +1,41 @@
 <template>
   <div class="navbar">
-    <hamburger v-if="false" id="hamburger-container" :is-active="sidebar.opened" class="hamburger-container" @toggleClick="toggleSideBar" />
-
-    <breadcrumb v-if="false" id="breadcrumb-container" class="breadcrumb-container" />
-
-    <topnav v-if="false" id="topnav-container" class="topnav-container" />
+    <hamburger id="hamburger-container" :is-active="appStore.sidebar.opened" class="hamburger-container" @toggleClick="toggleSideBar" />
+    <breadcrumb id="breadcrumb-container" class="breadcrumb-container" v-if="!settingsStore.topNav" />
+    <top-nav id="topmenu-container" class="topmenu-container" v-if="settingsStore.topNav" />
 
     <div class="right-menu">
-      <template v-if="device !== 'mobile'">
-        <search id="header-search" class="right-menu-item" />
+      <template v-if="appStore.device !== 'mobile'">
+        <header-search id="header-search" class="right-menu-item" />
 
-        <el-tooltip content="文档" effect="dark" placement="bottom">
-          <Doc v-if="false" id="guide-doc" class="right-menu-item hover-effect" />
-        </el-tooltip>
+        <screenfull id="screenfull" class="right-menu-item hover-effect" />
 
-        <el-tooltip content="全屏" effect="dark" placement="bottom">
-          <screenfull id="screenfull" class="right-menu-item hover-effect" />
+        <el-tooltip content="主题模式" effect="dark" placement="bottom">
+          <div class="right-menu-item hover-effect theme-switch-wrapper" @click="toggleTheme">
+            <svg-icon v-if="settingsStore.isDark" icon-class="sunny" />
+            <svg-icon v-if="!settingsStore.isDark" icon-class="moon" />
+          </div>
         </el-tooltip>
 
         <el-tooltip content="布局大小" effect="dark" placement="bottom">
           <size-select id="size-select" class="right-menu-item hover-effect" />
         </el-tooltip>
       </template>
-
-      <div class="right-menu-item hover-effect">
-        <span>{{ name }}</span>
-      </div>
-
-      <div class="right-menu-item hover-effect">
-        <el-dropdown @command="handleCommand">
-          <span class="el-dropdown-link">
-            <span>{{ roles[0] || '用户' }}</span>
-            <el-icon class="el-icon--right">
-              <arrow-down />
-            </el-icon>
-          </span>
+      <div class="avatar-container">
+        <el-dropdown @command="handleCommand" class="right-menu-item hover-effect" trigger="click">
+          <div class="avatar-wrapper">
+            <img :src="userStore.avatar" class="user-avatar" />
+            <el-icon><caret-bottom /></el-icon>
+          </div>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item command="userProfile" divided>
-                <span>个人中心</span>
+              <router-link to="/user/profile">
+                <el-dropdown-item>个人中心</el-dropdown-item>
+              </router-link>
+              <el-dropdown-item command="setLayout" v-if="settingsStore.showSettings">
+                <span>布局设置</span>
               </el-dropdown-item>
-              <el-dropdown-item command="logout" divided>
+              <el-dropdown-item divided command="logout">
                 <span>退出登录</span>
               </el-dropdown-item>
             </el-dropdown-menu>
@@ -52,16 +47,22 @@
 </template>
 
 <script setup>
-import useUserStore from '@/store/modules/user'
+import { ElMessageBox } from 'element-plus'
+import Breadcrumb from '@/components/Breadcrumb'
+import TopNav from '@/components/TopNav'
+import Hamburger from '@/components/Hamburger'
+import Screenfull from '@/components/Screenfull'
+import SizeSelect from '@/components/SizeSelect'
+import HeaderSearch from '@/components/HeaderSearch'
+import RuoYiGit from '@/components/RuoYi/Git'
+import RuoYiDoc from '@/components/RuoYi/Doc'
 import useAppStore from '@/store/modules/app'
+import useUserStore from '@/store/modules/user'
+import useSettingsStore from '@/store/modules/settings'
 
-const userStore = useUserStore()
 const appStore = useAppStore()
-
-const name = computed(() => userStore.name)
-const roles = computed(() => userStore.roles)
-const sidebar = computed(() => appStore.sidebar)
-const device = computed(() => appStore.device)
+const userStore = useUserStore()
+const settingsStore = useSettingsStore()
 
 function toggleSideBar() {
   appStore.toggleSideBar()
@@ -69,14 +70,14 @@ function toggleSideBar() {
 
 function handleCommand(command) {
   switch (command) {
-    case 'userProfile':
-      proxy.$router.push({ path: '/user/profile' })
-      break
-    case 'logout':
-      logout()
-      break
+    case "setLayout":
+      setLayout();
+      break;
+    case "logout":
+      logout();
+      break;
     default:
-      break
+      break;
   }
 }
 
@@ -87,18 +88,27 @@ function logout() {
     type: 'warning'
   }).then(() => {
     userStore.logOut().then(() => {
-      location.href = `${import.meta.env.BASE_URL}index`
+      location.href = '/index';
     })
-  }).catch(() => {})
+  }).catch(() => { });
+}
+
+const emits = defineEmits(['setLayout'])
+function setLayout() {
+  emits('setLayout');
+}
+
+function toggleTheme() {
+  settingsStore.toggleTheme()
 }
 </script>
 
-<style lang="scss" scoped>
+<style lang='scss' scoped>
 .navbar {
   height: 50px;
   overflow: hidden;
   position: relative;
-  background: #fff;
+  background: var(--navbar-bg);
   box-shadow: 0 1px 4px rgba(0, 21, 41, 0.08);
 
   .hamburger-container {
@@ -118,8 +128,14 @@ function logout() {
     float: left;
   }
 
-  .topnav-container {
-    float: left;
+  .topmenu-container {
+    position: absolute;
+    left: 50px;
+  }
+
+  .errLog-container {
+    display: inline-block;
+    vertical-align: top;
   }
 
   .right-menu {
@@ -137,7 +153,7 @@ function logout() {
       padding: 0 8px;
       height: 100%;
       font-size: 18px;
-      color: #5a5e66;
+      color: var(--navbar-text);
       vertical-align: text-bottom;
 
       &.hover-effect {
@@ -148,11 +164,43 @@ function logout() {
           background: rgba(0, 0, 0, 0.025);
         }
       }
+
+      &.theme-switch-wrapper {
+        display: flex;
+        align-items: center;
+
+        svg {
+          transition: transform 0.3s;
+          
+          &:hover {
+            transform: scale(1.15);
+          }
+        }
+      }
     }
 
-    .el-dropdown-link {
-      cursor: pointer;
-      color: var(--current-color);
+    .avatar-container {
+      margin-right: 40px;
+
+      .avatar-wrapper {
+        margin-top: 5px;
+        position: relative;
+
+        .user-avatar {
+          cursor: pointer;
+          width: 40px;
+          height: 40px;
+          border-radius: 10px;
+        }
+
+        i {
+          cursor: pointer;
+          position: absolute;
+          right: -20px;
+          top: 25px;
+          font-size: 12px;
+        }
+      }
     }
   }
 }

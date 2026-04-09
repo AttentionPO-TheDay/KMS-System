@@ -15,12 +15,12 @@ const constantRoutes = [
   },
   {
     path: '/login',
-    component: () => import('@/views/login/index.vue'),
+    component: () => import('@/views/login.vue'),
     hidden: true
   },
   {
     path: '/register',
-    component: () => import('@/views/register/index.vue'),
+    component: () => import('@/views/register.vue'),
     hidden: true
   },
   {
@@ -64,7 +64,7 @@ const constantRoutes = [
     children: [
       {
         path: 'profile',
-        component: () => import('@/views/system/user/profile/index'),
+        component: () => import('@/views/system/user/profile/index.vue'),
         name: 'Profile',
         meta: { title: '个人中心', icon: 'user' }
       }

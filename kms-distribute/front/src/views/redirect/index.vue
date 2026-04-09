@@ -1,8 +1,14 @@
+<template>
+  <div></div>
+</template>
+
 <script setup>
-import { useRouter, useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
-const router = useRouter()
-const route = useRoute()
+const route = useRoute();
+const router = useRouter();
+const { params, query } = route
+const { path } = params
 
-router.replace(route.path)
+router.replace({ path: '/' + path, query })
 </script>

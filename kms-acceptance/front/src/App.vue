@@ -116,9 +116,9 @@ onMounted(async () => {
     <section class="hero">
       <div>
         <p class="eyebrow">KMS Acceptance</p>
-        <h1>密钥系统验收测试台</h1>
+        <h1>测试系统</h1>
         <p class="hero-copy">
-          独立前后端的小型验收系统，用于执行 `wrk` 压测、汇总 TPS 指标，并对回收率做附加判定。
+          独立前后端的测试系统，用于执行 `wrk` 压测、汇总 TPS 指标，并支撑联调验证与回收率判定。
         </p>
       </div>
       <div class="hero-cards">

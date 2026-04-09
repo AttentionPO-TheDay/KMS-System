@@ -1,19 +1,24 @@
 <template>
-  <iframe :src="src" class="inner-link-frame" frameborder="0" />
+  <div :style="'height:' + height">
+    <iframe
+      :id="iframeId"
+      style="width: 100%; height: 100%"
+      :src="src"
+      frameborder="no"
+    ></iframe>
+  </div>
 </template>
 
 <script setup>
-import { computed } from 'vue'
-import { useRoute } from 'vue-router'
+const props = defineProps({
+  src: {
+    type: String,
+    default: "/"
+  },
+  iframeId: {
+    type: String
+  }
+});
 
-const route = useRoute()
-
-const src = computed(() => route.meta?.link || route.query?.url || 'about:blank')
+const height = ref(document.documentElement.clientHeight - 94.5 + "px");
 </script>
-
-<style scoped>
-.inner-link-frame {
-  width: 100%;
-  min-height: calc(100vh - 120px);
-}
-</style>

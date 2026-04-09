@@ -18,7 +18,7 @@ export default defineComponent({
     color: {
       type: String,
       default: ''
-    }
+    },
   },
   setup(props) {
     return {
@@ -34,8 +34,9 @@ export default defineComponent({
 })
 </script>
 
-<style scoped>
-.sub-el-icon, .nav-icon {
+<style scope lang="scss">
+.sub-el-icon,
+.nav-icon {
   display: inline-block;
   font-size: 15px;
   margin-right: 12px;

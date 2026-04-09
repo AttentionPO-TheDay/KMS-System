@@ -1,5 +1,5 @@
 const sessionCache = {
-  set(key, value) {
+  set (key, value) {
     if (!sessionStorage) {
       return
     }
@@ -7,7 +7,7 @@ const sessionCache = {
       sessionStorage.setItem(key, value)
     }
   },
-  get(key) {
+  get (key) {
     if (!sessionStorage) {
       return null
     }
@@ -16,24 +16,24 @@ const sessionCache = {
     }
     return sessionStorage.getItem(key)
   },
-  setJSON(key, json) {
-    if (json != null) {
-      this.set(key, JSON.stringify(json))
+  setJSON (key, jsonValue) {
+    if (jsonValue != null) {
+      this.set(key, JSON.stringify(jsonValue))
     }
   },
-  getJSON(key) {
+  getJSON (key) {
     const value = this.get(key)
     if (value != null) {
       return JSON.parse(value)
     }
+    return null
   },
-  remove(key) {
-    sessionStorage.removeItem(key)
+  remove (key) {
+    sessionStorage.removeItem(key);
   }
 }
-
 const localCache = {
-  set(key, value) {
+  set (key, value) {
     if (!localStorage) {
       return
     }
@@ -41,7 +41,7 @@ const localCache = {
       localStorage.setItem(key, value)
     }
   },
-  get(key) {
+  get (key) {
     if (!localStorage) {
       return null
     }
@@ -50,23 +50,30 @@ const localCache = {
     }
     return localStorage.getItem(key)
   },
-  setJSON(key, json) {
-    if (json != null) {
-      this.set(key, JSON.stringify(json))
+  setJSON (key, jsonValue) {
+    if (jsonValue != null) {
+      this.set(key, JSON.stringify(jsonValue))
     }
   },
-  getJSON(key) {
+  getJSON (key) {
     const value = this.get(key)
     if (value != null) {
       return JSON.parse(value)
     }
+    return null
   },
-  remove(key) {
-    localStorage.removeItem(key)
+  remove (key) {
+    localStorage.removeItem(key);
   }
 }
 
 export default {
+  /**
+   * 会话级缓存
+   */
   session: sessionCache,
+  /**
+   * 本地缓存
+   */
   local: localCache
 }

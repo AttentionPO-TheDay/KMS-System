@@ -133,11 +133,17 @@ const useTagsViewStore = defineStore(
       delRightTags(view) {
         return new Promise(resolve => {
           const index = this.visitedViews.findIndex(v => v.path === view.path)
-          if (index === -1) return
+          if (index === -1) {
+            return
+          }
           this.visitedViews = this.visitedViews.filter((item, idx) => {
-            if (idx <= index || (item.meta && item.meta.affix)) return true
+            if (idx <= index || (item.meta && item.meta.affix)) {
+              return true
+            }
             const i = this.cachedViews.indexOf(item.name)
-            if (i > -1) this.cachedViews.splice(i, 1)
+            if (i > -1) {
+              this.cachedViews.splice(i, 1)
+            }
             if(item.meta.link) {
               const fi = this.iframeViews.findIndex(v => v.path === item.path)
               this.iframeViews.splice(fi, 1)
@@ -150,11 +156,17 @@ const useTagsViewStore = defineStore(
       delLeftTags(view) {
         return new Promise(resolve => {
           const index = this.visitedViews.findIndex(v => v.path === view.path)
-          if (index === -1) return
+          if (index === -1) {
+            return
+          }
           this.visitedViews = this.visitedViews.filter((item, idx) => {
-            if (idx >= index || (item.meta && item.meta.affix)) return true
+            if (idx >= index || (item.meta && item.meta.affix)) {
+              return true
+            }
             const i = this.cachedViews.indexOf(item.name)
-            if (i > -1) this.cachedViews.splice(i, 1)
+            if (i > -1) {
+              this.cachedViews.splice(i, 1)
+            }
             if(item.meta.link) {
               const fi = this.iframeViews.findIndex(v => v.path === item.path)
               this.iframeViews.splice(fi, 1)
@@ -165,7 +177,6 @@ const useTagsViewStore = defineStore(
         })
       }
     }
-  }
-)
+  })
 
 export default useTagsViewStore

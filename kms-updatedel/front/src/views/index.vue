@@ -1,8 +1,8 @@
 <template>
   <div class="dashboard-container">
     <div class="page-title">
-      <h1>更新与回收系统仪表盘</h1>
-      <p class="subtitle">实时监控密钥更新、轮换与安全回收状态</p>
+      <h1>密钥动态更新与回收系统仪表盘</h1>
+      <p class="subtitle">实时监控密钥动态更新、轮换与安全回收状态</p>
     </div>
 
     <!-- 统计卡片区 -->

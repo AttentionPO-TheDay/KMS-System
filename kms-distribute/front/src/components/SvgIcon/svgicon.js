@@ -1,7 +1,10 @@
-import SvgIcon from './index.vue'
+import * as components from '@element-plus/icons-vue'
 
-const install = function(app) {
-  app.component('SvgIcon', SvgIcon)
-}
-
-export default { install }
+export default {
+    install: (app) => {
+        for (const key in components) {
+            const componentConfig = components[key];
+            app.component(componentConfig.name, componentConfig);
+        }
+    },
+};

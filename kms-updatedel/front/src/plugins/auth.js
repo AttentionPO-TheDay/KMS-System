@@ -1,112 +1,60 @@
 import useUserStore from '@/store/modules/user'
 
-/**
- * 是否有权限
- * @param {*} value
- */
-export function hasPermi(value) {
-  if (!value) {
-    return true
-  }
+function authPermission(permission) {
+  const all_permission = "*:*:*";
   const permissions = useUserStore().permissions
-  if (permissions && permissions.length > 0) {
-    return permissions.some(permission => {
-      return permission === value || permission === '*:*:*'
+  if (permission && permission.length > 0) {
+    return permissions.some(v => {
+      return all_permission === v || v === permission
     })
+  } else {
+    return false
   }
-  return false
 }
 
-/**
- * 是否有多个权限
- * @param {*} values
- */
-export function hasPermiOr(values) {
-  if (!values) {
-    return true
-  }
-  const permissions = useUserStore().permissions
-  if (permissions && permissions.length > 0) {
-    return permissions.some(permission => {
-      return values.includes(permission) || permission === '*:*:*'
-    })
-  }
-  return false
-}
-
-/**
- * 是否包含所有权限
- * @param {*} values
- */
-export function hasPermiAnd(values) {
-  if (!values) {
-    return true
-  }
-  const permissions = useUserStore().permissions
-  if (permissions && permissions.length > 0) {
-    return values.every(value => {
-      return permissions.includes(value) || permissions.includes('*:*:*')
-    })
-  }
-  return false
-}
-
-/**
- * 是否有角色
- * @param {*} value
- */
-export function hasRole(value) {
-  if (!value) {
-    return true
-  }
+function authRole(role) {
+  const super_admin = "admin";
   const roles = useUserStore().roles
-  if (roles && roles.length > 0) {
-    return roles.some(role => {
-      return role === value || role === '*'
+  if (role && role.length > 0) {
+    return roles.some(v => {
+      return super_admin === v || v === role
     })
+  } else {
+    return false
   }
-  return false
-}
-
-/**
- * 是否有多个角色
- * @param {*} values
- */
-export function hasRoleOr(values) {
-  if (!values) {
-    return true
-  }
-  const roles = useUserStore().roles
-  if (roles && roles.length > 0) {
-    return roles.some(role => {
-      return values.includes(role) || role === '*'
-    })
-  }
-  return false
-}
-
-/**
- * 是否包含所有角色
- * @param {*} values
- */
-export function hasRoleAnd(values) {
-  if (!values) {
-    return true
-  }
-  const roles = useUserStore().roles
-  if (roles && roles.length > 0) {
-    return values.every(value => {
-      return roles.includes(value) || roles.includes('*')
-    })
-  }
-  return false
 }
 
 export default {
-  hasPermi,
-  hasPermiOr,
-  hasPermiAnd,
-  hasRole,
-  hasRoleOr,
-  hasRoleAnd
+  // 验证用户是否具备某权限
+  hasPermi(permission) {
+    return authPermission(permission);
+  },
+  // 验证用户是否含有指定权限，只需包含其中一个
+  hasPermiOr(permissions) {
+    return permissions.some(item => {
+      return authPermission(item)
+    })
+  },
+  // 验证用户是否含有指定权限，必须全部拥有
+  hasPermiAnd(permissions) {
+    return permissions.every(item => {
+      return authPermission(item)
+    })
+  },
+  // 验证用户是否具备某角色
+  hasRole(role) {
+    return authRole(role);
+  },
+  // 验证用户是否含有指定角色，只需包含其中一个
+  hasRoleOr(roles) {
+    return roles.some(item => {
+      return authRole(item)
+    })
+  },
+  // 验证用户是否含有指定角色，必须全部拥有
+  hasRoleAnd(roles) {
+    return roles.every(item => {
+      return authRole(item)
+    })
+  }
 }

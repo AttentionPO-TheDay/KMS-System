@@ -1,110 +1,104 @@
 <template>
-  <div v-if="!item.hidden" class="menu-wrapper">
-    <template v-if="hasOneShowingChild(item.children, item) && (!onlyOneChild.children || onlyOneChild.noShowingChildren) && !item.alwaysShow">
-      <sidebar-item-link v-if="onlyOneChild.meta" :to="resolvePath(onlyOneChild.path, onlyOneChild.query)">
-        <el-menu-item :index="resolvePath(onlyOneChild.path)" :class="{ 'submenu-title-noDropdown': !isNest }">
-          <svg-icon v-if="onlyOneChild.meta.icon" :icon-class="onlyOneChild.meta.icon" />
-          <span v-if="onlyOneChild.meta.title">{{ onlyOneChild.meta.title }}</span>
-        </el-menu-item>
-      </sidebar-item-link>
-    </template>
-
-    <el-sub-menu v-else ref="subMenu" :index="resolvePath(item.path)" popper-append-to-body>
-      <template #title>
-        <svg-icon v-if="item.meta && item.meta.icon" :icon-class="item.meta.icon" />
-        <span v-if="item.meta && item.meta.title">{{ item.meta.title }}</span>
-      </template>
-      <sidebar-item v-for="child in item.children" :key="child.path" :item="child" :is-nest="true" :base-path="resolvePath(child.path)" class="nest-menu" />
-    </el-sub-menu>
+  <div :class="{ 'has-logo': showLogo }" class="sidebar-container">
+    <logo v-if="showLogo" :collapse="isCollapse" />
+    <el-scrollbar wrap-class="scrollbar-wrapper">
+      <el-menu
+        :default-active="activeMenu"
+        :collapse="isCollapse"
+        :background-color="getMenuBackground"
+        :text-color="getMenuTextColor"
+        :unique-opened="true"
+        :active-text-color="theme"
+        :collapse-transition="false"
+        mode="vertical"
+        :class="sideTheme"
+      >
+        <sidebar-item
+          v-for="(route, index) in sidebarRouters"
+          :key="route.path + index"
+          :item="route"
+          :base-path="route.path"
+        />
+      </el-menu>
+    </el-scrollbar>
   </div>
 </template>
 
-<script>
-import { isExternal } from '@/utils/validate'
-import SvgIcon from '@/components/SvgIcon'
-import sidebarItemLink from './sidebarItemLink'
+<script setup>
+import Logo from './Logo'
+import SidebarItem from './SidebarItem'
+import variables from '@/assets/styles/variables.module.scss'
+import useAppStore from '@/store/modules/app'
+import useSettingsStore from '@/store/modules/settings'
+import usePermissionStore from '@/store/modules/permission'
 
-function resolveMenuPath(basePath, routePath) {
-  if (!basePath || basePath === '/') {
-    return routePath
+const route = useRoute();
+const appStore = useAppStore()
+const settingsStore = useSettingsStore()
+const permissionStore = usePermissionStore()
+
+const sidebarRouters = computed(() => permissionStore.sidebarRouters);
+const showLogo = computed(() => settingsStore.sidebarLogo);
+const sideTheme = computed(() => settingsStore.sideTheme);
+const theme = computed(() => settingsStore.theme);
+const isCollapse = computed(() => !appStore.sidebar.opened);
+
+// 获取菜单背景色
+const getMenuBackground = computed(() => {
+  if (settingsStore.isDark) {
+    return 'var(--sidebar-bg)';
   }
-  if (!routePath || routePath === '/') {
-    return basePath
+  return sideTheme.value === 'theme-dark' ? variables.menuBg : variables.menuLightBg;
+});
+
+// 获取菜单文字颜色
+const getMenuTextColor = computed(() => {
+  if (settingsStore.isDark) {
+    return 'var(--sidebar-text)';
   }
-  return `/${[basePath, routePath].map(path => path.replace(/^\/+|\/+$/g, '')).filter(Boolean).join('/')}`
-}
+  return sideTheme.value === 'theme-dark' ? variables.menuText : variables.menuLightText;
+});
 
-export default {
-  name: 'SidebarItem',
-  components: { SvgIcon, sidebarItemLink },
-  props: {
-    item: {
-      type: Object,
-      required: true
-    },
-    isNest: {
-      type: Boolean,
-      default: false
-    },
-    basePath: {
-      type: String,
-      default: ''
-    }
-  },
-  data() {
-    this.onlyOneChild = null
-    return {}
-  },
-  methods: {
-    hasOneShowingChild(children, parent) {
-      if (!children) {
-        children = []
-      }
-      const showingChildren = children.filter(item => {
-        if (item.hidden) {
-          return false
-        } else {
-          this.onlyOneChild = item
-          return true
-        }
-      })
-
-      if (showingChildren.length === 1) {
-        return true
-      }
-
-      if (showingChildren.length === 0) {
-        this.onlyOneChild = { ...parent, path: '', noShowingChildren: true }
-        return true
-      }
-
-      return false
-    },
-    resolvePath(routePath, routeQuery) {
-      if (isExternal(routePath)) {
-        return routePath
-      }
-      if (isExternal(this.basePath)) {
-        return this.basePath
-      }
-      if (routeQuery) {
-        const query = JSON.parse(routeQuery)
-        return { path: resolveMenuPath(this.basePath, routePath), query: query }
-      }
-      return resolveMenuPath(this.basePath, routePath)
-    }
+const activeMenu = computed(() => {
+  const { meta, path } = route;
+  if (meta.activeMenu) {
+    return meta.activeMenu;
   }
-}
+  return path;
+});
 </script>
 
-<style lang="scss">
-.el-sub-menu__title {
-  padding: 0 !important;
-}
+<style lang="scss" scoped>
+.sidebar-container {
+  background-color: v-bind(getMenuBackground);
+  
+  .scrollbar-wrapper {
+    background-color: v-bind(getMenuBackground);
+  }
 
-.menu-wrapper {
-  svg {
-    margin-right: 12px;
+  .el-menu {
+    border: none;
+    height: 100%;
+    width: 100% !important;
+    
+    .el-menu-item, .el-sub-menu__title {
+      &:hover {
+        background-color: var(--menu-hover, rgba(0, 0, 0, 0.06)) !important;
+      }
+    }
+
+    .el-menu-item {
+      color: v-bind(getMenuTextColor);
+      
+      &.is-active {
+        color: var(--menu-active-text, #409eff);
+        background-color: var(--menu-hover, rgba(0, 0, 0, 0.06)) !important;
+      }
+    }
+
+    .el-sub-menu__title {
+      color: v-bind(getMenuTextColor);
+    }
   }
 }
 </style>

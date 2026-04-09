@@ -1,35 +1,47 @@
 export default {
-  title: '更新与回收系统',
   /**
-   * @type {string}
+   * 网页标题
    */
-  keywords: '密钥管理,更新,回收,自动更新',
+  title: import.meta.env.VITE_APP_TITLE,
   /**
-   * @type {string}
-   */
-  description: '密钥更新与回收系统',
-  /**
-   * @type {boolean} 是否系统主题
+   * 侧边栏主题 深色主题theme-dark，浅色主题theme-light
    */
   sideTheme: 'theme-dark',
   /**
-   * @type {string} 主题颜色
+   * 是否系统布局配置
    */
-  theme: '#409EFF',
+  showSettings: true,
+
   /**
-   * @type {boolean} 是否固定头部
+   * 是否显示顶部导航
    */
-  fixedHeader: false,
+  topNav: false,
+
   /**
-   * @type {boolean} 是否显示侧边栏Logo
-   */
-  sidebarLogo: true,
-  /**
-   * @type {boolean} 是否显示标签视图
+   * 是否显示 tagsView
    */
   tagsView: true,
+
   /**
-   * @type {string} 布局大小
+   * 是否固定头部
    */
-  size: 'default'
+  fixedHeader: false,
+
+  /**
+   * 是否显示logo
+   */
+  sidebarLogo: true,
+
+  /**
+   * 是否显示动态标题
+   */
+  dynamicTitle: false,
+
+  /**
+   * @type {string | array} 'production' | ['production', 'development']
+   * @description Need show err logs component.
+   * The default is only used in the production env
+   * If you want to also use it in dev, you can pass ['production', 'development']
+   */
+  errorLog: 'production'
 }
