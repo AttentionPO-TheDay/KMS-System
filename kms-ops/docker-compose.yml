@@ -240,7 +240,30 @@ services:
       - kms_net
 
   # ========================================
-  # 5. 网关层 (Nginx)
+  # 5. kms-acceptance 系统 (验收与联调)
+  # ========================================
+  acceptance-backend:
+    image: debian:bookworm-slim
+    container_name: kms_acceptance_backend
+    volumes:
+      - ./runtime/acceptance-go/kms-acceptance-backend:/app/kms-acceptance-backend:ro
+      - ./wrk:/app/wrk:ro
+    working_dir: /app
+    command: ["/app/kms-acceptance-backend"]
+    environment:
+      - PORT=9090
+      - WRK_PATH=/app/wrk/wrk
+      - ACCEPTANCE_GENERATE_BASE_URL=http://generate-go:8081
+      - ACCEPTANCE_LIFECYCLE_BASE_URL=http://updatedel-go:8082
+    depends_on:
+      - generate-go
+      - updatedel-go
+    restart: always
+    networks:
+      - kms_net
+
+  # ========================================
+  # 6. 网关层 (Nginx)
   # ========================================
   nginx:
     image: nginx:alpine
@@ -250,13 +273,18 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/logs:/var/log/nginx
+      - ./front/portal:/usr/share/nginx/html
       - ./front/generate:/usr/share/nginx/html/generate
       - ./front/updatedel:/usr/share/nginx/html/lifecycle
+      - ./front/user:/usr/share/nginx/html/user
+      - ./front/acceptance:/usr/share/nginx/html/acceptance
     depends_on:
       - generate-go
       - generate-java
       - updatedel-go
       - updatedel-java
+      - kms-distribute
+      - acceptance-backend
     restart: always
     networks:
       - kms_net

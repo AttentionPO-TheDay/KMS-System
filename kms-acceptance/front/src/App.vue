@@ -6,6 +6,7 @@ const runs = ref([])
 const health = ref(null)
 const loading = ref(false)
 const error = ref('')
+const apiBase = import.meta.env.VITE_APP_ACCEPTANCE_API || '/acceptance-api'
 
 const form = ref({
   scenarioId: '',
@@ -42,12 +43,12 @@ function applyScenario(scenario) {
 }
 
 async function loadHealth() {
-  const response = await fetch('/api/health')
+  const response = await fetch(`${apiBase}/health`)
   health.value = await response.json()
 }
 
 async function loadScenarios() {
-  const response = await fetch('/api/scenarios')
+  const response = await fetch(`${apiBase}/scenarios`)
   const payload = await response.json()
   scenarios.value = payload.data || []
   if (!form.value.scenarioId && scenarios.value.length > 0) {
@@ -56,7 +57,7 @@ async function loadScenarios() {
 }
 
 async function loadRuns() {
-  const response = await fetch('/api/runs')
+  const response = await fetch(`${apiBase}/runs`)
   const payload = await response.json()
   runs.value = payload.data || []
 }
@@ -65,7 +66,7 @@ async function runScenario() {
   error.value = ''
   loading.value = true
   try {
-    const response = await fetch('/api/runs', {
+    const response = await fetch(`${apiBase}/runs`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
