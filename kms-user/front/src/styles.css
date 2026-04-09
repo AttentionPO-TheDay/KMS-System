@@ -1,7 +1,7 @@
 :root {
   color-scheme: dark;
   font-family: Inter, "Microsoft YaHei", sans-serif;
-  background: #06111f;
+  background: #050507;
   color: #e2e8f0;
 }
 
@@ -12,13 +12,39 @@
 body {
   margin: 0;
   min-height: 100vh;
-  background:
-    radial-gradient(circle at top left, rgba(14, 165, 233, 0.18), transparent 28%),
-    linear-gradient(180deg, #07111d 0%, #020817 100%);
+  background-color: #050507;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-image: 
+    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 50px 50px;
+  z-index: -1;
+  pointer-events: none;
+  mask-image: linear-gradient(to bottom, transparent, black 10%, black 90%, transparent);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, black 10%, black 90%, transparent);
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  top: -200px;
+  left: -200px;
+  width: 600px;
+  height: 600px;
+  background: rgba(0, 153, 255, 0.25);
+  border-radius: 50%;
+  filter: blur(120px);
+  z-index: -2;
+  pointer-events: none;
 }
 
 a {
-  color: #7dd3fc;
+  color: #0099ff;
   text-decoration: none;
 }
 
@@ -38,8 +64,8 @@ code {
 
 .sidebar {
   padding: 28px 22px;
-  border-right: 1px solid rgba(148, 163, 184, 0.15);
-  background: rgba(2, 6, 23, 0.85);
+  border-right: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(5, 5, 7, 0.8);
   backdrop-filter: blur(14px);
 }
 
@@ -61,7 +87,7 @@ code {
 
 .eyebrow {
   margin-bottom: 8px;
-  color: #38bdf8;
+  color: #00e5ff;
   font-size: 12px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -80,22 +106,25 @@ code {
 
 .nav a {
   padding: 12px 14px;
-  border: 1px solid rgba(125, 211, 252, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.05);
   border-radius: 14px;
-  background: rgba(15, 23, 42, 0.7);
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .nav a.router-link-active {
-  border-color: rgba(56, 189, 248, 0.6);
-  background: rgba(14, 116, 144, 0.25);
+  border-color: rgba(0, 153, 255, 0.5);
+  background: linear-gradient(90deg, rgba(0, 153, 255, 0.1), transparent);
+  color: #00e5ff;
+  border-left: 3px solid #0099ff;
 }
 
 .meta {
   margin-top: 28px;
   padding: 18px;
   border-radius: 18px;
-  background: rgba(15, 23, 42, 0.85);
-  border: 1px solid rgba(148, 163, 184, 0.12);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(24px);
 }
 
 .auth-panel {
@@ -104,8 +133,9 @@ code {
   margin: 24px 0;
   padding: 18px;
   border-radius: 18px;
-  background: rgba(15, 23, 42, 0.85);
-  border: 1px solid rgba(148, 163, 184, 0.12);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(24px);
 }
 
 .auth-panel h2 {
@@ -122,8 +152,8 @@ code {
   width: 100%;
   padding: 12px 14px;
   border-radius: 12px;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  background: rgba(2, 6, 23, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.2);
   color: #e2e8f0;
 }
 
@@ -182,9 +212,9 @@ code {
   gap: 12px;
   padding: 22px;
   border-radius: 20px;
-  border: 1px solid rgba(148, 163, 184, 0.14);
-  background: linear-gradient(180deg, rgba(15, 23, 42, 0.95), rgba(3, 7, 18, 0.95));
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.22);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(24px);
 }
 
 .action-card textarea,
@@ -193,8 +223,8 @@ code {
   width: 100%;
   padding: 12px 14px;
   border-radius: 12px;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  background: rgba(2, 6, 23, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.2);
   color: #e2e8f0;
 }
 
@@ -217,9 +247,9 @@ button,
   min-height: 42px;
   padding: 0 16px;
   border-radius: 12px;
-  border: 1px solid rgba(56, 189, 248, 0.25);
-  background: rgba(8, 47, 73, 0.55);
-  color: #e0f2fe;
+  border: 1px solid rgba(0, 153, 255, 0.5);
+  background: rgba(0, 153, 255, 0.2);
+  color: #00e5ff;
   cursor: pointer;
 }
 
@@ -253,8 +283,8 @@ button:disabled {
 .record-card {
   padding: 16px;
   border-radius: 16px;
-  border: 1px solid rgba(148, 163, 184, 0.14);
-  background: rgba(15, 23, 42, 0.8);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .record-card p,
