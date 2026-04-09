@@ -21,6 +21,7 @@ fi
 echo "[INFO] 创建必要的数据目录..."
 mkdir -p mysql/data mysql/init redis/data kafka/kafka_data
 mkdir -p fisco/nodes/127.0.0.1
+mkdir -p fisco/console/account fisco/console/accounts
 mkdir -p nginx/logs
 mkdir -p front/generate front/updatedel
 mkdir -p runtime/generate-go runtime/generate-java runtime/updatedel-go runtime/updatedel-java runtime/distribute-java
@@ -32,6 +33,11 @@ docker-compose up -d
 # 等待中间件就绪
 echo "[INFO] 等待中间件启动..."
 sleep 5
+
+if ! grep -q '^FISCO_CONTRACT_ADDRESS=0x' .env; then
+    echo "[INFO] 未检测到已部署合约地址，开始自动部署 KeyEvidence..."
+    bash ./deploy-keyevidence.sh
+fi
 
 # 检查容器状态
 echo ""

@@ -94,6 +94,22 @@ docker compose down
 5. `/user/`
 6. `/acceptance/`
 
+## 前端本地开发代理
+
+Docker 网关路径与本地 Vite 开发代理不是一回事。
+
+当前本地开发应保持：
+
+1. `kms-generate/front`：`/generate-api` -> `http://localhost:9081`
+2. `kms-updatedel/front`：`/lifecycle-api` -> `http://localhost:9082`
+3. `kms-user/front`：`/generate-api` -> `http://localhost:9081`
+4. `kms-user/front`：`/lifecycle-api` -> `http://localhost:9082`
+5. `kms-user/front`：`/distribute-api` -> `http://localhost:8083`
+
+这样前端本地联调与 Docker 网关中的 API 映射保持一致，不会再出现请求误转发到 `localhost:80` 导致的 `502` 和验证码加载失败。
+
+网关配置同时启用了 Docker DNS 运行时解析，因此 `generate-java`、`updatedel-java`、`kms-distribute` 等容器重建后，Nginx 会自动刷新上游地址，不需要再手工重启网关来清理旧 IP。
+
 ## 启动后检查
 
 在 `kms-ops/` 目录执行：

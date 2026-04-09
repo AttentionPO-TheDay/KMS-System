@@ -37,8 +37,8 @@
         <h3>查看公共密钥列表</h3>
         <p>生成域权限。普通用户申请通过后可临时查看公共密钥列表，目标等级为中级用户。</p>
         <textarea v-model="reasons.PUBLIC_KEY_LIST" rows="4" placeholder="请填写申请理由"></textarea>
-        <button @click="submit('PUBLIC_KEY_LIST')" :disabled="loading.PUBLIC_KEY_LIST">
-          {{ loading.PUBLIC_KEY_LIST ? '提交中...' : '提交生成域申请' }}
+        <button @click="submit('PUBLIC_KEY_LIST')" :disabled="loading.PUBLIC_KEY_LIST || hasFeatureAccess('PUBLIC_KEY_LIST')">
+          {{ hasFeatureAccess('PUBLIC_KEY_LIST') ? '当前已具备该权限' : loading.PUBLIC_KEY_LIST ? '提交中...' : '提交生成域申请' }}
         </button>
       </article>
 
@@ -46,8 +46,8 @@
         <h3>密钥自动更新</h3>
         <p>更新与回收域权限。普通用户申请通过后可临时操作自动更新，目标等级为管理员。</p>
         <textarea v-model="reasons.AUTO_UPDATE" rows="4" placeholder="请填写申请理由"></textarea>
-        <button @click="submit('AUTO_UPDATE')" :disabled="loading.AUTO_UPDATE">
-          {{ loading.AUTO_UPDATE ? '提交中...' : '提交更新与回收申请' }}
+        <button @click="submit('AUTO_UPDATE')" :disabled="loading.AUTO_UPDATE || hasFeatureAccess('AUTO_UPDATE')">
+          {{ hasFeatureAccess('AUTO_UPDATE') ? '当前已具备该权限' : loading.AUTO_UPDATE ? '提交中...' : '提交更新与回收申请' }}
         </button>
       </article>
     </div>
@@ -71,7 +71,7 @@
           <p v-if="record.approveBy">审批人：{{ record.approveBy }}</p>
           <p v-if="record.approveNote">审批备注：{{ record.approveNote }}</p>
           <button
-            v-if="record.status === '1'"
+            v-if="record.status === '1' && Number(record.isTemp) === 1"
             class="danger-button"
             @click="rollback(record)"
           >
@@ -141,6 +141,10 @@ async function submit(featureCode) {
   }
 
   const reason = reasons[featureCode]?.trim()
+  if (hasFeatureAccess(featureCode)) {
+    errorMessage.value = '当前账号已具备该权限，无需重复申请。'
+    return
+  }
   if (!profile.userId || !profile.userName.trim()) {
     errorMessage.value = '当前登录用户信息不完整，请刷新资料后重试。'
     return
@@ -195,7 +199,7 @@ async function loadRecords() {
       listPermissionRequests('AUTO_UPDATE', Number(profile.userId))
     ])
     records.value = [...generateData.rows, ...lifecycleData.rows].sort((a, b) => {
-      return new Date(b.requestTime || 0).getTime() - new Date(a.requestTime || 0).getTime()
+      return getRecordTime(b) - getRecordTime(a)
     })
   } catch (error) {
     errorMessage.value = error.message
@@ -214,6 +218,26 @@ async function rollback(record) {
 
 function levelText(level) {
   return { 0: '管理员', 1: '中级用户', 2: '普通用户' }[level] || '未知'
+}
+
+function hasFeatureAccess(featureCode) {
+  const roleLevel = Number(profile.originalLevel)
+  if (featureCode === 'PUBLIC_KEY_LIST') {
+    return roleLevel <= 1
+  }
+  if (featureCode === 'AUTO_UPDATE') {
+    return roleLevel <= 0
+  }
+  return false
+}
+
+function getRecordTime(record) {
+  const value = record?.approveTime || record?.requestTime
+  const parsed = value ? new Date(value).getTime() : NaN
+  if (!Number.isNaN(parsed)) {
+    return parsed
+  }
+  return Number(record?.requestId) || 0
 }
 
 function systemText(systemCode) {

@@ -6,6 +6,7 @@ import com.ruoyi.common.utils.DateUtils;
 import com.ruoyi.common.core.domain.entity.SysUser;
 import com.ruoyi.distribute.domain.KeyDistributeRecord;
 import com.ruoyi.distribute.domain.Keymanage;
+import com.ruoyi.distribute.mapper.KeyDistributeMapper;
 import com.ruoyi.distribute.mapper.KeySnapshotMapper;
 import com.ruoyi.distribute.service.IKeyDistributeService;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -40,6 +41,9 @@ public class DistributeKafkaConsumer {
 
     @Autowired
     private KeySnapshotMapper keySnapshotMapper;
+
+    @Autowired
+    private KeyDistributeMapper keyDistributeMapper;
 
     /**
      * 消费生成和生命周期日志，按当前消息协议生成分发记录
@@ -129,6 +133,53 @@ public class DistributeKafkaConsumer {
         long totalCost = System.currentTimeMillis() - batchStartTime;
         log.debug("本次消费处理完成，耗时 {} ms，有效消息 {} 条",
                 totalCost, recordsToInsert.size());
+    }
+
+    @KafkaListener(
+            topics = "${kms.kafka.chain-result-topic:key_chain_result}",
+            groupId = "${spring.kafka.consumer.group-id:kms-distribute-consumer-group}",
+            properties = {
+                    "max.poll.records=200",
+                    "max.poll.interval.ms=600000"
+            }
+    )
+    public void onChainResult(List<ConsumerRecord<String, String>> records) {
+        for (ConsumerRecord<String, String> record : records) {
+            String jsonString = record.value();
+            if (jsonString == null || jsonString.isEmpty()) {
+                continue;
+            }
+
+            try {
+                JSONObject payload = JSON.parseObject(jsonString);
+                Long keyId = payload.getLong("key_id");
+                String actionType = payload.getString("action_type");
+                String distributeType = resolveDistributeType(null, actionType);
+                if (keyId == null || distributeType == null) {
+                    continue;
+                }
+
+                String chainStatus = payload.getString("chain_status");
+                String chainHash = payload.getString("chain_hash");
+                Long blockHeight = payload.getLong("block_height");
+                String errorMessage = payload.getString("error_message");
+                String remark = "1".equals(chainStatus) ? "链上结果已回填" : buildFailureRemark(errorMessage);
+
+                int rows = keyDistributeMapper.updateLatestChainResultByKeyIdAndType(
+                        keyId,
+                        distributeType,
+                        chainHash,
+                        blockHeight,
+                        remark
+                );
+
+                if (rows > 0) {
+                    log.info("分发记录链上结果回填完成: keyId={}, actionType={}, chainStatus={}", keyId, actionType, chainStatus);
+                }
+            } catch (Exception e) {
+                log.error("处理链上结果消息异常: offset={}", record.offset(), e);
+            }
+        }
     }
 
     private SysUser authorize(JSONObject payload) {
@@ -275,5 +326,12 @@ public class DistributeKafkaConsumer {
             return "3";
         }
         return null;
+    }
+
+    private String buildFailureRemark(String errorMessage) {
+        if (isBlank(errorMessage)) {
+            return "上链失败";
+        }
+        return "上链失败: " + errorMessage;
     }
 }

@@ -241,7 +241,7 @@
 <script setup>
 import { computed, getCurrentInstance, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { listPermissionRequests, rollbackPermission } from '@/services/permission-api'
+import { getLatestApprovedTemporaryRequest, rollbackPermission } from '@/services/permission-api'
 import {
   getLifecycleKey,
   listLifecycleKeys,
@@ -424,8 +424,7 @@ async function loadAutoUpdatePermissionState() {
   }
 
   try {
-    const response = await listPermissionRequests('AUTO_UPDATE', Number(profile.userId))
-    const approved = (response.rows || []).find((item) => String(item.status) === '1' && Number(item.isTemp) === 1)
+    const approved = await getLatestApprovedTemporaryRequest('AUTO_UPDATE', Number(profile.userId))
     approvedAutoUpdateRequestId.value = approved?.requestId || null
   } catch (error) {
     errorMessage.value = error.message

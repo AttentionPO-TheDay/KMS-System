@@ -161,6 +161,15 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         where key_id = #{keyId}
     </update>
 
+    <update id="resetChainState">
+        update keymanage
+        set chain_status = #{chainStatus},
+            chain_hash = null,
+            block_height = null,
+            upd_time = now()
+        where key_id = #{keyId}
+    </update>
+
     <delete id="deletekeymanageByKeyId" parameterType="Long">
         delete from keymanage where key_id = #{keyId}
     </delete>

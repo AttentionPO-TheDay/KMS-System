@@ -7,6 +7,9 @@ import com.ruoyi.updatedel.domain.Keymanage;
 import com.ruoyi.updatedel.mapper.KeymanageMapper;
 import java.io.File;
 import java.math.BigInteger;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import javax.annotation.PostConstruct;
 import org.bouncycastle.math.ec.ECPoint;
 import org.bouncycastle.util.encoders.Hex;
@@ -17,6 +20,7 @@ import org.fisco.bcos.sdk.model.TransactionReceipt;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -26,22 +30,34 @@ public class UpdatedelChainService {
     private static final BigInteger SM2_GX = new BigInteger("32C4AE2C1F1981195F9904466A39C9948FE30BBFF2660BE1715A4589334C74C7", 16);
     private static final BigInteger SM2_GY = new BigInteger("BC3736A2F4F6779C59BDCEE36B692153D0A9877CC62A474002DF32E52139F0A0", 16);
     private static final int REVOKED_STATUS = 3;
+    private static final int ACTIVE_STATUS = 0;
 
     private final KeymanageMapper keymanageMapper;
+    private final KafkaTemplate<String, String> kafkaTemplate;
 
     @Value("${fisco.contract-address:0x0000000000000000000000000000000000000000}")
     private String contractAddress;
 
+    @Value("${fisco.host:fisco-node}")
+    private String fiscoHost;
+
+    @Value("${fisco.private-key:}")
+    private String fiscoPrivateKey;
+
+    @Value("${kms.lifecycle.kafka.chain-result-topic:key_chain_result}")
+    private String chainResultTopic;
+
     private FiscoBcosWrapper fiscoWrapper;
 
-    public UpdatedelChainService(KeymanageMapper keymanageMapper) {
+    public UpdatedelChainService(KeymanageMapper keymanageMapper, KafkaTemplate<String, String> kafkaTemplate) {
         this.keymanageMapper = keymanageMapper;
+        this.kafkaTemplate = kafkaTemplate;
     }
 
     @PostConstruct
     public void init() {
         try {
-            this.fiscoWrapper = new FiscoBcosWrapper(contractAddress);
+            this.fiscoWrapper = new FiscoBcosWrapper(contractAddress, fiscoHost, fiscoPrivateKey);
             log.info("Lifecycle FISCO wrapper initialized, contract: {}", contractAddress);
         } catch (Exception e) {
             log.error("Failed to initialize lifecycle FISCO wrapper", e);
@@ -57,19 +73,22 @@ public class UpdatedelChainService {
             String finalPA = calculatePA(keymanage);
             if (finalPA == null) {
                 markFailed(keymanage.getKeyId());
+                publishChainResult(keymanage.getKeyId(), "UPDATE_KEY", "2", null, null, "PA_CALC_FAILED");
                 return false;
             }
 
             if (fiscoWrapper == null) {
                 markFailed(keymanage.getKeyId());
+                publishChainResult(keymanage.getKeyId(), "UPDATE_KEY", "2", null, null, "FISCO_NOT_READY");
                 return false;
             }
 
             TransactionReceipt receipt = fiscoWrapper.rotateKey(keymanage.getKeyId(), finalPA, keymanage.getVersion());
-            return handleTransactionReceipt(keymanage.getKeyId(), receipt);
+            return handleRotateReceipt(keymanage.getKeyId(), receipt);
         } catch (Exception e) {
             log.error("Rotate chain sync failed, keyId={}", keymanage.getKeyId(), e);
             markFailed(keymanage.getKeyId());
+            publishChainResult(keymanage.getKeyId(), "UPDATE_KEY", "2", null, null, e.getClass().getSimpleName());
             return false;
         }
     }
@@ -82,32 +101,105 @@ public class UpdatedelChainService {
         try {
             if (fiscoWrapper == null) {
                 markFailed(keymanage.getKeyId());
+                publishChainResult(keymanage.getKeyId(), "REVOKE_KEY", "2", null, null, "FISCO_NOT_READY");
                 return false;
             }
             TransactionReceipt receipt = fiscoWrapper.changeKeyStatus(keymanage.getKeyId(), REVOKED_STATUS);
-            return handleTransactionReceipt(keymanage.getKeyId(), receipt);
+            return handleRevokeReceipt(keymanage.getKeyId(), receipt);
         } catch (Exception e) {
             log.error("Revoke chain sync failed, keyId={}", keymanage.getKeyId(), e);
             markFailed(keymanage.getKeyId());
+            publishChainResult(keymanage.getKeyId(), "REVOKE_KEY", "2", null, null, e.getClass().getSimpleName());
             return false;
         }
     }
 
-    private boolean handleTransactionReceipt(Long keyId, TransactionReceipt receipt) {
+    private boolean handleRotateReceipt(Long keyId, TransactionReceipt receipt) {
+        if (!isReceiptStatusOk(keyId, receipt, "UPDATE_KEY")) {
+            return false;
+        }
+
+        List<KeyEvidence.KeyRotatedEventResponse> events = fiscoWrapper.getKeyRotatedEvents(receipt);
+        if (events.isEmpty()) {
+            log.error("Lifecycle rotate missing KeyRotated event, keyId={}", keyId);
+            markFailed(keyId);
+            publishChainResult(keyId, "UPDATE_KEY", "2", receipt.getTransactionHash(), parseBlockHeight(receipt.getBlockNumber()), "MISSING_ROTATE_EVENT");
+            return false;
+        }
+
+        KeyEvidence.KeyRotatedEventResponse lastEvent = events.get(events.size() - 1);
+        if (lastEvent.status == null || lastEvent.status.intValue() != ACTIVE_STATUS) {
+            log.error("Lifecycle rotate event status invalid, keyId={}, status={}", keyId, lastEvent.status);
+            markFailed(keyId);
+            publishChainResult(keyId, "UPDATE_KEY", "2", receipt.getTransactionHash(), parseBlockHeight(receipt.getBlockNumber()), "INVALID_ROTATE_STATUS");
+            return false;
+        }
+
+        Long blockHeight = parseBlockHeight(receipt.getBlockNumber());
+        keymanageMapper.updateChainStatus(keyId, "1", receipt.getTransactionHash(), blockHeight);
+        publishChainResult(keyId, "UPDATE_KEY", "1", receipt.getTransactionHash(), blockHeight, null);
+        return true;
+    }
+
+    private boolean handleRevokeReceipt(Long keyId, TransactionReceipt receipt) {
+        if (!isReceiptStatusOk(keyId, receipt, "REVOKE_KEY")) {
+            return false;
+        }
+
+        List<KeyEvidence.StatusChangedEventResponse> events = fiscoWrapper.getStatusChangedEvents(receipt);
+        if (events.isEmpty()) {
+            log.error("Lifecycle revoke missing StatusChanged event, keyId={}", keyId);
+            markFailed(keyId);
+            publishChainResult(keyId, "REVOKE_KEY", "2", receipt.getTransactionHash(), parseBlockHeight(receipt.getBlockNumber()), "MISSING_STATUS_EVENT");
+            return false;
+        }
+
+        KeyEvidence.StatusChangedEventResponse lastEvent = events.get(events.size() - 1);
+        if (lastEvent.newStatus == null || lastEvent.newStatus.intValue() != REVOKED_STATUS) {
+            log.error("Lifecycle revoke event status invalid, keyId={}, newStatus={}", keyId, lastEvent.newStatus);
+            markFailed(keyId);
+            publishChainResult(keyId, "REVOKE_KEY", "2", receipt.getTransactionHash(), parseBlockHeight(receipt.getBlockNumber()), "INVALID_REVOKE_STATUS");
+            return false;
+        }
+
+        Long blockHeight = parseBlockHeight(receipt.getBlockNumber());
+        keymanageMapper.updateChainStatus(keyId, "1", receipt.getTransactionHash(), blockHeight);
+        publishChainResult(keyId, "REVOKE_KEY", "1", receipt.getTransactionHash(), blockHeight, null);
+        return true;
+    }
+
+    private boolean isReceiptStatusOk(Long keyId, TransactionReceipt receipt, String actionType) {
         if (receipt == null || !receipt.isStatusOK()) {
             if (receipt != null) {
                 log.error("Lifecycle chain sync failed, keyId={}, status={}, message={}", keyId, receipt.getStatus(), receipt.getMessage());
+                publishChainResult(keyId, actionType, "2", receipt.getTransactionHash(), parseBlockHeight(receipt.getBlockNumber()), receipt.getMessage());
+            } else {
+                publishChainResult(keyId, actionType, "2", null, null, "EMPTY_RECEIPT");
             }
             markFailed(keyId);
             return false;
         }
 
-        keymanageMapper.updateChainStatus(keyId, "1", receipt.getTransactionHash(), parseBlockHeight(receipt.getBlockNumber()));
         return true;
     }
 
     private void markFailed(Long keyId) {
         keymanageMapper.updateChainStatus(keyId, "2", null, null);
+    }
+
+    private void publishChainResult(Long keyId, String actionType, String chainStatus, String chainHash, Long blockHeight, String errorMessage) {
+        try {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("key_id", keyId);
+            payload.put("action_type", actionType);
+            payload.put("chain_status", chainStatus);
+            payload.put("chain_hash", chainHash);
+            payload.put("block_height", blockHeight);
+            payload.put("error_message", errorMessage);
+            kafkaTemplate.send(chainResultTopic, String.valueOf(keyId), JSON.toJSONString(payload));
+        } catch (Exception ex) {
+            log.warn("发布生命周期上链结果失败, keyId={}", keyId, ex);
+        }
     }
 
     private Long parseBlockHeight(String blockNumberStr) {
@@ -243,10 +335,15 @@ public class UpdatedelChainService {
 
     private static class FiscoBcosWrapper {
         private final String contractAddress;
+        private final String fiscoHost;
+        private final String privateKeyHex;
         private KeyEvidence keyEvidence;
+        private Client client;
 
-        private FiscoBcosWrapper(String contractAddress) throws Exception {
+        private FiscoBcosWrapper(String contractAddress, String fiscoHost, String privateKeyHex) throws Exception {
             this.contractAddress = contractAddress;
+            this.fiscoHost = fiscoHost;
+            this.privateKeyHex = privateKeyHex;
             init();
         }
 
@@ -261,8 +358,8 @@ public class UpdatedelChainService {
 
             String configContent = new String(java.nio.file.Files.readAllBytes(configFile.toPath()));
             try {
-                String realIp = java.net.InetAddress.getByName("fisco-node").getHostAddress();
-                configContent = configContent.replace("fisco-node", realIp);
+                String realIp = java.net.InetAddress.getByName(fiscoHost).getHostAddress();
+                configContent = configContent.replace(fiscoHost, realIp);
             } catch (Exception ignored) {
             }
 
@@ -270,8 +367,8 @@ public class UpdatedelChainService {
             java.nio.file.Files.write(tempConfigFile.toPath(), configContent.getBytes());
 
             BcosSDK sdk = BcosSDK.build(tempConfigFile.getAbsolutePath());
-            Client client = sdk.getClient(1);
-            CryptoKeyPair cryptoKeyPair = client.getCryptoSuite().createKeyPair();
+            this.client = sdk.getClient(1);
+            CryptoKeyPair cryptoKeyPair = createConfiguredKeyPair();
             if (contractAddress == null || "0x0000000000000000000000000000000000000000".equals(contractAddress)) {
                 throw new RuntimeException("Contract address not configured");
             }
@@ -284,6 +381,22 @@ public class UpdatedelChainService {
 
         private TransactionReceipt changeKeyStatus(Long keyId, int newStatus) {
             return keyEvidence.changeKeyStatus(BigInteger.valueOf(keyId), BigInteger.valueOf(newStatus));
+        }
+
+        private List<KeyEvidence.KeyRotatedEventResponse> getKeyRotatedEvents(TransactionReceipt receipt) {
+            return keyEvidence.getKeyRotatedEvents(receipt);
+        }
+
+        private List<KeyEvidence.StatusChangedEventResponse> getStatusChangedEvents(TransactionReceipt receipt) {
+            return keyEvidence.getStatusChangedEvents(receipt);
+        }
+
+        private CryptoKeyPair createConfiguredKeyPair() {
+            if (privateKeyHex != null && !privateKeyHex.trim().isEmpty()) {
+                return client.getCryptoSuite().createKeyPair(privateKeyHex.trim());
+            }
+            log.warn("Lifecycle FISCO private key not configured, using ephemeral account");
+            return client.getCryptoSuite().createKeyPair();
         }
     }
 }

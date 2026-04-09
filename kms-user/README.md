@@ -42,6 +42,16 @@
 2. `/lifecycle-api` -> 生命周期系统后端
 3. `/distribute-api` -> 分发系统后端
 
+## 本地开发代理
+
+`kms-user/front/vite.config.js` 当前内置：
+
+1. `/generate-api` -> `http://localhost:9081`
+2. `/lifecycle-api` -> `http://localhost:9082`
+3. `/distribute-api` -> `http://localhost:8083`
+
+登录、注册、验证码和 `getInfo` 也走 `VITE_APP_BASE_API=/generate-api`，因此会一并代理到生成系统 Java 后端。
+
 ## 角色边界
 
 1. 普通用户使用 `kms-user`

@@ -71,6 +71,7 @@ public class LifecycleService {
         next.setKeyValue(generateKeyValue(next));
 
         keymanageMapper.updatekeymanage(next);
+        resetPendingChainState(next.getKeyId());
         publishChainEvent(ChainSyncEvent.TYPE_ROTATE, next);
         return requireExistingKey(next.getKeyId());
     }
@@ -82,6 +83,7 @@ public class LifecycleService {
             return;
         }
         keymanageMapper.revoke(keyId, KeyStatus.REVOKED.getCode());
+        resetPendingChainState(keyId);
         Keymanage revoked = requireExistingKey(keyId);
         publishChainEvent(ChainSyncEvent.TYPE_REVOKE, revoked);
     }
@@ -151,6 +153,10 @@ public class LifecycleService {
         } catch (JsonProcessingException ex) {
             throw new IllegalStateException("上链任务序列化失败", ex);
         }
+    }
+
+    private void resetPendingChainState(Long keyId) {
+        keymanageMapper.resetChainState(keyId, "0");
     }
 
     private String normalizeAutoUpdate(String autoUpdate) {

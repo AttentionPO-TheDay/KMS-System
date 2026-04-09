@@ -52,6 +52,18 @@
 5. `/user/`
 6. `/acceptance/`
 
+## 前端开发代理口径
+
+为避免本地 Vite 开发时请求落到错误的 `localhost:80`，当前前端开发代理统一为：
+
+1. `kms-generate/front`：`/generate-api` -> `http://localhost:9081`
+2. `kms-updatedel/front`：`/lifecycle-api` -> `http://localhost:9082`
+3. `kms-user/front`：`/generate-api` -> `9081`，`/lifecycle-api` -> `9082`，`/distribute-api` -> `8083`
+
+Docker 网关发布环境仍由 `kms-ops/nginx/nginx.conf` 统一处理，不依赖这些本地开发代理。
+
+`nginx` 已开启 Docker DNS 运行时解析，后端容器重建后会自动刷新上游地址，避免网关继续指向旧容器 IP 而出现 `502 Bad Gateway`。
+
 ## 本地构建
 
 在仓库根目录执行：

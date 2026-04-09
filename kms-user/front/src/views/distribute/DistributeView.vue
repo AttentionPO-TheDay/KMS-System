@@ -2,8 +2,8 @@
   <section class="page">
     <div class="page-header">
       <p class="eyebrow">Distribute</p>
-      <h2>分发记录</h2>
-      <p>统一前端已直接对接抗量子密钥分发系统后端，可查看记录列表并展开详情。</p>
+      <h2>分发记录与下载</h2>
+      <p>统一前端已直接对接分发系统后端，支持查询记录、查看详情并导出当前筛选结果。</p>
     </div>
 
     <article class="panel">
@@ -37,8 +37,10 @@
         </label>
         <button @click="handleSearch">搜索</button>
         <button class="ghost-button" @click="resetFilters">重置</button>
+        <button class="ghost-button" @click="handleExport">导出当前结果</button>
       </div>
       <p class="muted">API 前缀：<code>{{ apiBase }}</code></p>
+      <p class="muted">导出文件：<code>key-distribute-record-时间戳.xlsx</code></p>
       <p v-if="errorMessage" class="error-text">{{ errorMessage }}</p>
       <div v-if="records.length === 0" class="empty-state">暂无分发记录</div>
       <div v-else class="record-list">
@@ -87,10 +89,11 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, getCurrentInstance, onMounted, reactive, ref } from 'vue'
 import { apiBases } from '@/config/api-bases'
 import { getDistributeRecord, listDistributeRecords } from '@/services/distribute-api'
 
+const { proxy } = getCurrentInstance()
 const apiBase = apiBases.distributeApi
 const filters = reactive({
   pageNum: 1,
@@ -139,6 +142,15 @@ function resetFilters() {
   loadRecords()
 }
 
+function handleExport() {
+  errorMessage.value = ''
+  try {
+    proxy.download('/distribute-api/distribute/record/export', buildExportParams(), `key-distribute-record-${Date.now()}.xlsx`)
+  } catch (error) {
+    errorMessage.value = error.message || '导出失败'
+  }
+}
+
 function changePage(pageNum) {
   filters.pageNum = pageNum
   loadRecords()
@@ -160,6 +172,20 @@ function typeText(type) {
 
 function statusText(status) {
   return { 0: '待分发', 1: '分发中', 2: '分发成功', 3: '分发失败', '0': '待分发', '1': '分发中', '2': '分发成功', '3': '分发失败' }[status] || '未知'
+}
+
+function buildExportParams() {
+  return {
+    userName: normalizeFilter(filters.userName),
+    keyName: normalizeFilter(filters.keyName),
+    distributeType: normalizeFilter(filters.distributeType),
+    distributeStatus: normalizeFilter(filters.distributeStatus)
+  }
+}
+
+function normalizeFilter(value) {
+  const text = value == null ? '' : String(value).trim()
+  return text === '' ? undefined : text
 }
 </script>
 

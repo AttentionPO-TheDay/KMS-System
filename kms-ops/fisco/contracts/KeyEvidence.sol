@@ -2,6 +2,8 @@ pragma solidity ^0.4.24;
 
 contract KeyEvidence {
 
+    address public owner;
+
     // ✅ 改动1：事件定义增加 version，方便链下审计历史
     event UploadSuccess(uint256 indexed keyId, uint32 version, uint8 status, uint256 timestamp);
     event StatusChanged(uint256 indexed keyId, uint32 version, uint8 newStatus, uint256 timestamp);
@@ -22,6 +24,19 @@ contract KeyEvidence {
 
     mapping(uint256 => KeyRecord) private records;
 
+    constructor() public {
+        owner = msg.sender;
+    }
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "only owner");
+        _;
+    }
+
+    function isValidStatus(uint8 _status) internal pure returns (bool) {
+        return _status <= 3;
+    }
+
     // ✅ 改动3：上链方法增加 _version 参数
     function uploadKey(
         uint256 _keyId, 
@@ -31,9 +46,10 @@ contract KeyEvidence {
         string _usage,
         bool _isAutoUpdate,
         uint32 _version      // <--- 传入版本号 (通常为1)
-    ) public returns(int256) {
-        // 如果ID已存在，返回错误 (防止误覆盖)
-        if (records[_keyId].keyId != 0) return -1;
+    ) public onlyOwner returns(int256) {
+        require(_keyId != 0, "invalid keyId");
+        require(_version > 0, "invalid version");
+        require(records[_keyId].keyId == 0, "key exists");
 
         records[_keyId] = KeyRecord({
             keyId: _keyId,
@@ -54,13 +70,12 @@ contract KeyEvidence {
     }
 
     // ✅ 改动4：新增轮换/更新方法
-    function rotateKey(uint256 _keyId, string _newPubKey, uint32 _newVersion) public returns(int256) {
+    function rotateKey(uint256 _keyId, string _newPubKey, uint32 _newVersion) public onlyOwner returns(int256) {
         KeyRecord storage k = records[_keyId];
-        
-        // 检查是否存在
-        if (k.keyId == 0) return -1;
-        // 检查是否已回收 (已回收的不能更新)
-        if (k.status == 3) return -2; 
+
+        require(k.keyId != 0, "key missing");
+        require(k.status != 3, "key revoked");
+        require(_newVersion > k.version, "version must increase");
 
         // 1. 发出“旧版本退休”事件
         // 虽然 Storage 里马上要被覆盖，但这一条日志永远留在了区块链上
@@ -79,9 +94,11 @@ contract KeyEvidence {
     }
 
     // ✅ 改动5：状态变更方法，事件带上当前 version
-    function changeKeyStatus(uint256 _keyId, uint8 _newStatus) public returns(int256) {
-        if (records[_keyId].keyId == 0) return -1; 
-        
+    function changeKeyStatus(uint256 _keyId, uint8 _newStatus) public onlyOwner returns(int256) {
+        require(records[_keyId].keyId != 0, "key missing");
+        require(isValidStatus(_newStatus), "invalid status");
+        require(records[_keyId].status != 3, "revoked immutable");
+
         records[_keyId].status = _newStatus;
         records[_keyId].updateTime = now;
         

@@ -63,9 +63,27 @@ export function listPermissionRequests(featureCode, userId) {
   return request(feature.apiBase, `/permission/request/list${query}`).then((payload) => withFeatureMeta(featureCode, payload))
 }
 
+export async function getLatestApprovedTemporaryRequest(featureCode, userId) {
+  const payload = await listPermissionRequests(featureCode, userId)
+  const rows = Array.isArray(payload?.rows) ? payload.rows : []
+
+  return rows
+    .filter((item) => String(item.status) === '1' && Number(item.isTemp) === 1)
+    .sort((left, right) => getPermissionRequestTime(right) - getPermissionRequestTime(left))[0] || null
+}
+
 export function rollbackPermission(featureCode, requestId) {
   const feature = permissionFeatures[featureCode]
   return request(feature.apiBase, `/permission/request/rollback/${requestId}`, {
     method: 'PUT'
   })
+}
+
+function getPermissionRequestTime(item) {
+  const value = item?.approveTime || item?.requestTime
+  const parsed = value ? new Date(value).getTime() : NaN
+  if (!Number.isNaN(parsed)) {
+    return parsed
+  }
+  return Number(item?.requestId) || 0
 }

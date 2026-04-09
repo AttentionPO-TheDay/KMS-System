@@ -1,42 +1,47 @@
-import { getToken, removeToken } from '@/utils/auth'
+import request from '@/utils/request'
 
-async function parseResponse(response) {
-  const text = await response.text()
-  if (!text) {
-    return null
+function normalizeBody(body, headers = {}) {
+  if (body == null) {
+    return body
+  }
+
+  if (typeof body !== 'string') {
+    return body
+  }
+
+  const contentType = headers['Content-Type'] || headers['content-type'] || ''
+  if (!contentType.includes('application/json')) {
+    return body
   }
 
   try {
-    return JSON.parse(text)
+    return JSON.parse(body)
   } catch {
-    return { msg: text }
+    return body
   }
 }
 
-export async function requestJson(base, path, options = {}) {
+export function requestJson(base, path, options = {}) {
+  const method = (options.method || 'GET').toLowerCase()
   const headers = {
     'Content-Type': 'application/json',
     ...(options.headers || {})
   }
 
-  const token = getToken()
-  if (options.auth !== false && token) {
-    headers.Authorization = `Bearer ${token}`
-  }
-
-  const response = await fetch(`${base}${path}`, {
-    ...options,
-    headers
-  })
-
-  const data = await parseResponse(response)
-  if (!response.ok || (data && data.code !== undefined && data.code !== 200)) {
-    const message = data?.msg || `请求失败(${response.status})`
-    if (response.status === 401 || data?.code === 401) {
-      removeToken()
+  const config = {
+    url: `${base}${path}`,
+    method,
+    headers: {
+      ...headers,
+      ...(options.auth === false ? { isToken: false } : {})
     }
-    throw new Error(message)
   }
 
-  return data
+  if (method === 'get' || method === 'delete') {
+    config.params = options.params
+  } else {
+    config.data = normalizeBody(options.body, headers)
+  }
+
+  return request(config)
 }

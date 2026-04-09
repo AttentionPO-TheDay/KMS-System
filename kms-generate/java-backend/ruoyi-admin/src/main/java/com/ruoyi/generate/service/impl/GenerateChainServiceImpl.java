@@ -17,11 +17,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.PostConstruct;
 import java.io.File;
 import java.math.BigInteger;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * 区块链上链服务实现
@@ -37,22 +41,28 @@ public class GenerateChainServiceImpl implements GenerateChainService {
     @Autowired
     private GenerateKeyService generateKeyService;
 
+    @Autowired
+    private KafkaTemplate<String, String> kafkaTemplate;
+
     @Value("${fisco.contract-address:0x0000000000000000000000000000000000000000}")
     private String contractAddress;
 
     @Value("${fisco.host:fisco-node}")
     private String fiscoHost;
 
+    @Value("${fisco.private-key:}")
+    private String fiscoPrivateKey;
+
+    @Value("${kms.kafka.chain-result-topic:key_chain_result}")
+    private String chainResultTopic;
+
     private FiscoBcosWrapper fiscoWrapper;
 
     @PostConstruct
     public void init() {
-        try {
-            this.fiscoWrapper = new FiscoBcosWrapper(contractAddress, fiscoHost);
-            log.info("FISCO BCOS wrapper initialized, contract: {}", contractAddress);
-        } catch (Exception e) {
-            log.error("Failed to initialize FISCO BCOS wrapper", e);
-        }
+        // 上链客户端改为懒初始化，避免 FISCO SDK 在 Spring 启动阶段连接失败时打断整个服务启动。
+        this.fiscoWrapper = null;
+        log.info("FISCO BCOS wrapper will initialize lazily when chain sync is triggered");
     }
 
     @Override
@@ -68,13 +78,15 @@ public class GenerateChainServiceImpl implements GenerateChainService {
             if (finalPA == null) {
                 log.error("KeyId: {} 公钥计算失败", keymanage.getKeyId());
                 generateKeyService.updateChainStatus(keymanage.getKeyId(), "2", null, null);
+                publishChainResult(keymanage.getKeyId(), "ENROLL_KEY", "2", null, null, "PA_CALC_FAILED");
                 return false;
             }
 
             // 2. 执行上链
-            if (fiscoWrapper == null) {
+            if (!ensureFiscoWrapper()) {
                 log.error("FISCO wrapper not initialized");
                 generateKeyService.updateChainStatus(keymanage.getKeyId(), "2", null, null);
+                publishChainResult(keymanage.getKeyId(), "ENROLL_KEY", "2", null, null, "FISCO_NOT_READY");
                 return false;
             }
 
@@ -84,16 +96,17 @@ public class GenerateChainServiceImpl implements GenerateChainService {
                     finalPA,
                     keymanage.getEncrytName(),
                     keymanage.getKeyUse(),
-                    false,
+                    isAutoUpdateEnabled(keymanage.getAutoUpdate()),
                     keymanage.getVersion()
             );
 
             // 3. 处理结果
-            return handleTransactionReceipt(keymanage.getKeyId(), receipt);
+            return handleUploadReceipt(keymanage.getKeyId(), receipt);
 
         } catch (Exception e) {
             log.error("KeyId: {} 上链异常", keymanage.getKeyId(), e);
             generateKeyService.updateChainStatus(keymanage.getKeyId(), "2", null, null);
+            publishChainResult(keymanage.getKeyId(), "ENROLL_KEY", "2", null, null, e.getClass().getSimpleName());
             return false;
         }
     }
@@ -113,9 +126,26 @@ public class GenerateChainServiceImpl implements GenerateChainService {
         return status;
     }
 
-    private boolean handleTransactionReceipt(Long keyId, TransactionReceipt receipt) {
+    private synchronized boolean ensureFiscoWrapper() {
+        if (this.fiscoWrapper != null) {
+            return true;
+        }
+        try {
+            this.fiscoWrapper = new FiscoBcosWrapper(contractAddress, fiscoHost, fiscoPrivateKey);
+            log.info("FISCO BCOS wrapper initialized lazily, contract: {}", contractAddress);
+            return true;
+        } catch (Exception e) {
+            Thread.interrupted();
+            this.fiscoWrapper = null;
+            log.error("Failed to initialize FISCO BCOS wrapper lazily", e);
+            return false;
+        }
+    }
+
+    private boolean handleUploadReceipt(Long keyId, TransactionReceipt receipt) {
         if (receipt == null) {
             generateKeyService.updateChainStatus(keyId, "2", null, null);
+            publishChainResult(keyId, "ENROLL_KEY", "2", null, null, "EMPTY_RECEIPT");
             return false;
         }
 
@@ -123,6 +153,15 @@ public class GenerateChainServiceImpl implements GenerateChainService {
             log.error("KeyId: {} 上链失败，状态码: {}, 信息: {}",
                     keyId, receipt.getStatus(), receipt.getMessage());
             generateKeyService.updateChainStatus(keyId, "2", null, null);
+            publishChainResult(keyId, "ENROLL_KEY", "2", receipt.getTransactionHash(), parseBlockHeight(receipt.getBlockNumber()), receipt.getMessage());
+            return false;
+        }
+
+        List<KeyEvidence.UploadSuccessEventResponse> events = fiscoWrapper.getUploadSuccessEvents(receipt);
+        if (events.isEmpty()) {
+            log.error("KeyId: {} 上链交易缺少 UploadSuccess 事件，按失败处理", keyId);
+            generateKeyService.updateChainStatus(keyId, "2", null, null);
+            publishChainResult(keyId, "ENROLL_KEY", "2", receipt.getTransactionHash(), parseBlockHeight(receipt.getBlockNumber()), "MISSING_UPLOAD_EVENT");
             return false;
         }
 
@@ -130,8 +169,24 @@ public class GenerateChainServiceImpl implements GenerateChainService {
         Long blockHeight = parseBlockHeight(receipt.getBlockNumber());
 
         generateKeyService.updateChainStatus(keyId, "1", txHash, blockHeight);
+        publishChainResult(keyId, "ENROLL_KEY", "1", txHash, blockHeight, null);
         log.info("KeyId: {} 上链成功，txHash: {}, blockHeight: {}", keyId, txHash, blockHeight);
         return true;
+    }
+
+    private void publishChainResult(Long keyId, String actionType, String chainStatus, String chainHash, Long blockHeight, String errorMessage) {
+        try {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("key_id", keyId);
+            payload.put("action_type", actionType);
+            payload.put("chain_status", chainStatus);
+            payload.put("chain_hash", chainHash);
+            payload.put("block_height", blockHeight);
+            payload.put("error_message", errorMessage);
+            kafkaTemplate.send(chainResultTopic, String.valueOf(keyId), JSON.toJSONString(payload));
+        } catch (Exception ex) {
+            log.warn("发布生成系统上链结果失败, keyId={}", keyId, ex);
+        }
     }
 
     private Long parseBlockHeight(String blockNumberStr) {
@@ -146,12 +201,27 @@ public class GenerateChainServiceImpl implements GenerateChainService {
         }
     }
 
+    private boolean isAutoUpdateEnabled(String autoUpdate) {
+        if (autoUpdate == null) {
+            return false;
+        }
+        String value = autoUpdate.trim();
+        return "1".equals(value)
+                || "true".equalsIgnoreCase(value)
+                || "enabled".equalsIgnoreCase(value);
+    }
+
     /**
      * 计算最终公钥 PA
      */
     private String calculatePA(Keymanage km) {
         try {
             if (km.getKeyValue() == null) return null;
+
+            if ("AES".equalsIgnoreCase(km.getEncrytName()) || "对称加密".equals(km.getEncrytType())) {
+                return km.getKeyValue();
+            }
+
             JSONObject kv = JSON.parseObject(km.getKeyValue());
 
             String ssclKey = kv.getString("SSCLKey");
@@ -317,12 +387,14 @@ public class GenerateChainServiceImpl implements GenerateChainService {
     private static class FiscoBcosWrapper {
         private final String contractAddress;
         private final String fiscoHost;
+        private final String privateKeyHex;
         private KeyEvidence keyEvidence;
         private Client client;
 
-        public FiscoBcosWrapper(String contractAddress, String fiscoHost) throws Exception {
+        public FiscoBcosWrapper(String contractAddress, String fiscoHost, String privateKeyHex) throws Exception {
             this.contractAddress = contractAddress;
             this.fiscoHost = fiscoHost;
+            this.privateKeyHex = privateKeyHex;
             init();
         }
 
@@ -351,7 +423,7 @@ public class GenerateChainServiceImpl implements GenerateChainService {
 
             BcosSDK sdk = BcosSDK.build(tempConfigFile.getAbsolutePath());
             this.client = sdk.getClient(1);
-            CryptoKeyPair cryptoKeyPair = client.getCryptoSuite().createKeyPair();
+            CryptoKeyPair cryptoKeyPair = createConfiguredKeyPair();
             log.info("FISCO SDK initialized, account: {}", cryptoKeyPair.getAddress());
 
             if (contractAddress != null && !contractAddress.equals("0x0000000000000000000000000000000000000000")) {
@@ -363,7 +435,7 @@ public class GenerateChainServiceImpl implements GenerateChainService {
         }
 
         public TransactionReceipt uploadKey(Long keyId, String user, String pubKey,
-                                             String algo, String usage, boolean autoUpdate, Integer version) {
+                                              String algo, String usage, boolean autoUpdate, Integer version) {
             checkReady();
             try {
                 log.info("uploadKey calling contract: keyId={}, user={}, pubKey={}, algo={}", keyId, user, pubKey, algo);
@@ -374,6 +446,19 @@ public class GenerateChainServiceImpl implements GenerateChainService {
                 log.error("uploadKey contract call failed", e);
                 throw new RuntimeException("区块链[uploadKey]调用失败", e);
             }
+        }
+
+        public List<KeyEvidence.UploadSuccessEventResponse> getUploadSuccessEvents(TransactionReceipt receipt) {
+            checkReady();
+            return keyEvidence.getUploadSuccessEvents(receipt);
+        }
+
+        private CryptoKeyPair createConfiguredKeyPair() {
+            if (privateKeyHex != null && !privateKeyHex.trim().isEmpty()) {
+                return client.getCryptoSuite().createKeyPair(privateKeyHex.trim());
+            }
+            log.warn("FISCO private key not configured, using ephemeral account");
+            return client.getCryptoSuite().createKeyPair();
         }
 
         private void checkReady() {

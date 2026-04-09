@@ -185,12 +185,12 @@ getCookie();
 .title {
   margin: 0px auto 30px auto;
   text-align: center;
-  color: #707070;
+  color: #ffffff;
 }
 
 .login-form {
   border-radius: 6px;
-  background: #ffffff;
+  background: rgba(10, 15, 25, 0.85); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border: 1px solid rgba(0, 153, 255, 0.3); box-shadow: 0 15px 35px rgba(0, 0, 0, 0.6);
   width: 400px;
   padding: 25px 25px 5px 25px;
   .el-input {

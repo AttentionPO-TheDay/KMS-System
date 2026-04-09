@@ -59,6 +59,8 @@ public interface KeymanageMapper {
     int updateChainStatus(@Param("keyId") Long keyId, @Param("chainStatus") String chainStatus,
                           @Param("chainHash") String chainHash, @Param("blockHeight") Long blockHeight);
 
+    int resetChainState(@Param("keyId") Long keyId, @Param("chainStatus") String chainStatus);
+
     /**
      * 删除密钥管理
      *

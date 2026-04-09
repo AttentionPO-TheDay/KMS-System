@@ -88,6 +88,21 @@ services:
     networks:
       - kms_net
 
+  fisco-console:
+    image: eclipse-temurin:8-jre
+    container_name: kms_fisco_console
+    volumes:
+      - ./fisco/console:/app
+      - ./fisco/console/conf:/app/conf
+    working_dir: /app
+    command: ["bash", "-lc", "chmod +x /app/*.sh && sleep infinity"]
+    depends_on:
+      fisco-node:
+        condition: service_started
+    restart: always
+    networks:
+      - kms_net
+
   # ========================================
   # 2. kms-generate 系统 (密钥生成)
   # ========================================
@@ -119,6 +134,7 @@ services:
     volumes:
       - ./runtime/generate-java/kms-generate.jar:/app/kms-generate.jar:ro
       - ./runtime/generate-java/config-fisco.toml:/app/config-fisco.toml:ro
+      - ./fisco/console/conf:/app/conf:ro
     working_dir: /app
     command: ["java", "-jar", "/app/kms-generate.jar"]
     ports:
@@ -132,6 +148,9 @@ services:
       - GO_BACKEND_URL=http://generate-go:8081
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
       - FISCO_HOST=fisco-node
+      - FISCO_CONTRACT_ADDRESS=${FISCO_CONTRACT_ADDRESS:-0x0000000000000000000000000000000000000000}
+      - FISCO_PRIVATE_KEY=${FISCO_PRIVATE_KEY:-}
+      - KMS_CHAIN_RESULT_TOPIC=${KMS_CHAIN_RESULT_TOPIC:-key_chain_result}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
     depends_on:
@@ -140,6 +159,8 @@ services:
       kafka:
         condition: service_started
       fisco-node:
+        condition: service_started
+      fisco-console:
         condition: service_started
       redis:
         condition: service_healthy
@@ -194,6 +215,9 @@ services:
       - DB_PASSWORD=root123456
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
       - FISCO_HOST=fisco-node
+      - FISCO_CONTRACT_ADDRESS=${FISCO_CONTRACT_ADDRESS:-0x0000000000000000000000000000000000000000}
+      - FISCO_PRIVATE_KEY=${FISCO_PRIVATE_KEY:-}
+      - KMS_CHAIN_RESULT_TOPIC=${KMS_CHAIN_RESULT_TOPIC:-key_chain_result}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
     depends_on:
@@ -202,6 +226,8 @@ services:
       kafka:
         condition: service_started
       fisco-node:
+        condition: service_started
+      fisco-console:
         condition: service_started
       redis:
         condition: service_healthy
@@ -228,12 +254,17 @@ services:
       - DB_USERNAME=root
       - DB_PASSWORD=root123456
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - KMS_CHAIN_RESULT_TOPIC=${KMS_CHAIN_RESULT_TOPIC:-key_chain_result}
+      - FISCO_HOST=fisco-node
+      - FISCO_CONTRACT_ADDRESS=${FISCO_CONTRACT_ADDRESS:-0x0000000000000000000000000000000000000000}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
     depends_on:
       mysql:
         condition: service_healthy
       kafka:
+        condition: service_started
+      fisco-node:
         condition: service_started
       redis:
         condition: service_healthy

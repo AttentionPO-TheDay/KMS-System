@@ -12,6 +12,17 @@ export function listGenerateKeys(query = {}) {
   return requestJson(apiBases.generateApi, `/generate/key/list${suffix}`)
 }
 
+export function listPublicGenerateKeys(query = {}) {
+  const search = new URLSearchParams()
+  Object.entries(query).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
+      search.set(key, String(value).trim())
+    }
+  })
+  const suffix = search.toString() ? `?${search.toString()}` : ''
+  return requestJson(apiBases.generateApi, `/generate/key/public-list${suffix}`)
+}
+
 export function getGenerateKey(keyId) {
   return requestJson(apiBases.generateApi, `/generate/key/${keyId}`)
 }

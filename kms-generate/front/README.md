@@ -25,12 +25,12 @@
 
 1. Vite 开发端口：`81`
 2. 开发环境 `VITE_APP_BASE_API='/generate-api'`
-3. 当前 `vite.config.js` 仅内置 `/dev-api -> http://localhost:80` 代理
+3. 当前 `vite.config.js` 内置 `/generate-api -> http://localhost:9081` 代理
 
 ## 说明
 
 1. 页面代码按 `/generate-api` 作为业务 API 前缀
-2. 如果本地直接启动前端而不经过网关，需要自行补齐对应代理，或通过统一网关联调
+2. 本地直接启动前端时会直接转发到生成系统 Java 后端 `9081`
 3. 生产构建基路径为 `/generate/`
 
 ## 启动和构建

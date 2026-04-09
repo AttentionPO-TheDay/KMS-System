@@ -163,5 +163,6 @@ kms:
     generate-topic: ${KMS_KAFKA_GENERATE_TOPIC:key_generate_log}
     update-topic: ${KMS_KAFKA_UPDATE_TOPIC:key_update_log}
     revoke-topic: ${KMS_KAFKA_REVOKE_TOPIC:key_revoke_log}
+    chain-result-topic: ${KMS_CHAIN_RESULT_TOPIC:key_chain_result}
   distribute:
     url: ${KMS_DISTRIBUTE_URL:http://localhost:8083}

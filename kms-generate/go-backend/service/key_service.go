@@ -88,7 +88,7 @@ func (s *KeyManageService) EnrollKey(km *models.Keymanage, rawPassword string) (
 			}
 			km.KeyValue = resKm.KeyValue
 		}
-	} else if km.EncrytType == "对称加密" && km.EncrytName == "AES" {
+	} else if km.EncrytName == "AES" || km.EncrytType == "对称加密" {
 		keyBuf := make([]byte, 32)
 		if _, err := io.ReadFull(rand.Reader, keyBuf); err != nil {
 			return "", err

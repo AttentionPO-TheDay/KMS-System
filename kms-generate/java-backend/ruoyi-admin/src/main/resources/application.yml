@@ -111,11 +111,13 @@ xss:
 fisco:
   host: ${FISCO_HOST:fisco-node}
   contract-address: ${FISCO_CONTRACT_ADDRESS:0xadb09744949bbc4096c8b340303dfed763dae2b7}
+  private-key: ${FISCO_PRIVATE_KEY:}
 
 kms:
   kafka:
     generate-topic: ${KMS_GENERATE_TOPIC:key_generate_log}
     chain-topic: ${KMS_CHAIN_TOPIC:key_chain_task}
+    chain-result-topic: ${KMS_CHAIN_RESULT_TOPIC:key_chain_result}
   # Go 高性能生成服务配置
   go-backend:
     url: ${GO_BACKEND_URL:http://generate-go:8081}

@@ -103,6 +103,9 @@ kms:
       update-topic: key_update_log
       revoke-topic: key_revoke_log
       chain-task-topic: key_chain_task
+      chain-result-topic: ${KMS_CHAIN_RESULT_TOPIC:key_chain_result}
 
 fisco:
+  host: ${FISCO_HOST:fisco-node}
   contract-address: ${FISCO_CONTRACT_ADDRESS:0xadb09744949bbc4096c8b340303dfed763dae2b7}
+  private-key: ${FISCO_PRIVATE_KEY:}

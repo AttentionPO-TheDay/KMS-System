@@ -102,6 +102,36 @@ public class KeyEvidence extends Contract {
         return responses;
     }
 
+    public List<StatusChangedEventResponse> getStatusChangedEvents(TransactionReceipt transactionReceipt) {
+        List<EventValuesWithLog> valueList = extractEventParametersWithLog(STATUSCHANGED_EVENT, transactionReceipt);
+        ArrayList<StatusChangedEventResponse> responses = new ArrayList<StatusChangedEventResponse>(valueList.size());
+        for (EventValuesWithLog eventValues : valueList) {
+            StatusChangedEventResponse typedResponse = new StatusChangedEventResponse();
+            typedResponse.log = eventValues.getLog();
+            typedResponse.keyId = (BigInteger) eventValues.getIndexedValues().get(0).getValue();
+            typedResponse.version = (BigInteger) eventValues.getNonIndexedValues().get(0).getValue();
+            typedResponse.newStatus = (BigInteger) eventValues.getNonIndexedValues().get(1).getValue();
+            typedResponse.timestamp = (BigInteger) eventValues.getNonIndexedValues().get(2).getValue();
+            responses.add(typedResponse);
+        }
+        return responses;
+    }
+
+    public List<KeyRotatedEventResponse> getKeyRotatedEvents(TransactionReceipt transactionReceipt) {
+        List<EventValuesWithLog> valueList = extractEventParametersWithLog(KEYROTATED_EVENT, transactionReceipt);
+        ArrayList<KeyRotatedEventResponse> responses = new ArrayList<KeyRotatedEventResponse>(valueList.size());
+        for (EventValuesWithLog eventValues : valueList) {
+            KeyRotatedEventResponse typedResponse = new KeyRotatedEventResponse();
+            typedResponse.log = eventValues.getLog();
+            typedResponse.keyId = (BigInteger) eventValues.getIndexedValues().get(0).getValue();
+            typedResponse.newVersion = (BigInteger) eventValues.getNonIndexedValues().get(0).getValue();
+            typedResponse.status = (BigInteger) eventValues.getNonIndexedValues().get(1).getValue();
+            typedResponse.timestamp = (BigInteger) eventValues.getNonIndexedValues().get(2).getValue();
+            responses.add(typedResponse);
+        }
+        return responses;
+    }
+
     public static KeyEvidence load(String contractAddress, Client client, CryptoKeyPair credential) {
         return new KeyEvidence(contractAddress, client, credential);
     }
@@ -110,6 +140,22 @@ public class KeyEvidence extends Contract {
         public TransactionReceipt.Logs log;
         public BigInteger keyId;
         public BigInteger version;
+        public BigInteger status;
+        public BigInteger timestamp;
+    }
+
+    public static class StatusChangedEventResponse {
+        public TransactionReceipt.Logs log;
+        public BigInteger keyId;
+        public BigInteger version;
+        public BigInteger newStatus;
+        public BigInteger timestamp;
+    }
+
+    public static class KeyRotatedEventResponse {
+        public TransactionReceipt.Logs log;
+        public BigInteger keyId;
+        public BigInteger newVersion;
         public BigInteger status;
         public BigInteger timestamp;
     }
