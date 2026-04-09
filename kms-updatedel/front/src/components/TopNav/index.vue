@@ -73,6 +73,10 @@ const topMenus = computed(() => {
   return topMenus;
 })
 
+const baseSidebarMenus = computed(() => {
+  return constantRoutes.filter(route => route.hidden !== true)
+})
+
 // 设置子路由
 const childrenMenus = computed(() => {
   let childrenMenus = [];
@@ -91,7 +95,11 @@ const childrenMenus = computed(() => {
       childrenMenus.push(router.children[item]);
     }
   })
-  return constantRoutes.concat(childrenMenus);
+  return childrenMenus;
+})
+
+const fullSidebarMenus = computed(() => {
+  return [...baseSidebarMenus.value, ...childrenMenus.value]
 })
 
 // 默认激活的菜单
@@ -141,20 +149,9 @@ function handleSelect(key, keyPath) {
 }
 
 function activeRoutes(key) {
-  let routes = [];
-  if (childrenMenus.value && childrenMenus.value.length > 0) {
-    childrenMenus.value.map((item) => {
-      if (key == item.parentPath || (key == "index" && "" == item.path)) {
-        routes.push(item);
-      }
-    });
-  }
-  if(routes.length > 0) {
-    permissionStore.setSidebarRouters(routes);
-  } else {
-    appStore.toggleSideBarHide(true);
-  }
-  return routes;
+  permissionStore.setSidebarRouters(fullSidebarMenus.value);
+  appStore.toggleSideBarHide(false);
+  return fullSidebarMenus.value;
 }
 
 onMounted(() => {

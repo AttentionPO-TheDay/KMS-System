@@ -143,17 +143,27 @@ function normalizeRouteTree(routes = []) {
 
 function filterAdminRoutes(routes = []) {
   return routes
-    .filter(route => Object.prototype.hasOwnProperty.call(ADMIN_ROUTE_WHITELIST, route.path))
+    .filter(route => {
+      const routeKey = normalizeAdminRoutePath(route.path)
+      return Object.prototype.hasOwnProperty.call(ADMIN_ROUTE_WHITELIST, routeKey)
+    })
     .map(route => ({
       ...route,
-      children: (route.children || []).filter(child => ADMIN_ROUTE_WHITELIST[route.path].includes(child.path))
+      children: (route.children || []).filter(child => {
+        const routeKey = normalizeAdminRoutePath(route.path)
+        return ADMIN_ROUTE_WHITELIST[routeKey].includes(child.path)
+      })
     }))
     .filter(route => route.children && route.children.length)
 }
 
 function getRouteOrder(route) {
-  const path = route.path || ''
+  const path = normalizeAdminRoutePath(route.path)
   return ADMIN_ROUTE_ORDER[path] ?? 10
+}
+
+function normalizeAdminRoutePath(path = '') {
+  return path.replace(/^\//, '')
 }
 
 // 动态路由遍历，验证是否具备权限

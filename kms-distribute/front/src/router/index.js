@@ -57,6 +57,20 @@ export const constantRoutes = [
     ]
   },
   {
+    path: '/user',
+    component: Layout,
+    hidden: true,
+    redirect: 'noredirect',
+    children: [
+      {
+        path: 'profile',
+        component: () => import('@/views/system/user/profile/index.vue'),
+        name: 'Profile',
+        meta: { title: '个人中心', icon: 'user' }
+      }
+    ]
+  },
+  {
     path: '/query',
     component: Layout,
     redirect: '/query/key-list',
@@ -81,30 +95,10 @@ export const constantRoutes = [
         meta: { title: '区块链查看', icon: 'link' }
       },
       {
-        path: 'user-keys',
-        component: () => import('@/views/query/keyList/index.vue'),
-        name: 'UserKeysPage',
-        meta: { title: '用户密钥页', icon: 'user' }
-      },
-      {
         path: 'key-users',
         component: () => import('@/views/query/businessUsers/index.vue'),
         name: 'KeyUserManagement',
         meta: { title: '密钥用户管理', icon: 'peoples' }
-      }
-    ]
-  },
-  {
-    path: '/user',
-    component: Layout,
-    hidden: true,
-    redirect: 'noredirect',
-    children: [
-      {
-        path: 'profile',
-        component: () => import('@/views/system/user/profile/index.vue'),
-        name: 'Profile',
-        meta: { title: '个人中心', icon: 'user' }
       }
     ]
   }

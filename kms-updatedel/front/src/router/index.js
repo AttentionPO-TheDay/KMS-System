@@ -21,6 +21,19 @@ export const constantRoutes = [
     hidden: true
   },
   {
+    path: '',
+    component: Layout,
+    redirect: '/index',
+    children: [
+      {
+        path: '/index',
+        component: () => import('@/views/index.vue'),
+        name: 'Index',
+        meta: { title: '首页', icon: 'dashboard', affix: true }
+      }
+    ]
+  },
+  {
     path: '/updatedel/keyupdate',
     component: Layout,
     hidden: false,
@@ -80,6 +93,30 @@ export const constantRoutes = [
     ]
   },
   {
+    path: "/:pathMatch(.*)*",
+    component: () => import('@/views/error/404.vue'),
+    hidden: true
+  },
+  {
+    path: '/401',
+    component: () => import('@/views/error/401.vue'),
+    hidden: true
+  },
+  {
+    path: '/user',
+    component: Layout,
+    hidden: true,
+    redirect: 'noredirect',
+    children: [
+      {
+        path: 'profile',
+        component: () => import('@/views/system/user/profile/index.vue'),
+        name: 'Profile',
+        meta: { title: '个人中心', icon: 'user' }
+      }
+    ]
+  },
+  {
     path: '/query',
     component: Layout,
     redirect: '/query/key-list',
@@ -104,53 +141,10 @@ export const constantRoutes = [
         meta: { title: '区块链查看', icon: 'link' }
       },
       {
-        path: 'user-keys',
-        component: () => import('@/views/query/keyList/index.vue'),
-        name: 'UserKeysPage',
-        meta: { title: '用户密钥页', icon: 'user' }
-      },
-      {
         path: 'key-users',
         component: () => import('@/views/query/businessUsers/index.vue'),
         name: 'KeyUserManagement',
         meta: { title: '密钥用户管理', icon: 'peoples' }
-      }
-    ]
-  },
-  {
-    path: "/:pathMatch(.*)*",
-    component: () => import('@/views/error/404.vue'),
-    hidden: true
-  },
-  {
-    path: '/401',
-    component: () => import('@/views/error/401.vue'),
-    hidden: true
-  },
-  {
-    path: '',
-    component: Layout,
-    redirect: '/index',
-    children: [
-      {
-        path: '/index',
-        component: () => import('@/views/index.vue'),
-        name: 'Index',
-        meta: { title: '首页', icon: 'dashboard', affix: true }
-      }
-    ]
-  },
-  {
-    path: '/user',
-    component: Layout,
-    hidden: true,
-    redirect: 'noredirect',
-    children: [
-      {
-        path: 'profile',
-        component: () => import('@/views/system/user/profile/index.vue'),
-        name: 'Profile',
-        meta: { title: '个人中心', icon: 'user' }
       }
     ]
   }

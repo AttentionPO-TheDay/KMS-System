@@ -64,6 +64,22 @@ Docker 网关发布环境仍由 `kms-ops/nginx/nginx.conf` 统一处理，不依
 
 `nginx` 已开启 Docker DNS 运行时解析，后端容器重建后会自动刷新上游地址，避免网关继续指向旧容器 IP 而出现 `502 Bad Gateway`。
 
+## 公共查询总表
+
+三套业务后台当前都保留一张公共查询总表：`src/views/query/keyList/index.vue`。
+
+对应菜单入口：
+
+1. `密钥查询 -> 用户密钥查询`
+2. `密钥查询 -> 区块链查看`
+
+当前约定：
+
+1. `用户密钥页` 与 `用户密钥查询` 使用同一组件，公共菜单仅保留 `用户密钥查询`
+2. 公共查询总表已支持 `存证详情` 综合弹窗
+3. 综合弹窗展示业务字段、工作状态、存证状态、上链版本、区块高度、交易哈希
+4. `链上凭证` 继续保留为轻量链上信息弹窗
+
 ## 本地构建
 
 在仓库根目录执行：
@@ -86,6 +102,14 @@ Docker 网关发布环境仍由 `kms-ops/nginx/nginx.conf` 统一处理，不依
 10. 构建 `kms-user/front`
 11. 构建 `kms-acceptance/front`
 12. 整理产物到 `kms-ops/runtime` 和 `kms-ops/front`
+
+如果只需单独校验前端，可分别在各自 `front/` 目录执行：
+
+```powershell
+npm run build:prod
+```
+
+说明：前端项目默认没有 `build` 脚本，统一使用 `build:prod`。
 
 ## 启动方式
 

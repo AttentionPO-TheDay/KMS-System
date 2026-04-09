@@ -44,14 +44,58 @@
           <el-tag :type="chainType(scope.row.chainStatus)">{{ chainText(scope.row.chainStatus) }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" align="center" width="130">
+      <el-table-column label="操作" align="center" width="170">
         <template #default="scope">
+          <el-button link type="info" @click="handleViewEvidence(scope.row)">存证详情</el-button>
           <el-button link type="primary" @click="handleViewChain(scope.row)">链上凭证</el-button>
         </template>
       </el-table-column>
     </el-table>
 
     <pagination v-show="total > 0" :total="total" v-model:page="queryParams.pageNum" v-model:limit="queryParams.pageSize" @pagination="getList" />
+
+    <el-dialog title="存证详情" v-model="evidenceOpen" width="720px" append-to-body>
+      <el-descriptions :column="2" border>
+        <el-descriptions-item label="密钥ID">{{ evidenceData.keyId || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="用户名">{{ evidenceData.userName || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="算法类型">{{ evidenceData.encrytType || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="算法名称">{{ evidenceData.encrytName || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="密钥名称">{{ evidenceData.keyName || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="密钥用途">{{ evidenceData.keyUse || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="工作状态">
+          <el-tag :type="statusType(evidenceData.status)">{{ statusText(evidenceData.status) }}</el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="存证状态">
+          <el-tag :type="chainType(evidenceData.chainStatus)">{{ chainText(evidenceData.chainStatus) }}</el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="上链版本">v{{ evidenceData.version || 1 }}</el-descriptions-item>
+        <el-descriptions-item label="区块高度">{{ evidenceData.blockHeight || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="创建时间">{{ evidenceData.creTime || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="更新时间">{{ evidenceData.updTime || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="交易哈希" :span="2">
+          <div class="hash-row">
+            <span class="hash-text">{{ evidenceData.chainHash || '-' }}</span>
+            <el-button
+              v-if="evidenceData.chainHash"
+              link
+              type="primary"
+              @click="copyChainHash(evidenceData.chainHash)"
+            >复制</el-button>
+          </div>
+        </el-descriptions-item>
+        <el-descriptions-item label="存证说明" :span="2">
+          <el-alert
+            title="该记录已纳入公共查询总表的存证详情视图，可直接查看业务字段与链上凭证的对应关系。"
+            type="success"
+            :closable="false"
+            show-icon
+          />
+        </el-descriptions-item>
+      </el-descriptions>
+      <template #footer>
+        <el-button @click="evidenceOpen = false">关 闭</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog title="链上凭证" v-model="chainOpen" width="620px" append-to-body>
       <el-descriptions :column="1" border>
@@ -83,6 +127,8 @@ const total = ref(0)
 const keyList = ref([])
 const chainOpen = ref(false)
 const chainData = ref({})
+const evidenceOpen = ref(false)
+const evidenceData = ref({})
 
 const pageMode = computed(() => {
   if (route.name === 'BlockchainView') return 'chain'
@@ -130,6 +176,28 @@ function handleViewChain(row) {
   })
 }
 
+function handleViewEvidence(row) {
+  getKeyChainStatus(row.keyId).then(data => {
+    evidenceData.value = {
+      ...row,
+      ...data,
+      chainStatus: row.chainStatus,
+      version: data?.version ?? row.version,
+      blockHeight: data?.blockHeight ?? row.blockHeight,
+      chainHash: data?.chainHash ?? row.chainHash
+    }
+    evidenceOpen.value = true
+  })
+}
+
+function copyChainHash(value) {
+  navigator.clipboard.writeText(value).then(() => {
+    proxy.$modal.msgSuccess('交易哈希已复制')
+  }).catch(() => {
+    proxy.$modal.msgError('复制失败，请手动复制')
+  })
+}
+
 function statusText(status) {
   return ({ '0': '正常', '1': '冻结', '2': '轮换', '3': '回收' })[status] || (status || '-')
 }
@@ -156,5 +224,16 @@ getList()
 <style scoped>
 .mb16 {
   margin-bottom: 16px;
+}
+
+.hash-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.hash-text {
+  word-break: break-all;
 }
 </style>
