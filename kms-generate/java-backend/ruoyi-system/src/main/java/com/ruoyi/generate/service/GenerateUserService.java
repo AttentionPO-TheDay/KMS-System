@@ -9,7 +9,11 @@ public interface GenerateUserService {
 
     GenerateUser selectByUserId(Long userId);
 
+    List<GenerateUser> selectActiveUsers();
+
     List<GenerateUser> selectNonAdminUsers();
+
+    int countActiveUsers();
 
     int register(String userName, String rawPassword);
 

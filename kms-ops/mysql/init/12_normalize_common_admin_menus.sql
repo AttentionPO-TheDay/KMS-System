@@ -11,9 +11,6 @@ WHERE menu_id = 108;
 UPDATE sys_menu SET menu_name = '角色管理', parent_id = 4, order_num = 1, path = 'role', component = 'system/role/index', icon = 'peoples', visible = '0', status = '0'
 WHERE menu_id = 101;
 
-UPDATE sys_menu SET menu_name = '菜单管理', parent_id = 4, order_num = 2, path = 'menu', component = 'system/menu/index', icon = 'tree-table', visible = '0', status = '0'
-WHERE menu_id = 102;
-
 UPDATE sys_menu SET menu_name = '表单构建', parent_id = 5, order_num = 1, path = 'build', component = 'tool/build/index', icon = 'build', visible = '0', status = '0'
 WHERE menu_id = 115;
 

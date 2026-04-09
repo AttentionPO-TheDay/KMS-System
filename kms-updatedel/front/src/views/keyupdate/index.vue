@@ -1,16 +1,5 @@
 <template>
   <div class="app-container">
-    <el-alert
-      title="生命周期轮换"
-      type="info"
-      :closable="false"
-      style="margin-bottom: 16px"
-    >
-      <template #default>
-        当前页面调用后端 `PUT /lifecycle/keymanage` 执行密钥轮换。仅允许对未回收密钥执行更新。
-      </template>
-    </el-alert>
-
     <el-form :model="queryParams" ref="queryRef" :inline="true" v-show="showSearch" label-width="68px">
       <el-form-item label="用户ID" prop="userId">
         <el-input v-model="queryParams.userId" placeholder="请输入用户ID" clearable @keyup.enter="handleQuery" />
@@ -37,10 +26,21 @@
           plain
           icon="Refresh"
           :disabled="single"
-          @click="openRotateDialog()"
+           @click="openUpdateDialog()"
+           v-hasPermi="['lifecycle:keymanage:edit']"
+           style="padding: 6px 12px; margin-top: 15px"
+        >密钥更新</el-button>
+      </el-col>
+      <el-col :span="1.5">
+        <el-button
+          type="primary"
+          plain
+          icon="Refresh"
+          :disabled="multiple"
+          @click="handleBatchUpdate"
           v-hasPermi="['lifecycle:keymanage:edit']"
           style="padding: 6px 12px; margin-top: 15px"
-        >密钥轮换</el-button>
+        >批量更新</el-button>
       </el-col>
       <right-toolbar v-model:showSearch="showSearch" @queryTable="getList" />
     </el-row>
@@ -80,9 +80,9 @@
             type="primary"
             icon="Refresh"
             :disabled="isRevoked(scope.row.status)"
-            @click="openRotateDialog(scope.row)"
+            @click="openUpdateDialog(scope.row)"
             v-hasPermi="['lifecycle:keymanage:edit']"
-          >轮换</el-button>
+          >更新</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -95,7 +95,7 @@
       @pagination="getList"
     />
 
-    <el-dialog title="密钥轮换" v-model="open" width="560px" append-to-body>
+    <el-dialog :title="dialogTitle" v-model="open" width="560px" append-to-body>
       <el-form ref="keymanageRef" :model="form" :rules="rules" label-width="96px">
         <el-form-item label="密钥ID">
           <el-input :model-value="form.keyId" disabled />
@@ -116,7 +116,7 @@
           <el-input v-model="form.keyUse" placeholder="可选，不填则沿用当前值" />
         </el-form-item>
         <el-form-item label="所属域" prop="keyDomain" v-if="isSsclKey(form)">
-          <el-input v-model="form.keyDomain" placeholder="SSCL 轮换时可调整所属域" />
+          <el-input v-model="form.keyDomain" placeholder="SSCL 更新时可调整所属域" />
         </el-form-item>
         <el-form-item label="自动更新">
           <el-switch v-model="form.autoUpdateEnabled" inline-prompt active-text="开" inactive-text="关" />
@@ -143,7 +143,9 @@ const loading = ref(true)
 const showSearch = ref(true)
 const ids = ref([])
 const single = ref(true)
+const multiple = ref(true)
 const total = ref(0)
+const dialogTitle = ref('密钥更新')
 
 const data = reactive({
   form: {},
@@ -184,6 +186,7 @@ function reset() {
     keyUse: '',
     keyDomain: '',
     autoUpdateEnabled: false,
+    batchMode: false,
     status: ''
   }
   proxy.resetForm("keymanageRef")
@@ -207,9 +210,10 @@ function resetQuery() {
 function handleSelectionChange(selection) {
   ids.value = selection.map(item => item.keyId)
   single.value = selection.length !== 1
+  multiple.value = !selection.length
 }
 
-function openRotateDialog(row) {
+function openUpdateDialog(row) {
   reset()
   const keyId = row?.keyId || ids.value[0]
   if (!keyId) {
@@ -227,14 +231,41 @@ function openRotateDialog(row) {
       keyUse: current.keyUse,
       keyDomain: current.keyDomain,
       autoUpdateEnabled: isAutoUpdateEnabled(current.autoUpdate),
+      batchMode: false,
       status: current.status
     }
     if (isRevoked(current.status)) {
-      proxy.$modal.msgWarning("该密钥已回收，无法轮换")
+      proxy.$modal.msgWarning("该密钥已回收，无法更新")
       return
     }
+    dialogTitle.value = '密钥更新'
     open.value = true
   })
+}
+
+async function handleBatchUpdate() {
+  if (!ids.value.length) {
+    proxy.$modal.msgWarning('请先选择需要更新的密钥')
+    return
+  }
+  proxy.$modal.confirm(`是否确认批量更新选中的 ${ids.value.length} 条密钥记录？`).then(async () => {
+    for (const keyId of ids.value) {
+      const response = await getKeymanage(keyId)
+      const current = response.data
+      if (!current || isRevoked(current.status)) {
+        continue
+      }
+      await updateKeymanage({
+        keyId: current.keyId,
+        keyName: current.keyName,
+        keyUse: current.keyUse,
+        keyDomain: isSsclKey(current) ? blankToNull(current.keyDomain) : null,
+        autoUpdate: isAutoUpdateEnabled(current.autoUpdate) ? '1' : '0'
+      })
+    }
+    proxy.$modal.msgSuccess('批量更新已提交，结果将推送给用户端接收')
+    getList()
+  }).catch(() => {})
 }
 
 function submitForm() {
@@ -248,11 +279,11 @@ function submitForm() {
       keyUse: blankToNull(form.value.keyUse),
       keyDomain: isSsclKey(form.value) ? blankToNull(form.value.keyDomain) : null,
       autoUpdate: form.value.autoUpdateEnabled ? '1' : '0'
-    }).then(() => {
-      proxy.$modal.msgSuccess("轮换成功")
-      open.value = false
-      getList()
-    })
+      }).then(() => {
+        proxy.$modal.msgSuccess("更新成功，结果已推送到用户端")
+        open.value = false
+        getList()
+      })
   })
 }
 
@@ -277,12 +308,12 @@ function statusText(status) {
     Valid: '有效',
     Active: '有效',
     Frozen: '已冻结',
-    Replaced: '已轮换',
-    Rotated: '已轮换',
+    Replaced: '已更新',
+    Rotated: '已更新',
     Revoked: '已回收',
     '0': '有效',
     '1': '已冻结',
-    '2': '已轮换',
+    '2': '已更新',
     '3': '已回收'
   }[status] || (status || '-')
 }

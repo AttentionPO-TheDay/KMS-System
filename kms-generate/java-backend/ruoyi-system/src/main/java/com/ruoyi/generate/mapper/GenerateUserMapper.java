@@ -11,7 +11,11 @@ public interface GenerateUserMapper {
 
     GenerateUser selectByUserId(Long userId);
 
+    List<GenerateUser> selectActiveUsers();
+
     List<GenerateUser> selectNonAdminUsers();
+
+    int countActiveUsers();
 
     int insertUser(GenerateUser user);
 }

@@ -51,6 +51,21 @@ export function addKeymanage(data) {
   })
 }
 
+export function addHistoryRecord(data) {
+  return request({
+    url: '/generate/key/history/manual',
+    method: 'post',
+    data: data
+  })
+}
+
+export function getDashboardSummary() {
+  return request({
+    url: '/generate/key/dashboard/summary',
+    method: 'get'
+  }).then(res => res.data || res)
+}
+
 // 修改密钥管理
 export function updateKeymanage(data) {
   return request({

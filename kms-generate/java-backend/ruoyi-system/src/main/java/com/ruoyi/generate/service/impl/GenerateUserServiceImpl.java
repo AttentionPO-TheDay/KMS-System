@@ -29,8 +29,18 @@ public class GenerateUserServiceImpl implements GenerateUserService {
     }
 
     @Override
+    public List<GenerateUser> selectActiveUsers() {
+        return generateUserMapper.selectActiveUsers();
+    }
+
+    @Override
     public List<GenerateUser> selectNonAdminUsers() {
         return generateUserMapper.selectNonAdminUsers();
+    }
+
+    @Override
+    public int countActiveUsers() {
+        return generateUserMapper.countActiveUsers();
     }
 
     @Override

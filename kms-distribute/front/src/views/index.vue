@@ -1,13 +1,21 @@
 <template>
-  <div class="dashboard-container">
+  <div v-loading="loading" class="dashboard-container">
     <div class="page-title">
       <h1>抗量子密钥分发系统仪表盘</h1>
-      <p class="subtitle">实时监控抗量子密钥下发网络状态与分发数据</p>
+      <p class="subtitle">展示分发记录、链上回填结果与近 7 天事件趋势，全部来自当前真实分发数据链。</p>
     </div>
 
-    <!-- 统计卡片区 -->
+    <el-alert
+      v-if="errorMessage"
+      :title="errorMessage"
+      type="error"
+      show-icon
+      :closable="false"
+      class="error-alert"
+    />
+
     <el-row :gutter="20" class="stat-cards">
-      <el-col :span="6" v-for="(stat, index) in statsList" :key="index">
+      <el-col :span="6" v-for="stat in statsList" :key="stat.title">
         <div class="stat-card">
           <div class="stat-icon-wrapper" :class="stat.colorClass">
             <el-icon><component :is="stat.icon" /></el-icon>
@@ -17,54 +25,87 @@
             <div class="stat-title">{{ stat.title }}</div>
             <div class="stat-value">
               <span class="num">{{ stat.value }}</span>
-              <span class="unit" v-if="stat.unit">{{ stat.unit }}</span>
+              <span v-if="stat.unit" class="unit">{{ stat.unit }}</span>
             </div>
-            <div class="stat-trend" :class="stat.trend > 0 ? 'up' : 'down'">
-              <el-icon><Top v-if="stat.trend > 0"/><Bottom v-else/></el-icon>
-              <span>{{ Math.abs(stat.trend) }}% 较昨日</span>
-            </div>
+            <div class="stat-desc">{{ stat.description }}</div>
           </div>
         </div>
       </el-col>
     </el-row>
 
-    <!-- 图表区 -->
-    <el-row :gutter="20" class="chart-section" style="margin-top: 20px;">
+    <el-row :gutter="20" class="chart-section">
       <el-col :span="16">
         <div class="glass-card">
-          <div class="card-header">近7天密钥分发趋势</div>
-          <div class="chart-container" ref="lineChartRef"></div>
+          <div class="card-header">近 7 天分发与链上回填趋势</div>
+          <div ref="trendChartRef" class="chart-container"></div>
         </div>
       </el-col>
       <el-col :span="8">
         <div class="glass-card">
-          <div class="card-header">分发状态统计</div>
-          <div class="chart-container" ref="pieChartRef"></div>
+          <div class="card-header">近 7 天分发类型分布</div>
+          <div ref="typeChartRef" class="chart-container"></div>
         </div>
       </el-col>
     </el-row>
 
-    <!-- 底部区域 -->
-    <el-row :gutter="20" class="action-section" style="margin-top: 20px;">
+    <el-row :gutter="20" class="chart-section">
+      <el-col :span="24">
+        <div class="glass-card">
+          <div class="card-header">近 7 天算法分布</div>
+          <div ref="algorithmChartRef" class="chart-container algorithm-chart"></div>
+        </div>
+      </el-col>
+    </el-row>
+
+    <el-row :gutter="20" class="table-section">
+      <el-col :span="12">
+        <div class="glass-card table-card">
+          <div class="card-header">最近链上失败记录</div>
+          <el-table :data="recentFailures" empty-text="暂无失败记录">
+            <el-table-column label="记录ID" prop="recordId" width="90" />
+            <el-table-column label="密钥名称" prop="keyName" min-width="140" show-overflow-tooltip />
+            <el-table-column label="分发类型" width="110">
+              <template #default="scope">{{ formatType(scope.row.distributeType) }}</template>
+            </el-table-column>
+            <el-table-column label="分发时间" prop="distributeTime" width="170" />
+            <el-table-column label="失败原因" prop="remark" min-width="180" show-overflow-tooltip />
+          </el-table>
+        </div>
+      </el-col>
+      <el-col :span="12">
+        <div class="glass-card table-card">
+          <div class="card-header">最近链上回填记录</div>
+          <el-table :data="recentChainResults" empty-text="暂无链上回填记录">
+            <el-table-column label="记录ID" prop="recordId" width="90" />
+            <el-table-column label="密钥名称" prop="keyName" min-width="140" show-overflow-tooltip />
+            <el-table-column label="区块高度" prop="blockHeight" width="110" />
+            <el-table-column label="分发时间" prop="distributeTime" width="170" />
+            <el-table-column label="链上Hash" prop="chainHash" min-width="180" show-overflow-tooltip />
+          </el-table>
+        </div>
+      </el-col>
+    </el-row>
+
+    <el-row :gutter="20" class="action-section">
       <el-col :span="24">
         <div class="glass-card">
           <div class="card-header">快捷操作入口</div>
           <div class="action-grid">
-            <div class="action-btn primary" @click="$router.push('/distribute/record')">
+            <div class="action-btn primary" @click="router.push('/distribute/record')">
               <el-icon><List /></el-icon>
               <div class="btn-text">分发记录查询</div>
             </div>
-            <div class="action-btn success">
-              <el-icon><RefreshRight /></el-icon>
-              <div class="btn-text">失败重试</div>
+            <div class="action-btn success" @click="router.push('/distribute/record')">
+              <el-icon><CircleCheck /></el-icon>
+              <div class="btn-text">链上结果追踪</div>
             </div>
-            <div class="action-btn warning">
+            <div class="action-btn warning" @click="router.push('/distribute/record')">
+              <el-icon><Warning /></el-icon>
+              <div class="btn-text">查看失败记录</div>
+            </div>
+            <div class="action-btn info" @click="router.push('/distribute/record')">
               <el-icon><DataAnalysis /></el-icon>
-              <div class="btn-text">吞吐量监控</div>
-            </div>
-            <div class="action-btn info">
-              <el-icon><Setting /></el-icon>
-              <div class="btn-text">分发节点配置</div>
+              <div class="btn-text">全量分发分析</div>
             </div>
           </div>
         </div>
@@ -74,119 +115,273 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, onUnmounted, markRaw } from 'vue'
-import { Promotion, DataLine, Odometer, CircleCheck, Top, Bottom, List, RefreshRight, DataAnalysis, Setting } from '@element-plus/icons-vue'
+import { computed, markRaw, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { Promotion, DataLine, CircleCheck, Warning, List, DataAnalysis } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
-import { listKeyDistributeRecord } from '@/api/distribute/record'
+import { getDashboardOverview } from '@/api/distribute/dashboard'
 
-const lineChartRef = ref(null)
-const pieChartRef = ref(null)
-let lineChart = null
-let pieChart = null
+const router = useRouter()
+const loading = ref(false)
+const errorMessage = ref('')
+const overview = ref({})
+const trendChartRef = ref(null)
+const typeChartRef = ref(null)
+const algorithmChartRef = ref(null)
 
-const statsList = reactive([
-  { title: '累计下发密钥', value: 0, trend: 15.2, icon: markRaw(Promotion), colorClass: 'blue' },
-  { title: '今日分发总数', value: 342, trend: 12.3, icon: markRaw(DataLine), colorClass: 'green' },
-  { title: '正在分发队列', value: 12, trend: -5.1, icon: markRaw(Odometer), colorClass: 'orange' },
-  { title: '分发成功率', value: 99.8, trend: 0.1, icon: markRaw(CircleCheck), colorClass: 'purple', unit: '%' }
-])
+let trendChart = null
+let typeChart = null
+let algorithmChart = null
 
-const initData = async () => {
+const summary = computed(() => overview.value.summary || {})
+const recentFailures = computed(() => overview.value.recentFailures || [])
+const recentChainResults = computed(() => overview.value.recentChainResults || [])
+
+const trendData = computed(() => fillTrendPoints(overview.value.trend || []))
+const typeDistribution = computed(() => overview.value.typeDistribution || [])
+const algorithmDistribution = computed(() => overview.value.algorithmDistribution || [])
+
+const completionRate = computed(() => {
+  const total = trendData.value.reduce((sum, item) => sum + item.totalCount, 0)
+  if (!total) {
+    return 0
+  }
+  const completed = trendData.value.reduce((sum, item) => sum + item.chainCompletedCount, 0)
+  return Number(((completed / total) * 100).toFixed(1))
+})
+
+const weeklyFailures = computed(() => trendData.value.reduce((sum, item) => sum + item.chainFailedCount, 0))
+
+const statsList = computed(() => ([
+  {
+    title: '累计分发事件',
+    value: summary.value.totalRecords || 0,
+    description: '来自生成、更新、回收三类事件落表总量',
+    icon: markRaw(Promotion),
+    colorClass: 'blue'
+  },
+  {
+    title: '今日新增分发',
+    value: summary.value.todayRecords || 0,
+    description: '按 distribute_time 统计今天新增记录',
+    icon: markRaw(DataLine),
+    colorClass: 'green'
+  },
+  {
+    title: '近7日链上完成率',
+    value: completionRate.value,
+    unit: '%',
+    description: '按链上回填 hash 或区块高度计算',
+    icon: markRaw(CircleCheck),
+    colorClass: 'purple'
+  },
+  {
+    title: '近7日链上失败数',
+    value: weeklyFailures.value,
+    description: '按 remark 中的上链失败记录汇总',
+    icon: markRaw(Warning),
+    colorClass: 'orange'
+  }
+]))
+
+async function loadOverview() {
+  loading.value = true
+  errorMessage.value = ''
   try {
-    const res = await listKeyDistributeRecord()
-    if (res && res.total !== undefined) {
-      statsList[0].value = res.total
-    }
+    const response = await getDashboardOverview()
+    overview.value = response.data || {}
+    await nextTick()
+    initCharts()
   } catch (error) {
-    console.error('获取统计数据失败', error)
+    errorMessage.value = error?.message || '仪表盘数据加载失败'
+  } finally {
+    loading.value = false
   }
 }
 
-const initCharts = () => {
-  const textColor = 'rgba(255, 255, 255, 0.7)'
-  const splitLineColor = 'rgba(255, 255, 255, 0.1)'
+function initCharts() {
+  initTrendChart()
+  initTypeChart()
+  initAlgorithmChart()
+}
 
-  lineChart = echarts.init(lineChartRef.value)
-  lineChart.setOption({
-    tooltip: { trigger: 'axis', backgroundColor: 'rgba(15,23,30,0.9)', borderColor: '#00e5ff', textStyle: { color: '#fff' } },
-    legend: { data: ['成功分发', '失败重试'], textStyle: { color: textColor } },
+function initTrendChart() {
+  if (!trendChartRef.value) {
+    return
+  }
+  if (!trendChart) {
+    trendChart = echarts.init(trendChartRef.value)
+  }
+
+  const points = trendData.value
+  trendChart.setOption({
+    tooltip: { trigger: 'axis', backgroundColor: 'rgba(15,23,30,0.92)', borderColor: '#00e5ff', textStyle: { color: '#fff' } },
+    legend: { data: ['分发事件', '链上完成', '链上失败'], textStyle: { color: 'rgba(255,255,255,0.72)' } },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
-    xAxis: { 
-      type: 'category', 
-      boundaryGap: false, 
-      data: ['周一', '周二', '周三', '周四', '周五', '周六', '周日'],
-      axisLabel: { color: textColor }
+    xAxis: {
+      type: 'category',
+      data: points.map((item) => item.label),
+      axisLabel: { color: 'rgba(255,255,255,0.72)' },
+      axisLine: { lineStyle: { color: 'rgba(255,255,255,0.16)' } }
     },
-    yAxis: { 
+    yAxis: {
       type: 'value',
-      axisLabel: { color: textColor },
-      splitLine: { lineStyle: { color: splitLineColor } }
+      axisLabel: { color: 'rgba(255,255,255,0.72)' },
+      splitLine: { lineStyle: { color: 'rgba(255,255,255,0.08)' } }
     },
     series: [
       {
-        name: '成功分发', type: 'line', smooth: true,
+        name: '分发事件',
+        type: 'line',
+        smooth: true,
         itemStyle: { color: '#00e5ff' },
         areaStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: 'rgba(0,229,255,0.3)' },
+            { offset: 0, color: 'rgba(0,229,255,0.28)' },
             { offset: 1, color: 'rgba(0,229,255,0)' }
           ])
         },
-        data: [150, 232, 201, 154, 190, 330, 210]
+        data: points.map((item) => item.totalCount)
       },
       {
-        name: '失败重试', type: 'line', smooth: true,
-        itemStyle: { color: '#f56c6c' },
-        data: [5, 12, 11, 4, 9, 3, 10]
-      }
-    ]
-  })
-
-  pieChart = echarts.init(pieChartRef.value)
-  pieChart.setOption({
-    tooltip: { trigger: 'item', backgroundColor: 'rgba(15,23,30,0.9)', borderColor: '#0099ff', textStyle: { color: '#fff' } },
-    legend: { bottom: '0%', left: 'center', textStyle: { color: textColor } },
-    series: [
+        name: '链上完成',
+        type: 'line',
+        smooth: true,
+        itemStyle: { color: '#67c23a' },
+        data: points.map((item) => item.chainCompletedCount)
+      },
       {
-        name: '分发状态',
-        type: 'pie',
-        radius: ['45%', '70%'],
-        avoidLabelOverlap: false,
-        itemStyle: { borderRadius: 10, borderColor: 'rgba(0,0,0,0.5)', borderWidth: 2 },
-        label: { show: false, position: 'center' },
-        emphasis: { label: { show: true, fontSize: 20, fontWeight: 'bold' } },
-        labelLine: { show: false },
-        data: [
-          { value: 890, name: '已分发', itemStyle: { color: '#00e5ff' } },
-          { value: 92, name: '分发中', itemStyle: { color: '#0099ff' } },
-          { value: 18, name: '响应超时', itemStyle: { color: '#e6a23c' } },
-          { value: 3, name: '分发失败', itemStyle: { color: '#f56c6c' } }
-        ]
+        name: '链上失败',
+        type: 'line',
+        smooth: true,
+        itemStyle: { color: '#f56c6c' },
+        data: points.map((item) => item.chainFailedCount)
       }
     ]
   })
 }
 
-const resizeHandler = () => {
-  if (lineChart) lineChart.resize()
-  if (pieChart) pieChart.resize()
+function initTypeChart() {
+  if (!typeChartRef.value) {
+    return
+  }
+  if (!typeChart) {
+    typeChart = echarts.init(typeChartRef.value)
+  }
+
+  const data = typeDistribution.value.length
+    ? typeDistribution.value.map((item, index) => ({
+        value: item.value,
+        name: item.label,
+        itemStyle: { color: ['#00e5ff', '#0099ff', '#9c27b0', '#e6a23c'][index % 4] }
+      }))
+    : [{ value: 1, name: '暂无数据', itemStyle: { color: 'rgba(255,255,255,0.16)' } }]
+
+  typeChart.setOption({
+    tooltip: { trigger: 'item', backgroundColor: 'rgba(15,23,30,0.92)', borderColor: '#00e5ff', textStyle: { color: '#fff' } },
+    legend: { bottom: '0%', left: 'center', textStyle: { color: 'rgba(255,255,255,0.72)' } },
+    series: [{
+      type: 'pie',
+      radius: ['42%', '70%'],
+      itemStyle: { borderRadius: 12, borderColor: 'rgba(0,0,0,0.4)', borderWidth: 2 },
+      label: { color: '#fff', formatter: '{b}\n{d}%' },
+      data
+    }]
+  })
+}
+
+function initAlgorithmChart() {
+  if (!algorithmChartRef.value) {
+    return
+  }
+  if (!algorithmChart) {
+    algorithmChart = echarts.init(algorithmChartRef.value)
+  }
+
+  const data = algorithmDistribution.value
+  algorithmChart.setOption({
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, backgroundColor: 'rgba(15,23,30,0.92)', borderColor: '#00e5ff', textStyle: { color: '#fff' } },
+    grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
+    xAxis: {
+      type: 'category',
+      data: data.map((item) => item.label),
+      axisLabel: { color: 'rgba(255,255,255,0.72)', interval: 0, rotate: 18 },
+      axisLine: { lineStyle: { color: 'rgba(255,255,255,0.16)' } }
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: { color: 'rgba(255,255,255,0.72)' },
+      splitLine: { lineStyle: { color: 'rgba(255,255,255,0.08)' } }
+    },
+    series: [{
+      name: '事件数',
+      type: 'bar',
+      barWidth: 32,
+      itemStyle: {
+        borderRadius: [8, 8, 0, 0],
+        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+          { offset: 0, color: '#00e5ff' },
+          { offset: 1, color: '#0099ff' }
+        ])
+      },
+      data: data.map((item) => item.value)
+    }]
+  })
+}
+
+function fillTrendPoints(points) {
+  const pointMap = new Map((points || []).map((item) => [item.statDate, item]))
+  const result = []
+  for (let offset = 6; offset >= 0; offset -= 1) {
+    const date = new Date()
+    date.setDate(date.getDate() - offset)
+    const statDate = formatDate(date)
+    const source = pointMap.get(statDate) || {}
+    result.push({
+      statDate,
+      label: `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`,
+      totalCount: Number(source.totalCount || 0),
+      chainCompletedCount: Number(source.chainCompletedCount || 0),
+      chainFailedCount: Number(source.chainFailedCount || 0)
+    })
+  }
+  return result
+}
+
+function formatDate(date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function formatType(type) {
+  return { '1': '生成分发', '2': '更新分发', '3': '回收后补发' }[String(type)] || '未知类型'
+}
+
+function resizeHandler() {
+  if (trendChart) trendChart.resize()
+  if (typeChart) typeChart.resize()
+  if (algorithmChart) algorithmChart.resize()
 }
 
 onMounted(() => {
-  initData()
-  initCharts()
+  loadOverview()
   window.addEventListener('resize', resizeHandler)
 })
 
 onUnmounted(() => {
-  if (lineChart) lineChart.dispose()
-  if (pieChart) pieChart.dispose()
+  if (trendChart) trendChart.dispose()
+  if (typeChart) typeChart.dispose()
+  if (algorithmChart) algorithmChart.dispose()
   window.removeEventListener('resize', resizeHandler)
 })
 </script>
 
 <style scoped>
 .dashboard-container { padding: 24px; }
+
+.error-alert { margin-bottom: 20px; }
 
 .page-title { margin-bottom: 30px; }
 .page-title h1 {
@@ -277,15 +472,12 @@ onUnmounted(() => {
   font-size: 16px;
   color: rgba(255, 255, 255, 0.6);
 }
-.stat-trend {
-  display: flex;
-  align-items: center;
+.stat-desc {
+  margin-top: 10px;
   font-size: 13px;
-  margin-top: 8px;
-  gap: 4px;
+  color: rgba(255, 255, 255, 0.54);
+  line-height: 1.5;
 }
-.stat-trend.up { color: #67c23a; }
-.stat-trend.down { color: #f56c6c; }
 
 /* 玻璃面板通用样式 */
 .glass-card {
@@ -317,6 +509,37 @@ onUnmounted(() => {
 .chart-container {
   height: 320px;
   width: 100%;
+}
+
+.algorithm-chart {
+  height: 280px;
+}
+
+.chart-section,
+.table-section,
+.action-section {
+  margin-top: 20px;
+}
+
+.table-card :deep(.el-table),
+.table-card :deep(.el-table__inner-wrapper::before) {
+  background: transparent;
+}
+
+.table-card :deep(.el-table th.el-table__cell),
+.table-card :deep(.el-table tr),
+.table-card :deep(.el-table td.el-table__cell) {
+  background: transparent;
+  color: rgba(255, 255, 255, 0.82);
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+.table-card :deep(.el-table th.el-table__cell) {
+  color: rgba(255, 255, 255, 0.58);
+}
+
+.table-card :deep(.el-table__empty-text) {
+  color: rgba(255, 255, 255, 0.5);
 }
 
 .action-grid {
@@ -366,4 +589,20 @@ onUnmounted(() => {
 
 .action-btn.info:hover { border-color: rgba(156, 39, 176, 0.5); }
 .action-btn.info .el-icon { color: #9c27b0; }
+
+@media (max-width: 1200px) {
+  .action-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .dashboard-container {
+    padding: 16px;
+  }
+
+  .action-grid {
+    grid-template-columns: 1fr;
+  }
+}
 </style>

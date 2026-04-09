@@ -19,11 +19,6 @@ const constantRoutes = [
     hidden: true
   },
   {
-    path: '/register',
-    component: () => import('@/views/register.vue'),
-    hidden: true
-  },
-  {
     path: '/userKeys',
     component: () => import('@/views/userKeys/index.vue'),
     hidden: true
@@ -57,6 +52,19 @@ const constantRoutes = [
     ]
   },
   {
+    path: '/algorithm',
+    component: Layout,
+    hidden: false,
+    children: [
+      {
+        path: 'quick-view',
+        component: () => import('@/views/algorithm/quickView.vue'),
+        name: 'AlgorithmQuickView',
+        meta: { title: '生成算法速览', icon: 'guide' }
+      }
+    ]
+  },
+  {
     path: '/user',
     component: Layout,
     hidden: true,
@@ -79,7 +87,7 @@ const constantRoutes = [
         path: 'index',
         component: () => import('@/views/permission/request/index.vue'),
         name: 'GeneratePermissionRequest',
-        meta: { title: '生成域权限审批', icon: 'edit' }
+        meta: { title: '系统权限审批', icon: 'edit' }
       }
     ]
   },

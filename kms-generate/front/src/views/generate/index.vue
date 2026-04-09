@@ -21,7 +21,7 @@
 
     <el-row :gutter="10" class="mb8">
       <el-col :span="1.5">
-        <el-button type="primary" plain icon="Plus" @click="handleAdd" v-hasPermi="['keymanage:keymanage:add']" style="padding: 6px 12px; margin-top: 15px;">密钥生成</el-button>
+        <el-button type="primary" plain icon="View" @click="handleAdd" v-hasPermi="['keymanage:keymanage:add']" style="padding: 6px 12px; margin-top: 15px;">生成信息</el-button>
       </el-col>
       <right-toolbar v-model:showSearch="showSearch" @queryTable="getList"></right-toolbar>
     </el-row>
@@ -46,37 +46,25 @@
 
     <pagination v-show="total>0" :total="total" v-model:page="queryParams.pageNum" v-model:limit="queryParams.pageSize" @pagination="getList" />
 
-    <el-dialog :title="title" v-model="open" width="500px" append-to-body>
+    <el-dialog :title="title" v-model="open" width="480px" append-to-body>
       <el-form ref="keymanageRef" :model="form" :rules="rules" label-width="80px">
-        <el-form-item label="选择用户" prop="userId">
-          <el-select v-model="form.userId" placeholder="请选择用户" filterable>
-            <el-option v-for="user in userList" :key="user.userId" :label="`${user.userName} (ID: ${user.userId})`" :value="user.userId" />
-          </el-select>
-        </el-form-item>
         <el-form-item label="加密算法类型" prop="encrytType">
-          <el-select v-model="form.encrytType" placeholder="请选择加密算法类型" @change="handleEncrytTypeChange">
+          <el-select v-model="form.encrytType" placeholder="请选择加密算法类型" @change="handleEncrytTypeChange" style="width: 100%">
             <el-option label="无证书非对称加密" value="无证书非对称加密" />
           </el-select>
         </el-form-item>
         <el-form-item label="加密算法名称" prop="encrytName">
-          <el-select v-model="form.encrytName" placeholder="请选择加密算法名称">
+          <el-select v-model="form.encrytName" placeholder="请选择加密算法名称" style="width: 100%">
             <el-option v-for="option in encrytNameOptions" :key="option.value" :label="option.label" :value="option.value" />
           </el-select>
         </el-form-item>
-        <el-form-item label="密钥名称" prop="keyName">
-          <el-input v-model="form.keyName" placeholder="请输入密钥名称" />
-        </el-form-item>
-        <el-form-item label="密钥用途" prop="keyUse">
-          <el-input v-model="form.keyUse" placeholder="请输入密钥用途" />
-        </el-form-item>
-        <el-form-item label="密钥所属域(SSCL)" prop="keyDomain">
+        <el-form-item label="密钥所属域" prop="keyDomain">
           <el-input v-model="form.keyDomain" placeholder="请输入密钥所属域" />
         </el-form-item>
       </el-form>
       <template #footer>
         <div class="dialog-footer">
-          <el-button type="primary" @click="submitForm">确 定</el-button>
-          <el-button @click="cancel">取 消</el-button>
+          <el-button type="primary" @click="open = false">我知道了</el-button>
         </div>
       </template>
     </el-dialog>
@@ -140,15 +128,11 @@
 </template>
 
 <script setup name="KeyGenerate">
-import { listKeymanage, getKeymanage, delKeymanage, addKeymanage, updateKeymanage } from "@/api/generate/keymanage"
-import { listNonAdminUsers } from "@/api/system/user"
-import useUserStore from '@/store/modules/user'
+import { listKeymanage } from "@/api/generate/keymanage"
 
 const { proxy } = getCurrentInstance()
-const userStore = useUserStore()
 
 const keymanageList = ref([])
-const userList = ref([])
 const open = ref(false)
 const loading = ref(true)
 const showSearch = ref(true)
@@ -179,12 +163,9 @@ const data = reactive({
     status: null
   },
   rules: {
-    userId: [{ required: true, message: "用户ID不能为空", trigger: "blur" }],
-    userName: [{ required: true, message: "用户名不能为空", trigger: "blur" }],
     encrytType: [{ required: true, message: "加密算法类型不能为空", trigger: "change" }],
     encrytName: [{ required: true, message: "加密算法名称不能为空", trigger: "blur" }],
-    keyName: [{ required: true, message: "密钥名称不能为空", trigger: "blur" }],
-    keyUse: [{ required: true, message: "密钥用途不能为空", trigger: "blur" }]
+    keyDomain: [{ required: true, message: "密钥所属域不能为空", trigger: "blur" }]
   }
 })
 
@@ -203,12 +184,13 @@ function cancel() { open.value = false; reset() }
 
 function reset() {
   form.value = {
-    keyId: null, userId: null, userName: 'null', encrytType: '无证书非对称加密', encrytName: null,
-    keyName: null, keyUse: null, keyValue: null, creTime: null, updTime: null,
-    autoUpdate: 'false', status: 'null'
+    encrytType: '无证书非对称加密',
+    encrytName: 'SM2',
+    keyDomain: 'A'
   }
   proxy.resetForm("keymanageRef")
   handleEncrytTypeChange('无证书非对称加密')
+  form.value.encrytName = 'SM2'
 }
 
 function handleQuery() { queryParams.value.pageNum = 1; getList() }
@@ -223,9 +205,8 @@ function handleSelectionChange(selection) {
 
 function handleAdd() {
   reset()
-  listNonAdminUsers().then(response => { userList.value = response.data || [] })
   open.value = true
-  title.value = "添加密钥管理"
+  title.value = "生成信息"
 }
 
 function handleViewDetails(row) {
@@ -247,29 +228,6 @@ function copyDetailInfo() {
     textToCopy += `Key Value: ${info.keyValue}`
   }
   navigator.clipboard.writeText(textToCopy).then(() => { proxy.$modal.msgSuccess("信息已复制到剪贴板") }).catch(() => { proxy.$modal.msgError("复制失败，请手动复制") })
-}
-
-function submitForm() {
-  proxy.$refs["keymanageRef"].validate(valid => {
-    if (valid) {
-      const request = form.value.keyId != null ? updateKeymanage(form.value) : addKeymanage(form.value)
-      request.then(() => {
-        proxy.$modal.msgSuccess(form.value.keyId != null ? "更新请求已提交，正在后台处理" : "生成请求已提交，正在后台处理")
-        open.value = false
-        scheduleRefresh()
-      })
-    }
-  })
-}
-
-function scheduleRefresh() {
-  getList()
-  window.setTimeout(() => {
-    getList()
-  }, 1200)
-  window.setTimeout(() => {
-    getList()
-  }, 3500)
 }
 
 function handleEncrytTypeChange(value) {

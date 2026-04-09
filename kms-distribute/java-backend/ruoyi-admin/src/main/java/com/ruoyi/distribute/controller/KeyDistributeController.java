@@ -1,5 +1,6 @@
 package com.ruoyi.distribute.controller;
 
+import com.ruoyi.common.utils.SecurityUtils;
 import java.util.List;
 import javax.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,6 +38,7 @@ public class KeyDistributeController extends BaseController {
     @PreAuthorize("isAuthenticated()")
     @GetMapping("/list")
     public TableDataInfo list(KeyDistributeRecord record) {
+        bindCurrentUserScope(record);
         startPage();
         List<KeyDistributeRecord> list = keyDistributeService.selectKeyDistributeRecordList(record);
         return getDataTable(list);
@@ -49,6 +51,7 @@ public class KeyDistributeController extends BaseController {
     @Log(title = "密钥分发记录", businessType = BusinessType.EXPORT)
     @PostMapping("/export")
     public void export(HttpServletResponse response, KeyDistributeRecord record) {
+        bindCurrentUserScope(record);
         List<KeyDistributeRecord> list = keyDistributeService.selectKeyDistributeRecordList(record);
         ExcelUtil<KeyDistributeRecord> util = new ExcelUtil<KeyDistributeRecord>(KeyDistributeRecord.class);
         util.exportExcel(response, list, "密钥分发记录数据");
@@ -60,7 +63,14 @@ public class KeyDistributeController extends BaseController {
     @PreAuthorize("isAuthenticated()")
     @GetMapping("/{recordId}")
     public AjaxResult getInfo(@PathVariable("recordId") Long recordId) {
-        return success(keyDistributeService.selectKeyDistributeRecordById(recordId));
+        KeyDistributeRecord record = keyDistributeService.selectKeyDistributeRecordById(recordId);
+        if (record == null) {
+            return AjaxResult.error(404, "分发记录不存在");
+        }
+        if (!canAccess(record)) {
+            return AjaxResult.error("无权访问该分发记录");
+        }
+        return success(record);
     }
 
     /**
@@ -107,5 +117,18 @@ public class KeyDistributeController extends BaseController {
     @DeleteMapping("/{recordId}")
     public AjaxResult remove(@PathVariable Long recordId) {
         return toAjax(keyDistributeService.deleteKeyDistributeRecordById(recordId));
+    }
+
+    private void bindCurrentUserScope(KeyDistributeRecord record) {
+        if (record == null || SecurityUtils.isAdmin(getUserId())) {
+            return;
+        }
+        record.setUserId(getUserId());
+        record.setUserName(null);
+    }
+
+    private boolean canAccess(KeyDistributeRecord record) {
+        return SecurityUtils.isAdmin(getUserId())
+                || record.getUserId() != null && record.getUserId().equals(getUserId());
     }
 }

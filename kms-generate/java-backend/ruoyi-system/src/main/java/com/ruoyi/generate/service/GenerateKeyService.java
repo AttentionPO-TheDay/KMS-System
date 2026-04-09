@@ -32,6 +32,8 @@ public interface GenerateKeyService {
 
     int insertKey(Keymanage keymanage);
 
+    int insertHistoryRecord(Keymanage keymanage);
+
     int updateKey(Keymanage keymanage);
 
     int deleteKey(Long keyId);

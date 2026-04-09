@@ -18,12 +18,6 @@ WHERE NOT EXISTS (
 );
 
 INSERT INTO sys_role_menu (role_id, menu_id)
-SELECT 1, 102
-WHERE NOT EXISTS (
-  SELECT 1 FROM sys_role_menu WHERE role_id = 1 AND menu_id = 102
-);
-
-INSERT INTO sys_role_menu (role_id, menu_id)
 SELECT 1, 108
 WHERE NOT EXISTS (
   SELECT 1 FROM sys_role_menu WHERE role_id = 1 AND menu_id = 108

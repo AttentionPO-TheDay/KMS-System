@@ -170,6 +170,20 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         where key_id = #{keyId}
     </update>
 
+    <select id="selectAutoUpdateCandidates" resultMap="keymanageResult">
+        <include refid="selectKeymanageVo"/>
+        where auto_update = '1'
+          and status != '3'
+          and (upd_time is null or upd_time &lt;= #{cutoffTime})
+        order by upd_time asc, key_id asc
+    </select>
+
+    <select id="countAutoUpdateEnabled" resultType="int">
+        select count(1)
+        from keymanage
+        where auto_update = '1' and status != '3'
+    </select>
+
     <delete id="deletekeymanageByKeyId" parameterType="Long">
         delete from keymanage where key_id = #{keyId}
     </delete>

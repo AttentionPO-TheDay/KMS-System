@@ -52,9 +52,6 @@
           <span v-if="!loading">登 录</span>
           <span v-else>登 录 中...</span>
         </el-button>
-        <div style="float: right;" v-if="register">
-          <router-link class="link-type" :to="'/register'">立即注册</router-link>
-        </div>
       </el-form-item>
     </el-form>
   </div>
@@ -90,7 +87,6 @@ const loginRules = {
 const codeUrl = ref("")
 const loading = ref(false)
 const captchaEnabled = ref(true)
-const register = ref(true)
 const redirect = ref(undefined)
 
 watch(route, (newRoute) => {

@@ -2,8 +2,8 @@
   <section class="page lifecycle-page">
     <div class="page-header">
       <p class="eyebrow">Updatedel</p>
-      <h2>动态更新与回收</h2>
-      <p>恢复更新与回收主工作流，集中处理我的密钥、密钥轮换、逻辑回收与自动更新配置。</p>
+      <h2>密钥更新与回收</h2>
+      <p>集中处理我的密钥、手动更新、密钥回收、自动更新与结果查询接收。</p>
     </div>
 
     <article class="panel">
@@ -35,6 +35,7 @@
         <el-button type="success" :disabled="selectedIds.length !== 1" @click="openUpdateDialog()">密钥更新</el-button>
         <el-button type="danger" :disabled="selectedIds.length === 0" @click="handleRevoke()">密钥回收</el-button>
         <el-button type="warning" plain @click="activeTab = 'autoupdate'">密钥自动更新</el-button>
+        <el-button type="primary" plain @click="activeTab = 'results'">查询与接收</el-button>
         <RouterLink class="inline-link" to="/permissions">进入权限申请</RouterLink>
       </div>
     </article>
@@ -75,6 +76,11 @@
             <el-table-column label="状态" align="center" width="110">
               <template #default="scope">
                 <el-tag :type="statusTagType(scope.row.status)">{{ statusText(scope.row.status) }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="上链状态" align="center" width="110">
+              <template #default="scope">
+                <el-tag :type="chainStatusType(scope.row.chainStatus)">{{ chainStatusText(scope.row.chainStatus) }}</el-tag>
               </template>
             </el-table-column>
             <el-table-column label="更新时间" align="center" prop="updTime" width="180" />
@@ -186,6 +192,74 @@
           />
         </article>
       </el-tab-pane>
+
+      <el-tab-pane label="查询与接收" name="results">
+        <article class="panel">
+          <el-form :model="resultQuery" inline label-width="88px" class="query-form">
+            <el-form-item label="操作类型">
+              <el-select v-model="resultQuery.actionType" placeholder="全部" clearable>
+                <el-option label="密钥更新" value="UPDATE" />
+                <el-option label="密钥回收" value="REVOKE" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="接收状态">
+              <el-select v-model="resultQuery.receiveStatus" placeholder="全部" clearable>
+                <el-option label="待接收" value="0" />
+                <el-option label="已接收" value="1" />
+              </el-select>
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" @click="searchResults">搜索</el-button>
+              <el-button @click="resetResults">重置</el-button>
+            </el-form-item>
+          </el-form>
+
+          <el-table v-loading="resultLoading" :data="resultList">
+            <el-table-column label="记录ID" prop="recordId" width="90" />
+            <el-table-column label="密钥ID" prop="keyId" width="90" />
+            <el-table-column label="密钥名称" prop="keyName" min-width="140" />
+            <el-table-column label="操作类型" width="110">
+              <template #default="scope">{{ actionTypeText(scope.row.actionType) }}</template>
+            </el-table-column>
+            <el-table-column label="来源" width="110">
+              <template #default="scope">{{ actionSourceText(scope.row.actionSource) }}</template>
+            </el-table-column>
+            <el-table-column label="结果" width="100">
+              <template #default="scope">
+                <el-tag :type="resultStatusType(scope.row.resultStatus)">{{ resultStatusText(scope.row.resultStatus) }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="接收状态" width="110">
+              <template #default="scope">
+                <el-tag :type="scope.row.receiveStatus === '1' ? 'success' : 'warning'">{{ scope.row.receiveStatus === '1' ? '已接收' : '待接收' }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="结果说明" prop="resultMessage" min-width="160" show-overflow-tooltip />
+            <el-table-column label="操作时间" width="180">
+              <template #default="scope">{{ formatDateTime(scope.row.actionTime) }}</template>
+            </el-table-column>
+            <el-table-column label="操作" width="150" fixed="right">
+              <template #default="scope">
+                <el-button link @click="showDetail(scope.row.keyId)">详情</el-button>
+                <el-button
+                  v-if="scope.row.receiveStatus !== '1' && scope.row.resultStatus !== '0'"
+                  link
+                  type="primary"
+                  @click="receiveResult(scope.row)"
+                >接收</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+
+          <pagination
+            v-show="resultTotal > 0"
+            :total="resultTotal"
+            v-model:page="resultQuery.pageNum"
+            v-model:limit="resultQuery.pageSize"
+            @pagination="loadResultList"
+          />
+        </article>
+      </el-tab-pane>
     </el-tabs>
 
     <el-dialog v-model="updateDialogOpen" title="密钥更新" width="520px" append-to-body>
@@ -231,6 +305,8 @@
         <p><strong>自动更新：</strong>{{ autoUpdateText(selectedKey.autoUpdate) }}</p>
         <p><strong>状态：</strong>{{ statusText(selectedKey.status) }}</p>
         <p><strong>版本：</strong>{{ selectedKey.version ?? '-' }}</p>
+        <p><strong>上链状态：</strong>{{ chainStatusText(selectedKey.chainStatus) }}</p>
+        <p><strong>交易哈希：</strong>{{ selectedKey.chainHash || '-' }}</p>
         <p><strong>创建时间：</strong>{{ selectedKey.creTime || '-' }}</p>
         <p><strong>更新时间：</strong>{{ selectedKey.updTime || '-' }}</p>
       </div>
@@ -245,6 +321,8 @@ import { getLatestApprovedTemporaryRequest, rollbackPermission } from '@/service
 import {
   getLifecycleKey,
   listLifecycleKeys,
+  listLifecycleOperationRecords,
+  receiveLifecycleOperationRecord,
   revokeLifecycleKey,
   updateLifecycleAutoUpdate,
   updateLifecycleKey
@@ -310,6 +388,16 @@ const updateRules = {
 const selectedKey = ref(null)
 const detailDialogOpen = ref(false)
 const approvedAutoUpdateRequestId = ref(null)
+const resultList = ref([])
+const resultLoading = ref(false)
+const resultTotal = ref(0)
+
+const resultQuery = reactive({
+  pageNum: 1,
+  pageSize: 10,
+  actionType: '',
+  receiveStatus: ''
+})
 
 const canManageAutoUpdate = computed(() => Number(profile.roleLevel) <= 0)
 const showAutoUpdateRollback = computed(() => canManageAutoUpdate.value && Boolean(approvedAutoUpdateRequestId.value))
@@ -343,6 +431,9 @@ watch(activeTab, async (tab) => {
     await loadAutoUpdateKeys()
     await loadAutoUpdatePermissionState()
   }
+  if (tab === 'results') {
+    await loadResultList()
+  }
 })
 
 onMounted(async () => {
@@ -350,6 +441,9 @@ onMounted(async () => {
   await loadMyKeys()
   if (activeTab.value === 'autoupdate') {
     await loadAutoUpdateKeys()
+  }
+  if (activeTab.value === 'results') {
+    await loadResultList()
   }
 })
 
@@ -462,12 +556,45 @@ function resetAutoUpdate() {
 }
 
 function reloadCurrentTab() {
+  if (activeTab.value === 'results') {
+    loadResultList()
+    return
+  }
   if (activeTab.value === 'autoupdate') {
     loadAutoUpdateKeys()
     loadAutoUpdatePermissionState()
     return
   }
   loadMyKeys()
+}
+
+async function loadResultList() {
+  errorMessage.value = ''
+  resultLoading.value = true
+  try {
+    const response = await listLifecycleOperationRecords(resultQuery)
+    resultList.value = response.rows || []
+    resultTotal.value = response.total ?? resultList.value.length
+  } catch (error) {
+    errorMessage.value = error.message
+    resultList.value = []
+    resultTotal.value = 0
+  } finally {
+    resultLoading.value = false
+  }
+}
+
+function searchResults() {
+  resultQuery.pageNum = 1
+  loadResultList()
+}
+
+function resetResults() {
+  resultQuery.pageNum = 1
+  resultQuery.pageSize = 10
+  resultQuery.actionType = ''
+  resultQuery.receiveStatus = ''
+  loadResultList()
 }
 
 async function openUpdateDialog(row) {
@@ -524,7 +651,7 @@ async function submitUpdate() {
       keyDomain: normalizeText(updateForm.keyDomain),
       autoUpdate: updateForm.autoUpdateEnabled ? '1' : '0'
     })
-    proxy.$modal.msgSuccess('密钥更新成功')
+    proxy.$modal.msgSuccess('密钥更新成功，结果将推送到当前页待接收列表')
     updateDialogOpen.value = false
     await loadMyKeys()
     if (activeTab.value === 'autoupdate') {
@@ -559,9 +686,10 @@ function handleRevoke(row) {
       for (const keyId of ids) {
         await revokeLifecycleKey(keyId)
       }
-      proxy.$modal.msgSuccess('密钥回收成功')
+      proxy.$modal.msgSuccess('密钥回收成功，结果将推送到当前页待接收列表')
       await loadMyKeys()
       await loadAutoUpdateKeys()
+      await loadResultList()
     } catch (error) {
       errorMessage.value = error.message
     }
@@ -605,6 +733,21 @@ async function showDetail(keyId) {
   }
 }
 
+function receiveResult(row) {
+  proxy.$modal.confirm(`确认接收密钥 ${row.keyName || row.keyId} 的${actionTypeText(row.actionType)}结果？`).then(async () => {
+    errorMessage.value = ''
+    try {
+      await receiveLifecycleOperationRecord(row.recordId)
+      proxy.$modal.msgSuccess('结果已接收')
+      await loadResultList()
+      await loadMyKeys()
+      await loadAutoUpdateKeys()
+    } catch (error) {
+      errorMessage.value = error.message
+    }
+  }).catch(() => {})
+}
+
 function handleRollback() {
   if (!approvedAutoUpdateRequestId.value) {
     proxy.$modal.msgWarning('没有可回退的临时权限')
@@ -642,13 +785,41 @@ function autoUpdateText(value) {
   return isAutoUpdateEnabled(value) ? '已开启' : '已关闭'
 }
 
+function chainStatusText(status) {
+  return { '0': '待上链', '1': '已上链', '2': '上链失败' }[String(status)] || '-'
+}
+
+function chainStatusType(status) {
+  return { '0': 'warning', '1': 'success', '2': 'danger' }[String(status)] || 'info'
+}
+
+function actionTypeText(value) {
+  return { UPDATE: '密钥更新', REVOKE: '密钥回收' }[value] || '-'
+}
+
+function actionSourceText(value) {
+  return { MANUAL: '手动', AUTO: '自动' }[value] || '-'
+}
+
+function resultStatusText(value) {
+  return { '0': '处理中', '1': '成功', '2': '失败' }[String(value)] || '-'
+}
+
+function resultStatusType(value) {
+  return { '0': 'warning', '1': 'success', '2': 'danger' }[String(value)] || 'info'
+}
+
+function formatDateTime(value) {
+  return value ? new Date(value).toLocaleString() : '-'
+}
+
 function statusText(status) {
   return {
     1: '有效',
-    2: '已轮换',
+    2: '已更新',
     3: '已回收',
     Valid: '有效',
-    Replaced: '已轮换',
+    Replaced: '已更新',
     Revoked: '已回收',
     REVOKED: '已回收'
   }[status] || (status == null ? '-' : String(status))

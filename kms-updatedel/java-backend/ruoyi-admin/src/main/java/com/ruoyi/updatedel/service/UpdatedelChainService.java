@@ -34,6 +34,7 @@ public class UpdatedelChainService {
 
     private final KeymanageMapper keymanageMapper;
     private final KafkaTemplate<String, String> kafkaTemplate;
+    private final KeyOperationRecordService keyOperationRecordService;
 
     @Value("${fisco.contract-address:0x0000000000000000000000000000000000000000}")
     private String contractAddress;
@@ -49,9 +50,11 @@ public class UpdatedelChainService {
 
     private FiscoBcosWrapper fiscoWrapper;
 
-    public UpdatedelChainService(KeymanageMapper keymanageMapper, KafkaTemplate<String, String> kafkaTemplate) {
+    public UpdatedelChainService(KeymanageMapper keymanageMapper, KafkaTemplate<String, String> kafkaTemplate,
+                                 KeyOperationRecordService keyOperationRecordService) {
         this.keymanageMapper = keymanageMapper;
         this.kafkaTemplate = kafkaTemplate;
+        this.keyOperationRecordService = keyOperationRecordService;
     }
 
     @PostConstruct
@@ -73,12 +76,14 @@ public class UpdatedelChainService {
             String finalPA = calculatePA(keymanage);
             if (finalPA == null) {
                 markFailed(keymanage.getKeyId());
+                keyOperationRecordService.updateLatestResult(keymanage.getKeyId(), "UPDATE", "2", "2", null, null, "PA_CALC_FAILED");
                 publishChainResult(keymanage.getKeyId(), "UPDATE_KEY", "2", null, null, "PA_CALC_FAILED");
                 return false;
             }
 
             if (fiscoWrapper == null) {
                 markFailed(keymanage.getKeyId());
+                keyOperationRecordService.updateLatestResult(keymanage.getKeyId(), "UPDATE", "2", "2", null, null, "FISCO_NOT_READY");
                 publishChainResult(keymanage.getKeyId(), "UPDATE_KEY", "2", null, null, "FISCO_NOT_READY");
                 return false;
             }
@@ -88,6 +93,7 @@ public class UpdatedelChainService {
         } catch (Exception e) {
             log.error("Rotate chain sync failed, keyId={}", keymanage.getKeyId(), e);
             markFailed(keymanage.getKeyId());
+            keyOperationRecordService.updateLatestResult(keymanage.getKeyId(), "UPDATE", "2", "2", null, null, e.getClass().getSimpleName());
             publishChainResult(keymanage.getKeyId(), "UPDATE_KEY", "2", null, null, e.getClass().getSimpleName());
             return false;
         }
@@ -101,6 +107,7 @@ public class UpdatedelChainService {
         try {
             if (fiscoWrapper == null) {
                 markFailed(keymanage.getKeyId());
+                keyOperationRecordService.updateLatestResult(keymanage.getKeyId(), "REVOKE", "2", "2", null, null, "FISCO_NOT_READY");
                 publishChainResult(keymanage.getKeyId(), "REVOKE_KEY", "2", null, null, "FISCO_NOT_READY");
                 return false;
             }
@@ -109,6 +116,7 @@ public class UpdatedelChainService {
         } catch (Exception e) {
             log.error("Revoke chain sync failed, keyId={}", keymanage.getKeyId(), e);
             markFailed(keymanage.getKeyId());
+            keyOperationRecordService.updateLatestResult(keymanage.getKeyId(), "REVOKE", "2", "2", null, null, e.getClass().getSimpleName());
             publishChainResult(keymanage.getKeyId(), "REVOKE_KEY", "2", null, null, e.getClass().getSimpleName());
             return false;
         }
@@ -123,6 +131,7 @@ public class UpdatedelChainService {
         if (events.isEmpty()) {
             log.error("Lifecycle rotate missing KeyRotated event, keyId={}", keyId);
             markFailed(keyId);
+            keyOperationRecordService.updateLatestResult(keyId, "UPDATE", "2", "2", receipt.getTransactionHash(), parseBlockHeight(receipt.getBlockNumber()), "MISSING_ROTATE_EVENT");
             publishChainResult(keyId, "UPDATE_KEY", "2", receipt.getTransactionHash(), parseBlockHeight(receipt.getBlockNumber()), "MISSING_ROTATE_EVENT");
             return false;
         }
@@ -131,12 +140,14 @@ public class UpdatedelChainService {
         if (lastEvent.status == null || lastEvent.status.intValue() != ACTIVE_STATUS) {
             log.error("Lifecycle rotate event status invalid, keyId={}, status={}", keyId, lastEvent.status);
             markFailed(keyId);
+            keyOperationRecordService.updateLatestResult(keyId, "UPDATE", "2", "2", receipt.getTransactionHash(), parseBlockHeight(receipt.getBlockNumber()), "INVALID_ROTATE_STATUS");
             publishChainResult(keyId, "UPDATE_KEY", "2", receipt.getTransactionHash(), parseBlockHeight(receipt.getBlockNumber()), "INVALID_ROTATE_STATUS");
             return false;
         }
 
         Long blockHeight = parseBlockHeight(receipt.getBlockNumber());
         keymanageMapper.updateChainStatus(keyId, "1", receipt.getTransactionHash(), blockHeight);
+        keyOperationRecordService.updateLatestResult(keyId, "UPDATE", "1", "1", receipt.getTransactionHash(), blockHeight, "更新成功，结果待用户接收");
         publishChainResult(keyId, "UPDATE_KEY", "1", receipt.getTransactionHash(), blockHeight, null);
         return true;
     }
@@ -150,6 +161,7 @@ public class UpdatedelChainService {
         if (events.isEmpty()) {
             log.error("Lifecycle revoke missing StatusChanged event, keyId={}", keyId);
             markFailed(keyId);
+            keyOperationRecordService.updateLatestResult(keyId, "REVOKE", "2", "2", receipt.getTransactionHash(), parseBlockHeight(receipt.getBlockNumber()), "MISSING_STATUS_EVENT");
             publishChainResult(keyId, "REVOKE_KEY", "2", receipt.getTransactionHash(), parseBlockHeight(receipt.getBlockNumber()), "MISSING_STATUS_EVENT");
             return false;
         }
@@ -158,12 +170,14 @@ public class UpdatedelChainService {
         if (lastEvent.newStatus == null || lastEvent.newStatus.intValue() != REVOKED_STATUS) {
             log.error("Lifecycle revoke event status invalid, keyId={}, newStatus={}", keyId, lastEvent.newStatus);
             markFailed(keyId);
+            keyOperationRecordService.updateLatestResult(keyId, "REVOKE", "2", "2", receipt.getTransactionHash(), parseBlockHeight(receipt.getBlockNumber()), "INVALID_REVOKE_STATUS");
             publishChainResult(keyId, "REVOKE_KEY", "2", receipt.getTransactionHash(), parseBlockHeight(receipt.getBlockNumber()), "INVALID_REVOKE_STATUS");
             return false;
         }
 
         Long blockHeight = parseBlockHeight(receipt.getBlockNumber());
         keymanageMapper.updateChainStatus(keyId, "1", receipt.getTransactionHash(), blockHeight);
+        keyOperationRecordService.updateLatestResult(keyId, "REVOKE", "1", "1", receipt.getTransactionHash(), blockHeight, "回收成功，结果待用户接收");
         publishChainResult(keyId, "REVOKE_KEY", "1", receipt.getTransactionHash(), blockHeight, null);
         return true;
     }
@@ -172,8 +186,14 @@ public class UpdatedelChainService {
         if (receipt == null || !receipt.isStatusOK()) {
             if (receipt != null) {
                 log.error("Lifecycle chain sync failed, keyId={}, status={}, message={}", keyId, receipt.getStatus(), receipt.getMessage());
+                keyOperationRecordService.updateLatestResult(keyId,
+                    "UPDATE_KEY".equals(actionType) ? "UPDATE" : "REVOKE",
+                    "2", "2", receipt.getTransactionHash(), parseBlockHeight(receipt.getBlockNumber()), receipt.getMessage());
                 publishChainResult(keyId, actionType, "2", receipt.getTransactionHash(), parseBlockHeight(receipt.getBlockNumber()), receipt.getMessage());
             } else {
+                keyOperationRecordService.updateLatestResult(keyId,
+                    "UPDATE_KEY".equals(actionType) ? "UPDATE" : "REVOKE",
+                    "2", "2", null, null, "EMPTY_RECEIPT");
                 publishChainResult(keyId, actionType, "2", null, null, "EMPTY_RECEIPT");
             }
             markFailed(keyId);

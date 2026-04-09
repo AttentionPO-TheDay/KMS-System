@@ -35,6 +35,13 @@ export function updateKeyAutoUpdate(data) {
   })
 }
 
+export function getDashboardSummary() {
+  return request({
+    url: '/lifecycle/keymanage/dashboard/summary',
+    method: 'get'
+  }).then(res => res.data || res)
+}
+
 // 删除密钥管理
 export function delKeymanage(keyId) {
   return request({

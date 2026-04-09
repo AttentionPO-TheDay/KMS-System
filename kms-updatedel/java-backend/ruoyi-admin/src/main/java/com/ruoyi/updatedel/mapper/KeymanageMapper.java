@@ -1,10 +1,9 @@
 package com.ruoyi.updatedel.mapper;
 
 import com.ruoyi.updatedel.domain.Keymanage;
+import java.util.List;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Mapper;
-
-import java.util.List;
 
 /**
  * 密钥管理Mapper接口
@@ -60,6 +59,10 @@ public interface KeymanageMapper {
                           @Param("chainHash") String chainHash, @Param("blockHeight") Long blockHeight);
 
     int resetChainState(@Param("keyId") Long keyId, @Param("chainStatus") String chainStatus);
+
+    List<Keymanage> selectAutoUpdateCandidates(@Param("cutoffTime") String cutoffTime);
+
+    int countAutoUpdateEnabled();
 
     /**
      * 删除密钥管理

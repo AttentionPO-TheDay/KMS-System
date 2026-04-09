@@ -2,10 +2,9 @@
   <div class="dashboard-container">
     <div class="page-title">
       <h1>密钥生成系统仪表盘</h1>
-      <p class="subtitle">实时监控密钥生成状态与系统运行数据</p>
+      <p class="subtitle">实时监控生成记录、算法分布与上链状态</p>
     </div>
 
-    <!-- 统计卡片区 -->
     <el-row :gutter="20" class="stat-cards">
       <el-col :span="6" v-for="(stat, index) in statsList" :key="index">
         <div class="stat-card">
@@ -18,16 +17,12 @@
             <div class="stat-value">
               <span class="num">{{ stat.value }}</span>
             </div>
-            <div class="stat-trend" :class="stat.trend > 0 ? 'up' : 'down'">
-              <el-icon><Top v-if="stat.trend > 0"/><Bottom v-else/></el-icon>
-              <span>{{ Math.abs(stat.trend) }}% 较昨日</span>
-            </div>
+            <div class="stat-note">{{ stat.note }}</div>
           </div>
         </div>
       </el-col>
     </el-row>
 
-    <!-- 图表区 -->
     <el-row :gutter="20" class="chart-section" style="margin-top: 20px;">
       <el-col :span="16">
         <div class="glass-card">
@@ -43,26 +38,22 @@
       </el-col>
     </el-row>
 
-    <!-- 底部区域 -->
     <el-row :gutter="20" class="action-section" style="margin-top: 20px;">
       <el-col :span="12">
         <div class="glass-card">
           <div class="card-header">系统公告</div>
           <div class="notice-list">
             <div class="notice-item">
-              <span class="notice-tag new">最新</span>
-              <span class="notice-text">系统已升级至 V2.0，支持全量 SM2/SSCL 算法</span>
-              <span class="notice-time">04-09</span>
+              <span class="notice-tag new">简介</span>
+              <span class="notice-text">生成系统负责 SM2、SSCL 两类无证书算法的生成接入、记录落库与链上同步。</span>
             </div>
             <div class="notice-item">
-              <span class="notice-tag">维护</span>
-              <span class="notice-text">预告：本周末将进行区块链节点升级，影响上链查询</span>
-              <span class="notice-time">04-07</span>
+              <span class="notice-tag">边界</span>
+              <span class="notice-text">普通用户从统一用户端发起权限申请与查询，管理员在本系统完成审批与历史维护。</span>
             </div>
             <div class="notice-item">
-              <span class="notice-tag">通知</span>
-              <span class="notice-text">关于规范密钥访问权限管理的通知</span>
-              <span class="notice-time">04-05</span>
+              <span class="notice-tag">说明</span>
+              <span class="notice-text">公共参数、生成历史和系统权限审批均已与当前真实业务数据联动展示。</span>
             </div>
           </div>
         </div>
@@ -73,7 +64,7 @@
           <div class="action-grid">
             <div class="action-btn primary" @click="$router.push('/generate/keygenerate/index')">
               <el-icon><Lock /></el-icon>
-              <div class="btn-text">密钥生成</div>
+              <div class="btn-text">生成信息</div>
             </div>
             <div class="action-btn success" @click="$router.push('/generate/history/index')">
               <el-icon><Calendar /></el-icon>
@@ -85,7 +76,7 @@
             </div>
             <div class="action-btn info" @click="$router.push('/permission/request/index')">
               <el-icon><Stamp /></el-icon>
-              <div class="btn-text">权限审批</div>
+              <div class="btn-text">系统权限审批</div>
             </div>
           </div>
         </div>
@@ -96,9 +87,9 @@
 
 <script setup>
 import { ref, reactive, onMounted, onUnmounted, markRaw } from 'vue'
-import { Key, User, TrendCharts, Link, Top, Bottom, Lock, Calendar, Setting, Stamp } from '@element-plus/icons-vue'
+import { Key, User, TrendCharts, Link, Lock, Calendar, Setting, Stamp } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
-import { listKeymanage } from '@/api/generate/keymanage'
+import { getDashboardSummary } from '@/api/generate/keymanage'
 
 const lineChartRef = ref(null)
 const pieChartRef = ref(null)
@@ -106,42 +97,68 @@ let lineChart = null
 let pieChart = null
 
 const statsList = reactive([
-  { title: '平台总密钥数', value: 0, trend: 12.5, icon: markRaw(Key), colorClass: 'blue' },
-  { title: '注册用户总数', value: 1284, trend: 5.2, icon: markRaw(User), colorClass: 'green' },
-  { title: '今日生成密钥', value: 342, trend: -2.1, icon: markRaw(TrendCharts), colorClass: 'orange' },
-  { title: '已同步上链数', value: 8930, trend: 8.4, icon: markRaw(Link), colorClass: 'purple' }
+  { title: '平台总密钥数', value: 0, note: '根据真实生成记录统计', icon: markRaw(Key), colorClass: 'blue' },
+  { title: '系统用户总数', value: 0, note: '根据当前有效账号统计', icon: markRaw(User), colorClass: 'green' },
+  { title: '今日生成密钥', value: 0, note: '今日新增生成记录', icon: markRaw(TrendCharts), colorClass: 'orange' },
+  { title: '已同步上链数', value: 0, note: 'chainStatus = 1 的记录总数', icon: markRaw(Link), colorClass: 'purple' }
 ])
 
-const initData = async () => {
+const chartState = reactive({
+  labels: [],
+  sm2: [],
+  sscl: [],
+  distribution: []
+})
+
+async function initData() {
   try {
-    const res = await listKeymanage()
-    if (res && res.total !== undefined) {
-      statsList[0].value = res.total
-      // 真实数量如果比较大，相应调整上链数拟合
-      statsList[3].value = Math.floor(res.total * 0.95)
-    }
+    const summary = await getDashboardSummary()
+    statsList[0].value = summary.totalKeys || 0
+    statsList[0].note = `今日新增 ${summary.todayGenerated || 0} 条`
+    statsList[1].value = summary.totalUsers || 0
+    statsList[1].note = `今日新增 ${summary.todayUsers || 0} 个`
+    statsList[2].value = summary.todayGenerated || 0
+    statsList[2].note = '按创建时间统计今日生成量'
+    statsList[3].value = summary.totalSynced || 0
+    statsList[3].note = `今日上链 ${summary.todaySynced || 0} 条`
+
+    chartState.labels = summary.recent7Days?.labels || []
+    chartState.sm2 = summary.recent7Days?.sm2 || []
+    chartState.sscl = summary.recent7Days?.sscl || []
+    chartState.distribution = Object.entries(summary.algorithmDistribution || {}).map(([name, value], index) => ({
+      name,
+      value,
+      itemStyle: { color: ['#0099ff', '#9c27b0', '#00e5ff', '#e6a23c'][index % 4] }
+    }))
+
+    initCharts()
   } catch (error) {
-    console.error('获取统计数据失败', error)
+    console.error('获取仪表盘数据失败', error)
   }
 }
 
-const initCharts = () => {
-  // 设置暗色主题样式
+function initCharts() {
   const textColor = 'rgba(255, 255, 255, 0.7)'
   const splitLineColor = 'rgba(255, 255, 255, 0.1)'
 
-  lineChart = echarts.init(lineChartRef.value)
-  lineChart.setOption({
+  if (!lineChart && lineChartRef.value) {
+    lineChart = echarts.init(lineChartRef.value)
+  }
+  if (!pieChart && pieChartRef.value) {
+    pieChart = echarts.init(pieChartRef.value)
+  }
+
+  lineChart?.setOption({
     tooltip: { trigger: 'axis', backgroundColor: 'rgba(15,23,30,0.9)', borderColor: '#0099ff', textStyle: { color: '#fff' } },
     legend: { data: ['SM2生成量', 'SSCL生成量'], textStyle: { color: textColor } },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
-    xAxis: { 
-      type: 'category', 
-      boundaryGap: false, 
-      data: ['周一', '周二', '周三', '周四', '周五', '周六', '周日'],
+    xAxis: {
+      type: 'category',
+      boundaryGap: false,
+      data: chartState.labels,
       axisLabel: { color: textColor }
     },
-    yAxis: { 
+    yAxis: {
       type: 'value',
       axisLabel: { color: textColor },
       splitLine: { lineStyle: { color: splitLineColor } }
@@ -156,18 +173,17 @@ const initCharts = () => {
             { offset: 1, color: 'rgba(0,153,255,0)' }
           ])
         },
-        data: [120, 132, 101, 134, 90, 230, 210]
+        data: chartState.sm2
       },
       {
         name: 'SSCL生成量', type: 'line', smooth: true,
         itemStyle: { color: '#00e5ff' },
-        data: [220, 182, 191, 234, 290, 330, 310]
+        data: chartState.sscl
       }
     ]
   })
 
-  pieChart = echarts.init(pieChartRef.value)
-  pieChart.setOption({
+  pieChart?.setOption({
     tooltip: { trigger: 'item', backgroundColor: 'rgba(15,23,30,0.9)', borderColor: '#5e4d9a', textStyle: { color: '#fff' } },
     legend: { bottom: '0%', left: 'center', textStyle: { color: textColor } },
     series: [
@@ -180,29 +196,25 @@ const initCharts = () => {
         label: { show: false, position: 'center' },
         emphasis: { label: { show: true, fontSize: 20, fontWeight: 'bold' } },
         labelLine: { show: false },
-        data: [
-          { value: 1048, name: 'SM2', itemStyle: { color: '#0099ff' } },
-          { value: 735, name: 'SSCL', itemStyle: { color: '#9c27b0' } }
-        ]
+        data: chartState.distribution
       }
     ]
   })
 }
 
-const resizeHandler = () => {
-  if (lineChart) lineChart.resize()
-  if (pieChart) pieChart.resize()
+function resizeHandler() {
+  lineChart?.resize()
+  pieChart?.resize()
 }
 
 onMounted(() => {
   initData()
-  initCharts()
   window.addEventListener('resize', resizeHandler)
 })
 
 onUnmounted(() => {
-  if (lineChart) lineChart.dispose()
-  if (pieChart) pieChart.dispose()
+  lineChart?.dispose()
+  pieChart?.dispose()
   window.removeEventListener('resize', resizeHandler)
 })
 </script>
@@ -215,6 +227,7 @@ onUnmounted(() => {
 .page-title {
   margin-bottom: 30px;
 }
+
 .page-title h1 {
   font-size: 28px;
   color: #fff;
@@ -222,13 +235,13 @@ onUnmounted(() => {
   font-weight: 600;
   letter-spacing: 1px;
 }
+
 .page-title .subtitle {
   color: rgba(255, 255, 255, 0.5);
   margin: 0;
   font-size: 14px;
 }
 
-/* 统计卡片样式 */
 .stat-card {
   background: rgba(255, 255, 255, 0.02);
   backdrop-filter: blur(24px);
@@ -241,6 +254,7 @@ onUnmounted(() => {
   position: relative;
   overflow: hidden;
 }
+
 .stat-card:hover {
   transform: translateY(-5px);
   border-color: rgba(255, 255, 255, 0.1);
@@ -272,41 +286,36 @@ onUnmounted(() => {
 
 .stat-icon-wrapper.blue { color: #0099ff; background: rgba(0, 153, 255, 0.1); }
 .stat-icon-wrapper.blue .glow { background: #0099ff; }
-
 .stat-icon-wrapper.green { color: #00e5ff; background: rgba(0, 229, 255, 0.1); }
 .stat-icon-wrapper.green .glow { background: #00e5ff; }
-
 .stat-icon-wrapper.orange { color: #e6a23c; background: rgba(230, 162, 60, 0.1); }
 .stat-icon-wrapper.orange .glow { background: #e6a23c; }
-
 .stat-icon-wrapper.purple { color: #9c27b0; background: rgba(156, 39, 176, 0.1); }
 .stat-icon-wrapper.purple .glow { background: #9c27b0; }
 
 .stat-content {
   flex: 1;
 }
+
 .stat-title {
   font-size: 14px;
   color: rgba(255, 255, 255, 0.6);
   margin-bottom: 8px;
 }
+
 .stat-value .num {
   font-size: 28px;
   font-weight: bold;
   color: #fff;
   font-family: 'Inter', sans-serif;
 }
-.stat-trend {
-  display: flex;
-  align-items: center;
-  font-size: 13px;
-  margin-top: 8px;
-  gap: 4px;
-}
-.stat-trend.up { color: #67c23a; }
-.stat-trend.down { color: #f56c6c; }
 
-/* 玻璃面板通用样式 */
+.stat-note {
+  margin-top: 8px;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 13px;
+}
+
 .glass-card {
   background: rgba(255, 255, 255, 0.02);
   backdrop-filter: blur(24px);
@@ -315,6 +324,7 @@ onUnmounted(() => {
   padding: 20px;
   height: 100%;
 }
+
 .card-header {
   font-size: 16px;
   font-weight: 600;
@@ -323,6 +333,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
 }
+
 .card-header::before {
   content: '';
   display: inline-block;
@@ -338,12 +349,12 @@ onUnmounted(() => {
   width: 100%;
 }
 
-/* 底部区域 */
 .notice-list {
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
+
 .notice-item {
   display: flex;
   align-items: center;
@@ -353,82 +364,67 @@ onUnmounted(() => {
   border-left: 2px solid transparent;
   transition: all 0.2s;
 }
+
 .notice-item:hover {
   background: rgba(255, 255, 255, 0.06);
   border-left-color: #0099ff;
 }
+
 .notice-tag {
-  font-size: 12px;
-  padding: 2px 8px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.8);
+  min-width: 44px;
+  padding: 4px 8px;
   margin-right: 12px;
-  white-space: nowrap;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #d9ecff;
+  text-align: center;
+  font-size: 12px;
 }
+
 .notice-tag.new {
-  background: rgba(0, 153, 255, 0.2);
-  color: #00e5ff;
+  background: rgba(0, 153, 255, 0.18);
+  color: #8fd2ff;
 }
+
 .notice-text {
   flex: 1;
-  color: rgba(255, 255, 255, 0.8);
-  font-size: 14px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.notice-time {
-  color: rgba(255, 255, 255, 0.4);
-  font-size: 13px;
-  margin-left: 16px;
+  color: rgba(255, 255, 255, 0.78);
+  line-height: 1.6;
 }
 
 .action-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
 }
+
 .action-btn {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 24px;
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 8px;
+  gap: 10px;
+  min-height: 116px;
+  border-radius: 12px;
+  color: #fff;
   cursor: pointer;
-  transition: all 0.3s;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
-.action-btn .el-icon {
-  font-size: 32px;
-  margin-bottom: 12px;
-  transition: transform 0.3s;
-}
-.action-btn .btn-text {
-  font-size: 14px;
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.8);
-}
+
 .action-btn:hover {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.1);
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
-}
-.action-btn:hover .el-icon {
-  transform: scale(1.1);
+  transform: translateY(-4px);
 }
 
-.action-btn.primary:hover { border-color: rgba(0, 153, 255, 0.5); }
-.action-btn.primary .el-icon { color: #0099ff; }
+.action-btn.primary { background: linear-gradient(135deg, rgba(0, 153, 255, 0.24), rgba(0, 153, 255, 0.08)); }
+.action-btn.success { background: linear-gradient(135deg, rgba(103, 194, 58, 0.24), rgba(103, 194, 58, 0.08)); }
+.action-btn.warning { background: linear-gradient(135deg, rgba(230, 162, 60, 0.24), rgba(230, 162, 60, 0.08)); }
+.action-btn.info { background: linear-gradient(135deg, rgba(144, 147, 153, 0.24), rgba(144, 147, 153, 0.08)); }
 
-.action-btn.success:hover { border-color: rgba(0, 229, 255, 0.5); }
-.action-btn.success .el-icon { color: #00e5ff; }
+.action-btn .el-icon {
+  font-size: 28px;
+}
 
-.action-btn.warning:hover { border-color: rgba(230, 162, 60, 0.5); }
-.action-btn.warning .el-icon { color: #e6a23c; }
-
-.action-btn.info:hover { border-color: rgba(156, 39, 176, 0.5); }
-.action-btn.info .el-icon { color: #9c27b0; }
+.btn-text {
+  font-size: 14px;
+}
 </style>

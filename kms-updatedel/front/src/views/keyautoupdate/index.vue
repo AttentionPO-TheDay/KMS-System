@@ -1,16 +1,5 @@
 <template>
   <div class="app-container">
-    <el-alert
-      title="自动更新配置"
-      type="info"
-      :closable="false"
-      style="margin-bottom: 16px"
-    >
-      <template #default>
-        当前页面只调用后端 `PUT /lifecycle/keymanage/auto-update` 修改自动更新开关，不再编辑整条密钥记录。
-      </template>
-    </el-alert>
-
     <el-form :model="queryParams" ref="queryRef" :inline="true" v-show="showSearch" label-width="88px">
       <el-form-item label="用户ID" prop="userId">
         <el-input v-model="queryParams.userId" placeholder="请输入用户ID" clearable @keyup.enter="handleQuery" />
@@ -37,7 +26,7 @@
           @click="openDialog()"
           v-hasPermi="['lifecycle:keymanage:edit']"
           style="padding: 6px 12px; margin-top: 15px"
-        >修改自动更新</el-button>
+        >配置自动更新</el-button>
       </el-col>
       <right-toolbar v-model:showSearch="showSearch" @queryTable="getList" />
     </el-row>
@@ -86,7 +75,7 @@
       @pagination="getList"
     />
 
-    <el-dialog title="修改自动更新状态" v-model="open" width="420px" append-to-body>
+    <el-dialog title="配置自动更新" v-model="open" width="420px" append-to-body>
       <el-form ref="keymanageRef" :model="form" label-width="90px">
         <el-form-item label="密钥ID">
           <el-input :model-value="form.keyId" disabled />
@@ -198,7 +187,7 @@ function submitForm() {
     keyId: form.value.keyId,
     autoUpdate: form.value.autoUpdateEnabled ? '1' : '0'
   }).then(() => {
-    proxy.$modal.msgSuccess("自动更新状态修改成功")
+    proxy.$modal.msgSuccess("自动更新配置已生效，到时间会自动执行更新")
     open.value = false
     getList()
   })

@@ -199,7 +199,7 @@ function copyChainHash(value) {
 }
 
 function statusText(status) {
-  return ({ '0': '正常', '1': '冻结', '2': '轮换', '3': '回收' })[status] || (status || '-')
+  return ({ '0': '正常', '1': '冻结', '2': '更新', '3': '回收' })[status] || (status || '-')
 }
 
 function statusType(status) {

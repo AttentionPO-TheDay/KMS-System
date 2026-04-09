@@ -1,8 +1,8 @@
 <template>
   <div class="dashboard-container">
     <div class="page-title">
-      <h1>密钥动态更新与回收系统仪表盘</h1>
-      <p class="subtitle">实时监控密钥动态更新、轮换与安全回收状态</p>
+      <h1>密钥更新与回收系统仪表盘</h1>
+      <p class="subtitle">实时监控手动更新、自动更新、回收结果与用户待接收状态</p>
     </div>
 
     <!-- 统计卡片区 -->
@@ -19,7 +19,8 @@
               <span class="num">{{ stat.value }}</span>
               <span class="unit" v-if="stat.unit">{{ stat.unit }}</span>
             </div>
-            <div class="stat-trend" :class="stat.trend > 0 ? 'up' : 'down'">
+            <div class="stat-note">{{ stat.note }}</div>
+            <div class="stat-trend" v-if="stat.trend !== null" :class="stat.trend > 0 ? 'up' : 'down'">
               <el-icon><Top v-if="stat.trend > 0"/><Bottom v-else/></el-icon>
               <span>{{ Math.abs(stat.trend) }}% 较昨日</span>
             </div>
@@ -60,7 +61,7 @@
             </div>
             <div class="action-btn warning" @click="$router.push('/permission/request/index')">
               <el-icon><Tickets /></el-icon>
-              <div class="btn-text">权限审批</div>
+              <div class="btn-text">系统权限审批</div>
             </div>
             <div class="action-btn danger" @click="$router.push('/updatedel/keydelete')">
               <el-icon><Delete /></el-icon>
@@ -75,9 +76,9 @@
 
 <script setup>
 import { ref, reactive, onMounted, onUnmounted, markRaw } from 'vue'
-import { Refresh, Delete, Timer, Warning, Top, Bottom, Tickets } from '@element-plus/icons-vue'
+import { Refresh, Delete, Timer, Bell, Top, Bottom, Tickets } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
-import { listKeymanage } from '@/api/lifecycle/lifecycle'
+import { getDashboardSummary } from '@/api/lifecycle/lifecycle'
 
 const lineChartRef = ref(null)
 const pieChartRef = ref(null)
@@ -85,19 +86,43 @@ let lineChart = null
 let pieChart = null
 
 const statsList = reactive([
-  { title: '累计更新密钥', value: 0, trend: 5.2, icon: markRaw(Refresh), colorClass: 'blue' },
-  { title: '已安全回收', value: 128, trend: 1.3, icon: markRaw(Delete), colorClass: 'orange' },
-  { title: '自动更新监控中', value: 45, trend: -0.5, icon: markRaw(Timer), colorClass: 'green' },
-  { title: '安全拦截记录', value: 7, trend: -12.1, icon: markRaw(Warning), colorClass: 'purple' }
+  { title: '累计密钥更新', value: 0, note: '', trend: null, icon: markRaw(Refresh), colorClass: 'blue' },
+  { title: '累计密钥回收', value: 0, note: '', trend: null, icon: markRaw(Delete), colorClass: 'orange' },
+  { title: '自动更新已启用', value: 0, note: '', trend: null, icon: markRaw(Timer), colorClass: 'green' },
+  { title: '用户待接收结果', value: 0, note: '', trend: null, icon: markRaw(Bell), colorClass: 'purple' }
 ])
+
+const chartState = reactive({
+  labels: [],
+  manualUpdate: [],
+  autoUpdate: [],
+  revoke: [],
+  distribution: []
+})
 
 const initData = async () => {
   try {
-    // 假设可以通过类型或状态查询
-    const res = await listKeymanage({ pageNum: 1, pageSize: 1 })
-    if (res && res.total !== undefined) {
-      statsList[0].value = res.total
-    }
+    const summary = await getDashboardSummary()
+    statsList[0].value = summary.totalUpdates || 0
+    statsList[0].note = `近 7 天共 ${((summary.recent7Days?.manualUpdate || []).reduce((a, b) => a + b, 0))} 次手动更新`
+    statsList[1].value = summary.totalRevokes || 0
+    statsList[1].note = `上链失败 ${summary.failedResults || 0} 条`
+    statsList[2].value = summary.autoUpdateEnabled || 0
+    statsList[2].note = '当前仍处于启用状态的密钥数'
+    statsList[3].value = summary.pendingReceives || 0
+    statsList[3].note = '用户端尚未确认接收的结果数'
+
+    chartState.labels = summary.recent7Days?.labels || []
+    chartState.manualUpdate = summary.recent7Days?.manualUpdate || []
+    chartState.autoUpdate = summary.recent7Days?.autoUpdate || []
+    chartState.revoke = summary.recent7Days?.revoke || []
+    chartState.distribution = Object.entries(summary.operationDistribution || {}).map(([name, value], index) => ({
+      name,
+      value,
+      itemStyle: { color: ['#0099ff', '#00e5ff', '#e6a23c'][index % 3] }
+    }))
+
+    initCharts()
   } catch (error) {
     console.error('获取统计数据失败', error)
   }
@@ -107,15 +132,17 @@ const initCharts = () => {
   const textColor = 'rgba(255, 255, 255, 0.7)'
   const splitLineColor = 'rgba(255, 255, 255, 0.1)'
 
-  lineChart = echarts.init(lineChartRef.value)
+  if (!lineChart && lineChartRef.value) {
+    lineChart = echarts.init(lineChartRef.value)
+  }
   lineChart.setOption({
     tooltip: { trigger: 'axis', backgroundColor: 'rgba(15,23,30,0.9)', borderColor: '#0099ff', textStyle: { color: '#fff' } },
-    legend: { data: ['手动更新', '自动轮换', '密钥回收'], textStyle: { color: textColor } },
+    legend: { data: ['手动更新', '自动更新', '密钥回收'], textStyle: { color: textColor } },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
     xAxis: { 
       type: 'category', 
       boundaryGap: false, 
-      data: ['周一', '周二', '周三', '周四', '周五', '周六', '周日'],
+      data: chartState.labels,
       axisLabel: { color: textColor }
     },
     yAxis: { 
@@ -126,23 +153,25 @@ const initCharts = () => {
     series: [
       {
         name: '手动更新', type: 'line', smooth: true,
-        itemStyle: { color: '#0099ff' },
-        data: [15, 23, 20, 15, 19, 33, 21]
+         itemStyle: { color: '#0099ff' },
+         data: chartState.manualUpdate
       },
       {
-        name: '自动轮换', type: 'line', smooth: true,
+        name: '自动更新', type: 'line', smooth: true,
         itemStyle: { color: '#00e5ff' },
-        data: [40, 52, 61, 44, 49, 83, 70]
+        data: chartState.autoUpdate
       },
       {
         name: '密钥回收', type: 'line', smooth: true,
         itemStyle: { color: '#e6a23c' },
-        data: [5, 2, 1, 4, 9, 3, 2]
+        data: chartState.revoke
       }
     ]
   })
 
-  pieChart = echarts.init(pieChartRef.value)
+  if (!pieChart && pieChartRef.value) {
+    pieChart = echarts.init(pieChartRef.value)
+  }
   pieChart.setOption({
     tooltip: { trigger: 'item', backgroundColor: 'rgba(15,23,30,0.9)', borderColor: '#e6a23c', textStyle: { color: '#fff' } },
     legend: { bottom: '0%', left: 'center', textStyle: { color: textColor } },
@@ -155,16 +184,11 @@ const initCharts = () => {
         itemStyle: { borderRadius: 10, borderColor: 'rgba(0,0,0,0.5)', borderWidth: 2 },
         label: { show: false, position: 'center' },
         emphasis: { label: { show: true, fontSize: 20, fontWeight: 'bold' } },
-        labelLine: { show: false },
-        data: [
-          { value: 120, name: '手动更新', itemStyle: { color: '#0099ff' } },
-          { value: 430, name: '自动轮换', itemStyle: { color: '#00e5ff' } },
-          { value: 58, name: '主动回收', itemStyle: { color: '#e6a23c' } },
-          { value: 12, name: '到期吊销', itemStyle: { color: '#f56c6c' } }
-        ]
-      }
-    ]
-  })
+         labelLine: { show: false },
+         data: chartState.distribution
+       }
+     ]
+   })
 }
 
 const resizeHandler = () => {
@@ -174,7 +198,6 @@ const resizeHandler = () => {
 
 onMounted(() => {
   initData()
-  initCharts()
   window.addEventListener('resize', resizeHandler)
 })
 
@@ -257,6 +280,11 @@ onUnmounted(() => {
 .stat-icon-wrapper.purple .glow { background: #9c27b0; }
 
 .stat-content { flex: 1; }
+.stat-note {
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 12px;
+  margin-top: 4px;
+}
 .stat-title {
   font-size: 14px;
   color: rgba(255, 255, 255, 0.6);

@@ -34,6 +34,19 @@ export const constantRoutes = [
     ]
   },
   {
+    path: '/algorithm',
+    component: Layout,
+    hidden: false,
+    children: [
+      {
+        path: 'quick-view',
+        component: () => import('@/views/algorithm/quickView.vue'),
+        name: 'AlgorithmQuickView',
+        meta: { title: '更新与回收算法速览', icon: 'guide' }
+      }
+    ]
+  },
+  {
     path: '/updatedel/keyupdate',
     component: Layout,
     hidden: false,
@@ -88,7 +101,7 @@ export const constantRoutes = [
         path: 'index',
         component: () => import('@/views/permission/request/index.vue'),
         name: 'PermissionRequest',
-        meta: { title: '权限审批', icon: 'edit' }
+        meta: { title: '系统权限审批', icon: 'edit' }
       }
     ]
   },

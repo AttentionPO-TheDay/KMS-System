@@ -34,11 +34,23 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         limit 1
     </select>
 
+    <select id="selectActiveUsers" resultMap="generateUserResult">
+        <include refid="baseUserColumns"/>
+        where del_flag = '0'
+        order by user_id asc
+    </select>
+
     <select id="selectNonAdminUsers" resultMap="generateUserResult">
         <include refid="baseUserColumns"/>
         where del_flag = '0'
           and role_level &gt; 0
         order by user_id asc
+    </select>
+
+    <select id="countActiveUsers" resultType="int">
+        select count(1)
+        from sys_user
+        where del_flag = '0'
     </select>
 
     <insert id="insertUser" parameterType="com.ruoyi.generate.domain.GenerateUser" useGeneratedKeys="true" keyProperty="userId">

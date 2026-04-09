@@ -35,3 +35,20 @@ export function revokeLifecycleKey(keyId) {
     method: 'DELETE'
   })
 }
+
+export function listLifecycleOperationRecords(query = {}) {
+  const search = new URLSearchParams()
+  Object.entries(query).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
+      search.set(key, String(value).trim())
+    }
+  })
+  const suffix = search.toString() ? `?${search.toString()}` : ''
+  return requestJson(apiBases.lifecycleApi, `/lifecycle/operation-record/list${suffix}`)
+}
+
+export function receiveLifecycleOperationRecord(recordId) {
+  return requestJson(apiBases.lifecycleApi, `/lifecycle/operation-record/receive/${recordId}`, {
+    method: 'PUT'
+  })
+}

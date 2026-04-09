@@ -30,22 +30,28 @@ public class LifecycleService {
     private final SsclKeyGenerator ssclKeyGenerator;
     private final KafkaTemplate<String, String> kafkaTemplate;
     private final ObjectMapper objectMapper;
+    private final KeyOperationRecordService keyOperationRecordService;
 
     @Value("${kms.lifecycle.kafka.chain-task-topic:key_chain_task}")
     private String chainTaskTopic;
+
+    @Value("${kms.lifecycle.auto-update.interval-minutes:30}")
+    private long autoUpdateIntervalMinutes;
 
     public LifecycleService(
         KeymanageMapper keymanageMapper,
         EccKeyGenerator eccKeyGenerator,
         SsclKeyGenerator ssclKeyGenerator,
         KafkaTemplate<String, String> kafkaTemplate,
-        ObjectMapper objectMapper
+        ObjectMapper objectMapper,
+        KeyOperationRecordService keyOperationRecordService
     ) {
         this.keymanageMapper = keymanageMapper;
         this.eccKeyGenerator = eccKeyGenerator;
         this.ssclKeyGenerator = ssclKeyGenerator;
         this.kafkaTemplate = kafkaTemplate;
         this.objectMapper = objectMapper;
+        this.keyOperationRecordService = keyOperationRecordService;
     }
 
     public List<Keymanage> list(Keymanage query) {
@@ -58,6 +64,11 @@ public class LifecycleService {
 
     @Transactional
     public Keymanage rotateKey(Keymanage request) {
+        return rotateKey(request, "MANUAL");
+    }
+
+    @Transactional
+    public Keymanage rotateKey(Keymanage request, String actionSource) {
         Keymanage current = requireExistingKey(request.getKeyId());
         if (KeyStatus.REVOKED.getCode().equals(current.getStatus())) {
             throw new IllegalStateException("该密钥已被回收，无法更新");
@@ -72,12 +83,18 @@ public class LifecycleService {
 
         keymanageMapper.updatekeymanage(next);
         resetPendingChainState(next.getKeyId());
+        keyOperationRecordService.createPendingRecord(next, "UPDATE", normalizeActionSource(actionSource), "结果已推送，等待用户接收");
         publishChainEvent(ChainSyncEvent.TYPE_ROTATE, next);
         return requireExistingKey(next.getKeyId());
     }
 
     @Transactional
     public void revokeKey(Long keyId) {
+        revokeKey(keyId, "MANUAL");
+    }
+
+    @Transactional
+    public void revokeKey(Long keyId, String actionSource) {
         Keymanage current = requireExistingKey(keyId);
         if (KeyStatus.REVOKED.getCode().equals(current.getStatus())) {
             return;
@@ -85,6 +102,7 @@ public class LifecycleService {
         keymanageMapper.revoke(keyId, KeyStatus.REVOKED.getCode());
         resetPendingChainState(keyId);
         Keymanage revoked = requireExistingKey(keyId);
+        keyOperationRecordService.createPendingRecord(revoked, "REVOKE", normalizeActionSource(actionSource), "结果已推送，等待用户接收");
         publishChainEvent(ChainSyncEvent.TYPE_REVOKE, revoked);
     }
 
@@ -94,6 +112,10 @@ public class LifecycleService {
             throw new IllegalStateException("该密钥已被回收，无法修改自动更新状态");
         }
         keymanageMapper.updateAutoUpdate(keyId, normalizeAutoUpdate(autoUpdate));
+    }
+
+    public List<Keymanage> listAutoUpdateCandidates() {
+        return keymanageMapper.selectAutoUpdateCandidates(nowMinusMinutes(autoUpdateIntervalMinutes()));
     }
 
     private Keymanage requireExistingKey(Long keyId) {
@@ -177,7 +199,19 @@ public class LifecycleService {
         return candidate == null || candidate.trim().isEmpty() ? fallback : candidate;
     }
 
+    private String normalizeActionSource(String actionSource) {
+        return "AUTO".equalsIgnoreCase(actionSource) ? "AUTO" : "MANUAL";
+    }
+
     private String now() {
         return LocalDateTime.now().format(FORMATTER);
+    }
+
+    private String nowMinusMinutes(long minutes) {
+        return LocalDateTime.now().minusMinutes(minutes).format(FORMATTER);
+    }
+
+    private long autoUpdateIntervalMinutes() {
+        return autoUpdateIntervalMinutes;
     }
 }
