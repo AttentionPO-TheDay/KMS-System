@@ -49,7 +49,7 @@ function getList() {
 }
 
 function handleQuery() { queryParams.value.pageNum = 1; getList() }
-function resetQuery() { proxy.resetForm("queryRef"); handleQuery() }
+function resetQuery() { proxy.resetForm('queryRef'); handleQuery() }
 
 getList()
 </script>

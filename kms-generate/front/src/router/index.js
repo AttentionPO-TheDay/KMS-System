@@ -82,10 +82,45 @@ const constantRoutes = [
         meta: { title: '生成域权限审批', icon: 'edit' }
       }
     ]
-  }
-]
-
-const dynamicRoutes = [
+  },
+  {
+    path: '/query',
+    component: Layout,
+    redirect: '/query/key-list',
+    meta: { title: '密钥查询', icon: 'search' },
+    children: [
+      {
+        path: 'key-list',
+        component: () => import('@/views/query/keyList/index.vue'),
+        name: 'KeyQuery',
+        meta: { title: '用户密钥查询', icon: 'list' }
+      },
+      {
+        path: 'public-keys',
+        component: () => import('@/views/publickeys/index.vue'),
+        name: 'PublicKeyQuery',
+        meta: { title: '公钥查询', icon: 'lock' }
+      },
+      {
+        path: 'blockchain',
+        component: () => import('@/views/query/keyList/index.vue'),
+        name: 'BlockchainView',
+        meta: { title: '区块链查看', icon: 'link' }
+      },
+      {
+        path: 'user-keys',
+        component: () => import('@/views/query/keyList/index.vue'),
+        name: 'UserKeysPage',
+        meta: { title: '用户密钥页', icon: 'user' }
+      },
+      {
+        path: 'key-users',
+        component: () => import('@/views/query/businessUsers/index.vue'),
+        name: 'KeyUserManagement',
+        meta: { title: '密钥用户管理', icon: 'peoples' }
+      }
+    ]
+  },
   {
     path: '/generate/keygenerate',
     component: Layout,
@@ -124,8 +159,10 @@ const dynamicRoutes = [
         meta: { title: '公共参数', icon: 'list' }
       }
     ]
-  },
+  }
 ]
+
+const dynamicRoutes = []
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
