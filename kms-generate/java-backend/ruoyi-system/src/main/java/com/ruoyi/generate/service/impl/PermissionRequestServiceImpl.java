@@ -39,6 +39,16 @@ public class PermissionRequestServiceImpl implements IPermissionRequestService {
 
     @Transactional
     @Override
+    public void delete(Long requestId) {
+        PermissionRequest request = get(requestId);
+        if (request == null) {
+            throw new IllegalArgumentException("权限申请不存在");
+        }
+        permissionRequestMapper.deletePermissionRequestByRequestId(requestId);
+    }
+
+    @Transactional
+    @Override
     public void submit(PermissionRequest request) {
         validateSubmit(request);
         request.setSystemCode(SYSTEM_CODE);

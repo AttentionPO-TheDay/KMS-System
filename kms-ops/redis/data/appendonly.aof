@@ -466,3 +466,115 @@ $21
 sys_dict:sys_user_sex
 $974
 [{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":true,"dictCode":1L,"dictLabel":"ç”·","dictSort":1L,"dictType":"sys_user_sex","dictValue":"0","isDefault":"Y","params":{"@type":"java.util.HashMap"},"remark":"æ€§åˆ«ç”·","status":"0"},{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":false,"dictCode":2L,"dictLabel":"å¥³","dictSort":2L,"dictType":"sys_user_sex","dictValue":"1","isDefault":"N","params":{"@type":"java.util.HashMap"},"remark":"æ€§åˆ«å¥³","status":"0"},{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":false,"dictCode":3L,"dictLabel":"æœªçŸ¥","dictSort":3L,"dictType":"sys_user_sex","dictValue":"2","isDefault":"N","params":{"@type":"java.util.HashMap"},"remark":"æ€§åˆ«æœªçŸ¥","status":"0"}]
+*3
+$3
+SET
+$29
+sys_config:sys.index.skinName
+$11
+"skin-blue"
+*3
+$3
+SET
+$32
+sys_config:sys.user.initPassword
+$8
+"123456"
+*3
+$3
+SET
+$30
+sys_config:sys.index.sideTheme
+$12
+"theme-dark"
+*3
+$3
+SET
+$37
+sys_config:sys.account.captchaEnabled
+$6
+"true"
+*3
+$3
+SET
+$35
+sys_config:sys.account.registerUser
+$6
+"true"
+*3
+$3
+SET
+$32
+sys_config:sys.login.blackIPList
+$2
+""
+*3
+$3
+SET
+$22
+sys_dict:sys_job_group
+$681
+[{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":true,"dictCode":10L,"dictLabel":"é»˜è®¤","dictSort":1L,"dictType":"sys_job_group","dictValue":"DEFAULT","isDefault":"Y","params":{"@type":"java.util.HashMap"},"remark":"é»˜è®¤åˆ†ç»„","status":"0"},{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":false,"dictCode":11L,"dictLabel":"ç³»ç»Ÿ","dictSort":2L,"dictType":"sys_job_group","dictValue":"SYSTEM","isDefault":"N","params":{"@type":"java.util.HashMap"},"remark":"ç³»ç»Ÿåˆ†ç»„","status":"0"}]
+*3
+$3
+SET
+$24
+sys_dict:sys_notice_type
+$696
+[{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":true,"dictCode":14L,"dictLabel":"é€šçŸ¥","dictSort":1L,"dictType":"sys_notice_type","dictValue":"1","isDefault":"Y","listClass":"warning","params":{"@type":"java.util.HashMap"},"remark":"é€šçŸ¥","status":"0"},{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":false,"dictCode":15L,"dictLabel":"å…¬å‘Š","dictSort":2L,"dictType":"sys_notice_type","dictValue":"2","isDefault":"N","listClass":"success","params":{"@type":"java.util.HashMap"},"remark":"å…¬å‘Š","status":"0"}]
+*3
+$3
+SET
+$26
+sys_dict:sys_common_status
+$721
+[{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":false,"dictCode":28L,"dictLabel":"æˆåŠŸ","dictSort":1L,"dictType":"sys_common_status","dictValue":"0","isDefault":"N","listClass":"primary","params":{"@type":"java.util.HashMap"},"remark":"æ­£å¸¸çŠ¶æ€","status":"0"},{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":false,"dictCode":29L,"dictLabel":"å¤±è´¥","dictSort":2L,"dictType":"sys_common_status","dictValue":"1","isDefault":"N","listClass":"danger","params":{"@type":"java.util.HashMap"},"remark":"åœç”¨çŠ¶æ€","status":"0"}]
+*3
+$3
+SET
+$22
+sys_dict:sys_oper_type
+$3597
+[{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":false,"dictCode":19L,"dictLabel":"æ–°å¢ž","dictSort":1L,"dictType":"sys_oper_type","dictValue":"1","isDefault":"N","listClass":"info","params":{"@type":"java.util.HashMap"},"remark":"æ–°å¢žæ“ä½œ","status":"0"},{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":false,"dictCode":20L,"dictLabel":"ä¿®æ”¹","dictSort":2L,"dictType":"sys_oper_type","dictValue":"2","isDefault":"N","listClass":"info","params":{"@type":"java.util.HashMap"},"remark":"ä¿®æ”¹æ“ä½œ","status":"0"},{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":false,"dictCode":21L,"dictLabel":"åˆ é™¤","dictSort":3L,"dictType":"sys_oper_type","dictValue":"3","isDefault":"N","listClass":"danger","params":{"@type":"java.util.HashMap"},"remark":"åˆ é™¤æ“ä½œ","status":"0"},{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":false,"dictCode":22L,"dictLabel":"æŽˆæƒ","dictSort":4L,"dictType":"sys_oper_type","dictValue":"4","isDefault":"N","listClass":"primary","params":{"@type":"java.util.HashMap"},"remark":"æŽˆæƒæ“ä½œ","status":"0"},{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":false,"dictCode":23L,"dictLabel":"å¯¼å‡º","dictSort":5L,"dictType":"sys_oper_type","dictValue":"5","isDefault":"N","listClass":"warning","params":{"@type":"java.util.HashMap"},"remark":"å¯¼å‡ºæ“ä½œ","status":"0"},{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":false,"dictCode":24L,"dictLabel":"å¯¼å…¥","dictSort":6L,"dictType":"sys_oper_type","dictValue":"6","isDefault":"N","listClass":"warning","params":{"@type":"java.util.HashMap"},"remark":"å¯¼å…¥æ“ä½œ","status":"0"},{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":false,"dictCode":25L,"dictLabel":"å¼ºé€€","dictSort":7L,"dictType":"sys_oper_type","dictValue":"7","isDefault":"N","listClass":"danger","params":{"@type":"java.util.HashMap"},"remark":"å¼ºé€€æ“ä½œ","status":"0"},{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":false,"dictCode":26L,"dictLabel":"ç”Ÿæˆä»£ç ","dictSort":8L,"dictType":"sys_oper_type","dictValue":"8","isDefault":"N","listClass":"warning","params":{"@type":"java.util.HashMap"},"remark":"ç”Ÿæˆæ“ä½œ","status":"0"},{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":false,"dictCode":27L,"dictLabel":"æ¸…ç©ºæ•°æ®","dictSort":9L,"dictType":"sys_oper_type","dictValue":"9","isDefault":"N","listClass":"danger","params":{"@type":"java.util.HashMap"},"remark":"æ¸…ç©ºæ“ä½œ","status":"0"},{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":false,"dictCode":18L,"dictLabel":"å…¶ä»–","dictSort":99L,"dictType":"sys_oper_type","dictValue":"0","isDefault":"N","listClass":"info","params":{"@type":"java.util.HashMap"},"remark":"å…¶ä»–æ“ä½œ","status":"0"}]
+*3
+$3
+SET
+$19
+sys_dict:sys_yes_no
+$703
+[{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":true,"dictCode":12L,"dictLabel":"æ˜¯","dictSort":1L,"dictType":"sys_yes_no","dictValue":"Y","isDefault":"Y","listClass":"primary","params":{"@type":"java.util.HashMap"},"remark":"ç³»ç»Ÿé»˜è®¤æ˜¯","status":"0"},{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":false,"dictCode":13L,"dictLabel":"å¦","dictSort":2L,"dictType":"sys_yes_no","dictValue":"N","isDefault":"N","listClass":"danger","params":{"@type":"java.util.HashMap"},"remark":"ç³»ç»Ÿé»˜è®¤å¦","status":"0"}]
+*3
+$3
+SET
+$23
+sys_dict:sys_job_status
+$713
+[{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":true,"dictCode":8L,"dictLabel":"æ­£å¸¸","dictSort":1L,"dictType":"sys_job_status","dictValue":"0","isDefault":"Y","listClass":"primary","params":{"@type":"java.util.HashMap"},"remark":"æ­£å¸¸çŠ¶æ€","status":"0"},{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":false,"dictCode":9L,"dictLabel":"æš‚åœ","dictSort":2L,"dictType":"sys_job_status","dictValue":"1","isDefault":"N","listClass":"danger","params":{"@type":"java.util.HashMap"},"remark":"åœç”¨çŠ¶æ€","status":"0"}]
+*3
+$3
+SET
+$26
+sys_dict:sys_notice_status
+$723
+[{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":true,"dictCode":16L,"dictLabel":"æ­£å¸¸","dictSort":1L,"dictType":"sys_notice_status","dictValue":"0","isDefault":"Y","listClass":"primary","params":{"@type":"java.util.HashMap"},"remark":"æ­£å¸¸çŠ¶æ€","status":"0"},{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":false,"dictCode":17L,"dictLabel":"å…³é—­","dictSort":2L,"dictType":"sys_notice_status","dictValue":"1","isDefault":"N","listClass":"danger","params":{"@type":"java.util.HashMap"},"remark":"å…³é—­çŠ¶æ€","status":"0"}]
+*3
+$3
+SET
+$22
+sys_dict:sys_show_hide
+$711
+[{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":true,"dictCode":4L,"dictLabel":"æ˜¾ç¤º","dictSort":1L,"dictType":"sys_show_hide","dictValue":"0","isDefault":"Y","listClass":"primary","params":{"@type":"java.util.HashMap"},"remark":"æ˜¾ç¤ºèœå•","status":"0"},{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":false,"dictCode":5L,"dictLabel":"éšè—","dictSort":2L,"dictType":"sys_show_hide","dictValue":"1","isDefault":"N","listClass":"danger","params":{"@type":"java.util.HashMap"},"remark":"éšè—èœå•","status":"0"}]
+*3
+$3
+SET
+$27
+sys_dict:sys_normal_disable
+$721
+[{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":true,"dictCode":6L,"dictLabel":"æ­£å¸¸","dictSort":1L,"dictType":"sys_normal_disable","dictValue":"0","isDefault":"Y","listClass":"primary","params":{"@type":"java.util.HashMap"},"remark":"æ­£å¸¸çŠ¶æ€","status":"0"},{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":false,"dictCode":7L,"dictLabel":"åœç”¨","dictSort":2L,"dictType":"sys_normal_disable","dictValue":"1","isDefault":"N","listClass":"danger","params":{"@type":"java.util.HashMap"},"remark":"åœç”¨çŠ¶æ€","status":"0"}]
+*3
+$3
+SET
+$21
+sys_dict:sys_user_sex
+$974
+[{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":true,"dictCode":1L,"dictLabel":"ç”·","dictSort":1L,"dictType":"sys_user_sex","dictValue":"0","isDefault":"Y","params":{"@type":"java.util.HashMap"},"remark":"æ€§åˆ«ç”·","status":"0"},{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":false,"dictCode":2L,"dictLabel":"å¥³","dictSort":2L,"dictType":"sys_user_sex","dictValue":"1","isDefault":"N","params":{"@type":"java.util.HashMap"},"remark":"æ€§åˆ«å¥³","status":"0"},{"@type":"com.ruoyi.common.core.domain.entity.SysDictData","createBy":"admin","createTime":"2026-04-08 07:44:59","default":false,"dictCode":3L,"dictLabel":"æœªçŸ¥","dictSort":3L,"dictType":"sys_user_sex","dictValue":"2","isDefault":"N","params":{"@type":"java.util.HashMap"},"remark":"æ€§åˆ«æœªçŸ¥","status":"0"}]

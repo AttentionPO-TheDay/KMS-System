@@ -1,45 +1,28 @@
 <template>
   <div class="app-container">
+    <el-alert
+      title="生命周期轮换"
+      type="info"
+      :closable="false"
+      style="margin-bottom: 16px"
+    >
+      <template #default>
+        当前页面调用后端 `PUT /lifecycle/keymanage` 执行密钥轮换。仅允许对未回收密钥执行更新。
+      </template>
+    </el-alert>
+
     <el-form :model="queryParams" ref="queryRef" :inline="true" v-show="showSearch" label-width="68px">
       <el-form-item label="用户ID" prop="userId">
-        <el-input
-          v-model="queryParams.userId"
-          placeholder="请输入用户ID"
-          clearable
-          @keyup.enter="handleQuery"
-        />
+        <el-input v-model="queryParams.userId" placeholder="请输入用户ID" clearable @keyup.enter="handleQuery" />
       </el-form-item>
       <el-form-item label="用户名" prop="userName">
-        <el-input
-          v-model="queryParams.userName"
-          placeholder="请输入用户名"
-          clearable
-          @keyup.enter="handleQuery"
-        />
+        <el-input v-model="queryParams.userName" placeholder="请输入用户名" clearable @keyup.enter="handleQuery" />
       </el-form-item>
-      <el-form-item label="加密算法名称" prop="encrytName">
-        <el-input
-          v-model="queryParams.encrytName"
-          placeholder="请输入加密算法名称"
-          clearable
-          @keyup.enter="handleQuery"
-        />
+      <el-form-item label="算法名称" prop="encrytName">
+        <el-input v-model="queryParams.encrytName" placeholder="请输入算法名称" clearable @keyup.enter="handleQuery" />
       </el-form-item>
       <el-form-item label="密钥名称" prop="keyName">
-        <el-input
-          v-model="queryParams.keyName"
-          placeholder="请输入密钥名称"
-          clearable
-          @keyup.enter="handleQuery"
-        />
-      </el-form-item>
-      <el-form-item label="密钥用途" prop="keyUse">
-        <el-input
-          v-model="queryParams.keyUse"
-          placeholder="请输入密钥用途"
-          clearable
-          @keyup.enter="handleQuery"
-        />
+        <el-input v-model="queryParams.keyName" placeholder="请输入密钥名称" clearable @keyup.enter="handleQuery" />
       </el-form-item>
       <el-form-item>
         <el-button type="primary" icon="Search" @click="handleQuery">搜索</el-button>
@@ -52,70 +35,91 @@
         <el-button
           type="success"
           plain
-          icon="Edit"
+          icon="Refresh"
           :disabled="single"
-          @click="handleUpdate"
+          @click="openRotateDialog()"
           v-hasPermi="['lifecycle:keymanage:edit']"
-          style="padding: 6px 12px; margin-top: 15px;"
-        >密钥更新</el-button>
+          style="padding: 6px 12px; margin-top: 15px"
+        >密钥轮换</el-button>
       </el-col>
-      <right-toolbar v-model:showSearch="showSearch" @queryTable="getList"></right-toolbar>
+      <right-toolbar v-model:showSearch="showSearch" @queryTable="getList" />
     </el-row>
 
     <el-table v-loading="loading" :data="keymanageList" @selection-change="handleSelectionChange">
       <el-table-column type="selection" width="55" align="center" />
-      <el-table-column label="密钥ID" align="center" prop="keyId" />
-      <el-table-column label="用户ID" align="center" prop="userId" />
-      <el-table-column label="加密算法类型" align="center" prop="encrytType" />
-      <el-table-column label="加密算法名称" align="center" prop="encrytName" />
-      <el-table-column label="密钥名称" align="center" prop="keyName" />
-      <el-table-column label="密钥用途" align="center" prop="keyUse" />
-      <el-table-column label="创建时间" align="center" prop="creTime" />
-      <el-table-column label="更新时间" align="center" prop="updTime" />
-      <el-table-column label="密钥自动更新状态" align="center" prop="autoUpdate" />
+      <el-table-column label="密钥ID" align="center" prop="keyId" width="90" />
+      <el-table-column label="用户ID" align="center" prop="userId" width="90" />
+      <el-table-column label="用户名" align="center" prop="userName" width="120" />
+      <el-table-column label="算法类型" align="center" prop="encrytType" min-width="130" />
+      <el-table-column label="算法名称" align="center" prop="encrytName" width="120" />
+      <el-table-column label="密钥名称" align="center" prop="keyName" min-width="140" />
+      <el-table-column label="用途" align="center" prop="keyUse" min-width="140" />
+      <el-table-column label="版本" align="center" prop="version" width="80" />
+      <el-table-column label="自动更新" align="center" width="100">
+        <template #default="scope">
+          <el-tag :type="isAutoUpdateEnabled(scope.row.autoUpdate) ? 'success' : 'info'">
+            {{ isAutoUpdateEnabled(scope.row.autoUpdate) ? '启用' : '关闭' }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="状态" align="center" width="100">
+        <template #default="scope">
+          <el-tag :type="statusTagType(scope.row.status)">{{ statusText(scope.row.status) }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="上链状态" align="center" width="100">
+        <template #default="scope">
+          <el-tag :type="chainStatusType(scope.row.chainStatus)">{{ chainStatusText(scope.row.chainStatus) }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="更新时间" align="center" prop="updTime" width="170" />
+      <el-table-column label="操作" align="center" width="120">
+        <template #default="scope">
+          <el-button
+            link
+            type="primary"
+            icon="Refresh"
+            :disabled="isRevoked(scope.row.status)"
+            @click="openRotateDialog(scope.row)"
+            v-hasPermi="['lifecycle:keymanage:edit']"
+          >轮换</el-button>
+        </template>
+      </el-table-column>
     </el-table>
 
     <pagination
-      v-show="total>0"
+      v-show="total > 0"
       :total="total"
       v-model:page="queryParams.pageNum"
       v-model:limit="queryParams.pageSize"
       @pagination="getList"
     />
 
-    <el-dialog :title="title" v-model="open" width="500px" append-to-body>
-      <el-form ref="keymanageRef" :model="form" :rules="rules" label-width="80px">
-        <el-form-item label="用户ID" prop="userId">
-          <el-input v-model="form.userId" placeholder="请输入用户ID" />
+    <el-dialog title="密钥轮换" v-model="open" width="560px" append-to-body>
+      <el-form ref="keymanageRef" :model="form" :rules="rules" label-width="96px">
+        <el-form-item label="密钥ID">
+          <el-input :model-value="form.keyId" disabled />
         </el-form-item>
-
-        <el-form-item label="加密算法类型" prop="encrytType">
-          <el-select v-model="form.encrytType" placeholder="请选择加密算法类型" @change="handleEncrytTypeChange">
-            <el-option label="无证书非对称加密" value="无证书非对称加密" />
-            <el-option label="对称加密" value="对称加密" />
-            <el-option label="非对称加密" value="非对称加密" />
-            <el-option label="单向加密" value="单向加密" />
-          </el-select>
+        <el-form-item label="用户名">
+          <el-input :model-value="form.userName" disabled />
         </el-form-item>
-
-        <el-form-item label="加密算法名称" prop="encrytName">
-          <el-select v-model="form.encrytName" placeholder="请选择加密算法名称">
-            <el-option
-              v-for="option in encrytNameOptions"
-              :key="option.value"
-              :label="option.label"
-              :value="option.value"
-            />
-          </el-select>
+        <el-form-item label="算法类型">
+          <el-input :model-value="form.encrytType" disabled />
+        </el-form-item>
+        <el-form-item label="算法名称">
+          <el-input :model-value="form.encrytName" disabled />
         </el-form-item>
         <el-form-item label="密钥名称" prop="keyName">
-          <el-input v-model="form.keyName" placeholder="请输入密钥名称" />
+          <el-input v-model="form.keyName" placeholder="可选，不填则沿用当前值" />
         </el-form-item>
         <el-form-item label="密钥用途" prop="keyUse">
-          <el-input v-model="form.keyUse" placeholder="请输入密钥用途" />
+          <el-input v-model="form.keyUse" placeholder="可选，不填则沿用当前值" />
         </el-form-item>
-        <el-form-item label="密钥所属域(SSCL)" prop="keyDomain">
-          <el-input v-model="form.keyDomain" placeholder="请输入密钥所属域" />
+        <el-form-item label="所属域" prop="keyDomain" v-if="isSsclKey(form)">
+          <el-input v-model="form.keyDomain" placeholder="SSCL 轮换时可调整所属域" />
+        </el-form-item>
+        <el-form-item label="自动更新">
+          <el-switch v-model="form.autoUpdateEnabled" inline-prompt active-text="开" inactive-text="关" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -129,166 +133,173 @@
 </template>
 
 <script setup name="KeyUpdate">
-import { listKeymanage, getKeymanage, updateKeymanage } from "@/api/lifecycle/lifecycle";
+import { listKeymanage, getKeymanage, updateKeymanage } from "@/api/lifecycle/lifecycle"
 
-const { proxy } = getCurrentInstance();
+const { proxy } = getCurrentInstance()
 
-const keymanageList = ref([]);
-const open = ref(false);
-const loading = ref(true);
-const showSearch = ref(true);
-const ids = ref([]);
-const single = ref(true);
-const multiple = ref(true);
-const total = ref(0);
-const title = ref("");
+const keymanageList = ref([])
+const open = ref(false)
+const loading = ref(true)
+const showSearch = ref(true)
+const ids = ref([])
+const single = ref(true)
+const total = ref(0)
 
 const data = reactive({
   form: {},
-  encrytNameOptions: [],
   queryParams: {
     pageNum: 1,
     pageSize: 10,
     userId: null,
     userName: null,
-    encrytType: null,
     encrytName: null,
-    keyName: null,
-    keyUse: null,
-    keyValue: null,
-    creTime: null,
-    updTime: null,
-    autoUpdate: null,
-    status: null
+    keyName: null
   },
   rules: {
-    userId: [
-      { required: true, message: "用户ID不能为空", trigger: "blur" }
-    ],
-    encrytType: [
-      { required: true, message: "加密算法类型不能为空", trigger: "change" }
-    ],
-    encrytName: [
-      { required: true, message: "加密算法名称不能为空", trigger: "blur" }
-    ],
-    keyName: [
-      { required: true, message: "密钥名称不能为空", trigger: "blur" }
-    ],
-    keyUse: [
-      { required: true, message: "密钥用途不能为空", trigger: "blur" }
-    ]
+    keyName: [{ max: 64, message: "密钥名称长度不能超过64个字符", trigger: "blur" }],
+    keyUse: [{ max: 128, message: "密钥用途长度不能超过128个字符", trigger: "blur" }],
+    keyDomain: [{ max: 64, message: "所属域长度不能超过64个字符", trigger: "blur" }]
   }
-});
+})
 
-const { queryParams, encrytNameOptions, form, rules } = toRefs(data);
+const { queryParams, form, rules } = toRefs(data)
 
-/** 查询密钥管理列表 */
 function getList() {
-  loading.value = true;
+  loading.value = true
   listKeymanage(queryParams.value).then(response => {
-    keymanageList.value = response.rows;
-    total.value = response.total;
-    loading.value = false;
-  });
-}
-
-function cancel() {
-  open.value = false;
-  reset();
+    keymanageList.value = response.rows || []
+    total.value = response.total || 0
+  }).finally(() => {
+    loading.value = false
+  })
 }
 
 function reset() {
   form.value = {
     keyId: null,
-    userId: null,
-    userName: null,
-    encrytType: null,
-    encrytName: null,
-    keyName: null,
-    keyUse: null,
-    keyValue: null,
-    creTime: null,
-    updTime: null,
-    autoUpdate: null,
-    status: "Replaced",
-    keyDomain : 'A'
-  };
-  proxy.resetForm("keymanageRef");
+    userName: '',
+    encrytType: '',
+    encrytName: '',
+    keyName: '',
+    keyUse: '',
+    keyDomain: '',
+    autoUpdateEnabled: false,
+    status: ''
+  }
+  proxy.resetForm("keymanageRef")
 }
 
-/** 搜索按钮操作 */
+function cancel() {
+  open.value = false
+  reset()
+}
+
 function handleQuery() {
-  queryParams.value.pageNum = 1;
-  getList();
+  queryParams.value.pageNum = 1
+  getList()
 }
 
-/** 重置按钮操作 */
 function resetQuery() {
-  proxy.resetForm("queryRef");
-  handleQuery();
+  proxy.resetForm("queryRef")
+  handleQuery()
 }
 
 function handleSelectionChange(selection) {
-  ids.value = selection.map(item => item.keyId);
-  single.value = selection.length != 1;
-  multiple.value = !selection.length;
+  ids.value = selection.map(item => item.keyId)
+  single.value = selection.length !== 1
 }
 
-/** 修改按钮操作 */
-function handleUpdate(row) {
-  reset();
-  const _keyId = row.keyId || ids.value
-  getKeymanage(_keyId).then(response => {
-    form.value = response.data;
-    open.value = true;
-    title.value = "密钥更新";
-  });
+function openRotateDialog(row) {
+  reset()
+  const keyId = row?.keyId || ids.value[0]
+  if (!keyId) {
+    proxy.$modal.msgWarning("请先选择一条密钥记录")
+    return
+  }
+  getKeymanage(keyId).then(response => {
+    const current = response.data
+    form.value = {
+      keyId: current.keyId,
+      userName: current.userName,
+      encrytType: current.encrytType,
+      encrytName: current.encrytName,
+      keyName: current.keyName,
+      keyUse: current.keyUse,
+      keyDomain: current.keyDomain,
+      autoUpdateEnabled: isAutoUpdateEnabled(current.autoUpdate),
+      status: current.status
+    }
+    if (isRevoked(current.status)) {
+      proxy.$modal.msgWarning("该密钥已回收，无法轮换")
+      return
+    }
+    open.value = true
+  })
 }
 
 function submitForm() {
   proxy.$refs["keymanageRef"].validate(valid => {
-    if (valid) {
-      if (form.value.keyId == null) {
-        proxy.$modal.msgError("生命周期系统仅支持对已有密钥执行更新");
-        return;
-      }
-      updateKeymanage(form.value).then(response => {
-        proxy.$modal.msgSuccess("更新成功");
-        open.value = false;
-        getList();
-      });
+    if (!valid) {
+      return
     }
-  });
+    updateKeymanage({
+      keyId: form.value.keyId,
+      keyName: blankToNull(form.value.keyName),
+      keyUse: blankToNull(form.value.keyUse),
+      keyDomain: isSsclKey(form.value) ? blankToNull(form.value.keyDomain) : null,
+      autoUpdate: form.value.autoUpdateEnabled ? '1' : '0'
+    }).then(() => {
+      proxy.$modal.msgSuccess("轮换成功")
+      open.value = false
+      getList()
+    })
+  })
 }
 
-function handleEncrytTypeChange(value) {
-      if (value === '无证书非对称加密') {
-        encrytNameOptions.value = [
-            { label: 'SM2', value: 'SM2' },
-            { label: 'SSCL', value: 'SSCL'}
-        ];
-      } else if (value === '对称加密') {
-        encrytNameOptions.value = [
-          { label: 'AES', value: 'AES' }
-        ];
-      } else if (value === '非对称加密') {
-        encrytNameOptions.value = [
-          { label: 'RSA', value: 'RSA' },
-          { label: 'ECC', value: 'ECC' }
-        ];
-      } else if (value === '单向加密') {
-        encrytNameOptions.value = [
-          { label: 'MD5', value: 'MD5' },
-          { label: 'BLAKE2', value: 'BLAKE2' },
-          { label: 'SHA-256', value: 'SHA-256' },
-          { label: 'SHA-512', value: 'SHA-512' },
-          { label: 'SHA-3', value: 'SHA-3' }
-        ];
-      } else {
-        encrytNameOptions.value = [];
-      }
-      form.value.encrytName = '';
-    }
+function blankToNull(value) {
+  return value == null || String(value).trim() === '' ? null : String(value).trim()
+}
 
-getList();
+function isSsclKey(row) {
+  return row.encrytType === '无证书非对称加密' && row.encrytName === 'SSCL'
+}
+
+function isAutoUpdateEnabled(value) {
+  return value === 1 || value === '1' || value === true || value === 'true'
+}
+
+function isRevoked(status) {
+  return status === '3' || status === 'REVOKED'
+}
+
+function statusText(status) {
+  return {
+    Valid: '有效',
+    Replaced: '已轮换',
+    Revoked: '已回收',
+    '1': '有效',
+    '2': '已轮换',
+    '3': '已回收'
+  }[status] || (status || '-')
+}
+
+function statusTagType(status) {
+  if (isRevoked(status)) {
+    return 'danger'
+  }
+  if (status === 'Replaced' || status === '2') {
+    return 'warning'
+  }
+  return 'success'
+}
+
+function chainStatusText(status) {
+  return { '0': '待上链', '1': '已上链', '2': '失败' }[status] || '-'
+}
+
+function chainStatusType(status) {
+  return { '0': 'warning', '1': 'success', '2': 'danger' }[status] || 'info'
+}
+
+getList()
 </script>

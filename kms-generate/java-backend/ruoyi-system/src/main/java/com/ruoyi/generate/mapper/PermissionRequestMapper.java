@@ -10,6 +10,8 @@ import java.util.List;
 public interface PermissionRequestMapper {
     PermissionRequest selectPermissionRequestByRequestId(Long requestId);
 
+    int deletePermissionRequestByRequestId(Long requestId);
+
     List<PermissionRequest> selectPermissionRequestList(PermissionRequest permissionRequest);
 
     int insertPermissionRequest(PermissionRequest permissionRequest);

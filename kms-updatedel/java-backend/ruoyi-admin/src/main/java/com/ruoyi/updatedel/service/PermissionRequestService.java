@@ -30,6 +30,16 @@ public class PermissionRequestService {
     }
 
     @Transactional
+    public void delete(Long requestId) {
+        PermissionRequest request = findById(requestId)
+            .orElseThrow(() -> new IllegalStateException("权限申请不存在"));
+        if ("1".equals(request.getStatus())) {
+            throw new IllegalStateException("已审批通过的申请不能直接删除，请先回退");
+        }
+        permissionRequestMapper.deletePermissionRequestById(requestId);
+    }
+
+    @Transactional
     public PermissionRequest submit(PermissionRequest request) {
         SysUser user = loadUser(request.getUserId(), request.getUserName());
         request.setUserId(user.getUserId());

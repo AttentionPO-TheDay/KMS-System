@@ -16,6 +16,8 @@ public interface PermissionRequestMapper {
 
     int insertPermissionRequest(PermissionRequest request);
 
+    int deletePermissionRequestById(Long requestId);
+
     int markApproved(@Param("requestId") Long requestId, @Param("approveBy") String approveBy,
                      @Param("approveNote") String approveNote);
 

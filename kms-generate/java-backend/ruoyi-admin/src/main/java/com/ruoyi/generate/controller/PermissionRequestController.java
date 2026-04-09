@@ -78,4 +78,14 @@ public class PermissionRequestController extends BaseController {
             return error(ex.getMessage());
         }
     }
+
+    @DeleteMapping("/{requestId}")
+    public AjaxResult delete(@PathVariable Long requestId) {
+        try {
+            permissionRequestService.delete(requestId);
+            return success("删除成功");
+        } catch (IllegalArgumentException ex) {
+            return error(ex.getMessage());
+        }
+    }
 }

@@ -1,45 +1,33 @@
 <template>
   <div class="app-container">
+    <el-alert
+      title="密钥回收"
+      type="warning"
+      :closable="false"
+      style="margin-bottom: 16px"
+    >
+      <template #default>
+        当前页面调用后端 `DELETE /lifecycle/keymanage/{keyId}` 执行逻辑回收，不再是物理删除。
+      </template>
+    </el-alert>
+
     <el-form :model="queryParams" ref="queryRef" :inline="true" v-show="showSearch" label-width="68px">
       <el-form-item label="用户ID" prop="userId">
-        <el-input
-          v-model="queryParams.userId"
-          placeholder="请输入用户ID"
-          clearable
-          @keyup.enter="handleQuery"
-        />
+        <el-input v-model="queryParams.userId" placeholder="请输入用户ID" clearable @keyup.enter="handleQuery" />
       </el-form-item>
       <el-form-item label="用户名" prop="userName">
-        <el-input
-          v-model="queryParams.userName"
-          placeholder="请输入用户名"
-          clearable
-          @keyup.enter="handleQuery"
-        />
-      </el-form-item>
-      <el-form-item label="加密算法名称" prop="encrytName">
-        <el-input
-          v-model="queryParams.encrytName"
-          placeholder="请输入加密算法名称"
-          clearable
-          @keyup.enter="handleQuery"
-        />
+        <el-input v-model="queryParams.userName" placeholder="请输入用户名" clearable @keyup.enter="handleQuery" />
       </el-form-item>
       <el-form-item label="密钥名称" prop="keyName">
-        <el-input
-          v-model="queryParams.keyName"
-          placeholder="请输入密钥名称"
-          clearable
-          @keyup.enter="handleQuery"
-        />
+        <el-input v-model="queryParams.keyName" placeholder="请输入密钥名称" clearable @keyup.enter="handleQuery" />
       </el-form-item>
-      <el-form-item label="密钥用途" prop="keyUse">
-        <el-input
-          v-model="queryParams.keyUse"
-          placeholder="请输入密钥用途"
-          clearable
-          @keyup.enter="handleQuery"
-        />
+      <el-form-item label="状态" prop="status">
+        <el-select v-model="queryParams.status" placeholder="请选择状态" clearable style="width: 140px">
+          <el-option label="有效" value="Valid" />
+          <el-option label="已轮换" value="Replaced" />
+          <el-option label="已回收" value="Revoked" />
+          <el-option label="已回收(兼容)" value="3" />
+        </el-select>
       </el-form-item>
       <el-form-item>
         <el-button type="primary" icon="Search" @click="handleQuery">搜索</el-button>
@@ -54,261 +42,146 @@
           plain
           icon="Delete"
           :disabled="multiple"
-          @click="handleDelete"
+          @click="handleDelete()"
           v-hasPermi="['lifecycle:keymanage:remove']"
-          style="padding: 6px 12px; margin-top: 15px;"
+          style="padding: 6px 12px; margin-top: 15px"
         >密钥回收</el-button>
       </el-col>
-
-      <right-toolbar v-model:showSearch="showSearch" @queryTable="getList"></right-toolbar>
+      <right-toolbar v-model:showSearch="showSearch" @queryTable="getList" />
     </el-row>
 
     <el-table v-loading="loading" :data="keymanageList" @selection-change="handleSelectionChange">
       <el-table-column type="selection" width="55" align="center" />
-      <el-table-column label="密钥ID" align="center" prop="keyId" />
-      <el-table-column label="用户ID" align="center" prop="userId" />
-      <el-table-column label="加密算法类型" align="center" prop="encrytType" />
-      <el-table-column label="加密算法名称" align="center" prop="encrytName" />
-      <el-table-column label="密钥名称" align="center" prop="keyName" />
-      <el-table-column label="密钥用途" align="center" prop="keyUse" />
-      <el-table-column label="创建时间" align="center" prop="creTime" />
-      <el-table-column label="更新时间" align="center" prop="updTime" />
-      <el-table-column label="密钥自动更新状态" align="center" prop="autoUpdate" />
-      <el-table-column label="操作" align="center" class-name="small-padding fixed-width">
+      <el-table-column label="密钥ID" align="center" prop="keyId" width="90" />
+      <el-table-column label="用户ID" align="center" prop="userId" width="90" />
+      <el-table-column label="用户名" align="center" prop="userName" width="120" />
+      <el-table-column label="算法类型" align="center" prop="encrytType" min-width="130" />
+      <el-table-column label="算法名称" align="center" prop="encrytName" width="120" />
+      <el-table-column label="密钥名称" align="center" prop="keyName" min-width="140" />
+      <el-table-column label="版本" align="center" prop="version" width="80" />
+      <el-table-column label="状态" align="center" width="100">
         <template #default="scope">
-          <el-button link type="primary" icon="Delete" @click="handleDelete(scope.row)" v-hasPermi="['lifecycle:keymanage:remove']">删除</el-button>
+          <el-tag :type="statusTagType(scope.row.status)">{{ statusText(scope.row.status) }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="更新时间" align="center" prop="updTime" width="170" />
+      <el-table-column label="操作" align="center" width="120">
+        <template #default="scope">
+          <el-button
+            link
+            type="danger"
+            icon="Delete"
+            :disabled="isRevoked(scope.row.status)"
+            @click="handleDelete(scope.row)"
+            v-hasPermi="['lifecycle:keymanage:remove']"
+          >回收</el-button>
         </template>
       </el-table-column>
     </el-table>
 
     <pagination
-      v-show="total>0"
+      v-show="total > 0"
       :total="total"
       v-model:page="queryParams.pageNum"
       v-model:limit="queryParams.pageSize"
       @pagination="getList"
     />
-
-    <el-dialog :title="title" v-model="open" width="500px" append-to-body>
-      <el-form ref="keymanageRef" :model="form" :rules="rules" label-width="80px">
-        <el-form-item label="用户ID" prop="userId">
-          <el-input v-model="form.userId" placeholder="请输入用户ID" />
-        </el-form-item>
-        <el-form-item label="用户名" prop="userName">
-          <el-input v-model="form.userName" placeholder="请输入用户名" />
-        </el-form-item>
-
-        <el-form-item label="加密算法类型" prop="encrytType">
-          <el-select v-model="form.encrytType" placeholder="请选择加密算法类型" @change="handleEncrytTypeChange">
-            <el-option label="对称加密" value="对称加密" />
-            <el-option label="非对称加密" value="非对称加密" />
-            <el-option label="单向加密" value="单向加密" />
-          </el-select>
-        </el-form-item>
-
-        <el-form-item label="加密算法名称" prop="encrytName">
-          <el-select v-model="form.encrytName" placeholder="请选择加密算法名称">
-            <el-option
-              v-for="option in encrytNameOptions"
-              :key="option.value"
-              :label="option.label"
-              :value="option.value"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="密钥名称" prop="keyName">
-          <el-input v-model="form.keyName" placeholder="请输入密钥名称" />
-        </el-form-item>
-        <el-form-item label="密钥用途" prop="keyUse">
-          <el-input v-model="form.keyUse" placeholder="请输入密钥用途" />
-        </el-form-item>
-        <el-form-item label="密钥自动更新状态" prop="autoUpdate">
-          <el-input v-model="form.autoUpdate" placeholder="请输入密钥自动更新状态" />
-        </el-form-item>
-        <el-form-item label="密钥工作状态" prop="status">
-          <el-input v-model="form.status" placeholder="请输入密钥工作状态" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <div class="dialog-footer">
-          <el-button type="primary" @click="submitForm">确 定</el-button>
-          <el-button @click="cancel">取 消</el-button>
-        </div>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
 <script setup name="KeyDelete">
-import { listKeymanage, getKeymanage, delKeymanage, updateKeymanage } from "@/api/lifecycle/lifecycle";
+import { listKeymanage, delKeymanage } from "@/api/lifecycle/lifecycle"
 
-const { proxy } = getCurrentInstance();
+const { proxy } = getCurrentInstance()
 
-const keymanageList = ref([]);
-const open = ref(false);
-const loading = ref(true);
-const showSearch = ref(true);
-const ids = ref([]);
-const single = ref(true);
-const multiple = ref(true);
-const total = ref(0);
-const title = ref("");
+const keymanageList = ref([])
+const loading = ref(true)
+const showSearch = ref(true)
+const ids = ref([])
+const multiple = ref(true)
+const total = ref(0)
 
-const data = reactive({
-  form: {},
-  encrytNameOptions: [],
-  queryParams: {
-    pageNum: 1,
-    pageSize: 10,
-    userId: null,
-    userName: null,
-    encrytType: null,
-    encrytName: null,
-    keyName: null,
-    keyUse: null,
-    keyValue: null,
-    creTime: null,
-    updTime: null,
-    autoUpdate: null,
-    status: null
-  },
-  rules: {
-    userId: [
-      { required: true, message: "用户ID不能为空", trigger: "blur" }
-    ],
-    userName: [
-      { required: true, message: "用户名不能为空", trigger: "blur" }
-    ],
-    encrytType: [
-      { required: true, message: "加密算法类型不能为空", trigger: "change" }
-    ],
-    encrytName: [
-      { required: true, message: "加密算法名称不能为空", trigger: "blur" }
-    ],
-    keyName: [
-      { required: true, message: "密钥名称不能为空", trigger: "blur" }
-    ],
-    keyUse: [
-      { required: true, message: "密钥用途不能为空", trigger: "blur" }
-    ],
-    keyValue: [
-      { required: true, message: "密钥值不能为空", trigger: "blur" }
-    ]
-  }
-});
+const queryParams = ref({
+  pageNum: 1,
+  pageSize: 10,
+  userId: null,
+  userName: null,
+  keyName: null,
+  status: null
+})
 
-const { queryParams, encrytNameOptions, form, rules } = toRefs(data);
-
-/** 查询密钥管理列表 */
 function getList() {
-  loading.value = true;
+  loading.value = true
   listKeymanage(queryParams.value).then(response => {
-    keymanageList.value = response.rows;
-    total.value = response.total;
-    loading.value = false;
-  });
+    keymanageList.value = response.rows || []
+    total.value = response.total || 0
+  }).finally(() => {
+    loading.value = false
+  })
 }
 
-function cancel() {
-  open.value = false;
-  reset();
-}
-
-function reset() {
-  form.value = {
-    keyId: null,
-    userId: null,
-    userName: null,
-    encrytType: null,
-    encrytName: null,
-    keyName: null,
-    keyUse: null,
-    keyValue: null,
-    creTime: null,
-    updTime: null,
-    autoUpdate: null,
-    status: null
-  };
-  proxy.resetForm("keymanageRef");
-}
-
-/** 搜索按钮操作 */
 function handleQuery() {
-  queryParams.value.pageNum = 1;
-  getList();
+  queryParams.value.pageNum = 1
+  getList()
 }
 
-/** 重置按钮操作 */
 function resetQuery() {
-  proxy.resetForm("queryRef");
-  handleQuery();
+  proxy.resetForm("queryRef")
+  handleQuery()
 }
 
 function handleSelectionChange(selection) {
-  ids.value = selection.map(item => item.keyId);
-  single.value = selection.length != 1;
-  multiple.value = !selection.length;
-}
-
-function handleUpdate(row) {
-  reset();
-  const _keyId = row.keyId || ids.value
-  getKeymanage(_keyId).then(response => {
-    form.value = response.data;
-    open.value = true;
-    title.value = "修改密钥管理";
-  });
-}
-
-function submitForm() {
-  proxy.$refs["keymanageRef"].validate(valid => {
-    if (valid) {
-      if (form.value.keyId == null) {
-        proxy.$modal.msgError("生命周期系统仅支持对已有密钥执行回收或更新");
-        return;
-      }
-      updateKeymanage(form.value).then(response => {
-        proxy.$modal.msgSuccess("修改成功");
-        open.value = false;
-        getList();
-      });
-    }
-  });
+  ids.value = selection.map(item => item.keyId)
+  multiple.value = !selection.length
 }
 
 function handleDelete(row) {
-  const _keyIds = row.keyId || ids.value;
-  proxy.$modal.confirm('是否确认删除密钥管理编号为"' + _keyIds + '"的数据项？').then(function() {
-    return delKeymanage(_keyIds);
-  }).then(() => {
-    getList();
-    proxy.$modal.msgSuccess("删除成功");
-  }).catch(() => {});
+  const keyIds = row?.keyId ? [row.keyId] : ids.value
+  if (!keyIds.length) {
+    proxy.$modal.msgWarning("请先选择需要回收的密钥")
+    return
+  }
+  const revokedIds = keyIds.filter(keyId => {
+    const current = keymanageList.value.find(item => item.keyId === keyId)
+    return current && isRevoked(current.status)
+  })
+  if (revokedIds.length) {
+    proxy.$modal.msgWarning(`密钥 ${revokedIds.join(', ')} 已回收，无需重复操作`)
+    return
+  }
+  proxy.$modal.confirm(`是否确认回收密钥编号为 "${keyIds.join(', ')}" 的记录？`).then(async () => {
+    for (const keyId of keyIds) {
+      await delKeymanage(keyId)
+    }
+    proxy.$modal.msgSuccess("回收成功")
+    getList()
+  }).catch(() => {})
 }
 
-function handleEncrytTypeChange(value) {
-      if (value === '对称加密') {
-        encrytNameOptions.value = [
-          { label: 'AES', value: 'AES' }
-        ];
-      } else if (value === '非对称加密') {
-        encrytNameOptions.value = [
-          { label: 'RSA', value: 'RSA' },
-          { label: 'ECC', value: 'ECC' }
-        ];
-      } else if (value === '单向加密') {
-        encrytNameOptions.value = [
-          { label: 'MD5', value: 'MD5' },
-          { label: 'BLAKE2', value: 'BLAKE2' },
-          { label: 'SHA-256', value: 'SHA-256' },
-          { label: 'SHA-512', value: 'SHA-512' },
-          { label: 'SHA-3', value: 'SHA-3' }
-        ];
-      } else {
-        encrytNameOptions.value = [];
-      }
-      form.value.encrytName = '';
-    }
+function isRevoked(status) {
+  return status === '3' || status === 'Revoked' || status === 'REVOKED'
+}
 
-getList();
+function statusText(status) {
+  return {
+    Valid: '有效',
+    Replaced: '已轮换',
+    Revoked: '已回收',
+    '1': '有效',
+    '2': '已轮换',
+    '3': '已回收'
+  }[status] || (status || '-')
+}
+
+function statusTagType(status) {
+  if (isRevoked(status)) {
+    return 'danger'
+  }
+  if (status === 'Replaced' || status === '2') {
+    return 'warning'
+  }
+  return 'success'
+}
+
+getList()
 </script>

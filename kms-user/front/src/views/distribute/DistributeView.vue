@@ -17,6 +17,15 @@
           <input v-model="filters.keyName" type="text" placeholder="按密钥名称筛选" />
         </label>
         <label>
+          <span>分发类型</span>
+          <select v-model="filters.distributeType">
+            <option value="">全部</option>
+            <option value="1">初始分发</option>
+            <option value="2">更新分发</option>
+            <option value="3">回收后补发</option>
+          </select>
+        </label>
+        <label>
           <span>分发状态</span>
           <select v-model="filters.distributeStatus">
             <option value="">全部</option>
@@ -26,7 +35,8 @@
             <option value="3">分发失败</option>
           </select>
         </label>
-        <button @click="loadRecords">刷新</button>
+        <button @click="handleSearch">搜索</button>
+        <button class="ghost-button" @click="resetFilters">重置</button>
       </div>
       <p class="muted">API 前缀：<code>{{ apiBase }}</code></p>
       <p v-if="errorMessage" class="error-text">{{ errorMessage }}</p>
@@ -46,6 +56,11 @@
           <p>分发时间：{{ record.distributeTime || '-' }}</p>
           <button class="ghost-button" @click="showDetail(record.recordId)">查看详情</button>
         </article>
+      </div>
+      <div v-if="total > filters.pageSize" class="pagination">
+        <button class="ghost-button" :disabled="filters.pageNum <= 1" @click="changePage(filters.pageNum - 1)">上一页</button>
+        <span>第 {{ filters.pageNum }} / {{ totalPages }} 页，共 {{ total }} 条</span>
+        <button class="ghost-button" :disabled="filters.pageNum >= totalPages" @click="changePage(filters.pageNum + 1)">下一页</button>
       </div>
     </article>
 
@@ -72,19 +87,24 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { apiBases } from '@/config/api-bases'
 import { getDistributeRecord, listDistributeRecords } from '@/services/distribute-api'
 
 const apiBase = apiBases.distributeApi
 const filters = reactive({
+  pageNum: 1,
+  pageSize: 10,
   userName: '',
   keyName: '',
+  distributeType: '',
   distributeStatus: ''
 })
 const records = ref([])
 const selectedRecord = ref(null)
 const errorMessage = ref('')
+const total = ref(0)
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / filters.pageSize)))
 
 onMounted(() => {
   loadRecords()
@@ -96,10 +116,32 @@ async function loadRecords() {
   try {
     const data = await listDistributeRecords(filters)
     records.value = data.rows || []
+    total.value = data.total || 0
   } catch (error) {
     records.value = []
+    total.value = 0
     errorMessage.value = error.message
   }
+}
+
+function handleSearch() {
+  filters.pageNum = 1
+  loadRecords()
+}
+
+function resetFilters() {
+  filters.pageNum = 1
+  filters.pageSize = 10
+  filters.userName = ''
+  filters.keyName = ''
+  filters.distributeType = ''
+  filters.distributeStatus = ''
+  loadRecords()
+}
+
+function changePage(pageNum) {
+  filters.pageNum = pageNum
+  loadRecords()
 }
 
 async function showDetail(recordId) {
@@ -142,6 +184,14 @@ function statusText(status) {
 .record-list {
   display: grid;
   gap: 12px;
+}
+
+.pagination {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
 }
 
 .record-card {

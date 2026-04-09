@@ -35,6 +35,10 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         where request_id = #{requestId}
     </select>
 
+    <delete id="deletePermissionRequestByRequestId" parameterType="Long">
+        delete from permission_request where request_id = #{requestId}
+    </delete>
+
     <select id="selectPermissionRequestList" parameterType="com.ruoyi.generate.domain.PermissionRequest" resultMap="permissionRequestResult">
         <include refid="permissionRequestColumns"/>
         <where>

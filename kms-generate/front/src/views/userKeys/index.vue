@@ -156,11 +156,37 @@
         <el-button @click="resultOpen = false">关 闭</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog title="申请查看公共密钥列表" v-model="permissionDialogOpen" width="520px" append-to-body>
+      <el-form label-width="88px">
+        <el-form-item label="当前等级">
+          <el-tag type="info">{{ roleLevelText(userStore.roleLevel) }}</el-tag>
+        </el-form-item>
+        <el-form-item label="目标权限">
+          <el-tag type="warning">中级用户</el-tag>
+        </el-form-item>
+        <el-form-item label="申请理由" required>
+          <el-input
+            v-model="permissionReason"
+            type="textarea"
+            :rows="4"
+            maxlength="200"
+            show-word-limit
+            placeholder="请输入申请理由，至少 4 个字"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="permissionDialogOpen = false">取 消</el-button>
+        <el-button type="primary" :loading="permissionSubmitting" @click="submitPermissionApply">提 交</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup name="UserKeys">
 import { listKeymanage, addKeymanage, updateKeymanage, getComParam } from "@/api/generate/keymanage"
+import { submitPermissionRequest } from '@/api/permission/permission'
 import { getUserProfile } from "@/api/system/user"
 import { SM2 } from 'gm-crypto'
 import { BigInteger } from "jsbn"
@@ -180,6 +206,9 @@ const title = ref("")
 const activeTab = ref('mykeys')
 const resultOpen = ref(false)
 const localResult = ref({})
+const permissionDialogOpen = ref(false)
+const permissionReason = ref('')
+const permissionSubmitting = ref(false)
 
 const publicKeysList = ref([])
 const publicKeysLoading = ref(false)
@@ -505,9 +534,11 @@ function handleEncrytTypeChange(value) {
 
 function handleViewPublicKeys() {
   if (userStore.roleLevel > 1) {
-    proxy.$modal.msgWarning("您没有权限访问公共密钥列表")
+    permissionReason.value = ''
+    permissionDialogOpen.value = true
   } else {
     activeTab.value = 'publickeys'
+    loadPublicKeys()
   }
 }
 
@@ -518,6 +549,32 @@ function loadPublicKeys() {
     publicKeysTotal.value = response.total
     publicKeysLoading.value = false
   })
+}
+
+function submitPermissionApply() {
+  const reason = permissionReason.value.trim()
+  if (reason.length < 4) {
+    proxy.$modal.msgWarning('申请理由至少 4 个字')
+    return
+  }
+  permissionSubmitting.value = true
+  submitPermissionRequest({
+    userId,
+    userName,
+    originalLevel: userStore.roleLevel,
+    requestLevel: 1,
+    requestReason: reason,
+    isTemp: 1
+  }).then(() => {
+    proxy.$modal.msgSuccess('权限申请已提交，请等待生成域管理员审批')
+    permissionDialogOpen.value = false
+  }).finally(() => {
+    permissionSubmitting.value = false
+  })
+}
+
+function roleLevelText(level) {
+  return { 0: '管理员', 1: '中级用户', 2: '普通用户' }[level] || '未知'
 }
 
 let userId, userName

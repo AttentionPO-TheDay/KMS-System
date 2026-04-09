@@ -9,6 +9,8 @@ public interface IPermissionRequestService {
 
     PermissionRequest get(Long requestId);
 
+    void delete(Long requestId);
+
     void submit(PermissionRequest request);
 
     void approve(Long requestId, String approveBy, String approveNote);

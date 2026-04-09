@@ -45,8 +45,8 @@
       <el-table-column label="密钥用途" align="center" prop="keyUse" width="120" />
       <el-table-column label="自动更新状态" align="center" prop="autoUpdate" width="120">
         <template #default="scope">
-          <el-tag :type="scope.row.autoUpdate === 1 ? 'success' : 'info'">
-            {{ scope.row.autoUpdate === 1 ? '已启用' : '未启用' }}
+          <el-tag :type="isAutoUpdateEnabled(scope.row.autoUpdate) ? 'success' : 'info'">
+            {{ isAutoUpdateEnabled(scope.row.autoUpdate) ? '已启用' : '未启用' }}
           </el-tag>
         </template>
       </el-table-column>
@@ -118,13 +118,13 @@ function resetQuery() {
 }
 
 function handleToggleAutoUpdate(row) {
-  const newStatus = row.autoUpdate === 1 ? 0 : 1;
-  const statusText = newStatus === 1 ? '启用' : '禁用';
+  const newStatus = isAutoUpdateEnabled(row.autoUpdate) ? '0' : '1';
+  const statusText = newStatus === '1' ? '启用' : '禁用';
 
   proxy.$modal.confirm(`确认${statusText}密钥"${row.keyName}"的自动更新功能？`).then(() => {
-    const updateData = {
-      keyId: row.keyId,
-      autoUpdate: newStatus
+      const updateData = {
+        keyId: row.keyId,
+        autoUpdate: newStatus
     };
 
     updateKeyAutoUpdate(updateData).then(() => {
@@ -132,6 +132,10 @@ function handleToggleAutoUpdate(row) {
       getList();
     });
   }).catch(() => {});
+}
+
+function isAutoUpdateEnabled(value) {
+  return value === 1 || value === '1' || value === true || value === 'true'
 }
 
 function checkPendingRollback() {

@@ -5,21 +5,31 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
 <mapper namespace="com.ruoyi.updatedel.mapper.SysUserMapper">
 
     <resultMap id="sysUserResult" type="com.ruoyi.updatedel.domain.SysUser">
-        <result property="userId" column="user_id"/>
+        <id property="userId" column="user_id"/>
         <result property="userName" column="user_name"/>
         <result property="password" column="password"/>
         <result property="roleLevel" column="role_level"/>
     </resultMap>
 
     <select id="selectUserById" parameterType="Long" resultMap="sysUserResult">
-        select user_id, user_name, password, role_level from sys_user where user_id = #{userId}
+        select user_id, user_name, password, role_level
+        from sys_user
+        where user_id = #{userId}
+          and del_flag = '0'
     </select>
 
     <select id="selectUserByUserName" parameterType="String" resultMap="sysUserResult">
-        select user_id, user_name, password, role_level from sys_user where user_name = #{userName}
+        select user_id, user_name, password, role_level
+        from sys_user
+        where user_name = #{userName}
+          and del_flag = '0'
+        limit 1
     </select>
 
     <update id="updateRoleLevel">
-        update sys_user set role_level = #{roleLevel} where user_id = #{userId}
+        update sys_user
+        set role_level = #{roleLevel},
+            update_time = now()
+        where user_id = #{userId}
     </update>
 </mapper>
