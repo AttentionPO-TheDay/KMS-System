@@ -275,9 +275,13 @@ function isRevoked(status) {
 function statusText(status) {
   return {
     Valid: '有效',
+    Active: '有效',
+    Frozen: '已冻结',
     Replaced: '已轮换',
+    Rotated: '已轮换',
     Revoked: '已回收',
-    '1': '有效',
+    '0': '有效',
+    '1': '已冻结',
     '2': '已轮换',
     '3': '已回收'
   }[status] || (status || '-')
@@ -286,6 +290,9 @@ function statusText(status) {
 function statusTagType(status) {
   if (isRevoked(status)) {
     return 'danger'
+  }
+  if (status === 'Frozen' || status === '1') {
+    return 'info'
   }
   if (status === 'Replaced' || status === '2') {
     return 'warning'

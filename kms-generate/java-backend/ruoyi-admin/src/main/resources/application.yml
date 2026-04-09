@@ -118,6 +118,6 @@ kms:
     chain-topic: ${KMS_CHAIN_TOPIC:key_chain_task}
   # Go 高性能生成服务配置
   go-backend:
-    url: ${GO_BACKEND_URL:http://kms-generate-go:8081}
+    url: ${GO_BACKEND_URL:http://generate-go:8081}
     # 内部鉴权 Token，必须与 Go 端 INTERNAL_TOKEN 环境变量一致
     internal-token: ${INTERNAL_TOKEN:kms-generate-internal-secret-2026}

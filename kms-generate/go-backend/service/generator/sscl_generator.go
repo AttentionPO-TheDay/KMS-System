@@ -179,7 +179,7 @@ func (gen *SSCLGenerator) GenPartialKey(identityData string, uAStr string, keyDo
 	ctx.buffer = append(ctx.buffer, make([]byte, 64)...)
 	hex.Encode(ctx.buffer[startIdx:], ctx.temp32)
 
-	ctx.buffer = append(ctx.buffer, `","SSCLDomian":"`...)
+	ctx.buffer = append(ctx.buffer, `","SSCLDomain":"`...)
 	ctx.buffer = append(ctx.buffer, keyDomain...)
 	ctx.buffer = append(ctx.buffer, `"}`...)
 

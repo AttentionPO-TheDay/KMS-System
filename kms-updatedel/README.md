@@ -15,12 +15,11 @@
 
 ## 当前目录
 
-1. `front/`：生命周期系统前端
+1. `front/`：生命周期系统管理员前端
 2. `go-backend/`：Go 接入层，接收更新/回收请求并投递 Kafka
 3. `java-backend/`：Java 业务层，消费更新/回收消息并执行轮换、回收、审批等逻辑
 4. `docs/`：系统设计与接口文档
 5. `sql/`：权限申请等数据库脚本
-6. `tests/`：联调与压测脚本
 
 ## 当前接口口径
 
@@ -40,12 +39,13 @@
 3. `PUT /lifecycle/keymanage`
 4. `PUT /lifecycle/keymanage/auto-update`
 5. `DELETE /lifecycle/keymanage/{keyId}`
-6. `POST /permission/request/submit`
-7. `GET /permission/request/list`
-8. `GET /permission/request/{requestId}`
+6. `GET /permission/request/list`
+7. `GET /permission/request/{requestId}`
+8. `POST /permission/request/submit`
 9. `PUT /permission/request/approve/{requestId}`
 10. `PUT /permission/request/reject/{requestId}`
 11. `PUT /permission/request/rollback/{requestId}`
+12. `DELETE /permission/request/{requestId}`
 
 默认端口：`9082`
 
@@ -54,8 +54,15 @@
 1. Go 接入层接收 `UPDATE_KEY` / `REVOKE_KEY`
 2. 更新消息投递到 `key_update_log`
 3. 回收消息投递到 `key_revoke_log`
-4. Java `UpdateKafkaConsumer` / `RevokeKafkaConsumer` 分别消费
+4. Java `LifecycleKafkaConsumer` 统一消费更新和回收消息
 5. Java 业务层执行轮换、回收、自动更新配置和权限处理
+6. 链同步相关后续处理由 `UpdatedelChainConsumer` 负责
+
+## 说明
+
+1. `front/` 当前仍保留权限审批和系统管理能力
+2. 普通用户主入口已经迁移到 `kms-user`
+3. 生命周期管理员后台仍然保留为独立前端
 
 ## 参考文档
 

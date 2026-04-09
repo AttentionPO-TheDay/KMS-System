@@ -29,7 +29,12 @@ export default defineConfig(({ mode, command }) => {
       host: true,
       open: true,
       proxy: {
-        // https://cn.vitejs.dev/config/#server-proxy
+        // 独立联调时直接转发到分发后端，避免本地开发请求落空。
+        '/distribute-api': {
+          target: 'http://localhost:8083',
+          changeOrigin: true,
+          rewrite: (p) => p.replace(/^\/distribute-api/, '')
+        },
         '/dev-api': {
           target: 'http://localhost:80',
           changeOrigin: true,

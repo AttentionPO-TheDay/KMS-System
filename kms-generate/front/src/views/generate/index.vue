@@ -73,7 +73,7 @@
           <el-input v-model="form.keyUse" placeholder="请输入密钥用途" />
         </el-form-item>
         <el-form-item label="密钥所属域(SSCL)" prop="keyDomain">
-          <el-input v-model="form.keyDimain" placeholder="请输入密钥所属域" />
+          <el-input v-model="form.keyDomain" placeholder="请输入密钥所属域" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -121,7 +121,7 @@
             </div>
             <div class="key-item">
               <span class="key-label">密钥所属域 (Domain):</span>
-              <div class="key-value-block">{{ detailInfo.parsedKey?.SSCLDomian || detailInfo.keyDimain || '无数据' }}</div>
+              <div class="key-value-block">{{ detailInfo.parsedKey?.SSCLDomain || detailInfo.parsedKey?.SSCLDomian || detailInfo.keyDomain || '无数据' }}</div>
             </div>
           </template>
           <template v-else>
@@ -244,7 +244,7 @@ function copyDetailInfo() {
   if (info.encrytName === 'SM2') {
     textToCopy += `Partial Key: ${info.parsedKey?.partialKey}\nPublic Key: ${info.parsedKey?.finalPublicKey}`
   } else if (info.encrytName === 'SSCL') {
-    textToCopy += `Share: ${info.parsedKey?.SSCLKey}\nDomain: ${info.parsedKey?.SSCLDomian}`
+    textToCopy += `Share: ${info.parsedKey?.SSCLKey}\nDomain: ${info.parsedKey?.SSCLDomain || info.parsedKey?.SSCLDomian}`
   } else {
     textToCopy += `Key Value: ${info.keyValue}`
   }
@@ -257,16 +257,34 @@ function submitForm() {
       if (form.value.keyId != null) {
         if (form.value.encrytType == "无证书非对称加密") { alert("该功能需配合用户系统使用") }
         else {
-          updateKeymanage(form.value).then(response => { proxy.$modal.msgSuccess("修改成功"); open.value = false; getList() })
+          updateKeymanage(form.value).then(() => {
+            proxy.$modal.msgSuccess("更新请求已提交，正在后台处理")
+            open.value = false
+            scheduleRefresh()
+          })
         }
       } else {
         if (form.value.encrytType == "无证书非对称加密") { alert("该功能需配合用户系统使用") }
         else {
-          addKeymanage(form.value).then(response => { proxy.$modal.msgSuccess("新增成功"); open.value = false; getList() })
+          addKeymanage(form.value).then(() => {
+            proxy.$modal.msgSuccess("生成请求已提交，正在后台处理")
+            open.value = false
+            scheduleRefresh()
+          })
         }
       }
     }
   })
+}
+
+function scheduleRefresh() {
+  getList()
+  window.setTimeout(() => {
+    getList()
+  }, 1200)
+  window.setTimeout(() => {
+    getList()
+  }, 3500)
 }
 
 function handleEncrytTypeChange(value) {

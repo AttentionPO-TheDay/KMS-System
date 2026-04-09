@@ -43,7 +43,7 @@ public class SsclKeyGenerator implements ECConstants {
         PartialKey partialKey = genPartialKey(userName, ua);
         Map<String, String> payload = new LinkedHashMap<>();
         payload.put("SSCLKey", "04" + toFixedLengthHex(partialKey.getMx(), 32) + toFixedLengthHex(partialKey.getMy(), 32));
-        payload.put("SSCLDomian", keyDomain == null ? "A" : keyDomain);
+        payload.put("SSCLDomain", keyDomain == null ? "A" : keyDomain);
         try {
             return OBJECT_MAPPER.writeValueAsString(payload);
         } catch (IOException ex) {

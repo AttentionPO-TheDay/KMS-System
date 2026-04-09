@@ -21,14 +21,14 @@
       <el-form-item label="密钥名称" prop="keyName">
         <el-input v-model="queryParams.keyName" placeholder="请输入密钥名称" clearable @keyup.enter="handleQuery" />
       </el-form-item>
-      <el-form-item label="状态" prop="status">
-        <el-select v-model="queryParams.status" placeholder="请选择状态" clearable style="width: 140px">
-          <el-option label="有效" value="Valid" />
-          <el-option label="已轮换" value="Replaced" />
-          <el-option label="已回收" value="Revoked" />
-          <el-option label="已回收(兼容)" value="3" />
-        </el-select>
-      </el-form-item>
+        <el-form-item label="状态" prop="status">
+          <el-select v-model="queryParams.status" placeholder="请选择状态" clearable style="width: 140px">
+          <el-option label="有效" value="0" />
+          <el-option label="已冻结" value="1" />
+          <el-option label="已轮换" value="2" />
+          <el-option label="已回收" value="3" />
+          </el-select>
+        </el-form-item>
       <el-form-item>
         <el-button type="primary" icon="Search" @click="handleQuery">搜索</el-button>
         <el-button icon="Refresh" @click="resetQuery">重置</el-button>
@@ -165,9 +165,13 @@ function isRevoked(status) {
 function statusText(status) {
   return {
     Valid: '有效',
+    Active: '有效',
+    Frozen: '已冻结',
     Replaced: '已轮换',
+    Rotated: '已轮换',
     Revoked: '已回收',
-    '1': '有效',
+    '0': '有效',
+    '1': '已冻结',
     '2': '已轮换',
     '3': '已回收'
   }[status] || (status || '-')
@@ -176,6 +180,9 @@ function statusText(status) {
 function statusTagType(status) {
   if (isRevoked(status)) {
     return 'danger'
+  }
+  if (status === 'Frozen' || status === '1') {
+    return 'info'
   }
   if (status === 'Replaced' || status === '2') {
     return 'warning'

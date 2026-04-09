@@ -129,6 +129,7 @@ services:
       - DB_NAME=kms
       - DB_USERNAME=root
       - DB_PASSWORD=root123456
+      - GO_BACKEND_URL=http://generate-go:8081
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
       - FISCO_HOST=fisco-node
       - REDIS_HOST=redis

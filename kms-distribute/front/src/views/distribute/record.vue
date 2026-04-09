@@ -1,6 +1,6 @@
 <template>
   <div class="app-container">
-    <el-form :model="queryParams" ref="queryForm" :inline="true" v-show="showSearch" label-width="80px">
+    <el-form ref="queryForm" :model="queryParams" :inline="true" v-show="showSearch" label-width="80px">
       <el-form-item label="用户名" prop="userName">
         <el-input v-model="queryParams.userName" placeholder="请输入用户名" clearable style="width: 200px" @keyup.enter="handleQuery" />
       </el-form-item>
@@ -22,6 +22,17 @@
           <el-option label="分发失败" value="3" />
         </el-select>
       </el-form-item>
+      <el-form-item label="分发时间">
+        <el-date-picker
+          v-model="dateRange"
+          type="daterange"
+          range-separator="-"
+          start-placeholder="开始日期"
+          end-placeholder="结束日期"
+          value-format="YYYY-MM-DD HH:mm:ss"
+          style="width: 260px"
+        />
+      </el-form-item>
       <el-form-item>
         <el-button type="primary" icon="Search" @click="handleQuery">搜索</el-button>
         <el-button icon="Refresh" @click="resetQuery">重置</el-button>
@@ -29,7 +40,10 @@
     </el-form>
 
     <el-row :gutter="10" class="mb8">
-      <right-toolbar :showSearch.sync="showSearch" @queryTable="getList"></right-toolbar>
+      <el-col :span="1.5">
+        <el-button type="warning" plain icon="Download" @click="handleExport">导出</el-button>
+      </el-col>
+      <right-toolbar v-model:showSearch="showSearch" @queryTable="getList"></right-toolbar>
     </el-row>
 
     <el-table v-loading="loading" :data="recordList">
@@ -52,7 +66,11 @@
           <el-tag v-else type="danger">失败</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="分发时间" align="center" prop="distributeTime" width="180" />
+      <el-table-column label="分发时间" align="center" prop="distributeTime" width="180">
+        <template #default="scope">
+          <span>{{ parseTime(scope.row.distributeTime) }}</span>
+        </template>
+      </el-table-column>
       <el-table-column label="区块链Hash" align="center" prop="chainHash" width="200" show-overflow-tooltip />
       <el-table-column label="备注" align="center" prop="remark" show-overflow-tooltip />
       <el-table-column label="操作" align="center" class-name="small-padding fixed-width" width="120">
@@ -73,15 +91,20 @@
         <el-descriptions-item label="密钥名称">{{ currentRecord.keyName }}</el-descriptions-item>
         <el-descriptions-item label="加密算法">{{ currentRecord.encrytName }}</el-descriptions-item>
         <el-descriptions-item label="分发类型">
-          <el-tag v-if="currentRecord.distributeType === '1'" type="success">初始分发</el-tag>
-          <el-tag v-else-if="currentRecord.distributeType === '2'" type="warning">更新分发</el-tag>
-          <el-tag v-else type="info">回收后补发</el-tag>
+          <el-tag
+            :type="currentRecord.distributeType === '1' ? 'success' : currentRecord.distributeType === '2' ? 'warning' : currentRecord.distributeType === '3' ? 'info' : 'danger'"
+          >
+            {{ formatDistributeType(currentRecord.distributeType) }}
+          </el-tag>
         </el-descriptions-item>
         <el-descriptions-item label="分发状态">
-          <el-tag v-if="currentRecord.distributeStatus === '2'" type="success">分发成功</el-tag>
-          <el-tag v-else type="danger">分发失败</el-tag>
+          <el-tag
+            :type="currentRecord.distributeStatus === '0' ? 'info' : currentRecord.distributeStatus === '1' ? 'primary' : currentRecord.distributeStatus === '2' ? 'success' : currentRecord.distributeStatus === '3' ? 'danger' : 'warning'"
+          >
+            {{ formatDistributeStatus(currentRecord.distributeStatus) }}
+          </el-tag>
         </el-descriptions-item>
-        <el-descriptions-item label="分发时间">{{ currentRecord.distributeTime }}</el-descriptions-item>
+        <el-descriptions-item label="分发时间">{{ parseTime(currentRecord.distributeTime) }}</el-descriptions-item>
         <el-descriptions-item label="区块链Hash" :span="2">{{ currentRecord.chainHash }}</el-descriptions-item>
         <el-descriptions-item label="区块高度">{{ currentRecord.blockHeight }}</el-descriptions-item>
         <el-descriptions-item label="备注" :span="2">{{ currentRecord.remark }}</el-descriptions-item>
@@ -91,15 +114,17 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { getCurrentInstance, reactive, ref } from 'vue'
 import { listKeyDistributeRecord, getKeyDistributeRecord } from '@/api/distribute/record'
 
+const { proxy } = getCurrentInstance()
 const loading = ref(true)
 const showSearch = ref(true)
 const total = ref(0)
 const recordList = ref([])
 const detailVisible = ref(false)
 const currentRecord = ref(null)
+const dateRange = ref([])
 
 const queryParams = reactive({
   pageNum: 1,
@@ -110,13 +135,24 @@ const queryParams = reactive({
   distributeStatus: null
 })
 
+function buildQueryParams() {
+  return proxy.addDateRange({ ...queryParams }, dateRange.value, 'DistributeTime')
+}
+
 function getList() {
   loading.value = true
-  listKeyDistributeRecord(queryParams).then(res => {
-    recordList.value = res.rows || []
-    total.value = res.total || 0
-    loading.value = false
-  })
+  listKeyDistributeRecord(buildQueryParams())
+    .then(res => {
+      recordList.value = res.rows || []
+      total.value = res.total || 0
+    })
+    .catch(() => {
+      recordList.value = []
+      total.value = 0
+    })
+    .finally(() => {
+      loading.value = false
+    })
 }
 
 function handleQuery() {
@@ -125,10 +161,8 @@ function handleQuery() {
 }
 
 function resetQuery() {
-  queryParams.userName = null
-  queryParams.keyName = null
-  queryParams.distributeType = null
-  queryParams.distributeStatus = null
+  proxy.resetForm('queryForm')
+  dateRange.value = []
   handleQuery()
 }
 
@@ -137,6 +171,39 @@ function handleDetail(row) {
     currentRecord.value = res.data
     detailVisible.value = true
   })
+}
+
+function handleExport() {
+  proxy.download('/distribute/record/export', buildQueryParams(), `key-distribute-record-${Date.now()}.xlsx`)
+}
+
+function formatDistributeType(type) {
+  if (type === '1') {
+    return '初始分发'
+  }
+  if (type === '2') {
+    return '更新分发'
+  }
+  if (type === '3') {
+    return '回收后补发'
+  }
+  return '未知'
+}
+
+function formatDistributeStatus(status) {
+  if (status === '0') {
+    return '待分发'
+  }
+  if (status === '1') {
+    return '分发中'
+  }
+  if (status === '2') {
+    return '分发成功'
+  }
+  if (status === '3') {
+    return '分发失败'
+  }
+  return '未知'
 }
 
 getList()

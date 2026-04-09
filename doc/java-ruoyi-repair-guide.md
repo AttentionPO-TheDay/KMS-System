@@ -1,5 +1,7 @@
 # Java RuoYi Framework Repair Guide
 
+> Archived note: this document records repair and migration guidance from an earlier phase. It does not define the current repository baseline. For current status, refer to `doc/project_overview.md`, `doc/message-protocol.md`, and each active module `README.md`.
+
 ## Document Purpose
 
 This document is the unified repair guide for the three Java systems:

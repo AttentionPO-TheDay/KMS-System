@@ -87,7 +87,10 @@ public class LifecycleService {
     }
 
     public void updateAutoUpdate(Long keyId, String autoUpdate) {
-        requireExistingKey(keyId);
+        Keymanage current = requireExistingKey(keyId);
+        if (KeyStatus.REVOKED.getCode().equals(current.getStatus())) {
+            throw new IllegalStateException("该密钥已被回收，无法修改自动更新状态");
+        }
         keymanageMapper.updateAutoUpdate(keyId, normalizeAutoUpdate(autoUpdate));
     }
 
@@ -106,6 +109,7 @@ public class LifecycleService {
         merged.setEncrytName(valueOrDefault(request.getEncrytName(), current.getEncrytName()));
         merged.setKeyName(valueOrDefault(request.getKeyName(), current.getKeyName()));
         merged.setKeyUse(valueOrDefault(request.getKeyUse(), current.getKeyUse()));
+        merged.setKeyValue(current.getKeyValue());
         merged.setCreTime(current.getCreTime());
         merged.setAutoUpdate(normalizeAutoUpdate(valueOrDefault(request.getAutoUpdate(), current.getAutoUpdate())));
         merged.setKeyDomain(valueOrDefault(request.getKeyDomain(), current.getKeyDomain()));
@@ -122,7 +126,7 @@ public class LifecycleService {
         if ("无证书非对称加密".equals(key.getEncrytType()) && "SSCL".equalsIgnoreCase(key.getEncrytName())) {
             return ssclKeyGenerator.generate(key.getUserName(), key.getUa(), key.getKeyDomain());
         }
-        return key.getKeyValue() == null ? "demo" : key.getKeyValue();
+        return key.getKeyValue();
     }
 
     private String generateAesKey() {

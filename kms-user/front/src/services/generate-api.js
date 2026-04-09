@@ -16,6 +16,13 @@ export function getGenerateKey(keyId) {
   return requestJson(apiBases.generateApi, `/generate/key/${keyId}`)
 }
 
+export function createGenerateKey(payload) {
+  return requestJson(apiBases.generateApi, '/generate/keymanage', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })
+}
+
 export async function getCommonParams(payload) {
   const data = await requestJson(apiBases.generateApi, '/generate/keymanage/comparam', {
     method: 'POST',

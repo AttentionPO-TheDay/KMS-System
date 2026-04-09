@@ -1,5 +1,7 @@
 # KMS 拆分 Agent 任务拆解
 
+> 归档说明：本文档属于阶段性任务拆解记录，不代表当前系统现状。当前实现请以 `doc/project_overview.md`、`doc/message-protocol.md` 和各模块 `README.md` 为准。
+
 本文档用于后续并行分配给不同 agent 实施，所有任务均以可独立交付、可独立验收为原则。
 
 ---

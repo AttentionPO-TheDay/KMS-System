@@ -70,7 +70,9 @@ public class GenerateKeyServiceImpl implements GenerateKeyService {
         keymanage.setVersion(1);
         keymanage.setStatus(KeyStatus.ACTIVE.getCode());
         keymanage.setChainStatus("0");
-        generateKeyValue(keymanage);
+        if (isBlank(keymanage.getKeyValue())) {
+            generateKeyValue(keymanage);
+        }
         return keymanageMapper.insertkeymanage(keymanage);
     }
 
@@ -109,7 +111,9 @@ public class GenerateKeyServiceImpl implements GenerateKeyService {
         }
         keymanage.setStatus(KeyStatus.ACTIVE.getCode());
         keymanage.setChainStatus("0");
-        generateKeyValue(keymanage);
+        if (isBlank(keymanage.getKeyValue())) {
+            generateKeyValue(keymanage);
+        }
         return keymanageMapper.updatekeymanage(keymanage);
     }
 
@@ -181,7 +185,7 @@ public class GenerateKeyServiceImpl implements GenerateKeyService {
             JSONObject jsonObject = new JSONObject();
             jsonObject.put("SSCLKey", "04" + toFixedLengthHex(partialKey.getMx(), 32) + toFixedLengthHex(partialKey.getMy(), 32));
             jsonObject.put("SSCLEA", toFixedLengthHex(ssclGenerator.getEA(), 32));
-            jsonObject.put("SSCLDomian", keymanage.getKeyDomain());
+            jsonObject.put("SSCLDomain", keymanage.getKeyDomain());
             keymanage.setKeyValue(jsonObject.toJSONString());
             return;
         }

@@ -18,10 +18,10 @@ func TestSSCLGenPartialKeyIncludesChainScalar(t *testing.T) {
 	if !strings.Contains(res.KeyValue, `"SSCLEA":"`) {
 		t.Fatalf("missing SSCLEA in response: %s", res.KeyValue)
 	}
-	if !strings.Contains(res.KeyValue, `"SSCLDomian":"test-domain"`) {
-		t.Fatalf("missing SSCLDomian in response: %s", res.KeyValue)
+	if !strings.Contains(res.KeyValue, `"SSCLDomain":"test-domain"`) {
+		t.Fatalf("missing SSCLDomain in response: %s", res.KeyValue)
 	}
-	if len(res.KeyValue) != len(`{"SSCLKey":"04`)+128+len(`","SSCLEA":"`)+64+len(`","SSCLDomian":"test-domain"}`) {
+	if len(res.KeyValue) != len(`{"SSCLKey":"04`)+128+len(`","SSCLEA":"`)+64+len(`","SSCLDomain":"test-domain"}`) {
 		t.Fatalf("unexpected response length: got %d, value=%s", len(res.KeyValue), res.KeyValue)
 	}
 }

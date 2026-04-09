@@ -25,7 +25,7 @@
 </template>
 
 <script setup name="PublicKeys">
-import { listKeymanage } from "@/api/generate/keymanage"
+import { listPublicKeys } from "@/api/generate/keymanage"
 
 const { proxy } = getCurrentInstance()
 const publicKeysList = ref([])
@@ -41,7 +41,7 @@ const { queryParams } = toRefs(data)
 
 function getList() {
   loading.value = true
-  listKeymanage(queryParams.value).then(response => {
+  listPublicKeys(queryParams.value).then(response => {
     publicKeysList.value = response.rows
     total.value = response.total
     loading.value = false

@@ -334,8 +334,7 @@ const permissionDialogTitle = ref("");
 const rollbackDialogOpen = ref(false);
 const permissionForm = ref({
     requestReason: '',
-    requestLevel: null,
-    featureName: ''
+    featureKey: null
 });
 const permissionRules = {
     requestReason: [
@@ -343,14 +342,32 @@ const permissionRules = {
         { min: 10, message: "申请理由不能少于10个字符", trigger: "blur" }
     ]
 };
-const currentRequestId = ref(null);  // 当前通过的申请ID
+const approvedRequestIds = reactive({
+  publickeys: null,
+  autoupdate: null
+});
 
 // 权限提示对话框
 const permissionWarningOpen = ref(false);
 const permissionWarningTitle = ref('');
 const permissionWarningFeature = ref('');
 const permissionWarningRequiredLevel = ref(null);
-const pendingFeatureName = ref('');  // 保存待申请的功能名称
+const pendingFeatureKey = ref(null);
+
+const permissionFeatureMap = {
+  publickeys: {
+    featureCode: 'PUBLIC_KEY_LIST',
+    featureName: '查看公共密钥列表',
+    systemCode: 'generate',
+    requestLevel: 1
+  },
+  autoupdate: {
+    featureCode: 'AUTO_UPDATE',
+    featureName: '密钥自动更新',
+    systemCode: 'lifecycle',
+    requestLevel: 0
+  }
+};
 
 const data = reactive({
     form: {},
@@ -882,7 +899,7 @@ getUser().then(() => {
 /** 查看公共密钥列表（需要 role_level = 1） */
 function handleViewPublicKeys() {
     if (userStore.roleLevel > 1) {
-        showPermissionWarning(1, '查看公共密钥列表');
+        showPermissionWarning('publickeys');
     } else {
         activeTab.value = 'publickeys';
         proxy.$message.success('已切换到公共密钥视图');
@@ -892,7 +909,7 @@ function handleViewPublicKeys() {
 /** 密钥自动更新（需要 role_level = 0） */
 function handleAutoUpdate() {
     if (userStore.roleLevel > 0) {
-        showPermissionWarning(0, '密钥自动更新');
+        showPermissionWarning('autoupdate');
     } else {
         activeTab.value = 'autoupdate';
         proxy.$message.success('已切换到密钥自动更新视图');
@@ -900,29 +917,35 @@ function handleAutoUpdate() {
 }
 
 /** 显示权限提示对话框 */
-function showPermissionWarning(requiredLevel, featureName) {
+function showPermissionWarning(featureKey) {
+    const feature = permissionFeatureMap[featureKey];
+    if (!feature) {
+      return;
+    }
     permissionWarningTitle.value = '权限不足提示';
-    permissionWarningFeature.value = featureName;
-    permissionWarningRequiredLevel.value = requiredLevel;
-    pendingFeatureName.value = featureName;
+    permissionWarningFeature.value = feature.featureName;
+    permissionWarningRequiredLevel.value = feature.requestLevel;
+    pendingFeatureKey.value = featureKey;
     permissionWarningOpen.value = true;
 }
 
 /** 从提示页面进入权限申请 */
 function proceedToPermissionRequest() {
     permissionWarningOpen.value = false;
-    // 打开权限申请表单
-    showPermissionDialog(permissionWarningRequiredLevel.value, pendingFeatureName.value);
+    showPermissionDialog(pendingFeatureKey.value);
 }
 
 /** 显示权限申请对话框 */
-function showPermissionDialog(requiredLevel, featureName) {
+function showPermissionDialog(featureKey) {
+    const feature = permissionFeatureMap[featureKey];
+    if (!feature) {
+      return;
+    }
     permissionForm.value = {
         requestReason: '',
-        requestLevel: requiredLevel,
-        featureName: featureName
+        featureKey
     };
-    permissionDialogTitle.value = `申请\"${featureName}\"权限`;
+    permissionDialogTitle.value = `申请\"${feature.featureName}\"权限`;
     permissionDialogOpen.value = true;
 }
 
@@ -940,20 +963,27 @@ function getRoleLevelText(level) {
 function submitPermissionRequest() {
     proxy.$refs["permissionFormRef"].validate(valid => {
         if (valid) {
+            const feature = permissionFeatureMap[permissionForm.value.featureKey];
+            if (!feature) {
+                proxy.$modal.msgError("未识别的申请功能");
+                return;
+            }
             const requestData = {
                 userId: userStore.id,
                 userName: userStore.name,
                 originalLevel: userStore.roleLevel,
-                requestLevel: permissionForm.value.requestLevel,
-                requestReason: `申请"${permissionForm.value.featureName}"功能权限：${permissionForm.value.requestReason}`,
-                isTemp: 1
+                requestLevel: feature.requestLevel,
+                requestReason: `申请"${feature.featureName}"功能权限：${permissionForm.value.requestReason}`,
+                isTemp: 1,
+                featureCode: feature.featureCode,
+                featureName: feature.featureName,
+                systemCode: feature.systemCode
             };
 
             apiSubmitPermissionRequest(requestData).then(response => {
                 proxy.$modal.msgSuccess("权限申请已提交，请等待管理员审批");
                 permissionDialogOpen.value = false;
-                // 可选：订阅申请状态更新
-                checkApprovalStatus();
+                checkApprovalStatus(permissionForm.value.featureKey);
             }).catch(error => {
                 proxy.$modal.msgError("提交申请失败：" + error.message);
             });
@@ -962,20 +992,12 @@ function submitPermissionRequest() {
 }
 
 /** 检查申请审批状态（轮询） */
-function checkApprovalStatus() {
-    // 每5秒检查一次申请状态
+function checkApprovalStatus(featureKey) {
     const checkInterval = setInterval(() => {
-        listPermissionRequests({
-            userId: userStore.id,
-            status: '1'  // 已通过
-        }).then(response => {
-            if (response.rows && response.rows.length > 0) {
-                const approvedRequest = response.rows[0];
-                currentRequestId.value = approvedRequest.requestId;
-
-                // 刷新用户信息以获取新的权限等级
+        loadApprovedRequest(featureKey).then(approvedRequest => {
+            if (approvedRequest) {
+                approvedRequestIds[featureKey] = approvedRequest.requestId;
                 userStore.getInfo().then(() => {
-                    // 已删除自动弹出的成功提示
                     clearInterval(checkInterval);
                 });
             }
@@ -990,15 +1012,16 @@ function checkApprovalStatus() {
 
 /** 回退权限到原始等级 */
 function handleRollback() {
-    if(!currentRequestId.value) {
+    const requestId = approvedRequestIds[activeTab.value];
+    if(!requestId) {
         proxy.$modal.msgWarning("没有可回退的权限申请");
         return;
     }
 
-    apiRollbackPermission(currentRequestId.value).then(response => {
+    apiRollbackPermission(requestId).then(response => {
         proxy.$modal.msgSuccess("权限已回退到普通用户等级");
         rollbackDialogOpen.value = false;
-        currentRequestId.value = null;
+        approvedRequestIds[activeTab.value] = null;
 
         // 刷新用户信息
         userStore.getInfo();
@@ -1041,17 +1064,20 @@ function toggleAutoUpdate(row) {
 }
 /** Handle rollback from tab */
 function handleRollbackFromTab() {
-  if (!currentRequestId.value) {
+  const featureKey = activeTab.value;
+  const requestId = approvedRequestIds[featureKey];
+  if (!requestId) {
     proxy.$modal.msgWarning("没有可回退的权限申请");
     return;
   }
 
   proxy.$modal.confirm('确认回退到普通用户权限？').then(() => {
-    apiRollbackPermission(currentRequestId.value).then(() => {
+    apiRollbackPermission(requestId).then(() => {
       proxy.$modal.msgSuccess("权限已回退成功！");
       showPublicKeysRollback.value = false;
       showAutoUpdateRollback.value = false;
-      currentRequestId.value = null;
+      approvedRequestIds.publickeys = null;
+      approvedRequestIds.autoupdate = null;
 
       userStore.getInfo().then(() => {
         setTimeout(() => {
@@ -1065,23 +1091,70 @@ function handleRollbackFromTab() {
 /** Check rollback status for tab */
 function checkRollbackStatus(tab) {
   if (userStore.roleLevel === 0 || userStore.roleLevel === 1) {
-    listPermissionRequests({
-      userId: userStore.id,
-      status: '1'
-    }).then(response => {
-      if (response.rows && response.rows.length > 0) {
-        const request = response.rows[0];
-        if (request.isTemp === 1) {
-          currentRequestId.value = request.requestId;
-          if (tab === 'publickeys') {
-            showPublicKeysRollback.value = true;
-          } else if (tab === 'autoupdate') {
-            showAutoUpdateRollback.value = true;
-          }
-        }
+    loadApprovedRequest(tab).then(request => {
+      approvedRequestIds[tab] = request?.requestId || null;
+      if (tab === 'publickeys') {
+        showPublicKeysRollback.value = Boolean(request);
+      } else if (tab === 'autoupdate') {
+        showAutoUpdateRollback.value = Boolean(request);
       }
     });
   }
+}
+
+function loadApprovedRequest(featureKey) {
+  const feature = permissionFeatureMap[featureKey];
+  if (!feature || !userStore.id) {
+    return Promise.resolve(null);
+  }
+
+  return listPermissionRequests({
+    userId: userStore.id,
+    status: '1',
+    requestLevel: feature.requestLevel
+  }).then(response => {
+    const rows = Array.isArray(response.rows) ? response.rows : [];
+    const matched = rows
+      .filter(item => isApprovedTempRequest(item, feature))
+      .sort(comparePermissionRequest);
+    return matched[0] || null;
+  });
+}
+
+function isApprovedTempRequest(item, feature) {
+  if (!item || String(item.status) !== '1') {
+    return false;
+  }
+
+  const isTemp = item.isTemp === 1 || item.isTemp === '1' || item.isTemp === true;
+  if (!isTemp) {
+    return false;
+  }
+
+  if (item.featureCode) {
+    return item.featureCode === feature.featureCode;
+  }
+
+  if (item.systemCode && item.systemCode !== feature.systemCode) {
+    return false;
+  }
+
+  const sameLevel = Number(item.requestLevel) === feature.requestLevel;
+  const sameFeature = typeof item.requestReason === 'string' && item.requestReason.includes(feature.featureName);
+  return sameLevel && sameFeature;
+}
+
+function comparePermissionRequest(a, b) {
+  return getPermissionRequestTime(b) - getPermissionRequestTime(a);
+}
+
+function getPermissionRequestTime(item) {
+  const time = item?.approveTime || item?.requestTime;
+  const parsed = time ? new Date(time).getTime() : NaN;
+  if (!Number.isNaN(parsed)) {
+    return parsed;
+  }
+  return Number(item?.requestId) || 0;
 }
 // Watch tab changes
 watch(activeTab, (newTab) => {

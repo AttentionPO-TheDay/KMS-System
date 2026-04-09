@@ -15,7 +15,8 @@
 7. `updatedel-go`：生命周期接入层，端口 `8082`
 8. `updatedel-java`：生命周期业务层，端口 `9082`
 9. `kms-distribute`：分发业务层，端口 `8083`
-10. `nginx`：网关，端口 `80`
+10. `acceptance-backend`：验收后端，端口 `9090`
+11. `nginx`：网关，端口 `80`
 
 ## 统一配置口径
 
@@ -39,58 +40,27 @@
 推荐直接执行：
 
 ```powershell
-./build-local.ps1
+./kms-ops/build-local.ps1
 ```
 
-脚本位置：`kms-ops/build-local.ps1`
-
-它会完成：
+该脚本会完成：
 
 1. 构建 `kms-generate/java-backend`
 2. 构建 `kms-updatedel/java-backend`
 3. 构建 `kms-distribute/java-backend`
-4. 交叉编译 `kms-generate/go-backend` 为 Linux 二进制
-5. 交叉编译 `kms-updatedel/go-backend` 为 Linux 二进制
-
-手工命令如下。
-
-### Java
-
-```powershell
-mvn -DskipTests package
-```
-
-分别在以下目录执行：
-
-1. `kms-generate/java-backend`
-2. `kms-updatedel/java-backend`
-3. `kms-distribute/java-backend`
-
-### Go
-
-在各自目录执行：
-
-```powershell
-$env:GOOS = "linux"
-$env:GOARCH = "amd64"
-$env:CGO_ENABLED = "0"
-go build -o dist/key-service ./cmd/main.go
-```
-
-目录如下：
-
-1. `kms-generate/go-backend`
-2. `kms-updatedel/go-backend`
+4. 构建 `kms-generate/go-backend`
+5. 构建 `kms-updatedel/go-backend`
+6. 构建 `kms-acceptance/backend`
+7. 构建 `kms-generate/front`
+8. 构建 `kms-updatedel/front`
+9. 构建 `kms-distribute/front`
+10. 构建 `kms-user/front`
+11. 构建 `kms-acceptance/front`
+12. 整理产物到 `kms-ops/runtime` 和 `kms-ops/front`
 
 ## 启动方式
 
 在 `kms-ops/` 目录执行：
-
-```bash
-docker compose up
-```
-
-后台启动：
 
 ```bash
 docker compose up -d
@@ -101,6 +71,28 @@ docker compose up -d
 ```bash
 docker compose down
 ```
+
+## 网关路径
+
+### API
+
+1. `/generate-ingress/` -> generate Go
+2. `/generate-api/` -> generate Java
+3. `/updatedel-ingress/` -> updatedel Go
+4. `/lifecycle-ingress/` -> `/updatedel-ingress/`
+5. `/updatedel-api/` -> updatedel Java
+6. `/lifecycle-api/` -> updatedel Java
+7. `/distribute-api/` -> distribute Java
+8. `/acceptance-api/` -> acceptance backend `/api/`
+
+### 前端
+
+1. `/generate/`
+2. `/updatedel/`
+3. `/lifecycle/` -> `/updatedel/`
+4. `/distribute/`
+5. `/user/`
+6. `/acceptance/`
 
 ## 启动后检查
 
@@ -124,12 +116,12 @@ docker compose down
 3. `docker compose logs generate-java`
 4. `docker compose logs updatedel-java`
 5. `docker compose logs kms-distribute`
+6. `docker compose logs acceptance-backend`
+7. `docker compose logs nginx`
 
 ## 说明
 
-1. `docker-compose.yml` 当前直接消费本地构建产物，不再在容器内执行 Maven 或 Go 编译。
-2. 2 个 Go 服务必须产出 Linux 可执行文件，输出位置固定为 `dist/key-service`。
-3. 3 个 Java 服务 jar 名已改为各自独立名称，避免都叫 `ruoyi-admin.jar`。
-4. Java 配置已统一改为优先读取环境变量，默认值与 Docker 编排一致。
-5. `legacy-kms/` 仍然保留为历史参考，不参与当前 Docker 编排。
-6. 新增的初始化脚本只对首次建库自动生效；如果数据库卷已经存在，需要手工执行新增 SQL 或重建数据库卷。
+1. `docker-compose.yml` 当前直接消费本地构建产物，不在容器内执行 Maven 或 Go 编译。
+2. `kms-user` 和 `kms-acceptance/front` 当前作为静态前端产物由 `nginx` 提供。
+3. `legacy-kms/` 仍然保留为历史参考，不参与当前 Docker 编排。
+4. 旧版编排文件如 `docker-compose-before.yml` 仅作历史对照，不代表当前部署方式。

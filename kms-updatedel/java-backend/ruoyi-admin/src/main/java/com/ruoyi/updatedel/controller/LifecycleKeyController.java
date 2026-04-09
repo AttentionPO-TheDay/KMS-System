@@ -4,6 +4,7 @@ import com.ruoyi.common.core.domain.AjaxResult;
 import com.ruoyi.common.core.controller.BaseController;
 import com.ruoyi.common.core.page.TableDataInfo;
 import com.ruoyi.common.utils.SecurityUtils;
+import com.ruoyi.updatedel.domain.KeyStatus;
 import com.ruoyi.updatedel.domain.Keymanage;
 import com.ruoyi.updatedel.service.LifecycleService;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -30,6 +31,7 @@ public class LifecycleKeyController extends BaseController {
         if (!SecurityUtils.isAdmin(getUserId())) {
             query.setUserId(getUserId());
         }
+        query.setStatus(normalizeStatusQuery(query.getStatus()));
         startPage();
         return getDataTable(lifecycleService.list(query));
     }
@@ -63,6 +65,9 @@ public class LifecycleKeyController extends BaseController {
         if (request.getEncrytType() == null && request.getEncrytName() == null && request.getKeyName() == null
             && request.getKeyUse() == null && request.getKeyDomain() == null && request.getUa() == null
             && request.getUserName() == null) {
+            if (KeyStatus.REVOKED.getCode().equals(current.getStatus())) {
+                return AjaxResult.error("该密钥已被回收，无法修改自动更新状态");
+            }
             if (!canManageAutoUpdate()) {
                 return AjaxResult.error("当前用户没有自动更新操作权限");
             }
@@ -84,6 +89,9 @@ public class LifecycleKeyController extends BaseController {
         }
         if (!canAccess(current)) {
             return AjaxResult.error("无权修改该密钥");
+        }
+        if (KeyStatus.REVOKED.getCode().equals(current.getStatus())) {
+            return AjaxResult.error("该密钥已被回收，无法修改自动更新状态");
         }
         if (!canManageAutoUpdate()) {
             return AjaxResult.error("当前用户没有自动更新操作权限");
@@ -115,5 +123,25 @@ public class LifecycleKeyController extends BaseController {
             && getLoginUser().getUser() != null
             && getLoginUser().getUser().getRoleLevel() != null
             && getLoginUser().getUser().getRoleLevel() <= 0;
+    }
+
+    private String normalizeStatusQuery(String status) {
+        if (status == null) {
+            return null;
+        }
+        switch (status.trim()) {
+            case "Valid":
+            case "Active":
+                return "0";
+            case "Frozen":
+                return "1";
+            case "Replaced":
+            case "Rotated":
+                return "2";
+            case "Revoked":
+                return "3";
+            default:
+                return status.trim();
+        }
     }
 }

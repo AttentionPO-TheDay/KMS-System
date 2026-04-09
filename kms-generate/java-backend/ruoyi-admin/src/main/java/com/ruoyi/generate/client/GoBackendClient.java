@@ -6,14 +6,14 @@ import com.ruoyi.generate.domain.Keymanage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestTemplate;
 
-import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -23,8 +23,8 @@ import java.util.Map;
  * 调用流程：
  * 1. Java（已完成 Session 鉴权）→ 携带 X-Internal-Token 转发 → Go
  * 2. Go 验证 Token 放行（无需用户密码）→ 执行密码学计算 → 发送 Kafka
- * 3. Java Kafka 消费者（GenerateKafkaConsumer）落库
- * 4. Java 即时返回 Go 计算好的 keyValue 给前端
+ * 3. Java Kafka 消费者（GenerateKafkaConsumer）统一落库
+ * 4. Java 仅返回本次生成结果快照给前端展示
  */
 @Component
 public class GoBackendClient {
@@ -39,9 +39,7 @@ public class GoBackendClient {
     @Value("${kms.go-backend.internal-token:kms-generate-internal-secret-2026}")
     private String internalToken;
 
-    private final HttpClient httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(5))
-            .build();
+    private final RestTemplate restTemplate = new RestTemplate();
 
     /**
      * 调用 Go 服务执行 ENROLL_KEY（密钥生成）
@@ -61,6 +59,19 @@ public class GoBackendClient {
         body.put("key_use", keymanage.getKeyUse() != null ? keymanage.getKeyUse() : "加解密");
 
         return callGoApi("/generate/request/ENROLL_KEY", body);
+    }
+
+    public String reenrollKey(Keymanage keymanage) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("user", keymanage.getUserName());
+        body.put("encryt_type", keymanage.getEncrytType());
+        body.put("encryt_name", keymanage.getEncrytName());
+        body.put("ua", keymanage.getuA() != null ? keymanage.getuA() : "");
+        body.put("key_domain", keymanage.getKeyDomain() != null ? keymanage.getKeyDomain() : "");
+        body.put("key_name", keymanage.getKeyName() != null ? keymanage.getKeyName() : "example");
+        body.put("key_use", keymanage.getKeyUse() != null ? keymanage.getKeyUse() : "加解密");
+
+        return callGoApi("/generate/request/REENROLL_KEY", body);
     }
 
     /**
@@ -89,22 +100,19 @@ public class GoBackendClient {
         String bodyJson = JSON.toJSONString(body);
 
         try {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .timeout(Duration.ofSeconds(10))
-                    .header("Content-Type", "application/json")
-                    .header(INTERNAL_TOKEN_HEADER, internalToken)
-                    .POST(HttpRequest.BodyPublishers.ofString(bodyJson))
-                    .build();
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.set(INTERNAL_TOKEN_HEADER, internalToken);
+            HttpEntity<String> request = new HttpEntity<>(bodyJson, headers);
 
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            ResponseEntity<String> response = restTemplate.postForEntity(url, request, String.class);
 
-            if (response.statusCode() >= 400) {
-                log.error("Go 服务调用失败: path={}, status={}, body={}", path, response.statusCode(), response.body());
-                throw new RuntimeException("Go 服务返回错误 [" + response.statusCode() + "]: " + response.body());
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                log.error("Go 服务调用失败: path={}, status={}, body={}", path, response.getStatusCodeValue(), response.getBody());
+                throw new RuntimeException("Go 服务返回错误 [" + response.getStatusCodeValue() + "]: " + response.getBody());
             }
 
-            JSONObject resp = JSON.parseObject(response.body());
+            JSONObject resp = JSON.parseObject(response.getBody());
             int code = resp.getIntValue("code");
             if (code != 200) {
                 String msg = resp.getString("msg");
@@ -119,7 +127,7 @@ public class GoBackendClient {
             }
             return data instanceof String ? (String) data : JSON.toJSONString(data);
 
-        } catch (IOException | InterruptedException e) {
+        } catch (RestClientException e) {
             log.error("Go 服务网络异常: path={}, error={}", path, e.getMessage(), e);
             throw new RuntimeException("无法连接 Go 生成服务: " + e.getMessage(), e);
         }

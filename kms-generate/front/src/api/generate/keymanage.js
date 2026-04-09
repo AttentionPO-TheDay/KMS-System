@@ -13,6 +13,18 @@ export function listKeymanage(query) {
   }))
 }
 
+export function listPublicKeys(query) {
+  return request({
+    url: '/generate/key/public-list',
+    method: 'get',
+    params: query
+  }).then(res => ({
+    ...res,
+    rows: res.rows || res.data || [],
+    total: res.total || ((res.data || []).length)
+  }))
+}
+
 // 查询密钥管理详细
 export function getKeymanage(keyId) {
   return request({

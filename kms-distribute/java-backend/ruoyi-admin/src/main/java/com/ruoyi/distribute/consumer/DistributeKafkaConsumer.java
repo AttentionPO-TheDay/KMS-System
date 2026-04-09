@@ -148,10 +148,12 @@ public class DistributeKafkaConsumer {
 
     private Keymanage resolveKey(String topic, JSONObject payload, SysUser user) {
         if ("key_generate_log".equals(topic)) {
+            JSONObject generatedKeyPayload = payload.getJSONObject("generated_key");
             Keymanage generatedKey = payload.getObject("generated_key", Keymanage.class);
             if (generatedKey == null) {
                 return null;
             }
+            fillSnapshotFields(generatedKey, generatedKeyPayload);
             if (generatedKey.getUserId() == null) {
                 generatedKey.setUserId(user.getUserId());
             }
@@ -164,6 +166,7 @@ public class DistributeKafkaConsumer {
         JSONObject keyInfo = payload.getJSONObject("key_info");
         if (keyInfo != null) {
             Keymanage snapshot = keyInfo.to(Keymanage.class);
+            fillSnapshotFields(snapshot, keyInfo);
             if (snapshot.getKeyId() == null) {
                 snapshot.setKeyId(payload.getLong("key_id"));
             }
@@ -208,6 +211,57 @@ public class DistributeKafkaConsumer {
             resolved.setBlockHeight(snapshot.getBlockHeight());
         }
         return resolved;
+    }
+
+    private void fillSnapshotFields(Keymanage snapshot, JSONObject payload) {
+        if (snapshot == null || payload == null) {
+            return;
+        }
+
+        if (snapshot.getKeyId() == null) {
+            snapshot.setKeyId(readLong(payload, "key_id", "keyId"));
+        }
+        if (snapshot.getUserId() == null) {
+            snapshot.setUserId(readLong(payload, "user_id", "userId"));
+        }
+        if (isBlank(snapshot.getUserName())) {
+            snapshot.setUserName(readString(payload, "user_name", "userName"));
+        }
+        if (isBlank(snapshot.getKeyName())) {
+            snapshot.setKeyName(readString(payload, "key_name", "keyName"));
+        }
+        if (isBlank(snapshot.getEncrytType())) {
+            snapshot.setEncrytType(readString(payload, "encryt_type", "encrytType"));
+        }
+        if (isBlank(snapshot.getEncrytName())) {
+            snapshot.setEncrytName(readString(payload, "encryt_name", "encrytName"));
+        }
+        if (isBlank(snapshot.getChainHash())) {
+            snapshot.setChainHash(readString(payload, "chain_hash", "chainHash"));
+        }
+        if (snapshot.getBlockHeight() == null) {
+            snapshot.setBlockHeight(readLong(payload, "block_height", "blockHeight"));
+        }
+    }
+
+    private String readString(JSONObject payload, String primaryKey, String fallbackKey) {
+        String value = payload.getString(primaryKey);
+        if (isBlank(value)) {
+            value = payload.getString(fallbackKey);
+        }
+        return value;
+    }
+
+    private Long readLong(JSONObject payload, String primaryKey, String fallbackKey) {
+        Long value = payload.getLong(primaryKey);
+        if (value == null) {
+            value = payload.getLong(fallbackKey);
+        }
+        return value;
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
     }
 
     private String resolveDistributeType(String topic, String actionType) {
