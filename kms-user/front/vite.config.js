@@ -35,6 +35,11 @@ export default defineConfig(({ mode, command }) => {
           changeOrigin: true,
           rewrite: (p) => p.replace(/^\/generate-api/, '')
         },
+        '/lifecycle-api': {
+          target: 'http://localhost:9082',
+          changeOrigin: true,
+          rewrite: (p) => p.replace(/^\/lifecycle-api/, '')
+        },
         '/distribute-api': {
           target: 'http://localhost:8083',
           changeOrigin: true,
