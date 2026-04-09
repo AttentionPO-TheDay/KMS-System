@@ -31,7 +31,16 @@ function Copy-Artifact {
         New-Item -ItemType Directory -Path $parentDir -Force | Out-Null
     }
 
-    Copy-Item -Path $Source -Destination $Destination -Force
+    if (Test-Path $Destination) {
+        Remove-Item -Recurse -Force $Destination
+    }
+
+    Copy-Item -Path $Source -Destination $parentDir -Force
+
+    $copiedPath = Join-Path $parentDir (Split-Path -Leaf $Source)
+    if ($copiedPath -ne $Destination) {
+        Rename-Item -Path $copiedPath -NewName (Split-Path -Leaf $Destination) -Force
+    }
 }
 
 function Invoke-MavenBuild {
