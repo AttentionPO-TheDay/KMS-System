@@ -1,9 +1,9 @@
 <template>
   <section class="page">
     <div class="page-header">
-      <p class="eyebrow">Lifecycle</p>
-      <h2>生命周期记录与自动更新</h2>
-      <p>统一前端已读取生命周期系统密钥列表，并可直接切换自动更新状态。</p>
+      <p class="eyebrow">Updatedel</p>
+      <h2>更新与回收记录</h2>
+      <p>统一前端已读取更新与回收系统密钥列表，并可直接切换自动更新状态。</p>
     </div>
 
     <article class="panel">
@@ -29,7 +29,7 @@
       <p>API 前缀：<code>{{ apiBase }}</code></p>
       <RouterLink class="inline-link" to="/permissions">申请密钥自动更新权限</RouterLink>
       <p v-if="errorMessage" class="error-text">{{ errorMessage }}</p>
-      <div v-if="keys.length === 0" class="empty-state">暂无生命周期记录</div>
+      <div v-if="keys.length === 0" class="empty-state">暂无更新与回收记录</div>
       <div v-else class="record-list">
         <article v-for="key in keys" :key="key.keyId" class="record-card">
           <div class="record-head">
@@ -52,7 +52,7 @@
 
     <article v-if="selectedKey" class="panel">
       <div class="panel-head">
-        <h3>生命周期详情</h3>
+        <h3>更新与回收详情</h3>
         <button class="ghost-button" @click="selectedKey = null">关闭</button>
       </div>
       <div class="detail-grid">

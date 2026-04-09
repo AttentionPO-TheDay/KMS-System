@@ -275,7 +275,8 @@ services:
       - ./nginx/logs:/var/log/nginx
       - ./front/portal:/usr/share/nginx/html
       - ./front/generate:/usr/share/nginx/html/generate
-      - ./front/updatedel:/usr/share/nginx/html/lifecycle
+      - ./front/updatedel:/usr/share/nginx/html/updatedel
+      - ./front/distribute:/usr/share/nginx/html/distribute
       - ./front/user:/usr/share/nginx/html/user
       - ./front/acceptance:/usr/share/nginx/html/acceptance
     depends_on:

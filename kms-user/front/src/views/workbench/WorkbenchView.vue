@@ -13,9 +13,9 @@
         <RouterLink to="/generate">进入生成系统</RouterLink>
       </article>
       <article class="card">
-        <h3>生命周期链路</h3>
+        <h3>更新与回收链路</h3>
         <p>密钥更新、密钥回收、自动更新、权限申请与审批。</p>
-        <RouterLink to="/lifecycle">进入生命周期系统</RouterLink>
+        <RouterLink to="/updatedel">进入更新与回收系统</RouterLink>
       </article>
       <article class="card">
         <h3>分发查询</h3>

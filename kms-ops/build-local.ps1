@@ -153,12 +153,14 @@ $updatedelGoDir = Join-Path $repoRoot "kms-updatedel\go-backend"
 $acceptanceGoDir = Join-Path $repoRoot "kms-acceptance\backend"
 $generateFrontDir = Join-Path $repoRoot "kms-generate\front"
 $updatedelFrontDir = Join-Path $repoRoot "kms-updatedel\front"
+$distributeFrontDir = Join-Path $repoRoot "kms-distribute\front"
 $userFrontDir = Join-Path $repoRoot "kms-user\front"
 $acceptanceFrontDir = Join-Path $repoRoot "kms-acceptance\front"
 
 New-CleanDirectory $runtimeRoot
 New-CleanDirectory (Join-Path $frontRoot "generate")
 New-CleanDirectory (Join-Path $frontRoot "updatedel")
+New-CleanDirectory (Join-Path $frontRoot "distribute")
 New-CleanDirectory (Join-Path $frontRoot "user")
 New-CleanDirectory (Join-Path $frontRoot "acceptance")
 
@@ -172,6 +174,7 @@ Invoke-GoProjectBuild -ProjectDir $acceptanceGoDir -OutputName "kms-acceptance-b
 
 Invoke-FrontendBuild -ProjectDir $generateFrontDir -BuildScript "build:prod"
 Invoke-FrontendBuild -ProjectDir $updatedelFrontDir -BuildScript "build:prod"
+Invoke-FrontendBuild -ProjectDir $distributeFrontDir -BuildScript "build:prod"
 Invoke-FrontendBuild -ProjectDir $userFrontDir -BuildScript "build"
 Invoke-FrontendBuild -ProjectDir $acceptanceFrontDir -BuildScript "build"
 
@@ -187,6 +190,7 @@ Copy-Artifact -Source (Join-Path $acceptanceGoDir "dist\kms-acceptance-backend")
 
 Copy-Item -Path (Join-Path $generateFrontDir "dist\*") -Destination (Join-Path $frontRoot "generate") -Recurse -Force
 Copy-Item -Path (Join-Path $updatedelFrontDir "dist\*") -Destination (Join-Path $frontRoot "updatedel") -Recurse -Force
+Copy-Item -Path (Join-Path $distributeFrontDir "dist\*") -Destination (Join-Path $frontRoot "distribute") -Recurse -Force
 Copy-Item -Path (Join-Path $userFrontDir "dist\*") -Destination (Join-Path $frontRoot "user") -Recurse -Force
 Copy-Item -Path (Join-Path $acceptanceFrontDir "dist\*") -Destination (Join-Path $frontRoot "acceptance") -Recurse -Force
 

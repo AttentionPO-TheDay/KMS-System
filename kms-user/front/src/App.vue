@@ -4,7 +4,7 @@
       <div class="brand">
         <p class="eyebrow">Unified UI</p>
         <h1>kms-user</h1>
-        <p>统一用户界面，聚合生成、生命周期与分发能力。</p>
+        <p>统一用户界面，聚合生成、更新与回收、分发能力。</p>
       </div>
       <section class="auth-panel">
         <h2>统一登录</h2>
@@ -22,7 +22,7 @@
               </span>
             </li>
             <li>
-              生命周期系统：
+              更新与回收系统：
               <span :class="authState.systemAccess.lifecycle.ok ? 'status-ok' : 'status-bad'">
                 {{ authState.systemAccess.lifecycle.message }}
               </span>
@@ -73,7 +73,7 @@
       <nav class="nav">
         <RouterLink to="/workbench">工作台</RouterLink>
         <RouterLink to="/generate">生成系统</RouterLink>
-        <RouterLink to="/lifecycle">生命周期系统</RouterLink>
+        <RouterLink to="/updatedel">更新与回收系统</RouterLink>
         <RouterLink to="/distribute">分发系统</RouterLink>
         <RouterLink to="/permissions">权限申请</RouterLink>
       </nav>

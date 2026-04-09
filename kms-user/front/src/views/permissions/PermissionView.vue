@@ -44,10 +44,10 @@
 
       <article class="card action-card">
         <h3>密钥自动更新</h3>
-        <p>生命周期域权限。普通用户申请通过后可临时操作自动更新，目标等级为管理员。</p>
+        <p>更新与回收域权限。普通用户申请通过后可临时操作自动更新，目标等级为管理员。</p>
         <textarea v-model="reasons.AUTO_UPDATE" rows="4" placeholder="请填写申请理由"></textarea>
         <button @click="submit('AUTO_UPDATE')" :disabled="loading.AUTO_UPDATE">
-          {{ loading.AUTO_UPDATE ? '提交中...' : '提交生命周期申请' }}
+          {{ loading.AUTO_UPDATE ? '提交中...' : '提交更新与回收申请' }}
         </button>
       </article>
     </div>
@@ -210,7 +210,7 @@ function levelText(level) {
 }
 
 function systemText(systemCode) {
-  return { generate: '生成系统', lifecycle: '生命周期系统' }[systemCode] || systemCode
+    return { generate: '生成系统', lifecycle: '更新与回收系统' }[systemCode] || systemCode
 }
 
 function statusText(status) {

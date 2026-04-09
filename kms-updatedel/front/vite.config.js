@@ -9,7 +9,7 @@ export default defineConfig(({ mode, command }) => {
   const isProduction = command === 'build' && VITE_APP_ENV === 'production'
   return {
     // 部署生产环境和开发环境下的URL。
-    base: isProduction ? '/lifecycle/' : '/',
+    base: isProduction ? '/updatedel/' : '/',
     plugins: createVitePlugins(env, command === 'build'),
     resolve: {
       // https://cn.vitejs.dev/config/#resolve-alias
@@ -29,7 +29,7 @@ export default defineConfig(({ mode, command }) => {
       open: true,
       proxy: {
         // https://cn.vitejs.dev/config/#server-proxy
-        // 生命周期系统API代理
+        // 更新与回收系统 API 代理
         '/lifecycle-api': {
           target: 'http://localhost:9082',
           changeOrigin: true,

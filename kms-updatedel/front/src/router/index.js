@@ -43,7 +43,7 @@ export const constantRoutes = [
     hidden: true
   },
   {
-    path: '/lifecycle/keyupdate',
+    path: '/updatedel/keyupdate',
     component: Layout,
     hidden: true,
     children: [
@@ -56,7 +56,7 @@ export const constantRoutes = [
     ]
   },
   {
-    path: '/lifecycle/keydelete',
+    path: '/updatedel/keydelete',
     component: Layout,
     hidden: true,
     children: [
@@ -69,7 +69,7 @@ export const constantRoutes = [
     ]
   },
   {
-    path: '/lifecycle/keyautoupdate',
+    path: '/updatedel/keyautoupdate',
     component: Layout,
     hidden: true,
     children: [

@@ -6,6 +6,10 @@ const routes = [
     redirect: '/workbench'
   },
   {
+    path: '/lifecycle',
+    redirect: '/updatedel'
+  },
+  {
     path: '/workbench',
     name: 'Workbench',
     component: () => import('@/views/workbench/WorkbenchView.vue')
@@ -16,8 +20,8 @@ const routes = [
     component: () => import('@/views/generate/GenerateView.vue')
   },
   {
-    path: '/lifecycle',
-    name: 'Lifecycle',
+    path: '/updatedel',
+    name: 'Updatedel',
     component: () => import('@/views/lifecycle/LifecycleView.vue')
   },
   {
