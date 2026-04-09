@@ -4,7 +4,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
 "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.ruoyi.updatedel.mapper.KeymanageMapper">
 
-    <resultMap type="Keymanage" id="keymanageResult">
+    <resultMap type="com.ruoyi.updatedel.domain.Keymanage" id="keymanageResult">
         <result property="keyId"       column="key_id"       />
         <result property="userId"     column="user_id"      />
         <result property="userName"   column="user_name"    />
@@ -29,7 +29,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         select key_id, user_id, user_name, ua, encryt_type, encryt_name, key_name, key_use, key_value, cre_time, upd_time, auto_update, status, chain_hash, block_height, chain_status, version, key_domain from keymanage
     </sql>
 
-    <select id="selectkeymanageList" parameterType="Keymanage" resultMap="keymanageResult">
+    <select id="selectkeymanageList" parameterType="com.ruoyi.updatedel.domain.Keymanage" resultMap="keymanageResult">
         <include refid="selectKeymanageVo"/>
         <where>
             <if test="userId != null "> and user_id = #{userId}</if>
@@ -53,7 +53,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         where key_id = #{keyId}
     </select>
 
-    <insert id="insertkeymanage" parameterType="Keymanage" useGeneratedKeys="true" keyProperty="keyId">
+    <insert id="insertkeymanage" parameterType="com.ruoyi.updatedel.domain.Keymanage" useGeneratedKeys="true" keyProperty="keyId">
         insert into keymanage
         <trim prefix="(" suffix=")" suffixOverrides=",">
             <if test="userId != null">user_id,</if>
@@ -119,7 +119,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         </foreach>
     </insert>
 
-    <update id="updatekeymanage" parameterType="Keymanage">
+    <update id="updatekeymanage" parameterType="com.ruoyi.updatedel.domain.Keymanage">
         update keymanage
         <trim prefix="SET" suffixOverrides=",">
             <if test="userId != null">user_id = #{userId},</if>

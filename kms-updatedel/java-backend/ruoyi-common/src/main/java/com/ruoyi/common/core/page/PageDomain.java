@@ -9,6 +9,10 @@ import com.ruoyi.common.utils.StringUtils;
  */
 public class PageDomain
 {
+    private static final int DEFAULT_PAGE_NUM = 1;
+    private static final int DEFAULT_PAGE_SIZE = 10;
+    private static final int MAX_PAGE_SIZE = 100;
+
     /** 当前记录起始索引 */
     private Integer pageNum;
 
@@ -40,7 +44,7 @@ public class PageDomain
 
     public void setPageNum(Integer pageNum)
     {
-        this.pageNum = pageNum;
+        this.pageNum = pageNum == null || pageNum < DEFAULT_PAGE_NUM ? DEFAULT_PAGE_NUM : pageNum;
     }
 
     public Integer getPageSize()
@@ -50,7 +54,12 @@ public class PageDomain
 
     public void setPageSize(Integer pageSize)
     {
-        this.pageSize = pageSize;
+        if (pageSize == null || pageSize < 1)
+        {
+            this.pageSize = DEFAULT_PAGE_SIZE;
+            return;
+        }
+        this.pageSize = Math.min(pageSize, MAX_PAGE_SIZE);
     }
 
     public String getOrderByColumn()

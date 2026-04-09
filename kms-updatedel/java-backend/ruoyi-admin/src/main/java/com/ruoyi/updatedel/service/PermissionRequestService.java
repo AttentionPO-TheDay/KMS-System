@@ -78,10 +78,6 @@ public class PermissionRequestService {
         int rollbackCount = 0;
 
         for (PermissionRequest request : expiredRequests) {
-            if (!Integer.valueOf(1).equals(request.getIsTemp())) {
-                continue;
-            }
-
             sysUserMapper.updateRoleLevel(request.getUserId(), request.getOriginalLevel());
             permissionRequestMapper.markRolledBack(request.getRequestId());
             rollbackCount++;

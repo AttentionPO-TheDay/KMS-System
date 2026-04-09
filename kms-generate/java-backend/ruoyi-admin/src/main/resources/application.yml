@@ -87,7 +87,7 @@ token:
 
 # MyBatis配置
 mybatis:
-  typeAliasesPackage: com.ruoyi.**.domain,com.ruoyi.generate.domain
+  typeAliasesPackage: com.ruoyi.common.core.domain,com.ruoyi.common.core.domain.entity,com.ruoyi.system.domain,com.ruoyi.quartz.domain,com.ruoyi.generator.domain
   mapperLocations: classpath*:mapper/**/*Mapper.xml
   configLocation: classpath:mybatis/mybatis-config.xml
 

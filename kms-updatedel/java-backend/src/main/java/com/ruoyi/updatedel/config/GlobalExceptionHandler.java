@@ -1,10 +1,12 @@
 package com.ruoyi.updatedel.config;
 
 import com.ruoyi.updatedel.common.AjaxResult;
+import org.springframework.stereotype.Component;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
+@Component("updatedelGlobalExceptionHandler")
 public class GlobalExceptionHandler {
     @ExceptionHandler(IllegalStateException.class)
     public AjaxResult handleIllegalState(IllegalStateException ex) {

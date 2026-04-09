@@ -4,6 +4,7 @@ import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
+import org.springframework.context.annotation.FullyQualifiedAnnotationBeanNameGenerator;
 import org.springframework.kafka.annotation.EnableKafka;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
@@ -19,10 +20,14 @@ import org.springframework.scheduling.annotation.EnableScheduling;
  * 5. 提供生成记录查询接口
  * 6. 记录生成审计日志
  */
-@SpringBootApplication(scanBasePackages = {"com.ruoyi"}, exclude = { DataSourceAutoConfiguration.class })
+@SpringBootApplication(
+        scanBasePackages = {"com.ruoyi"},
+        nameGenerator = FullyQualifiedAnnotationBeanNameGenerator.class,
+        exclude = { DataSourceAutoConfiguration.class }
+)
 @EnableKafka
 @EnableScheduling
-@MapperScan("com.ruoyi.generate.mapper")
+@MapperScan(value = "com.ruoyi.generate.mapper", nameGenerator = FullyQualifiedAnnotationBeanNameGenerator.class)
 public class KmsGenerateApplication {
 
     public static void main(String[] args) {

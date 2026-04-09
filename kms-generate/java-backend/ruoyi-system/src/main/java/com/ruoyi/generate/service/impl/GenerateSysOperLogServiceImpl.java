@@ -10,7 +10,7 @@ import org.springframework.stereotype.Service;
  * 操作日志 服务层处理
  */
 @Service
-public class SysOperLogServiceImpl implements ISysOperLogService {
+public class GenerateSysOperLogServiceImpl implements ISysOperLogService {
     @Autowired
     private SysOperLogMapper operLogMapper;
 

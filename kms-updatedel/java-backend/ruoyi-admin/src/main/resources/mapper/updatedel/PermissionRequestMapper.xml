@@ -4,7 +4,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
 "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.ruoyi.updatedel.mapper.PermissionRequestMapper">
 
-    <resultMap id="permissionRequestResult" type="PermissionRequest">
+    <resultMap id="permissionRequestResult" type="com.ruoyi.updatedel.domain.PermissionRequest">
         <result property="requestId" column="request_id"/>
         <result property="userId" column="user_id"/>
         <result property="userName" column="user_name"/>
@@ -34,7 +34,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         where request_id = #{requestId}
     </select>
 
-    <select id="selectPermissionRequestList" parameterType="PermissionRequest" resultMap="permissionRequestResult">
+    <select id="selectPermissionRequestList" parameterType="com.ruoyi.updatedel.domain.PermissionRequest" resultMap="permissionRequestResult">
         <include refid="selectPermissionRequestVo"/>
         <where>
             <if test="userId != null">and user_id = #{userId}</if>
@@ -46,11 +46,11 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
 
     <select id="selectApprovedBefore" parameterType="java.util.Date" resultMap="permissionRequestResult">
         <include refid="selectPermissionRequestVo"/>
-        where status = '1' and approve_time is not null and approve_time &lt; #{beforeTime}
+        where status = '1' and is_temp = 1 and approve_time is not null and approve_time &lt; #{beforeTime}
         order by request_id asc
     </select>
 
-    <insert id="insertPermissionRequest" parameterType="PermissionRequest" useGeneratedKeys="true" keyProperty="requestId">
+    <insert id="insertPermissionRequest" parameterType="com.ruoyi.updatedel.domain.PermissionRequest" useGeneratedKeys="true" keyProperty="requestId">
         insert into permission_request (
             user_id, user_name, original_level, request_level, request_reason, status, is_temp,
             request_time, create_time, update_time
