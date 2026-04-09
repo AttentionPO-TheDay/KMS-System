@@ -8,6 +8,16 @@ import InnerLink from '@/layout/components/InnerLink'
 // 匹配views里面所有的.vue文件
 const modules = import.meta.glob('./../../views/**/*.vue')
 
+const ADMIN_ROUTE_ORDER = {
+  system: 80,
+  log: 81
+}
+
+const ADMIN_ROUTE_WHITELIST = {
+  system: ['user', 'role', 'menu'],
+  log: ['operlog', 'logininfor']
+}
+
 const usePermissionStore = defineStore(
   'permission',
   {
@@ -43,9 +53,10 @@ const usePermissionStore = defineStore(
                 return title !== 'Permission Approval' && title !== 'Permission Request';
               });
             }
-            const sdata = JSON.parse(JSON.stringify(res.data))
-            const rdata = JSON.parse(JSON.stringify(res.data))
-            const defaultData = JSON.parse(JSON.stringify(res.data))
+            const normalizedRoutes = normalizeRouteTree(filterAdminRoutes(res.data))
+            const sdata = JSON.parse(JSON.stringify(normalizedRoutes))
+            const rdata = JSON.parse(JSON.stringify(normalizedRoutes))
+            const defaultData = JSON.parse(JSON.stringify(normalizedRoutes))
             const sidebarRoutes = filterAsyncRouter(sdata)
             const rewriteRoutes = filterAsyncRouter(rdata, false, true)
             const defaultRoutes = filterAsyncRouter(defaultData)
@@ -116,6 +127,33 @@ function filterChildren(childrenMap, lastRouter = false) {
     children = children.concat(el)
   })
   return children
+}
+
+function normalizeRouteTree(routes = []) {
+  return routes
+    .map(route => {
+      const normalized = { ...route }
+      if (normalized.children && normalized.children.length) {
+        normalized.children = normalizeRouteTree(normalized.children)
+      }
+      return normalized
+    })
+    .sort((a, b) => getRouteOrder(a) - getRouteOrder(b))
+}
+
+function filterAdminRoutes(routes = []) {
+  return routes
+    .filter(route => Object.prototype.hasOwnProperty.call(ADMIN_ROUTE_WHITELIST, route.path))
+    .map(route => ({
+      ...route,
+      children: (route.children || []).filter(child => ADMIN_ROUTE_WHITELIST[route.path].includes(child.path))
+    }))
+    .filter(route => route.children && route.children.length)
+}
+
+function getRouteOrder(route) {
+  const path = route.path || ''
+  return ADMIN_ROUTE_ORDER[path] ?? 10
 }
 
 // 动态路由遍历，验证是否具备权限

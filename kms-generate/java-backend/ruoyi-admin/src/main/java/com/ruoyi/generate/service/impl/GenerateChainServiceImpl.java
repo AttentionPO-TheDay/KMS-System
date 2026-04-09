@@ -218,8 +218,8 @@ public class GenerateChainServiceImpl implements GenerateChainService {
         try {
             if (km.getKeyValue() == null) return null;
 
-            if ("AES".equalsIgnoreCase(km.getEncrytName()) || "对称加密".equals(km.getEncrytType())) {
-                return km.getKeyValue();
+            if (!"无证书非对称加密".equals(km.getEncrytType())) {
+                return null;
             }
 
             JSONObject kv = JSON.parseObject(km.getKeyValue());

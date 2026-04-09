@@ -86,9 +86,6 @@
         <el-form-item label="加密算法类型" prop="encrytType">
           <el-select v-model="form.encrytType" placeholder="请选择加密算法类型" @change="handleEncrytTypeChange">
             <el-option label="无证书非对称加密" value="无证书非对称加密" />
-            <el-option label="对称加密" value="对称加密" />
-            <el-option label="非对称加密" value="非对称加密" />
-            <el-option label="单向加密" value="单向加密" />
           </el-select>
         </el-form-item>
         <el-form-item label="加密算法名称" prop="encrytName">
@@ -116,13 +113,6 @@
 
     <el-dialog title="本地最终密钥结果 (请妥善保存)" v-model="resultOpen" width="760px" append-to-body destroy-on-close>
       <el-alert title="请立即复制并妥善保存您的私钥。此页面刷新后结果将无法找回！" type="warning" show-icon style="margin-bottom: 20px;" />
-      
-      <div v-if="localResult.encrytType === '对称加密' && localResult.encrytName === 'AES'">
-        <div class="key-item">
-          <span class="key-label">AES 秘密密钥 (Secret Key):</span>
-          <div class="key-value-block">{{ localResult.keyValue }}</div>
-        </div>
-      </div>
       
       <div v-if="localResult.encrytType === '无证书非对称加密'">
         <el-descriptions :column="1" border v-if="localResult.encrytName === 'SSCL'">
@@ -259,10 +249,11 @@ function cancel() { open.value = false; reset() }
 function reset() {
   form.value = {
     keyId: null, userId: queryParams.value.userId, userName: queryParams.value.userName,
-    encrytType: null, encrytName: null, keyName: null, keyUse: null, keyValue: null,
+    encrytType: '无证书非对称加密', encrytName: null, keyName: null, keyUse: null, keyValue: null,
     creTime: null, updTime: null, autoUpdate: 'false', status: 'Valid', uA: 'null', keyDomain: 'A'
   }
   proxy.resetForm("keymanageRef")
+  handleEncrytTypeChange('无证书非对称加密')
 }
 
 function handleSelectionChange(selection) {}
@@ -305,13 +296,6 @@ async function handleSubmittedSnapshot(snapshot) {
 
 /** 生成用户的最终私钥逻辑 (还原自 legacy-kms 完善的算法) */
 async function performGenDA(item) {
-  if (item.encrytType === '对称加密' && item.encrytName === 'AES') {
-    item.keyValue = item.keyValue
-    showLocalKeyResult(item)
-    return
-  }
-
-  // 不是非证书非对称加密则直接返回
   if (item.encrytType !== '无证书非对称加密') return
 
   const { xIndex, yIndex, PPub } = await genUA(item.encrytType, item.encrytName)
@@ -466,13 +450,8 @@ function scheduleRefresh() {
 
 function copyLocalKeyResult() {
   const result = localResult.value
-  let text = ""
-  if (result.encrytType === '对称加密') {
-      text = `Algorithm: AES\nSecretKey: ${result.keyValue || ''}`
-  } else {
-      text = `Algorithm: ${result.encrytName || ''}\nPrivateKey: ${result.PrivateKey || ''}\nPublicKey: ${result.PublicKey || ''}\n`
-      if (result.encrytName === 'SSCL') text += `DA: ${result.DA || ''}\nuA: ${result.uA || ''}`
-  }
+  let text = `Algorithm: ${result.encrytName || ''}\nPrivateKey: ${result.PrivateKey || ''}\nPublicKey: ${result.PublicKey || ''}\n`
+  if (result.encrytName === 'SSCL') text += `DA: ${result.DA || ''}\nuA: ${result.uA || ''}`
   navigator.clipboard.writeText(text).then(() => {
     proxy.$modal.msgSuccess('结果已复制')
   }).catch(() => {
@@ -481,11 +460,11 @@ function copyLocalKeyResult() {
 }
 
 function handleEncrytTypeChange(value) {
-  if (value === '无证书非对称加密') { encrytNameOptions.value = [{ label: 'SM2', value: 'SM2' }, { label: 'SSCL', value: 'SSCL' }] }
-  else if (value === '对称加密') { encrytNameOptions.value = [{ label: 'AES', value: 'AES' }] }
-  else if (value === '非对称加密') { encrytNameOptions.value = [{ label: 'RSA', value: 'RSA' }, { label: 'ECC', value: 'ECC' }] }
-  else if (value === '单向加密') { encrytNameOptions.value = [{ label: 'MD5', value: 'MD5' }, { label: 'BLAKE2', value: 'BLAKE2' }, { label: 'SHA-256', value: 'SHA-256' }, { label: 'SHA-512', value: 'SHA-512' }, { label: 'SHA-3', value: 'SHA-3' }] }
-  else { encrytNameOptions.value = [] }
+  if (value === '无证书非对称加密') {
+    encrytNameOptions.value = [{ label: 'SM2', value: 'SM2' }, { label: 'SSCL', value: 'SSCL' }]
+  } else {
+    encrytNameOptions.value = []
+  }
   form.value.encrytName = ''
 }
 

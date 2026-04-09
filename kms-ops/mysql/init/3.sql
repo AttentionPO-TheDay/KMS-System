@@ -34,4 +34,4 @@ CREATE TABLE `keymanage` (
 
 -- 插入测试数据 (新字段会自动使用默认值: version=1, chain_status='0')
 INSERT INTO `keymanage` (`user_id`, `user_name`, `encryt_type`, `encryt_name`, `key_name`, `key_use`, `key_value`, `cre_time`, `upd_time`, `auto_update`, `status`)
-VALUES (1, 'example_user', 'AES', 'AES-256', 'example_key', 'encryption', 's3cr3tK3y', '2023-10-10 12:00:00', '2023-10-10 12:00:00', 'enabled', 3');
+VALUES (1, 'example_user', 'AES', 'AES-256', 'example_key', 'encryption', 's3cr3tK3y', '2023-10-10 12:00:00', '2023-10-10 12:00:00', 'enabled', '3');

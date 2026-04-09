@@ -17,10 +17,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import javax.crypto.KeyGenerator;
-import javax.crypto.SecretKey;
 import java.math.BigInteger;
-import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -152,16 +149,8 @@ public class GenerateKeyServiceImpl implements GenerateKeyService {
     }
 
     private void generateKeyValue(Keymanage keymanage) {
-        if ("对称加密".equals(keymanage.getEncrytType()) && "AES".equals(keymanage.getEncrytName())) {
-            try {
-                KeyGenerator keyGen = KeyGenerator.getInstance("AES");
-                keyGen.init(256);
-                SecretKey secretKey = keyGen.generateKey();
-                keymanage.setKeyValue(bytesToHex(secretKey.getEncoded()));
-                return;
-            } catch (NoSuchAlgorithmException e) {
-                throw new IllegalStateException("AES 生成失败", e);
-            }
+        if (!"无证书非对称加密".equals(keymanage.getEncrytType())) {
+            throw new IllegalArgumentException("仅支持无证书密钥生成");
         }
 
         UserIdentity userIdentity = new UserIdentity();
@@ -190,7 +179,7 @@ public class GenerateKeyServiceImpl implements GenerateKeyService {
             return;
         }
 
-        keymanage.setKeyValue("demo");
+        throw new IllegalArgumentException("仅支持 SM2 和 SSCL 算法");
     }
 
     private String now() {
@@ -199,14 +188,6 @@ public class GenerateKeyServiceImpl implements GenerateKeyService {
 
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
-    }
-
-    private static String bytesToHex(byte[] bytes) {
-        StringBuilder sb = new StringBuilder();
-        for (byte b : bytes) {
-            sb.append(String.format("%02x", b));
-        }
-        return sb.toString();
     }
 
     private static String toFixedLengthHex(BigInteger value, int byteLength) {

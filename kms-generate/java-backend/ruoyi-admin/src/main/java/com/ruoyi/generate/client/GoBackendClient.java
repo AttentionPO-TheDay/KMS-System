@@ -45,7 +45,7 @@ public class GoBackendClient {
      * 调用 Go 服务执行 ENROLL_KEY（密钥生成）
      *
      * @param keymanage 密钥信息（含 userName, encrytType, encrytName, uA, keyDomain 等）
-     * @return Go 计算生成的 keyValue 字符串（SM2/SSCL 为 JSON 串，AES 为 hex 串）
+     * @return Go 计算生成的 keyValue 字符串（SM2/SSCL 为 JSON 串）
      * @throws RuntimeException 调用失败时抛出
      */
     public String enrollKey(Keymanage keymanage) {

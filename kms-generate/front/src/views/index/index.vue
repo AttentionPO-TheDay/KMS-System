@@ -182,9 +182,7 @@ const initCharts = () => {
         labelLine: { show: false },
         data: [
           { value: 1048, name: 'SM2', itemStyle: { color: '#0099ff' } },
-          { value: 735, name: 'SSCL', itemStyle: { color: '#9c27b0' } },
-          { value: 300, name: 'RSA', itemStyle: { color: '#e6a23c' } },
-          { value: 120, name: 'AES', itemStyle: { color: '#67c23a' } }
+          { value: 735, name: 'SSCL', itemStyle: { color: '#9c27b0' } }
         ]
       }
     ]

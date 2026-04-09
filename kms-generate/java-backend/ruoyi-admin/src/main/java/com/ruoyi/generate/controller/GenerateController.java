@@ -107,11 +107,8 @@ public class GenerateController extends BaseController {
         if (keymanage == null || keymanage.getKeyValue() == null) {
             return null;
         }
-        if ("AES".equalsIgnoreCase(keymanage.getEncrytName()) || "对称加密".equals(keymanage.getEncrytType())) {
-            return null;
-        }
         if (!"无证书非对称加密".equals(keymanage.getEncrytType())) {
-            return keymanage.getKeyValue();
+            return null;
         }
         try {
             JSONObject payload = JSON.parseObject(keymanage.getKeyValue());

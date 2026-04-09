@@ -31,9 +31,6 @@
         <el-form-item label="加密算法类型" prop="encrytType">
           <el-select v-model="form.encrytType" placeholder="请选择加密算法类型" @change="handleTypeChange">
             <el-option label="无证书非对称加密" value="无证书非对称加密" />
-            <el-option label="对称加密" value="对称加密" />
-            <el-option label="非对称加密" value="非对称加密" />
-            <el-option label="单向加密" value="单向加密" />
           </el-select>
         </el-form-item>
         <el-form-item label="加密算法名称" prop="encrytName">
@@ -107,16 +104,17 @@ function resetQuery() { proxy.resetForm("queryRef"); handleQuery() }
 function handleAdd() { reset(); open.value = true }
 
 function reset() {
-  form.value = { encrytType: null, encrytName: null }
+  form.value = { encrytType: '无证书非对称加密', encrytName: null }
   proxy.resetForm("paramRef")
+  handleTypeChange('无证书非对称加密')
 }
 
 function handleTypeChange(value) {
-  if (value === '无证书非对称加密') { encrytNameOptions.value = [{ label: 'SM2', value: 'SM2' }, { label: 'SSCL', value: 'SSCL' }] }
-  else if (value === '对称加密') { encrytNameOptions.value = [{ label: 'AES', value: 'AES' }] }
-  else if (value === '非对称加密') { encrytNameOptions.value = [{ label: 'RSA', value: 'RSA' }, { label: 'ECC', value: 'ECC' }] }
-  else if (value === '单向加密') { encrytNameOptions.value = [{ label: 'MD5', value: 'MD5' }] }
-  else { encrytNameOptions.value = [] }
+  if (value === '无证书非对称加密') {
+    encrytNameOptions.value = [{ label: 'SM2', value: 'SM2' }, { label: 'SSCL', value: 'SSCL' }]
+  } else {
+    encrytNameOptions.value = []
+  }
   form.value.encrytName = ''
 }
 

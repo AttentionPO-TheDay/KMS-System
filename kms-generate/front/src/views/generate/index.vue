@@ -56,9 +56,6 @@
         <el-form-item label="加密算法类型" prop="encrytType">
           <el-select v-model="form.encrytType" placeholder="请选择加密算法类型" @change="handleEncrytTypeChange">
             <el-option label="无证书非对称加密" value="无证书非对称加密" />
-            <el-option label="对称加密" value="对称加密" />
-            <el-option label="非对称加密" value="非对称加密" />
-            <el-option label="单向加密" value="单向加密" />
           </el-select>
         </el-form-item>
         <el-form-item label="加密算法名称" prop="encrytName">
@@ -206,11 +203,12 @@ function cancel() { open.value = false; reset() }
 
 function reset() {
   form.value = {
-    keyId: null, userId: null, userName: 'null', encrytType: null, encrytName: null,
+    keyId: null, userId: null, userName: 'null', encrytType: '无证书非对称加密', encrytName: null,
     keyName: null, keyUse: null, keyValue: null, creTime: null, updTime: null,
     autoUpdate: 'false', status: 'null'
   }
   proxy.resetForm("keymanageRef")
+  handleEncrytTypeChange('无证书非对称加密')
 }
 
 function handleQuery() { queryParams.value.pageNum = 1; getList() }
@@ -254,25 +252,12 @@ function copyDetailInfo() {
 function submitForm() {
   proxy.$refs["keymanageRef"].validate(valid => {
     if (valid) {
-      if (form.value.keyId != null) {
-        if (form.value.encrytType == "无证书非对称加密") { alert("该功能需配合用户系统使用") }
-        else {
-          updateKeymanage(form.value).then(() => {
-            proxy.$modal.msgSuccess("更新请求已提交，正在后台处理")
-            open.value = false
-            scheduleRefresh()
-          })
-        }
-      } else {
-        if (form.value.encrytType == "无证书非对称加密") { alert("该功能需配合用户系统使用") }
-        else {
-          addKeymanage(form.value).then(() => {
-            proxy.$modal.msgSuccess("生成请求已提交，正在后台处理")
-            open.value = false
-            scheduleRefresh()
-          })
-        }
-      }
+      const request = form.value.keyId != null ? updateKeymanage(form.value) : addKeymanage(form.value)
+      request.then(() => {
+        proxy.$modal.msgSuccess(form.value.keyId != null ? "更新请求已提交，正在后台处理" : "生成请求已提交，正在后台处理")
+        open.value = false
+        scheduleRefresh()
+      })
     }
   })
 }
@@ -288,13 +273,15 @@ function scheduleRefresh() {
 }
 
 function handleEncrytTypeChange(value) {
-  if (value === '无证书非对称加密') { encrytNameOptions.value = [{ label: 'SM2', value: 'SM2' }, { label: 'SSCL', value: 'SSCL' }] }
-  else if (value === '对称加密') { encrytNameOptions.value = [{ label: 'AES', value: 'AES' }] }
-  else if (value === '非对称加密') { encrytNameOptions.value = [{ label: 'RSA', value: 'RSA' }, { label: 'ECC', value: 'ECC' }] }
-  else if (value === '单向加密') { encrytNameOptions.value = [{ label: 'MD5', value: 'MD5' }, { label: 'BLAKE2', value: 'BLAKE2' }, { label: 'SHA-256', value: 'SHA-256' }, { label: 'SHA-512', value: 'SHA-512' }, { label: 'SHA-3', value: 'SHA-3' }] }
-  else { encrytNameOptions.value = [] }
+  if (value === '无证书非对称加密') {
+    encrytNameOptions.value = [{ label: 'SM2', value: 'SM2' }, { label: 'SSCL', value: 'SSCL' }]
+  } else {
+    encrytNameOptions.value = []
+  }
   form.value.encrytName = ''
 }
+
+reset()
 
 getList()
 </script>

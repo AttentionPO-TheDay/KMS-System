@@ -95,7 +95,7 @@ const dynamicRoutes = [
         path: 'index',
         component: () => import('@/views/generate/index.vue'),
         name: 'KeyGenerate',
-        meta: { title: '密钥生成', icon: 'key' }
+        meta: { title: '密钥生成', icon: 'lock' }
       }
     ]
   },
@@ -108,7 +108,7 @@ const dynamicRoutes = [
         path: 'index',
         component: () => import('@/views/generateHistory/index.vue'),
         name: 'KeyGenerateHistory',
-        meta: { title: '生成历史', icon: 'history' }
+        meta: { title: '生成历史', icon: 'chart' }
       }
     ]
   },
@@ -121,7 +121,7 @@ const dynamicRoutes = [
         path: 'index',
         component: () => import('@/views/commonParam/index.vue'),
         name: 'CommonParam',
-        meta: { title: '公共参数', icon: 'param' }
+        meta: { title: '公共参数', icon: 'list' }
       }
     ]
   },

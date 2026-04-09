@@ -1,8 +1,6 @@
 package service
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"io"
 	"net/http"
@@ -73,29 +71,25 @@ func (s *KeyManageService) EnrollKey(km *models.Keymanage, rawPassword string) (
 	km.CreTime = nowStr
 	km.UpdTime = nowStr
 
-	if km.EncrytType == "无证书非对称加密" {
-		switch km.EncrytName {
-		case "SM2":
-			resKm, err := s.eccGen.GenPartialKey(km.UserName, km.UA)
-			if err != nil {
-				return "", err
-			}
-			km.KeyValue = resKm.KeyValue
-		case "SSCL":
-			resKm, err := s.ssclGen.GenPartialKey(km.UserName, km.UA, km.KeyDomain)
-			if err != nil {
-				return "", err
-			}
-			km.KeyValue = resKm.KeyValue
-		}
-	} else if km.EncrytName == "AES" || km.EncrytType == "对称加密" {
-		keyBuf := make([]byte, 32)
-		if _, err := io.ReadFull(rand.Reader, keyBuf); err != nil {
+	if km.EncrytType != "无证书非对称加密" {
+		return "", errors.New("only certless algorithms are supported")
+	}
+
+	switch km.EncrytName {
+	case "SM2":
+		resKm, err := s.eccGen.GenPartialKey(km.UserName, km.UA)
+		if err != nil {
 			return "", err
 		}
-		km.KeyValue = hex.EncodeToString(keyBuf)
-	} else {
-		km.KeyValue = "demo"
+		km.KeyValue = resKm.KeyValue
+	case "SSCL":
+		resKm, err := s.ssclGen.GenPartialKey(km.UserName, km.UA, km.KeyDomain)
+		if err != nil {
+			return "", err
+		}
+		km.KeyValue = resKm.KeyValue
+	default:
+		return "", errors.New("unsupported certless algorithm")
 	}
 
 	if err := s.sendToKafka(km, rawPassword, ActionEnrollKey); err != nil {
@@ -150,10 +144,11 @@ func (s *KeyManageService) Close() {
 }
 
 func (s *KeyManageService) GetComParam(encrytType, encrytName string) map[string]interface{} {
-	if encrytType == "无证书非对称加密" {
-		if encrytName == "SSCL" {
-			return s.ssclGen.GetComParam()
-		}
+	if encrytType != "无证书非对称加密" {
+		return nil
+	}
+	if encrytName == "SSCL" {
+		return s.ssclGen.GetComParam()
 	}
 	return nil
 }
