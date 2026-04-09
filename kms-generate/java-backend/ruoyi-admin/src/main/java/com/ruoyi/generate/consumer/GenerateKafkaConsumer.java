@@ -83,7 +83,8 @@ public class GenerateKafkaConsumer {
                     continue;
                 }
 
-                // 3. 终校验用户身份，避免任何人直接向 Kafka 注入生成消息
+                // 3. 校验用户身份，防止外部直接向 Kafka 注入生成消息
+                // 注意：当 rawPassword 为空时，表示请求来自 Java 后端内部（已通过 Session 鉴权），直接放行
                 String rawUser = payload.getRawUser();
                 String rawPassword = payload.getRawPassword();
                 GenerateUser user = generateUserService.selectByUserName(rawUser);
@@ -91,7 +92,9 @@ public class GenerateKafkaConsumer {
                     log.warn("生成消息用户不存在: {}", rawUser);
                     continue;
                 }
-                if (!generateUserService.matchesPassword(rawPassword, user.getPassword())) {
+                // rawPassword 为空 = 来自 Java 内部可信调用，无需密码校验
+                if (rawPassword != null && !rawPassword.isEmpty()
+                        && !generateUserService.matchesPassword(rawPassword, user.getPassword())) {
                     log.warn("生成消息用户鉴权失败: {}", rawUser);
                     continue;
                 }

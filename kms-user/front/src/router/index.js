@@ -1,7 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import Layout from '@/layout'
 
-const constantRoutes = [
+export const constantRoutes = [
   {
     path: '/redirect',
     component: Layout,
@@ -16,6 +16,11 @@ const constantRoutes = [
   {
     path: '/login',
     component: () => import('@/views/login.vue'),
+    hidden: true
+  },
+  {
+    path: '/register',
+    component: () => import('@/views/register.vue'),
     hidden: true
   },
   {

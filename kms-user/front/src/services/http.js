@@ -1,4 +1,4 @@
-import { authState, clearSession, getAuthToken } from '@/services/session'
+import { getToken, removeToken } from '@/utils/auth'
 
 async function parseResponse(response) {
   const text = await response.text()
@@ -19,7 +19,7 @@ export async function requestJson(base, path, options = {}) {
     ...(options.headers || {})
   }
 
-  const token = getAuthToken()
+  const token = getToken()
   if (options.auth !== false && token) {
     headers.Authorization = `Bearer ${token}`
   }
@@ -33,8 +33,7 @@ export async function requestJson(base, path, options = {}) {
   if (!response.ok || (data && data.code !== undefined && data.code !== 200)) {
     const message = data?.msg || `请求失败(${response.status})`
     if (response.status === 401 || data?.code === 401) {
-      clearSession()
-      authState.lastError = '登录已失效，请重新登录。'
+      removeToken()
     }
     throw new Error(message)
   }

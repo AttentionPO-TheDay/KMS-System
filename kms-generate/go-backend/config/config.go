@@ -16,6 +16,13 @@ var (
 	JavaBackendBase = getEnv("JAVA_BACKEND_BASE", "http://localhost:9081")
 )
 
+// 内部鉴权配置
+// Java 后端调用 Go 时需在 Header 携带：X-Internal-Token: <InternalToken>
+// 只要 Token 匹配，Go 便信任该请求已由 Java 完成鉴权，无需再校验用户密码
+var (
+	InternalToken = getEnv("INTERNAL_TOKEN", "kms-generate-internal-secret-2026")
+)
+
 // App 配置
 var (
 	AppName = "key-service-generate"

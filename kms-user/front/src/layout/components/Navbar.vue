@@ -64,6 +64,11 @@ const appStore = useAppStore()
 const userStore = useUserStore()
 const settingsStore = useSettingsStore()
 
+function getLoginPath() {
+  const base = import.meta.env.BASE_URL || '/'
+  return `${base.replace(/\/?$/, '/') }login`
+}
+
 function toggleSideBar() {
   appStore.toggleSideBar()
 }
@@ -88,7 +93,7 @@ function logout() {
     type: 'warning'
   }).then(() => {
     userStore.logOut().then(() => {
-      location.href = '/index';
+      location.href = getLoginPath();
     })
   }).catch(() => { });
 }

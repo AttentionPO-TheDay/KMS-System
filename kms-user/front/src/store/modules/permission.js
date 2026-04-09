@@ -1,12 +1,23 @@
 import auth from '@/plugins/auth'
 import router, { constantRoutes, dynamicRoutes } from '@/router'
-import { getRouters } from '@/api/menu'
 import Layout from '@/layout/index'
 import ParentView from '@/components/ParentView'
 import InnerLink from '@/layout/components/InnerLink'
 
 // 匹配views里面所有的.vue文件
 const modules = import.meta.glob('./../../views/**/*.vue')
+
+function cloneRoute(route) {
+  return {
+    ...route,
+    meta: route.meta ? { ...route.meta } : route.meta,
+    children: route.children ? route.children.map(cloneRoute) : route.children
+  }
+}
+
+function cloneRoutes(routes) {
+  return routes.map(cloneRoute)
+}
 
 const usePermissionStore = defineStore(
   'permission',
@@ -34,29 +45,14 @@ const usePermissionStore = defineStore(
       },
       generateRoutes(roles) {
         return new Promise(resolve => {
-          // 向后端请求路由数据
-          getRouters().then(res => {
-            // Remove redundant English sidebar items
-            if (res.data && res.data.length) {
-              res.data = res.data.filter(r => {
-                const title = r.meta && r.meta.title;
-                return title !== 'Permission Approval' && title !== 'Permission Request';
-              });
-            }
-            const sdata = JSON.parse(JSON.stringify(res.data))
-            const rdata = JSON.parse(JSON.stringify(res.data))
-            const defaultData = JSON.parse(JSON.stringify(res.data))
-            const sidebarRoutes = filterAsyncRouter(sdata)
-            const rewriteRoutes = filterAsyncRouter(rdata, false, true)
-            const defaultRoutes = filterAsyncRouter(defaultData)
-            const asyncRoutes = filterDynamicRoutes(dynamicRoutes)
-            asyncRoutes.forEach(route => { router.addRoute(route) })
-            this.setRoutes(rewriteRoutes)
-            this.setSidebarRouters(constantRoutes.concat(sidebarRoutes))
-            this.setDefaultRoutes(sidebarRoutes)
-            this.setTopbarRoutes(defaultRoutes)
-            resolve(rewriteRoutes)
-          })
+          const localRoutes = cloneRoutes(constantRoutes)
+          const asyncRoutes = filterDynamicRoutes(dynamicRoutes)
+          asyncRoutes.forEach(route => { router.addRoute(route) })
+          this.setRoutes(asyncRoutes)
+          this.setSidebarRouters(localRoutes)
+          this.setDefaultRoutes(localRoutes)
+          this.setTopbarRoutes(localRoutes)
+          resolve(asyncRoutes)
         })
       }
     }

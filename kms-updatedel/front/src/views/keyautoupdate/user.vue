@@ -169,7 +169,7 @@ function handleRollback() {
 
       userStore.getInfo().then(() => {
         setTimeout(() => {
-          proxy.$router.push({ path: '/index' }).then(() => {
+          proxy.$router.push({ path: `${import.meta.env.BASE_URL}index` }).then(() => {
             window.location.reload();
           });
         }, 1000);
@@ -183,7 +183,7 @@ function handleRollback() {
 onMounted(() => {
   if (userStore.roleLevel > 0) {
     proxy.$message.warning('您没有权限访问此页面');
-    proxy.$router.push({ path: '/index' });
+    proxy.$router.push({ path: `${import.meta.env.BASE_URL}index` });
     return;
   }
   checkPendingRollback();

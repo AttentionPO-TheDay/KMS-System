@@ -34,7 +34,7 @@ function getBreadcrumb() {
   }
   // 判断是否为首页
   if (!isDashboard(matched[0])) {
-    matched = [{ path: "/index", meta: { title: "首页" } }].concat(matched)
+    matched = [{ path: "/workbench", meta: { title: "首页" } }].concat(matched)
   }
   levelList.value = matched.filter(item => item.meta && item.meta.title && item.meta.breadcrumb !== false)
 }
@@ -62,7 +62,7 @@ function isDashboard(route) {
   if (!name) {
     return false
   }
-  return name.trim() === 'Index'
+  return name.trim() === 'Workbench'
 }
 function handleLink(item) {
   const { redirect, path } = item

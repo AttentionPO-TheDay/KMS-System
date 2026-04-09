@@ -78,23 +78,15 @@ router.beforeEach((to, from, next) => {
       if (useUserStore().roles.length === 0) {
         isRelogin.show = true
         // 判断当前用户是否已拉取完user_info信息
-        useUserStore().getInfo().then((res) => {
+        useUserStore().getInfo().then(() => {
           isRelogin.show = false
           usePermissionStore().generateRoutes().then(accessRoutes => {
-            // console.log(77777777777, res.user);
-            // console.log(66666666666, res.user.roles[0]?.roleId);
-            let roleid = res.user.roles[0]?.roleId
-            if (roleid === 1 || roleid === 2) {
-              // 根据roles权限生成可访问的路由表
-              accessRoutes.forEach(route => {
-                  if (!isHttp(route.path)) {
-                      router.addRoute(route); // 动态添加可访问路由表
-                  }
-              });
-              next({ ...to, replace: true }); // hack方法 确保addRoutes已完成
-            } else {
-              next({ path: '/userKeys', repace: true });
-            }
+            accessRoutes.forEach(route => {
+              if (!isHttp(route.path)) {
+                router.addRoute(route)
+              }
+            })
+            next({ ...to, replace: true })
           })
         }).catch(err => {
           useUserStore().logOut().then(() => {

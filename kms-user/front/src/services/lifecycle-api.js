@@ -22,3 +22,16 @@ export function updateLifecycleAutoUpdate(payload) {
     body: JSON.stringify(payload)
   })
 }
+
+export function updateLifecycleKey(payload) {
+  return requestJson(apiBases.lifecycleApi, '/lifecycle/keymanage', {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  })
+}
+
+export function revokeLifecycleKey(keyId) {
+  return requestJson(apiBases.lifecycleApi, `/lifecycle/keymanage/${keyId}`, {
+    method: 'DELETE'
+  })
+}

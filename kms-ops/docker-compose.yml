@@ -180,6 +180,7 @@ services:
     volumes:
       - ./runtime/updatedel-java/kms-updatedel.jar:/app/kms-updatedel.jar:ro
       - ./runtime/updatedel-java/config-fisco.toml:/app/config-fisco.toml:ro
+      - ./fisco/console/conf:/app/conf:ro
     working_dir: /app
     command: ["java", "-jar", "/app/kms-updatedel.jar"]
     ports:

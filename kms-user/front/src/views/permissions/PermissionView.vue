@@ -85,8 +85,10 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { authState, refreshProfile } from '@/services/auth'
 import { listPermissionRequests, rollbackPermission, submitPermissionRequest } from '@/services/permission-api'
+import useUserStore from '@/store/modules/user'
+
+const userStore = useUserStore()
 
 const profile = reactive({
   userId: '',
@@ -106,16 +108,21 @@ const loading = reactive({
 
 const records = ref([])
 const errorMessage = ref('')
-const isAuthenticated = computed(() => Boolean(authState.profile && authState.token))
+const isAuthenticated = computed(() => Boolean(userStore.token))
 
 watch(
-  () => authState.profile,
+  () => ({
+    userId: userStore.id,
+    userName: userStore.name,
+    roleLevel: userStore.roleLevel,
+    token: userStore.token
+  }),
   (value) => {
-    profile.userId = value?.userId || ''
-    profile.userName = value?.userName || ''
-    profile.originalLevel = value?.roleLevel ?? 2
+    profile.userId = value.userId || ''
+    profile.userName = value.userName || ''
+    profile.originalLevel = value.roleLevel ?? 2
 
-    if (!value) {
+    if (!value.token) {
       records.value = []
     }
   },
@@ -169,7 +176,7 @@ async function loadRecords() {
 
   if (!profile.userId) {
     try {
-      await refreshProfile()
+      await userStore.getInfo()
     } catch (error) {
       errorMessage.value = error.message
       records.value = []

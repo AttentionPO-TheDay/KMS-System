@@ -10,6 +10,7 @@ import (
 
 	"key-service-generate/config"
 	"key-service-generate/controllers"
+	"key-service-generate/middleware"
 	"key-service-generate/service"
 )
 
@@ -30,9 +31,13 @@ func main() {
 
 	reqCtrl := controllers.NewRequestController(keyService)
 
-	api := app.Group("/generate/request")
+	// Register 接口不需要内部鉴权（用于用户注册流程）
+	app.Post("/generate/request/Register", reqCtrl.Register)
+
+	// 以下接口仅允许 Java 后端（已完成用户鉴权）转发调用
+	// 通过 X-Internal-Token Header 进行内部服务鉴权
+	api := app.Group("/generate/request", middleware.InternalAuth())
 	{
-		api.Post("/Register", reqCtrl.Register)
 		api.Post("/ENROLL_KEY", reqCtrl.EnrollKey)
 		api.Post("/REENROLL_KEY", reqCtrl.ReenrollKey)
 		api.Post("/comparam", reqCtrl.ComParam)
@@ -47,3 +52,4 @@ func main() {
 		log.Fatalf("Server shutdown: %v", err)
 	}
 }
+

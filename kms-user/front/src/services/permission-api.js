@@ -5,6 +5,28 @@ async function request(base, path, options = {}) {
   return requestJson(base, path, options)
 }
 
+function withFeatureMeta(featureCode, payload) {
+  const feature = permissionFeatures[featureCode]
+  if (!payload || !feature) {
+    return payload
+  }
+
+  const rows = (payload.rows || []).map((row) => ({
+    featureCode,
+    systemCode: feature.system,
+    featureName: feature.label,
+    ...row
+  }))
+
+  return {
+    ...payload,
+    featureCode,
+    systemCode: feature.system,
+    featureName: feature.label,
+    rows
+  }
+}
+
 export const permissionFeatures = {
   PUBLIC_KEY_LIST: {
     system: 'generate',
@@ -38,7 +60,7 @@ export function submitPermissionRequest(featureCode, payload) {
 export function listPermissionRequests(featureCode, userId) {
   const feature = permissionFeatures[featureCode]
   const query = userId ? `?userId=${encodeURIComponent(userId)}` : ''
-  return request(feature.apiBase, `/permission/request/list${query}`)
+  return request(feature.apiBase, `/permission/request/list${query}`).then((payload) => withFeatureMeta(featureCode, payload))
 }
 
 export function rollbackPermission(featureCode, requestId) {
