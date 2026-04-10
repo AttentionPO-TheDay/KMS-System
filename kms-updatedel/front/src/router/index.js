@@ -43,6 +43,12 @@ export const constantRoutes = [
         component: () => import('@/views/algorithm/quickView.vue'),
         name: 'AlgorithmQuickView',
         meta: { title: '更新与回收算法速览', icon: 'guide' }
+      },
+      {
+        path: 'process-view',
+        component: () => import('@/views/algorithm/processView.vue'),
+        name: 'AlgorithmProcessView',
+        meta: { title: '更新过程展示', icon: 'monitor' }
       }
     ]
   },

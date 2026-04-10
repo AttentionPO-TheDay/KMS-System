@@ -65,6 +65,7 @@ create table sys_user (
 -- ----------------------------
 insert into sys_user values(1,  103, 'admin', 'test', '管理员', 'ry@163.com', '15888888888', '1', '', '$2a$10$7JB720yubVSZvUI0rEqK/.VqGOZTH.ulu33dHOiBE8ByOhJIrdAu2', '0', '0', '127.0.0.1', sysdate(), 'admin', sysdate(), '', null, '管理员', 0);
 insert into sys_user values(2,  105, 'yx',    'test', '普通用户', 'ry@qq.com',  '15666666666', '1', '', '$2a$10$7JB720yubVSZvUI0rEqK/.VqGOZTH.ulu33dHOiBE8ByOhJIrdAu2', '0', '0', '127.0.0.1', sysdate(), 'admin', sysdate(), '', null, '普通用户', 2);
+insert into sys_user values(3,  103, 'test',  '演示用户', '00', 'test@kms.local', '13800000000', '0', '', '$2a$10$7JB720yubVSZvUI0rEqK/.VqGOZTH.ulu33dHOiBE8ByOhJIrdAu2', '0', '0', '127.0.0.1', sysdate(), 'admin', sysdate(), '', null, '专用演示账户-计算过程可视化', 0);
 
 
 -- ----------------------------
@@ -207,6 +208,7 @@ create table sys_user_role (
 -- ----------------------------
 insert into sys_user_role values ('1', '1');
 insert into sys_user_role values ('2', '2');
+insert into sys_user_role values ('3', '1');
 
 
 -- ----------------------------
@@ -341,6 +343,7 @@ create table sys_user_post
 -- ----------------------------
 insert into sys_user_post values ('1', '1');
 insert into sys_user_post values ('2', '2');
+insert into sys_user_post values ('3', '1');
 
 
 -- ----------------------------
