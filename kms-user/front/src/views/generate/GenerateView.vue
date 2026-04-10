@@ -1,9 +1,27 @@
 <template>
-  <section class="page">
+  <section class="page generate-page">
     <div class="page-header">
       <p class="eyebrow">Generate</p>
       <h2>密钥生成与记录查询</h2>
-      <p>保留用户侧生成入口，同时继续支持生成记录、详情和公共参数查询。</p>
+      <p>用户端已按生成系统当前真实能力收敛，只保留可直接走通的证书无关生成链路。</p>
+    </div>
+
+    <div class="summary-grid">
+      <article class="summary-card">
+        <span class="summary-label">当前用户</span>
+        <strong>{{ profile.userName || '未登录' }}</strong>
+        <small>ID: {{ profile.userId || '-' }}</small>
+      </article>
+      <article class="summary-card">
+        <span class="summary-label">生成能力</span>
+        <strong>证书无关密钥</strong>
+        <small>支持 SM2 / SSCL</small>
+      </article>
+      <article class="summary-card">
+        <span class="summary-label">公共密钥权限</span>
+        <strong>{{ canViewPublicKeys ? '已具备' : '需申请' }}</strong>
+        <small>{{ canViewPublicKeys ? '可直接查询公共密钥' : '去权限页申请临时权限' }}</small>
+      </article>
     </div>
 
     <el-card class="panel" shadow="never">
@@ -11,75 +29,97 @@
         <div class="panel-head">
           <div>
             <h3>发起生成</h3>
-            <p class="muted">当前用户将自动绑定为申请人，无需手动选择用户。</p>
+            <p class="muted">提交前会先在当前浏览器生成一份用户侧密钥材料，并把公钥份额 `uA` 发送到后端。</p>
           </div>
-          <RouterLink class="inline-link" to="/permissions">查看权限申请</RouterLink>
+          <RouterLink class="inline-link" to="/user_actions/permissions">查看权限申请</RouterLink>
         </div>
       </template>
 
-      <div class="profile-grid">
-        <label>
-          <span>用户 ID</span>
-          <input :value="profile.userId || '-'" type="text" disabled />
-        </label>
-        <label>
-          <span>用户名</span>
-          <input :value="profile.userName || '-'" type="text" disabled />
-        </label>
-        <label>
-          <span>API 前缀</span>
-          <input :value="apiBase" type="text" disabled />
-        </label>
-      </div>
-
       <el-alert
-        v-if="generateForm.encrytType === '无证书非对称加密'"
-        title="当前统一生成页暂不直接处理无证书非对称密钥的浏览器端私钥拼装，请优先使用对称/非对称/单向算法。"
-        type="warning"
+        title="当前统一用户端不再展示 AES / RSA / 摘要算法伪入口，避免前端可填但后端必失败。"
+        type="info"
         :closable="false"
         show-icon
-        class="mb12"
+        class="mb16"
       />
 
-      <el-form ref="generateFormRef" :model="generateForm" :rules="generateRules" label-width="108px" class="generate-form">
-        <div class="form-grid three-col">
-          <el-form-item label="算法类型" prop="encrytType">
-            <el-select v-model="generateForm.encrytType" placeholder="请选择算法类型" @change="handleEncrytTypeChange">
-              <el-option label="无证书非对称加密" value="无证书非对称加密" />
-              <el-option label="对称加密" value="对称加密" />
-              <el-option label="非对称加密" value="非对称加密" />
-              <el-option label="单向加密" value="单向加密" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="算法名称" prop="encrytName">
-            <el-select v-model="generateForm.encrytName" placeholder="请选择算法名称">
-              <el-option
-                v-for="option in encrytNameOptions"
-                :key="option.value"
-                :label="option.label"
-                :value="option.value"
-              />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="密钥名称" prop="keyName">
-            <el-input v-model="generateForm.keyName" maxlength="64" show-word-limit />
-          </el-form-item>
-          <el-form-item label="密钥用途" prop="keyUse">
-            <el-input v-model="generateForm.keyUse" maxlength="128" show-word-limit />
-          </el-form-item>
-          <el-form-item label="所属域" prop="keyDomain">
-            <el-input v-model="generateForm.keyDomain" maxlength="64" placeholder="默认 A，可按需填写" />
-          </el-form-item>
-          <el-form-item label="自动更新">
-            <el-switch v-model="generateForm.autoUpdateEnabled" />
-          </el-form-item>
-        </div>
-      </el-form>
+      <div class="generate-layout">
+        <div class="generate-main">
+          <div class="profile-grid">
+            <label>
+              <span>用户 ID</span>
+              <input :value="profile.userId || '-'" type="text" disabled />
+            </label>
+            <label>
+              <span>用户名</span>
+              <input :value="profile.userName || '-'" type="text" disabled />
+            </label>
+            <label>
+              <span>API 前缀</span>
+              <input :value="apiBase" type="text" disabled />
+            </label>
+          </div>
 
-      <div class="action-row">
-        <el-button type="primary" :loading="submitting" @click="submitGenerate">提交生成</el-button>
-        <el-button @click="resetGenerateForm">重置</el-button>
+          <el-form ref="generateFormRef" :model="generateForm" :rules="generateRules" label-width="108px" class="generate-form">
+            <div class="form-grid two-col">
+              <el-form-item label="算法类型" prop="encrytType">
+                <el-select v-model="generateForm.encrytType" @change="handleEncrytTypeChange">
+                  <el-option label="无证书非对称加密" value="无证书非对称加密" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="算法名称" prop="encrytName">
+                <el-select v-model="generateForm.encrytName" placeholder="请选择算法名称">
+                  <el-option v-for="option in encrytNameOptions" :key="option.value" :label="option.label" :value="option.value" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="密钥名称" prop="keyName">
+                <el-input v-model="generateForm.keyName" maxlength="64" show-word-limit />
+              </el-form-item>
+              <el-form-item label="密钥用途" prop="keyUse">
+                <el-input v-model="generateForm.keyUse" maxlength="128" show-word-limit />
+              </el-form-item>
+              <el-form-item label="所属域" prop="keyDomain">
+                <el-input v-model="generateForm.keyDomain" maxlength="64" placeholder="SSCL 默认 A" />
+              </el-form-item>
+              <el-form-item label="自动更新">
+                <el-switch v-model="generateForm.autoUpdateEnabled" />
+              </el-form-item>
+            </div>
+          </el-form>
+
+          <div class="action-row">
+            <el-button type="primary" :loading="submitting" @click="submitGenerate">提交生成</el-button>
+            <el-button @click="regenerateLocalMaterial">重新生成本地材料</el-button>
+            <el-button @click="resetGenerateForm">重置表单</el-button>
+          </div>
+        </div>
+
+        <aside class="material-card">
+          <div class="material-head">
+            <h3>本地材料</h3>
+            <el-tag type="success">浏览器侧</el-tag>
+          </div>
+          <p class="muted">私钥份额只保留在当前页面中，不会提交到后端。提交时仅发送 `uA`。</p>
+          <div class="material-item">
+            <span>生成时间</span>
+            <strong>{{ localMaterial.generatedAt || '-' }}</strong>
+          </div>
+          <div class="material-item full">
+            <span>公钥份额 uA</span>
+            <code>{{ localMaterial.publicKey || '-' }}</code>
+          </div>
+          <div class="material-item full">
+            <span>私钥份额</span>
+            <code>{{ maskedPrivateKey }}</code>
+          </div>
+          <div class="action-row compact">
+            <el-button text type="primary" @click="copyLocalMaterial">复制材料摘要</el-button>
+            <el-button text type="primary" @click="downloadLocalMaterial">下载材料</el-button>
+          </div>
+        </aside>
       </div>
+
+      <p v-if="errorMessage" class="error-text">{{ errorMessage }}</p>
     </el-card>
 
     <el-card class="panel" shadow="never">
@@ -87,7 +127,7 @@
         <div class="panel-head">
           <div>
             <h3>生成记录</h3>
-            <p class="muted">统一前端直接读取生成系统记录，并支持查看单条详情。</p>
+            <p class="muted">默认聚焦当前登录用户的生成记录，可查看链上状态与单条详情。</p>
           </div>
         </div>
       </template>
@@ -100,15 +140,13 @@
           <el-input v-model="filters.userName" placeholder="按用户名筛选" />
         </el-form-item>
         <el-form-item label="算法名称">
-          <el-input v-model="filters.encrytName" placeholder="如 AES / RSA / SHA-256" />
+          <el-input v-model="filters.encrytName" placeholder="SM2 / SSCL" />
         </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="loadKeys">刷新</el-button>
           <el-button @click="resetFilters">重置</el-button>
         </el-form-item>
       </el-form>
-
-      <p v-if="errorMessage" class="error-text">{{ errorMessage }}</p>
 
       <el-table v-loading="listLoading" :data="keys">
         <el-table-column label="密钥 ID" prop="keyId" width="90" />
@@ -117,6 +155,13 @@
         <el-table-column label="算法名称" prop="encrytName" width="120" />
         <el-table-column label="密钥名称" prop="keyName" min-width="160" />
         <el-table-column label="密钥用途" prop="keyUse" min-width="160" show-overflow-tooltip />
+        <el-table-column label="自动更新" width="110">
+          <template #default="scope">
+            <el-tag :type="scope.row.autoUpdate === 'true' || scope.row.autoUpdate === '1' ? 'success' : 'info'">
+              {{ scope.row.autoUpdate === 'true' || scope.row.autoUpdate === '1' ? '已开启' : '未开启' }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="链上状态" width="120">
           <template #default="scope">
             <el-tag :type="chainStatusType(scope.row.chainStatus)">{{ chainStatusText(scope.row.chainStatus) }}</el-tag>
@@ -136,9 +181,9 @@
         <div class="panel-head">
           <div>
             <h3>公共密钥列表</h3>
-            <p class="muted">该能力属于生成域临时权限，审批通过后可查看公共密钥。</p>
+            <p class="muted">该能力需要生成域临时权限，审批通过后只展示脱敏后的公共值。</p>
           </div>
-          <RouterLink class="inline-link" to="/permissions">去申请权限</RouterLink>
+          <RouterLink class="inline-link" to="/user_actions/permissions">去申请权限</RouterLink>
         </div>
       </template>
 
@@ -190,6 +235,7 @@
         <div class="panel-head">
           <div>
             <h3>公共参数查询</h3>
+            <p class="muted">用于核对 SSCL 公共参数，便于和 legacy 结果做比对。</p>
           </div>
         </div>
       </template>
@@ -198,13 +244,13 @@
         <el-form-item label="算法类型">
           <el-select v-model="paramForm.encrytType" placeholder="请选择">
             <el-option label="无证书非对称加密" value="无证书非对称加密" />
-            <el-option label="对称加密" value="对称加密" />
-            <el-option label="非对称加密" value="非对称加密" />
-            <el-option label="单向加密" value="单向加密" />
           </el-select>
         </el-form-item>
         <el-form-item label="算法名称">
-          <el-input v-model="paramForm.encrytName" placeholder="例如 SSCL / SM2 / AES" />
+          <el-select v-model="paramForm.encrytName" placeholder="请选择算法名称">
+            <el-option label="SM2" value="SM2" />
+            <el-option label="SSCL" value="SSCL" />
+          </el-select>
         </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="loadParams">查询公共参数</el-button>
@@ -212,6 +258,27 @@
       </el-form>
       <pre v-if="commonParams" class="json-block">{{ JSON.stringify(commonParams, null, 2) }}</pre>
     </el-card>
+
+    <el-dialog v-model="resultOpen" title="本地最终结果" width="760px" append-to-body destroy-on-close>
+      <el-alert title="请立即保存用户侧私钥材料。刷新页面后将无法再次恢复。" type="warning" :closable="false" show-icon class="mb16" />
+      <div class="detail-grid">
+        <p><strong>算法类型：</strong>{{ localResult.encrytType || '-' }}</p>
+        <p><strong>算法名称：</strong>{{ localResult.encrytName || '-' }}</p>
+        <p><strong>密钥名称：</strong>{{ localResult.keyName || '-' }}</p>
+        <p><strong>所属域：</strong>{{ localResult.keyDomain || '-' }}</p>
+        <p class="detail-span"><strong>用户公钥份额 uA：</strong>{{ localResult.uA || '-' }}</p>
+        <p class="detail-span"><strong>用户私钥份额：</strong>{{ localResult.clientPrivateKey || '-' }}</p>
+        <p class="detail-span"><strong>服务端返回值：</strong>{{ localResult.keyValue || '-' }}</p>
+        <p v-if="localResult.partialKey" class="detail-span"><strong>部分私钥：</strong>{{ localResult.partialKey }}</p>
+        <p v-if="localResult.finalPublicKey" class="detail-span"><strong>最终公钥：</strong>{{ localResult.finalPublicKey }}</p>
+        <p v-if="localResult.finalPrivateKey" class="detail-span"><strong>最终私钥：</strong>{{ localResult.finalPrivateKey }}</p>
+        <p v-if="localResult.domainDa" class="detail-span"><strong>SSCL DA：</strong>{{ localResult.domainDa }}</p>
+      </div>
+      <template #footer>
+        <el-button @click="copyResultSummary">复制结果</el-button>
+        <el-button type="primary" @click="downloadResultSummary">下载结果</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="detailOpen" title="生成详情" width="720px" append-to-body>
       <div v-if="selectedKey" class="detail-grid">
@@ -235,28 +302,51 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { SM2 } from 'gm-crypto'
+import { BigInteger } from 'jsbn'
+import { weierstrass } from '@noble/curves/abstract/weierstrass.js'
 import { apiBases } from '@/config/api-bases'
 import { createGenerateKey, getCommonParams, getGenerateKey, listGenerateKeys, listPublicGenerateKeys } from '@/services/generate-api'
 import { getLatestApprovedTemporaryRequest, rollbackPermission } from '@/services/permission-api'
 import useUserStore from '@/store/modules/user'
-const userStore = useUserStore()
 
+const userStore = useUserStore()
 const apiBase = apiBases.generateApi
+const curveOrder = new BigInteger('FFFFFFFEFFFFFFFFFFFFFFFFFFFFFFFF7203DF6B21C6052B53BBF40939D54123', 16)
+const sm2Curve = weierstrass({
+  p: BigInt('0xFFFFFFFEFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000FFFFFFFFFFFFFFFF'),
+  n: BigInt('0xFFFFFFFEFFFFFFFFFFFFFFFFFFFFFFFF7203DF6B21C6052B53BBF40939D54123'),
+  h: 1n,
+  a: BigInt('0xFFFFFFFEFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000FFFFFFFFFFFFFFFC'),
+  b: BigInt('0x28E9FA9E9D9F5E344D5AEF9BAE4BCF6509A7F39789F515AB8F92DDBCBD414D94'),
+  Gx: BigInt('0x32C4AE2C1F1981195F9904466A39C9948FE30BBFF2660BE1715A4589334C74C7'),
+  Gy: BigInt('0xBC3736A2F4F6779C59BDCEE36B692153D0A9877CC62A474002DF32E52139F0A0')
+})
+
 const listLoading = ref(false)
 const submitting = ref(false)
 const detailOpen = ref(false)
+const resultOpen = ref(false)
 const generateFormRef = ref(null)
 const selectedKey = ref(null)
+const localResult = ref({})
 const keys = ref([])
 const publicKeys = ref([])
 const commonParams = ref(null)
 const errorMessage = ref('')
 const publicListLoading = ref(false)
 const approvedPublicRequestId = ref(null)
+const encrytNameOptions = ref([])
 
 const profile = reactive({
   userId: '',
   userName: ''
+})
+
+const localMaterial = reactive({
+  publicKey: '',
+  privateKey: '',
+  generatedAt: ''
 })
 
 const filters = reactive({
@@ -266,8 +356,8 @@ const filters = reactive({
 })
 
 const paramForm = reactive({
-  encrytType: '',
-  encrytName: ''
+  encrytType: '无证书非对称加密',
+  encrytName: 'SSCL'
 })
 
 const publicKeyQuery = reactive({
@@ -277,15 +367,14 @@ const publicKeyQuery = reactive({
 })
 
 const generateForm = reactive({
-  encrytType: '',
-  encrytName: '',
+  encrytType: '无证书非对称加密',
+  encrytName: 'SM2',
   keyName: '',
   keyUse: '',
   keyDomain: 'A',
   autoUpdateEnabled: false
 })
 
-const encrytNameOptions = ref([])
 const generateRules = {
   encrytType: [{ required: true, message: '请选择算法类型', trigger: 'change' }],
   encrytName: [{ required: true, message: '请选择算法名称', trigger: 'change' }],
@@ -293,8 +382,11 @@ const generateRules = {
   keyUse: [{ required: true, message: '请输入密钥用途', trigger: 'blur' }]
 }
 
-const canViewPublicKeys = computed(() => Number(userStore.roleLevel) <= 1)
-const showPublicKeysRollback = computed(() => canViewPublicKeys.value && Boolean(approvedPublicRequestId.value))
+const hasPermanentPublicKeysAccess = computed(() => Number(userStore.roleLevel) <= 1)
+const hasTemporaryPublicKeysAccess = computed(() => Boolean(approvedPublicRequestId.value))
+const canViewPublicKeys = computed(() => hasPermanentPublicKeysAccess.value || hasTemporaryPublicKeysAccess.value)
+const showPublicKeysRollback = computed(() => hasTemporaryPublicKeysAccess.value)
+const maskedPrivateKey = computed(() => maskText(localMaterial.privateKey, 20))
 
 watch(
   () => ({
@@ -323,6 +415,8 @@ watch(
 )
 
 onMounted(async () => {
+  handleEncrytTypeChange(generateForm.encrytType)
+  regenerateLocalMaterial()
   await ensureProfile()
   fillDefaultFilters()
   await loadKeys()
@@ -355,13 +449,13 @@ function fillDefaultFilters() {
 }
 
 function resetGenerateForm() {
-  generateForm.encrytType = ''
-  generateForm.encrytName = ''
+  generateForm.encrytType = '无证书非对称加密'
+  generateForm.encrytName = 'SM2'
   generateForm.keyName = ''
   generateForm.keyUse = ''
   generateForm.keyDomain = 'A'
   generateForm.autoUpdateEnabled = false
-  encrytNameOptions.value = []
+  handleEncrytTypeChange(generateForm.encrytType)
   generateFormRef.value?.clearValidate()
 }
 
@@ -371,25 +465,19 @@ function handleEncrytTypeChange(value) {
       { label: 'SM2', value: 'SM2' },
       { label: 'SSCL', value: 'SSCL' }
     ]
-  } else if (value === '对称加密') {
-    encrytNameOptions.value = [{ label: 'AES', value: 'AES' }]
-  } else if (value === '非对称加密') {
-    encrytNameOptions.value = [
-      { label: 'RSA', value: 'RSA' },
-      { label: 'ECC', value: 'ECC' }
-    ]
-  } else if (value === '单向加密') {
-    encrytNameOptions.value = [
-      { label: 'MD5', value: 'MD5' },
-      { label: 'BLAKE2', value: 'BLAKE2' },
-      { label: 'SHA-256', value: 'SHA-256' },
-      { label: 'SHA-512', value: 'SHA-512' },
-      { label: 'SHA-3', value: 'SHA-3' }
-    ]
   } else {
     encrytNameOptions.value = []
   }
-  generateForm.encrytName = ''
+  if (!encrytNameOptions.value.some((item) => item.value === generateForm.encrytName)) {
+    generateForm.encrytName = encrytNameOptions.value[0]?.value || ''
+  }
+}
+
+function regenerateLocalMaterial() {
+  const { publicKey, privateKey } = SM2.generateKeyPair()
+  localMaterial.publicKey = publicKey
+  localMaterial.privateKey = privateKey
+  localMaterial.generatedAt = new Date().toLocaleString('zh-CN', { hour12: false })
 }
 
 async function submitGenerate() {
@@ -411,14 +499,13 @@ async function submitGenerate() {
     errorMessage.value = '当前登录用户信息不完整，请刷新后重试。'
     return
   }
-  if (generateForm.encrytType === '无证书非对称加密') {
-    errorMessage.value = '当前生成页暂不直接处理无证书非对称密钥，请先选择其他算法类型。'
-    return
+  if (!localMaterial.publicKey || !localMaterial.privateKey) {
+    regenerateLocalMaterial()
   }
 
   submitting.value = true
   try {
-    await createGenerateKey({
+    const response = await createGenerateKey({
       userId: Number(profile.userId),
       userName: profile.userName,
       encrytType: generateForm.encrytType,
@@ -426,10 +513,14 @@ async function submitGenerate() {
       keyName: normalizeText(generateForm.keyName),
       keyUse: normalizeText(generateForm.keyUse),
       keyDomain: normalizeText(generateForm.keyDomain) || 'A',
-      autoUpdate: generateForm.autoUpdateEnabled ? 'true' : 'false'
+      autoUpdate: generateForm.autoUpdateEnabled ? 'true' : 'false',
+      uA: localMaterial.publicKey,
+      ua: localMaterial.publicKey
     })
-    ElMessage.success('生成请求已提交，正在后台处理')
-    resetGenerateForm()
+
+    const snapshot = response?.data || response
+    await handleSubmittedSnapshot(snapshot)
+    ElMessage.success('生成请求已提交，已同步展示本地结果摘要')
     fillDefaultFilters()
     await loadKeys()
   } catch (error) {
@@ -437,6 +528,73 @@ async function submitGenerate() {
   } finally {
     submitting.value = false
   }
+}
+
+async function handleSubmittedSnapshot(snapshot) {
+  const result = {
+    ...snapshot,
+    keyDomain: snapshot?.keyDomain || generateForm.keyDomain,
+    uA: localMaterial.publicKey,
+    clientPrivateKey: localMaterial.privateKey
+  }
+
+  if (result?.keyValue && result?.encrytType === '无证书非对称加密') {
+    if (result.encrytName === 'SM2') {
+      enrichSm2Result(result)
+    } else if (result.encrytName === 'SSCL') {
+      await enrichSsclResult(result)
+    }
+  }
+
+  localResult.value = result
+  resultOpen.value = true
+}
+
+function enrichSm2Result(result) {
+  const keyValue = safeJsonParse(result.keyValue)
+  if (!keyValue?.partialKey) {
+    return
+  }
+  const partialKey = new BigInteger(keyValue.partialKey, 16)
+  const clientPrivateKey = new BigInteger(localMaterial.privateKey, 16)
+  const finalPrivateKey = partialKey.add(clientPrivateKey).mod(curveOrder)
+
+  result.partialKey = keyValue.partialKey
+  result.finalPublicKey = keyValue.finalPublicKey || ''
+  if (isValidPrivateKey(finalPrivateKey)) {
+    result.finalPrivateKey = leftPad(finalPrivateKey.toString(16), 64)
+  }
+}
+
+async function enrichSsclResult(result) {
+  const keyValue = safeJsonParse(result.keyValue)
+  if (!keyValue?.SSCLKey) {
+    return
+  }
+
+  const params = await getCommonParams({
+    encrytType: result.encrytType,
+    encrytName: result.encrytName
+  })
+  const xIndex = parseIndexArray(params?.xIndex)
+  const yIndex = parseIndexArray(params?.yIndex)
+  const publicPoint = params?.PPub
+  if (!xIndex || !yIndex || !publicPoint) {
+    return
+  }
+
+  const share = keyValue.SSCLKey
+  const xHex = share.slice(2, 66)
+  const yHex = share.slice(66, 130)
+  const secret = getSecret(xIndex, yIndex, xHex, yHex, curveOrder)
+  const domainPrivate = secret.multiply(new BigInteger(xHex, 16)).mod(curveOrder)
+  const clientPrivate = new BigInteger(localMaterial.privateKey, 16)
+  const finalPrivate = clientPrivate.add(domainPrivate).mod(curveOrder)
+
+  result.partialKey = keyValue.SSCLKey
+  result.domainDa = sm2PointMultiply(publicPoint, leftPad(domainPrivate.toString(16), 64))
+  result.finalPublicKey = sm2PointMultiply(publicPoint, leftPad(finalPrivate.toString(16), 64))
+  result.finalPrivateKey = leftPad(finalPrivate.toString(16), 64)
 }
 
 async function loadKeys() {
@@ -543,9 +701,37 @@ async function handleRollbackPublicKeys() {
   }
 }
 
-function normalizeText(value) {
-  const text = value == null ? '' : String(value).trim()
-  return text === '' ? null : text
+function copyLocalMaterial() {
+  copyText(`uA: ${localMaterial.publicKey}\nprivate_share: ${localMaterial.privateKey}`)
+}
+
+function downloadLocalMaterial() {
+  downloadText(`generated_at: ${localMaterial.generatedAt}\nuA: ${localMaterial.publicKey}\nprivate_share: ${localMaterial.privateKey}\n`, 'kms-user-local-material.txt')
+}
+
+function copyResultSummary() {
+  copyText(buildResultSummary())
+}
+
+function downloadResultSummary() {
+  downloadText(buildResultSummary(), 'kms-user-generate-result.txt')
+}
+
+function buildResultSummary() {
+  const result = localResult.value || {}
+  return [
+    `algorithm_type: ${result.encrytType || ''}`,
+    `algorithm_name: ${result.encrytName || ''}`,
+    `key_name: ${result.keyName || ''}`,
+    `key_domain: ${result.keyDomain || ''}`,
+    `uA: ${result.uA || ''}`,
+    `client_private_key: ${result.clientPrivateKey || ''}`,
+    `partial_key: ${result.partialKey || ''}`,
+    `final_public_key: ${result.finalPublicKey || ''}`,
+    `final_private_key: ${result.finalPrivateKey || ''}`,
+    `domain_da: ${result.domainDa || ''}`,
+    `server_key_value: ${result.keyValue || ''}`
+  ].join('\n')
 }
 
 function chainStatusText(status) {
@@ -569,35 +755,184 @@ function chainStatusType(status) {
     '2': 'danger'
   }[status] || 'info'
 }
+
+function getSecret(xIndex, yIndex, xHex, yHex, n) {
+  const xPoints = xIndex.map((value) => new BigInteger(value, 16))
+  xPoints.push(new BigInteger(xHex, 16))
+  const yPoints = yIndex.map((value) => new BigInteger(value, 16))
+  yPoints.push(new BigInteger(yHex, 16))
+
+  let secret = new BigInteger('0')
+  for (let i = 0; i < xPoints.length; i += 1) {
+    let numerator = new BigInteger('1')
+    let denominator = new BigInteger('1')
+    for (let j = 0; j < xPoints.length; j += 1) {
+      if (i !== j) {
+        numerator = numerator.multiply(xPoints[j].negate()).mod(n)
+        denominator = denominator.multiply(xPoints[i].subtract(xPoints[j]).mod(n)).mod(n)
+      }
+    }
+    secret = secret.add(yPoints[i].multiply(numerator).multiply(denominator.modInverse(n)).mod(n)).mod(n)
+  }
+  return secret.compareTo(new BigInteger('0')) < 0 ? secret.add(n) : secret
+}
+
+function sm2PointMultiply(hexPoint, hexScalar) {
+  if (!hexPoint || !hexPoint.startsWith('04')) {
+    throw new Error('点格式错误，必须以04开头')
+  }
+  const point = sm2Curve.fromHex(hexPoint)
+  point.assertValidity()
+  const result = point.multiply(BigInt(`0x${hexScalar}`))
+  result.assertValidity()
+  return result.toHex(false)
+}
+
+function isValidPrivateKey(value) {
+  return value.compareTo(new BigInteger('1')) > 0 && value.compareTo(curveOrder.subtract(new BigInteger('1'))) < 0
+}
+
+function parseIndexArray(value) {
+  if (!value) {
+    return null
+  }
+  if (Array.isArray(value)) {
+    return value
+  }
+  try {
+    return JSON.parse(value)
+  } catch {
+    return null
+  }
+}
+
+function safeJsonParse(value) {
+  try {
+    return JSON.parse(value)
+  } catch {
+    return null
+  }
+}
+
+function leftPad(value, length) {
+  return String(value || '').padStart(length, '0')
+}
+
+function normalizeText(value) {
+  const text = value == null ? '' : String(value).trim()
+  return text === '' ? null : text
+}
+
+function maskText(value, keep) {
+  const text = value || ''
+  if (!text) {
+    return '-'
+  }
+  if (text.length <= keep * 2) {
+    return text
+  }
+  return `${text.slice(0, keep)}...${text.slice(-keep)}`
+}
+
+function copyText(text) {
+  navigator.clipboard.writeText(text).then(() => {
+    ElMessage.success('复制成功')
+  }).catch(() => {
+    ElMessage.error('复制失败，请手动复制')
+  })
+}
+
+function downloadText(text, filename) {
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
+}
 </script>
 
 <style scoped>
-.panel + .panel {
-  margin-top: 16px;
-}
-
-.panel-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+.generate-page {
+  display: grid;
   gap: 16px;
 }
 
+.summary-grid,
 .profile-grid,
-.form-grid.three-col,
-.detail-grid {
+.form-grid.two-col,
+.detail-grid,
+.generate-layout {
   display: grid;
-  gap: 12px 16px;
+  gap: 16px;
+}
+
+.summary-grid {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.summary-card,
+.material-card {
+  padding: 18px;
+  border: 1px solid #e5e7eb;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+}
+
+.summary-card strong,
+.material-item strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 18px;
+  color: #111827;
+}
+
+.summary-card small,
+.muted {
+  color: #6b7280;
+}
+
+.summary-label,
+.material-item span {
+  font-size: 13px;
+  color: #64748b;
+}
+
+.generate-layout {
+  grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr);
+  align-items: start;
+}
+
+.generate-main {
+  min-width: 0;
 }
 
 .profile-grid,
-.form-grid.three-col {
+.form-grid.two-col,
+.detail-grid {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
 .profile-grid label {
   display: grid;
   gap: 6px;
+}
+
+.profile-grid input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
 }
 
 .generate-form {
@@ -608,10 +943,51 @@ function chainStatusType(status) {
   margin-bottom: 0;
 }
 
+.material-head,
+.material-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.material-head {
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.material-item {
+  padding: 12px 0;
+  border-top: 1px solid #e5e7eb;
+  align-items: flex-start;
+}
+
+.material-item.full {
+  display: grid;
+}
+
+.material-item code,
+.detail-span,
+.json-block {
+  word-break: break-all;
+}
+
+.material-item code {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
 .action-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
   margin-top: 16px;
+}
+
+.action-row.compact {
+  margin-top: 12px;
 }
 
 .query-form {
@@ -627,15 +1003,21 @@ function chainStatusType(status) {
   overflow: auto;
 }
 
-.detail-grid {
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-}
-
 .detail-span {
   grid-column: 1 / -1;
 }
 
 .mb12 {
   margin-top: 12px;
+}
+
+.mb16 {
+  margin-top: 16px;
+}
+
+@media (max-width: 960px) {
+  .generate-layout {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

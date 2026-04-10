@@ -72,7 +72,9 @@ public class PermissionRequestServiceImpl implements IPermissionRequestService {
         request.setApproveTime(now);
         request.setApproveNote(approveNote);
         permissionRequestMapper.updatePermissionRequest(request);
-        permissionRequestMapper.updateUserRoleLevel(request.getUserId(), request.getRequestLevel());
+        if (!isTemporaryRequest(request)) {
+            permissionRequestMapper.updateUserRoleLevel(request.getUserId(), request.getRequestLevel());
+        }
     }
 
     @Transactional
@@ -97,7 +99,9 @@ public class PermissionRequestServiceImpl implements IPermissionRequestService {
         if (!"1".equals(request.getStatus())) {
             throw new IllegalArgumentException("当前申请未处于已通过状态，无法回退");
         }
-        permissionRequestMapper.updateUserRoleLevel(request.getUserId(), request.getOriginalLevel());
+        if (!isTemporaryRequest(request)) {
+            permissionRequestMapper.updateUserRoleLevel(request.getUserId(), request.getOriginalLevel());
+        }
         request.setStatus("3");
         request.setRollbackTime(new Date());
         permissionRequestMapper.updatePermissionRequest(request);
@@ -111,6 +115,14 @@ public class PermissionRequestServiceImpl implements IPermissionRequestService {
             rollback(request.getRequestId());
         }
         return requests.size();
+    }
+
+    @Override
+    public boolean hasActivePermission(Long userId, String featureCode) {
+        if (userId == null || featureCode == null || featureCode.trim().isEmpty()) {
+            return false;
+        }
+        return permissionRequestMapper.selectLatestApprovedTemporaryRequest(userId, SYSTEM_CODE, featureCode.trim()) != null;
     }
 
     private void validateSubmit(PermissionRequest request) {
@@ -141,5 +153,9 @@ public class PermissionRequestServiceImpl implements IPermissionRequestService {
 
     private String blankToDefault(String value, String fallback) {
         return value == null || value.trim().isEmpty() ? fallback : value.trim();
+    }
+
+    private boolean isTemporaryRequest(PermissionRequest request) {
+        return request != null && Integer.valueOf(1).equals(request.getIsTemp());
     }
 }

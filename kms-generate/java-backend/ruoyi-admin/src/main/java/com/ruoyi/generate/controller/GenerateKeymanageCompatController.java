@@ -5,6 +5,8 @@ import com.ruoyi.common.core.domain.AjaxResult;
 import com.ruoyi.common.core.page.TableDataInfo;
 import com.ruoyi.common.utils.SecurityUtils;
 import com.ruoyi.generate.client.GoBackendClient;
+import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONObject;
 import com.ruoyi.generate.domain.ComParam;
 import com.ruoyi.generate.domain.GenerateUser;
 import com.ruoyi.generate.domain.Keymanage;
@@ -25,7 +27,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 密钥生成兼容控制器
@@ -78,6 +82,10 @@ public class GenerateKeymanageCompatController extends BaseController {
     @PreAuthorize("isAuthenticated()")
     @PostMapping("/comparam")
     public AjaxResult getComParam(@RequestBody Keymanage keymanage) {
+        if ("无证书非对称加密".equals(keymanage.getEncrytType()) && "SSCL".equals(keymanage.getEncrytName())) {
+            String payload = goBackendClient.getComParam(keymanage.getEncrytType(), keymanage.getEncrytName());
+            return AjaxResult.success("操作成功", normalizeGoComParam(payload));
+        }
         ComParam comParam = generateKeyService.getComParam(keymanage.getEncrytType(), keymanage.getEncrytName());
         return AjaxResult.success("操作成功", comParam == null ? new HashMap<>() : comParam.toMap());
     }
@@ -200,5 +208,39 @@ public class GenerateKeymanageCompatController extends BaseController {
 
     private String defaultIfBlank(String value, String fallback) {
         return value == null || value.trim().isEmpty() ? fallback : value;
+    }
+
+    private Map<String, Object> normalizeGoComParam(String payload) {
+        if (payload == null || payload.trim().isEmpty()) {
+            return new HashMap<>();
+        }
+
+        JSONObject source = JSON.parseObject(payload);
+        Map<String, Object> normalized = new LinkedHashMap<>();
+        normalized.put("G", source.get("G"));
+        normalized.put("PPub", source.get("PPub"));
+        Object order = source.get("N");
+        if (order == null) {
+            order = source.get("n");
+        }
+        normalized.put("N", order);
+        Object xIndex = source.get("xIndex");
+        if (xIndex == null) {
+            xIndex = source.get("xIndexs");
+        }
+        Object yIndex = source.get("yIndex");
+        if (yIndex == null) {
+            yIndex = source.get("yIndexs");
+        }
+        normalized.put("xIndex", stringifyIfNeeded(xIndex));
+        normalized.put("yIndex", stringifyIfNeeded(yIndex));
+        return normalized;
+    }
+
+    private Object stringifyIfNeeded(Object value) {
+        if (value instanceof List) {
+            return JSON.toJSONString(value);
+        }
+        return value;
     }
 }

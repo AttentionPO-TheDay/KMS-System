@@ -91,6 +91,17 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
           and approve_time &lt; DATE_SUB(now(), INTERVAL 30 MINUTE)
     </select>
 
+    <select id="selectLatestApprovedTemporaryRequest" resultMap="permissionRequestResult">
+        <include refid="permissionRequestColumns"/>
+        where user_id = #{userId}
+          and system_code = #{systemCode}
+          and feature_code = #{featureCode}
+          and status = '1'
+          and is_temp = 1
+        order by approve_time desc, request_id desc
+        limit 1
+    </select>
+
     <update id="updateUserRoleLevel">
         update sys_user
         set role_level = #{roleLevel}

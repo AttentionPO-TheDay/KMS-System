@@ -8,6 +8,7 @@ import com.ruoyi.common.core.page.TableDataInfo;
 import com.ruoyi.common.utils.SecurityUtils;
 import com.ruoyi.generate.domain.GenerateUser;
 import com.ruoyi.generate.domain.Keymanage;
+import com.ruoyi.generate.service.IPermissionRequestService;
 import com.ruoyi.generate.service.GenerateKeyService;
 import com.ruoyi.generate.service.GenerateUserService;
 import org.slf4j.Logger;
@@ -40,6 +41,9 @@ public class GenerateController extends BaseController {
     @Autowired
     private GenerateUserService generateUserService;
 
+    @Autowired
+    private IPermissionRequestService permissionRequestService;
+
     /**
      * 查询生成密钥列表
      * GET /generate/key/list
@@ -60,7 +64,9 @@ public class GenerateController extends BaseController {
     @GetMapping("/public-list")
     public TableDataInfo publicList(Keymanage query) {
         GenerateUser currentUser = generateUserService.selectByUserId(getUserId());
-        if (currentUser == null || currentUser.getRoleLevel() == null || currentUser.getRoleLevel() > 1) {
+        boolean hasPermanentAccess = currentUser != null && currentUser.getRoleLevel() != null && currentUser.getRoleLevel() <= 1;
+        boolean hasTemporaryAccess = permissionRequestService.hasActivePermission(getUserId(), "PUBLIC_KEY_LIST");
+        if (!hasPermanentAccess && !hasTemporaryAccess) {
             return getDataTable(new ArrayList<>());
         }
 

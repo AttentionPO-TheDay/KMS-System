@@ -8,6 +8,9 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         <id property="requestId" column="request_id"/>
         <result property="userId" column="user_id"/>
         <result property="userName" column="user_name"/>
+        <result property="systemCode" column="system_code"/>
+        <result property="featureCode" column="feature_code"/>
+        <result property="featureName" column="feature_name"/>
         <result property="originalLevel" column="original_level"/>
         <result property="requestLevel" column="request_level"/>
         <result property="requestReason" column="request_reason"/>
@@ -24,7 +27,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     </resultMap>
 
     <sql id="selectPermissionRequestVo">
-        select request_id, user_id, user_name, original_level, request_level, request_reason,
+        select request_id, user_id, user_name, system_code, feature_code, feature_name, original_level, request_level, request_reason,
                status, is_temp, request_time, approve_by, approve_time, approve_note,
                use_time, rollback_time, create_time, update_time
         from permission_request
@@ -40,6 +43,8 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         <where>
             <if test="userId != null">and user_id = #{userId}</if>
             <if test="userName != null and userName != ''">and user_name like concat('%', #{userName}, '%')</if>
+            <if test="systemCode != null and systemCode != ''">and system_code = #{systemCode}</if>
+            <if test="featureCode != null and featureCode != ''">and feature_code = #{featureCode}</if>
             <if test="requestLevel != null">and request_level = #{requestLevel}</if>
             <if test="status != null and status != ''">and status = #{status}</if>
             <if test="isTemp != null">and is_temp = #{isTemp}</if>
@@ -57,10 +62,10 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
 
     <insert id="insertPermissionRequest" parameterType="com.ruoyi.updatedel.domain.PermissionRequest" useGeneratedKeys="true" keyProperty="requestId">
         insert into permission_request (
-            user_id, user_name, original_level, request_level, request_reason, status,
+            user_id, user_name, system_code, feature_code, feature_name, original_level, request_level, request_reason, status,
             is_temp, request_time, create_time, update_time
         ) values (
-            #{userId}, #{userName}, #{originalLevel}, #{requestLevel}, #{requestReason}, #{status},
+            #{userId}, #{userName}, #{systemCode}, #{featureCode}, #{featureName}, #{originalLevel}, #{requestLevel}, #{requestReason}, #{status},
             #{isTemp}, #{requestTime}, now(), now()
         )
     </insert>
@@ -96,4 +101,13 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             update_time = now()
         where request_id = #{requestId}
     </update>
+
+    <select id="selectLatestApprovedTemporaryRequest" parameterType="Long" resultMap="permissionRequestResult">
+        <include refid="selectPermissionRequestVo"/>
+        where user_id = #{userId}
+          and status = '1'
+          and is_temp = 1
+        order by approve_time desc, request_id desc
+        limit 1
+    </select>
 </mapper>

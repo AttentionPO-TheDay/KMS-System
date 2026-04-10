@@ -56,6 +56,7 @@ func (c *RequestController) EnrollKey(ctx *fiber.Ctx) error {
 		KeyDomain  string `json:"key_domain"`
 		KeyName    string `json:"key_name"`
 		KeyUse     string `json:"key_use"`
+		AutoUpdate string `json:"auto_update"`
 	}
 
 	if err := ctx.BodyParser(&req); err != nil {
@@ -85,6 +86,10 @@ func (c *RequestController) EnrollKey(ctx *fiber.Ctx) error {
 	if keyUse == "" {
 		keyUse = "加解密"
 	}
+	autoUpdate := req.AutoUpdate
+	if autoUpdate == "" {
+		autoUpdate = "false"
+	}
 
 	km := &models.Keymanage{
 		UserName:   req.User,
@@ -95,7 +100,7 @@ func (c *RequestController) EnrollKey(ctx *fiber.Ctx) error {
 		Status:     "0",
 		KeyName:    keyName,
 		KeyUse:     keyUse,
-		AutoUpdate: "false",
+		AutoUpdate: autoUpdate,
 	}
 
 	// 由内部 Token 保证身份，不再需要明文密码鉴权

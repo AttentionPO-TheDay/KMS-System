@@ -9,7 +9,8 @@ import (
 // Config holds all configuration for the lifecycle service.
 type Config struct {
 	// Server
-	ServerPort string
+	ServerPort    string
+	InternalToken string
 
 	// Kafka
 	KafkaBrokers string
@@ -35,6 +36,7 @@ func Get() *Config {
 	once.Do(func() {
 		cfg = &Config{
 			ServerPort:     getEnv("SERVER_PORT", "8082"),
+			InternalToken:  getEnv("INTERNAL_TOKEN", "kms-generate-internal-secret-2026"),
 			KafkaBrokers:   getEnv("KAFKA_BROKERS", "localhost:9092"),
 			UpdateTopic:    getEnv("KAFKA_UPDATE_TOPIC", "key_update_log"),
 			RevokeTopic:    getEnv("KAFKA_REVOKE_TOPIC", "key_revoke_log"),

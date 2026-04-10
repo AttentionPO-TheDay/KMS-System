@@ -107,6 +107,10 @@ const loading = reactive({
 })
 
 const records = ref([])
+const activeFeatureAccess = reactive({
+  PUBLIC_KEY_LIST: false,
+  AUTO_UPDATE: false
+})
 const errorMessage = ref('')
 const isAuthenticated = computed(() => Boolean(userStore.token))
 
@@ -201,6 +205,8 @@ async function loadRecords() {
     records.value = [...generateData.rows, ...lifecycleData.rows].sort((a, b) => {
       return getRecordTime(b) - getRecordTime(a)
     })
+    activeFeatureAccess.PUBLIC_KEY_LIST = hasApprovedTemporaryRequest(generateData.rows)
+    activeFeatureAccess.AUTO_UPDATE = hasApprovedTemporaryRequest(lifecycleData.rows)
   } catch (error) {
     errorMessage.value = error.message
   }
@@ -223,12 +229,16 @@ function levelText(level) {
 function hasFeatureAccess(featureCode) {
   const roleLevel = Number(profile.originalLevel)
   if (featureCode === 'PUBLIC_KEY_LIST') {
-    return roleLevel <= 1
+    return roleLevel <= 1 || activeFeatureAccess.PUBLIC_KEY_LIST
   }
   if (featureCode === 'AUTO_UPDATE') {
-    return roleLevel <= 0
+    return roleLevel <= 0 || activeFeatureAccess.AUTO_UPDATE
   }
   return false
+}
+
+function hasApprovedTemporaryRequest(rows = []) {
+  return rows.some((item) => String(item?.status) === '1' && Number(item?.isTemp) === 1)
 }
 
 function getRecordTime(record) {

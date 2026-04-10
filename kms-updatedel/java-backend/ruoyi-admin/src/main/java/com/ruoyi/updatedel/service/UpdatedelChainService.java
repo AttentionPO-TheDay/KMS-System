@@ -309,6 +309,18 @@ public class UpdatedelChainService {
         digest.update((byte) (entlen >> 8));
         digest.update((byte) entlen);
         digest.update(userId.getBytes(), 0, userId.getBytes().length);
+        byte[] a = to32Bytes(curve.getA().toBigInteger());
+        byte[] b = to32Bytes(curve.getB().toBigInteger());
+        byte[] gx = to32Bytes(g.getAffineXCoord().toBigInteger());
+        byte[] gy = to32Bytes(g.getAffineYCoord().toBigInteger());
+        byte[] pPubX = to32Bytes(pPub.getAffineXCoord().toBigInteger());
+        byte[] pPubY = to32Bytes(pPub.getAffineYCoord().toBigInteger());
+        digest.update(a, 0, 32);
+        digest.update(b, 0, 32);
+        digest.update(gx, 0, 32);
+        digest.update(gy, 0, 32);
+        digest.update(pPubX, 0, 32);
+        digest.update(pPubY, 0, 32);
 
         byte[] hA = new byte[32];
         digest.doFinal(hA, 0);

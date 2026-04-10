@@ -72,7 +72,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             ifnull(sum(case when remark like '上链失败%' then 1 else 0 end), 0) as chain_failed_count
         from key_distribute_record
         where distribute_time >= date_sub(curdate(), interval #{days} day)
-          and distribute_time < date_add(curdate(), interval 1 day)
+          and distribute_time &lt; date_add(curdate(), interval 1 day)
         <include refid="dashboardUserFilter"/>
         group by date_format(distribute_time, '%Y-%m-%d')
         order by stat_date asc
@@ -89,7 +89,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             count(*) as value
         from key_distribute_record
         where distribute_time >= date_sub(curdate(), interval #{days} day)
-          and distribute_time < date_add(curdate(), interval 1 day)
+          and distribute_time &lt; date_add(curdate(), interval 1 day)
         <include refid="dashboardUserFilter"/>
         group by distribute_type
         order by value desc
@@ -104,7 +104,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             count(*) as value
         from key_distribute_record
         where distribute_time >= date_sub(curdate(), interval #{days} day)
-          and distribute_time < date_add(curdate(), interval 1 day)
+          and distribute_time &lt; date_add(curdate(), interval 1 day)
         <include refid="dashboardUserFilter"/>
         group by label
         order by value desc

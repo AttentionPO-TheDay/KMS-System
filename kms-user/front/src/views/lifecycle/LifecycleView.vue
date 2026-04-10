@@ -36,7 +36,7 @@
         <el-button type="danger" :disabled="selectedIds.length === 0" @click="handleRevoke()">密钥回收</el-button>
         <el-button type="warning" plain @click="activeTab = 'autoupdate'">密钥自动更新</el-button>
         <el-button type="primary" plain @click="activeTab = 'results'">查询与接收</el-button>
-        <RouterLink class="inline-link" to="/permissions">进入权限申请</RouterLink>
+        <RouterLink class="inline-link" to="/user_actions/permissions">进入权限申请</RouterLink>
       </div>
     </article>
 
@@ -118,7 +118,7 @@
             class="mb12"
           >
             <template #default>
-              <RouterLink class="inline-link" to="/permissions">去申请权限</RouterLink>
+              <RouterLink class="inline-link" to="/user_actions/permissions">去申请权限</RouterLink>
             </template>
           </el-alert>
 
@@ -399,8 +399,10 @@ const resultQuery = reactive({
   receiveStatus: ''
 })
 
-const canManageAutoUpdate = computed(() => Number(profile.roleLevel) <= 0)
-const showAutoUpdateRollback = computed(() => canManageAutoUpdate.value && Boolean(approvedAutoUpdateRequestId.value))
+const hasPermanentAutoUpdateAccess = computed(() => Number(profile.roleLevel) <= 0)
+const hasTemporaryAutoUpdateAccess = computed(() => Boolean(approvedAutoUpdateRequestId.value))
+const canManageAutoUpdate = computed(() => hasPermanentAutoUpdateAccess.value || hasTemporaryAutoUpdateAccess.value)
+const showAutoUpdateRollback = computed(() => hasTemporaryAutoUpdateAccess.value)
 
 watch(
   () => ({
@@ -699,7 +701,7 @@ function handleRevoke(row) {
 function toggleAutoUpdate(row) {
   if (!canManageAutoUpdate.value) {
     proxy.$modal.msgWarning('当前没有自动更新操作权限，请先申请临时权限')
-    router.push('/permissions')
+    router.push('/user_actions/permissions')
     return
   }
   if (isRevoked(row.status)) {

@@ -13,6 +13,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class PermissionRequestService {
+    private static final String SYSTEM_CODE = "lifecycle";
+    private static final String FEATURE_CODE = "AUTO_UPDATE";
+    private static final String FEATURE_NAME = "密钥自动更新";
+
     private final PermissionRequestMapper permissionRequestMapper;
     private final SysUserMapper sysUserMapper;
 
@@ -44,6 +48,9 @@ public class PermissionRequestService {
         SysUser user = loadUser(request.getUserId(), request.getUserName());
         request.setUserId(user.getUserId());
         request.setUserName(user.getUserName());
+        request.setSystemCode(SYSTEM_CODE);
+        request.setFeatureCode(FEATURE_CODE);
+        request.setFeatureName(FEATURE_NAME);
         request.setOriginalLevel(user.getRoleLevel());
         request.setStatus("0");
         request.setIsTemp(request.getIsTemp() == null ? 1 : request.getIsTemp());
@@ -57,7 +64,9 @@ public class PermissionRequestService {
     public void approve(Long requestId, String approveBy, String approveNote) {
         PermissionRequest request = requirePendingRequest(requestId);
         permissionRequestMapper.markApproved(requestId, approveBy, approveNote);
-        sysUserMapper.updateRoleLevel(request.getUserId(), request.getRequestLevel());
+        if (!isTemporaryRequest(request)) {
+            sysUserMapper.updateRoleLevel(request.getUserId(), request.getRequestLevel());
+        }
     }
 
     @Transactional
@@ -73,7 +82,9 @@ public class PermissionRequestService {
         if (!"1".equals(request.getStatus())) {
             throw new IllegalStateException("该申请未通过审批，无需回退");
         }
-        sysUserMapper.updateRoleLevel(request.getUserId(), request.getOriginalLevel());
+        if (!isTemporaryRequest(request)) {
+            sysUserMapper.updateRoleLevel(request.getUserId(), request.getOriginalLevel());
+        }
         permissionRequestMapper.markRolledBack(requestId);
     }
 
@@ -88,7 +99,9 @@ public class PermissionRequestService {
         int rollbackCount = 0;
 
         for (PermissionRequest request : expiredRequests) {
-            sysUserMapper.updateRoleLevel(request.getUserId(), request.getOriginalLevel());
+            if (!isTemporaryRequest(request)) {
+                sysUserMapper.updateRoleLevel(request.getUserId(), request.getOriginalLevel());
+            }
             permissionRequestMapper.markRolledBack(request.getRequestId());
             rollbackCount++;
         }
@@ -115,5 +128,13 @@ public class PermissionRequestService {
                 .orElseThrow(() -> new IllegalStateException("用户不存在: " + userName));
         }
         throw new IllegalStateException("提交权限申请时必须提供 userId 或 userName");
+    }
+
+    public boolean hasActiveTemporaryPermission(Long userId) {
+        return userId != null && permissionRequestMapper.selectLatestApprovedTemporaryRequest(userId) != null;
+    }
+
+    private boolean isTemporaryRequest(PermissionRequest request) {
+        return request != null && Integer.valueOf(1).equals(request.getIsTemp());
     }
 }

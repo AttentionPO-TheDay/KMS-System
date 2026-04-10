@@ -14,22 +14,29 @@ import (
 // RequestController handles UPDATE_KEY and REVOKE_KEY endpoints.
 type RequestController struct {
 	lifecycleService *service.KeyLifecycleService
-	idempService    *service.IdempotencyService
+	idempService     *service.IdempotencyService
 }
 
 // NewRequestController creates a new RequestController.
 func NewRequestController(lc *service.KeyLifecycleService, idem *service.IdempotencyService) *RequestController {
 	return &RequestController{
 		lifecycleService: lc,
-		idempService:    idem,
+		idempService:     idem,
 	}
 }
 
 // updateKeyRequest matches the unified parameter name keyId.
 type updateKeyRequest struct {
-	KeyId    int64  `json:"keyId"`
-	User     string `json:"user"`
-	Password string `json:"password"`
+	KeyId      int64  `json:"keyId"`
+	User       string `json:"user"`
+	Password   string `json:"password"`
+	UA         string `json:"ua"`
+	EncrytType string `json:"encrytType"`
+	EncrytName string `json:"encrytName"`
+	KeyName    string `json:"keyName"`
+	KeyUse     string `json:"keyUse"`
+	AutoUpdate string `json:"autoUpdate"`
+	KeyDomain  string `json:"keyDomain"`
 }
 
 // revokeKeyRequest matches the unified parameter name keyId.
@@ -51,9 +58,9 @@ func (c *RequestController) UpdateKey(ctx *fiber.Ctx) error {
 	}
 
 	// Parameter validation
-	if req.KeyId == 0 || req.User == "" || req.Password == "" {
+	if req.KeyId == 0 || req.User == "" {
 		return c.failResponse(ctx, fiber.StatusBadRequest, models.StatusInvalidParam,
-			"必填参数缺失(keyId/user/password)", traceId)
+			"必填参数缺失(keyId/user)", traceId)
 	}
 
 	// Idempotency check via Redis
@@ -69,13 +76,25 @@ func (c *RequestController) UpdateKey(ctx *fiber.Ctx) error {
 	}
 
 	// Build payload and enqueue
+	keyInfo := &models.Keymanage{
+		KeyID:      req.KeyId,
+		UserName:   req.User,
+		UA:         req.UA,
+		EncrytType: req.EncrytType,
+		EncrytName: req.EncrytName,
+		KeyName:    req.KeyName,
+		KeyUse:     req.KeyUse,
+		AutoUpdate: req.AutoUpdate,
+		KeyDomain:  req.KeyDomain,
+	}
+
 	payload := service.NewKeyLifecyclePayload(
 		traceId,
 		service.ActionUpdateKey,
 		req.User,
 		req.Password,
 		req.KeyId,
-		nil,
+		keyInfo,
 	)
 
 	if err := c.lifecycleService.EnqueueUpdate(payload); err != nil {
@@ -109,9 +128,9 @@ func (c *RequestController) RevokeKey(ctx *fiber.Ctx) error {
 	}
 
 	// Parameter validation
-	if req.KeyId == 0 || req.User == "" || req.Password == "" {
+	if req.KeyId == 0 || req.User == "" {
 		return c.failResponse(ctx, fiber.StatusBadRequest, models.StatusInvalidParam,
-			"必填参数缺失(keyId/user/password)", traceId)
+			"必填参数缺失(keyId/user)", traceId)
 	}
 
 	// Idempotency check via Redis
@@ -124,13 +143,18 @@ func (c *RequestController) RevokeKey(ctx *fiber.Ctx) error {
 	}
 
 	// Build payload and enqueue
+	keyInfo := &models.Keymanage{
+		KeyID:    req.KeyId,
+		UserName: req.User,
+	}
+
 	payload := service.NewKeyLifecyclePayload(
 		traceId,
 		service.ActionRevokeKey,
 		req.User,
 		req.Password,
 		req.KeyId,
-		nil,
+		keyInfo,
 	)
 
 	if err := c.lifecycleService.EnqueueRevoke(payload); err != nil {

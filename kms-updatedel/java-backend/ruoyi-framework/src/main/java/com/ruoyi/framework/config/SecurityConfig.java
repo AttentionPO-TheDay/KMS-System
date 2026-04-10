@@ -113,7 +113,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests((requests) -> {
                     permitAllUrl.getUrls().forEach(url -> requests.antMatchers(url).permitAll());
                     // 对于登录login 注册register 验证码captchaImage 允许匿名访问
-                    requests.antMatchers("/login", "/register", "/captchaImage").permitAll()
+                    requests.antMatchers("/login", "/register", "/captchaImage", "/internal/**").permitAll()
                             // 静态资源，可匿名访问
                             .antMatchers(HttpMethod.GET, "/", "/*.html", "/**/*.html", "/**/*.css", "/**/*.js",
                                     "/profile/**")

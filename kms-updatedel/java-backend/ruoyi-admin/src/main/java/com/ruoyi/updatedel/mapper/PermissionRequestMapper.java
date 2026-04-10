@@ -25,4 +25,6 @@ public interface PermissionRequestMapper {
                      @Param("approveNote") String approveNote);
 
     int markRolledBack(Long requestId);
+
+    PermissionRequest selectLatestApprovedTemporaryRequest(Long userId);
 }

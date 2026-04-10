@@ -20,5 +20,9 @@ public interface PermissionRequestMapper {
 
     List<PermissionRequest> selectExpiredApprovedRequests(@Param("systemCode") String systemCode);
 
+    PermissionRequest selectLatestApprovedTemporaryRequest(@Param("userId") Long userId,
+                                                           @Param("systemCode") String systemCode,
+                                                           @Param("featureCode") String featureCode);
+
     int updateUserRoleLevel(@Param("userId") Long userId, @Param("roleLevel") Integer roleLevel);
 }

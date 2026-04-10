@@ -4,9 +4,11 @@ import com.ruoyi.common.core.domain.AjaxResult;
 import com.ruoyi.common.core.controller.BaseController;
 import com.ruoyi.common.core.page.TableDataInfo;
 import com.ruoyi.common.utils.SecurityUtils;
+import com.ruoyi.updatedel.client.GoBackendClient;
 import com.ruoyi.updatedel.domain.KeyStatus;
 import com.ruoyi.updatedel.domain.Keymanage;
 import com.ruoyi.updatedel.service.LifecycleService;
+import com.ruoyi.updatedel.service.PermissionRequestService;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -20,9 +22,15 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/lifecycle/keymanage")
 public class LifecycleKeyController extends BaseController {
     private final LifecycleService lifecycleService;
+    private final PermissionRequestService permissionRequestService;
+    private final GoBackendClient goBackendClient;
 
-    public LifecycleKeyController(LifecycleService lifecycleService) {
+    public LifecycleKeyController(LifecycleService lifecycleService,
+                                  PermissionRequestService permissionRequestService,
+                                  GoBackendClient goBackendClient) {
         this.lifecycleService = lifecycleService;
+        this.permissionRequestService = permissionRequestService;
+        this.goBackendClient = goBackendClient;
     }
 
     @PreAuthorize("isAuthenticated()")
@@ -74,7 +82,17 @@ public class LifecycleKeyController extends BaseController {
             lifecycleService.updateAutoUpdate(request.getKeyId(), request.getAutoUpdate());
             return AjaxResult.success("自动更新状态修改成功", lifecycleService.findById(request.getKeyId()).orElse(null));
         }
-        return AjaxResult.success("密钥更新成功", lifecycleService.rotateKey(request));
+        request.setUserId(current.getUserId());
+        request.setUserName(current.getUserName());
+        request.setUa(valueOrDefault(request.getUa(), current.getUa()));
+        request.setEncrytType(valueOrDefault(request.getEncrytType(), current.getEncrytType()));
+        request.setEncrytName(valueOrDefault(request.getEncrytName(), current.getEncrytName()));
+        request.setKeyName(valueOrDefault(request.getKeyName(), current.getKeyName()));
+        request.setKeyUse(valueOrDefault(request.getKeyUse(), current.getKeyUse()));
+        request.setKeyDomain(valueOrDefault(request.getKeyDomain(), current.getKeyDomain()));
+        request.setAutoUpdate(valueOrDefault(request.getAutoUpdate(), current.getAutoUpdate()));
+        goBackendClient.updateKey(request);
+        return AjaxResult.success("密钥更新请求已提交，结果将推送到当前页待接收列表", request);
     }
 
     @PreAuthorize("isAuthenticated()")
@@ -110,8 +128,8 @@ public class LifecycleKeyController extends BaseController {
         if (!canAccess(current)) {
             return AjaxResult.error("无权回收该密钥");
         }
-        lifecycleService.revokeKey(keyId);
-        return AjaxResult.success("密钥回收成功", keyId);
+        goBackendClient.revokeKey(keyId, current.getUserName());
+        return AjaxResult.success("密钥回收请求已提交，结果将推送到当前页待接收列表", keyId);
     }
 
     private boolean canAccess(Keymanage keymanage) {
@@ -119,10 +137,11 @@ public class LifecycleKeyController extends BaseController {
     }
 
     private boolean canManageAutoUpdate() {
-        return getLoginUser() != null
+        boolean hasPermanentAccess = getLoginUser() != null
             && getLoginUser().getUser() != null
             && getLoginUser().getUser().getRoleLevel() != null
             && getLoginUser().getUser().getRoleLevel() <= 0;
+        return hasPermanentAccess || permissionRequestService.hasActiveTemporaryPermission(getUserId());
     }
 
     private String normalizeStatusQuery(String status) {
@@ -143,5 +162,9 @@ public class LifecycleKeyController extends BaseController {
             default:
                 return status.trim();
         }
+    }
+
+    private String valueOrDefault(String value, String fallback) {
+        return value == null || value.trim().isEmpty() ? fallback : value;
     }
 }

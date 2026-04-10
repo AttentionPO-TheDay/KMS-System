@@ -80,6 +80,9 @@ public class KeyDistributeController extends BaseController {
     @Log(title = "密钥分发记录", businessType = BusinessType.INSERT)
     @PostMapping
     public AjaxResult add(@RequestBody KeyDistributeRecord record) {
+        if (!SecurityUtils.isAdmin(getUserId())) {
+            return AjaxResult.error("仅管理员可维护分发记录");
+        }
         record.setCreateBy(getUsername());
         return toAjax(keyDistributeService.insertKeyDistributeRecord(record));
     }
@@ -91,6 +94,9 @@ public class KeyDistributeController extends BaseController {
     @Log(title = "密钥分发记录", businessType = BusinessType.INSERT)
     @PostMapping("/batch")
     public AjaxResult addBatch(@RequestBody List<KeyDistributeRecord> records) {
+        if (!SecurityUtils.isAdmin(getUserId())) {
+            return AjaxResult.error("仅管理员可维护分发记录");
+        }
         String username = getUsername();
         for (KeyDistributeRecord record : records) {
             record.setCreateBy(username);
@@ -105,6 +111,9 @@ public class KeyDistributeController extends BaseController {
     @Log(title = "密钥分发记录", businessType = BusinessType.UPDATE)
     @PutMapping
     public AjaxResult edit(@RequestBody KeyDistributeRecord record) {
+        if (!SecurityUtils.isAdmin(getUserId())) {
+            return AjaxResult.error("仅管理员可维护分发记录");
+        }
         record.setUpdateBy(getUsername());
         return toAjax(keyDistributeService.updateKeyDistributeRecord(record));
     }
@@ -116,6 +125,9 @@ public class KeyDistributeController extends BaseController {
     @Log(title = "密钥分发记录", businessType = BusinessType.DELETE)
     @DeleteMapping("/{recordId}")
     public AjaxResult remove(@PathVariable Long recordId) {
+        if (!SecurityUtils.isAdmin(getUserId())) {
+            return AjaxResult.error("仅管理员可维护分发记录");
+        }
         return toAjax(keyDistributeService.deleteKeyDistributeRecordById(recordId));
     }
 
@@ -131,4 +143,5 @@ public class KeyDistributeController extends BaseController {
         return SecurityUtils.isAdmin(getUserId())
                 || record.getUserId() != null && record.getUserId().equals(getUserId());
     }
+
 }

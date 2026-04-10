@@ -1,10 +1,129 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 
+const securitySuites = [
+  {
+    id: 'generate-attacks',
+    name: '生成系统 3 类攻击',
+    accent: 'accent-red',
+    summary: '按验收口径展示生成系统 3 类攻击：重放、篡改、越权，重点验证密钥生成入口与用户态访问边界。',
+    cases: [
+      {
+        caseId: 'generate-replay',
+        title: '重放攻击',
+        mode: '浏览器 + Postman',
+        target: 'POST 生成请求',
+        expected: '重复发送不应造成不可控重复有效业务结果。',
+        steps: ['登录 testuser 并在用户密钥页抓取生成请求', 'Copy as cURL 后延迟 5 秒再重放']
+      },
+      {
+        caseId: 'generate-tamper',
+        title: '篡改攻击',
+        mode: 'Postman',
+        target: '公钥内容、公钥长度、公钥前缀',
+        expected: '非法公钥、非法长度、非法前缀应被拒绝。',
+        steps: ['将合法公钥改成非法曲线点', '分别改成 64 长度和 05 前缀重发']
+      },
+      {
+        caseId: 'generate-privilege',
+        title: '越权攻击',
+        mode: '双 Token 对照',
+        target: '公共密钥列表、非本人数据访问',
+        expected: '普通用户不能访问管理员口径数据或他人密钥。',
+        steps: ['分别登录普通用户与管理员获取 JWT', '用普通用户 Token 访问高权限接口']
+      }
+    ]
+  },
+  {
+    id: 'lifecycle-attacks',
+    name: '更新与回收 5 类攻击',
+    accent: 'accent-orange',
+    summary: '按验收口径展示更新与回收系统 5 类攻击：SQL 注入、XSS、重放、篡改、越权。',
+    cases: [
+      {
+        caseId: 'lifecycle-sql',
+        title: 'SQL 注入',
+        mode: '半自动',
+        target: '我的密钥、结果查询、操作记录查询条件',
+        expected: '仅返回正常参数校验或空结果，不应出现异常 SQL 行为。',
+        steps: ['对 keyName、actionType、record query 注入 SQL payload', '检查响应和列表结果是否异常']
+      },
+      {
+        caseId: 'lifecycle-xss',
+        title: 'XSS',
+        mode: '半自动',
+        target: '更新时可编辑的 keyName、keyUse、keyDomain',
+        expected: '恶意脚本不应在我的密钥、详情、结果页执行。',
+        steps: ['提交带 script/onload payload 的更新请求', '刷新列表和详情页确认仅文本显示']
+      },
+      {
+        caseId: 'lifecycle-replay',
+        title: '重放攻击',
+        mode: '浏览器 + Postman',
+        target: 'UPDATE_KEY / REVOKE_KEY 请求',
+        expected: '重复请求不应造成越权或失控状态流转。',
+        steps: ['抓取更新或回收请求', '延迟后重放并检查结果记录与状态变化']
+      },
+      {
+        caseId: 'lifecycle-tamper',
+        title: '篡改攻击',
+        mode: 'Postman',
+        target: 'keyId、user、body 字段',
+        expected: '伪造用户、伪造 keyId、非法字段组合应被拒绝或无效。',
+        steps: ['将 keyId 改为他人密钥或不存在的 key', '篡改 user、autoUpdate、domain 后重发']
+      },
+      {
+        caseId: 'lifecycle-privilege',
+        title: '越权攻击',
+        mode: '双 Token 对照',
+        target: '他人密钥更新与回收',
+        expected: '普通用户不能操作他人 key，403/业务拒绝应可见。',
+        steps: ['使用普通用户 Token 对 foreign key 发更新/回收', '验证返回和结果记录']
+      }
+    ]
+  },
+  {
+    id: 'platform-protection',
+    name: '平台防护验证',
+    accent: 'accent-purple',
+    summary: '验证扫描器拦截、登录暴破、点击劫持等平台级能力，和业务攻击区分展示。',
+    cases: [
+      {
+        title: '扫描工具识别',
+        mode: '自动化脚本',
+        target: 'SmartSecurityFilter',
+        expected: '恶意 User-Agent 访问应返回 403，后续访问进入黑名单窗口。',
+        steps: ['运行 security/security_test.ps1', '观察 sqlmap User-Agent 探测返回码']
+      },
+      {
+        title: '登录暴力破解',
+        mode: '自动化脚本',
+        target: '登录限流与锁定',
+        expected: '连续 5 次错误后，第 6 次仍处于锁定窗口。',
+        steps: ['脚本模拟 6 次错误登录', '检查锁定提示与 Redis 计数效果']
+      },
+      {
+        title: '点击劫持',
+        mode: '自动化 + 浏览器',
+        target: '响应头与 iframe 嵌套行为',
+        expected: '当前基线为 SAMEORIGIN；若要求更严，需要后续收紧为 deny/frame-ancestors none。',
+        steps: ['检查 X-Frame-Options/CSP 响应头', '使用 iframe 页面嵌套验证']
+      }
+    ]
+  }
+]
+
+const securityAssets = [
+  { name: '安全测试总方案', path: 'doc/security-test-plan.md', desc: '覆盖攻击范围、执行方式、预期结果与后续加固建议。' },
+  { name: '自动化脚本入口', path: 'security/security_test.ps1', desc: '包含扫描器探测、登录暴破、点击劫持响应头检查等基线脚本。' }
+]
+
 const scenarios = ref([])
 const runs = ref([])
+const securityRuns = ref([])
 const health = ref(null)
 const loading = ref(false)
+const securityLoadingCaseId = ref('')
 const error = ref('')
 const apiBase = import.meta.env.VITE_APP_ACCEPTANCE_API || '/acceptance-api'
 
@@ -25,6 +144,7 @@ const activeScenario = computed(() => {
 })
 
 const passCount = computed(() => runs.value.filter((item) => item.status === 'passed').length)
+const securityCaseCount = computed(() => securitySuites.reduce((total, suite) => total + suite.cases.length, 0))
 
 function applyScenario(scenario) {
   if (!scenario) {
@@ -60,6 +180,12 @@ async function loadRuns() {
   const response = await fetch(`${apiBase}/runs`)
   const payload = await response.json()
   runs.value = payload.data || []
+}
+
+async function loadSecurityRuns() {
+  const response = await fetch(`${apiBase}/security/runs`)
+  const payload = await response.json()
+  securityRuns.value = payload.data || []
 }
 
 async function runScenario() {
@@ -99,6 +225,55 @@ async function runScenario() {
   }
 }
 
+async function runSecurityCase(caseId) {
+  error.value = ''
+  securityLoadingCaseId.value = caseId
+  try {
+    const response = await fetch(`${apiBase}/security/runs`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ caseId })
+    })
+    const payload = await response.json()
+    if (!response.ok) {
+      throw new Error(payload.message || payload.error || '安全攻击执行失败')
+    }
+    await loadSecurityRuns()
+  } catch (err) {
+    error.value = err.message
+  } finally {
+    securityLoadingCaseId.value = ''
+  }
+}
+
+function latestSecurityRun(caseId) {
+  return securityRuns.value.find((item) => item.caseId === caseId) || null
+}
+
+function securityVerdictLabel(caseId) {
+  const item = latestSecurityRun(caseId)
+  if (!item) {
+    return '未执行'
+  }
+  if (item.status === 'error') {
+    return '执行失败'
+  }
+  return item.passed ? '已拦截' : '存在风险'
+}
+
+function securityVerdictClass(caseId) {
+  const item = latestSecurityRun(caseId)
+  if (!item) {
+    return 'warn'
+  }
+  if (item.status === 'error') {
+    return 'accent-red'
+  }
+  return item.passed ? 'ok' : 'accent-orange'
+}
+
 function metricLabel(item) {
   if (!item.metricCheck || !item.metricCheck.kind) {
     return '未采集'
@@ -107,7 +282,7 @@ function metricLabel(item) {
 }
 
 onMounted(async () => {
-  await Promise.all([loadHealth(), loadScenarios(), loadRuns()])
+  await Promise.all([loadHealth(), loadScenarios(), loadRuns(), loadSecurityRuns()])
 })
 </script>
 
@@ -233,11 +408,16 @@ onMounted(async () => {
             <dt>时间</dt>
             <dd>{{ health?.now || '-' }}</dd>
           </div>
+          <div>
+            <dt>验收用户</dt>
+            <dd>{{ health?.acceptanceUser || '-' }}</dd>
+          </div>
         </dl>
         <div class="callout">
           <h3>当前回收率口径</h3>
           <p>
-            默认按 `kms-updatedel` 的 `/lifecycle/metrics` 计算受理回收率，适合验收附加系统快速落地；若你后续补了业务最终回收统计接口，这里可以直接切换。
+            生成、更新、回收默认都直接压 Go 接口并自动携带内部 token。回收率场景会在压测结束后去生命周期 Java
+            内部接口核验 `status=3`，按最终状态计算回收率。
           </p>
         </div>
       </article>
@@ -283,6 +463,71 @@ onMounted(async () => {
           </details>
         </article>
         <p v-if="runs.length === 0" class="empty-text">还没有测试记录。</p>
+      </div>
+    </section>
+
+    <section class="panel security-panel">
+      <div class="panel-header">
+        <h2>安全测试总览</h2>
+        <span class="badge" :class="health?.securityAvailable ? 'ok' : 'warn'">{{ securityCaseCount }} 个攻击场景</span>
+      </div>
+      <p class="security-intro">
+        这里直接执行生成 3 类、更新与回收 5 类真实攻击。平台防护项仍保留为资产入口，业务攻击结果会回填到每张卡片。
+      </p>
+
+      <div class="asset-grid">
+        <article v-for="asset in securityAssets" :key="asset.path" class="asset-card">
+          <span class="asset-label">资产</span>
+          <strong>{{ asset.name }}</strong>
+          <code>{{ asset.path }}</code>
+          <p>{{ asset.desc }}</p>
+        </article>
+      </div>
+
+      <div class="security-suite-grid">
+        <article v-for="suite in securitySuites" :key="suite.id" class="suite-card">
+          <div class="suite-head">
+            <div>
+              <p class="suite-kicker">Security Suite</p>
+              <h3>{{ suite.name }}</h3>
+            </div>
+            <span class="badge" :class="suite.accent">{{ suite.cases.length }} 项</span>
+          </div>
+          <p class="suite-summary">{{ suite.summary }}</p>
+
+          <div class="attack-list">
+            <article v-for="item in suite.cases" :key="`${suite.id}-${item.title}`" class="attack-card">
+              <div class="attack-head">
+                <div>
+                  <h4>{{ item.title }}</h4>
+                  <span>{{ item.mode }}</span>
+                </div>
+                <span v-if="item.caseId" class="badge" :class="securityVerdictClass(item.caseId)">{{ securityVerdictLabel(item.caseId) }}</span>
+              </div>
+              <p><strong>目标：</strong>{{ item.target }}</p>
+              <p><strong>预期：</strong>{{ item.expected }}</p>
+              <ul>
+                <li v-for="step in item.steps" :key="step">{{ step }}</li>
+              </ul>
+              <div v-if="item.caseId" class="attack-actions">
+                <button class="ghost" :disabled="securityLoadingCaseId === item.caseId || !health?.securityAvailable" @click="runSecurityCase(item.caseId)">
+                  {{ securityLoadingCaseId === item.caseId ? '执行中...' : '执行真实攻击' }}
+                </button>
+              </div>
+              <div v-if="item.caseId && latestSecurityRun(item.caseId)" class="attack-result">
+                <p><strong>结论：</strong>{{ latestSecurityRun(item.caseId).summary }}</p>
+                <p v-if="latestSecurityRun(item.caseId).error"><strong>错误：</strong>{{ latestSecurityRun(item.caseId).error }}</p>
+                <ul v-if="latestSecurityRun(item.caseId).notes?.length">
+                  <li v-for="note in latestSecurityRun(item.caseId).notes" :key="note">{{ note }}</li>
+                </ul>
+                <details v-if="latestSecurityRun(item.caseId).requests?.length" class="raw-output">
+                  <summary>查看攻击请求</summary>
+                  <pre>{{ JSON.stringify(latestSecurityRun(item.caseId).requests, null, 2) }}</pre>
+                </details>
+              </div>
+            </article>
+          </div>
+        </article>
       </div>
     </section>
   </main>
@@ -371,6 +616,18 @@ h1 {
 
 .accent-purple {
   background: linear-gradient(135deg, rgba(91, 33, 182, 0.45), rgba(6, 18, 33, 0.92));
+}
+
+.accent-red {
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.4);
+  border-color: rgba(248, 113, 113, 0.35);
+}
+
+.accent-orange {
+  color: #fdba74;
+  background: rgba(124, 45, 18, 0.42);
+  border-color: rgba(251, 146, 60, 0.35);
 }
 
 .grid.two-columns {
@@ -522,6 +779,102 @@ button:disabled {
   gap: 16px;
 }
 
+.security-panel {
+  margin-top: 24px;
+}
+
+.security-intro,
+.suite-summary,
+.asset-card p,
+.attack-card p,
+.attack-card li,
+.suite-kicker,
+.asset-label,
+.attack-head span {
+  color: #9fb3c8;
+}
+
+.asset-grid,
+.security-suite-grid,
+.attack-list {
+  display: grid;
+  gap: 16px;
+}
+
+.asset-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 18px 0 22px;
+}
+
+.security-suite-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.asset-card,
+.suite-card,
+.attack-card {
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.68);
+}
+
+.asset-card,
+.suite-card {
+  padding: 18px;
+}
+
+.asset-card code {
+  display: block;
+  margin: 8px 0 10px;
+  color: #7dd3fc;
+  word-break: break-all;
+}
+
+.suite-head,
+.attack-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.suite-kicker,
+.asset-label {
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 11px;
+  margin-bottom: 8px;
+}
+
+.attack-card {
+  padding: 16px;
+}
+
+.attack-card strong {
+  color: #f8fafc;
+}
+
+.attack-card ul {
+  margin: 10px 0 0;
+  padding-left: 18px;
+}
+
+.attack-actions {
+  margin-top: 14px;
+}
+
+.attack-result {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 14px;
+  background: rgba(2, 6, 23, 0.68);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.attack-result p + p {
+  margin-top: 8px;
+}
+
 .history-item {
   padding: 20px;
 }
@@ -583,7 +936,8 @@ pre {
   }
 
   .history-metrics,
-  .hero-cards {
+  .hero-cards,
+  .security-suite-grid {
     grid-template-columns: repeat(2, 1fr);
   }
 }
@@ -596,7 +950,9 @@ pre {
   .field-row,
   .field-row.triple,
   .history-metrics,
-  .hero-cards {
+  .hero-cards,
+  .asset-grid,
+  .security-suite-grid {
     grid-template-columns: 1fr;
   }
 

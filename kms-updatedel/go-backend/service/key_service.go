@@ -19,9 +19,9 @@ const (
 // Metrics holds counters for monitoring.
 type Metrics struct {
 	UpdateRequests    uint64
-	UpdateSuccess      uint64
-	UpdateQueueFull    uint64
-	UpdateErrors       uint64
+	UpdateSuccess     uint64
+	UpdateQueueFull   uint64
+	UpdateErrors      uint64
 	RevokeRequests    uint64
 	RevokeSuccess     uint64
 	RevokeQueueFull   uint64
@@ -34,14 +34,14 @@ var globalMetrics Metrics
 // KeyLifecycleService handles UPDATE_KEY and REVOKE_KEY operations.
 type KeyLifecycleService struct {
 	kafkaProducer *utils.KafkaProducer
-	updateChan     chan *models.KeyLifecyclePayload
-	revokeChan     chan *models.KeyLifecyclePayload
-	workerCount    int
-	stopCh         chan struct{}
+	updateChan    chan *models.KeyLifecyclePayload
+	revokeChan    chan *models.KeyLifecyclePayload
+	workerCount   int
+	stopCh        chan struct{}
 }
 
 var (
-	kms *KeyLifecycleService
+	kms     *KeyLifecycleService
 	kmsOnce sync.Once
 )
 
@@ -121,9 +121,9 @@ func (s *KeyLifecycleService) EnqueueRevoke(payload *models.KeyLifecyclePayload)
 func GetMetrics() Metrics {
 	return Metrics{
 		UpdateRequests:    atomic.LoadUint64(&globalMetrics.UpdateRequests),
-		UpdateSuccess:      atomic.LoadUint64(&globalMetrics.UpdateSuccess),
-		UpdateQueueFull:    atomic.LoadUint64(&globalMetrics.UpdateQueueFull),
-		UpdateErrors:       atomic.LoadUint64(&globalMetrics.UpdateErrors),
+		UpdateSuccess:     atomic.LoadUint64(&globalMetrics.UpdateSuccess),
+		UpdateQueueFull:   atomic.LoadUint64(&globalMetrics.UpdateQueueFull),
+		UpdateErrors:      atomic.LoadUint64(&globalMetrics.UpdateErrors),
 		RevokeRequests:    atomic.LoadUint64(&globalMetrics.RevokeRequests),
 		RevokeSuccess:     atomic.LoadUint64(&globalMetrics.RevokeSuccess),
 		RevokeQueueFull:   atomic.LoadUint64(&globalMetrics.RevokeQueueFull),
@@ -148,17 +148,31 @@ func (s *KeyLifecycleService) Close() {
 // NewKeyLifecyclePayload constructs a payload with traceId and timestamps.
 func NewKeyLifecyclePayload(traceId, action, user, password string, keyId int64, km *models.Keymanage) *models.KeyLifecyclePayload {
 	now := time.Now().Format("2006-01-02 15:04:05")
+	keyInfo := models.Keymanage{
+		KeyID:    keyId,
+		UserName: user,
+		CreTime:  now,
+		UpdTime:  now,
+	}
+	if km != nil {
+		keyInfo = *km
+		keyInfo.KeyID = keyId
+		if keyInfo.UserName == "" {
+			keyInfo.UserName = user
+		}
+		if keyInfo.CreTime == "" {
+			keyInfo.CreTime = now
+		}
+		if keyInfo.UpdTime == "" {
+			keyInfo.UpdTime = now
+		}
+	}
 	return &models.KeyLifecyclePayload{
 		TraceID:     traceId,
 		ActionType:  action,
 		RawUser:     user,
 		RawPassword: password,
 		KeyID:       keyId,
-		KeyInfo: models.Keymanage{
-			KeyID:    keyId,
-			UserName: user,
-			CreTime:  now,
-			UpdTime:  now,
-		},
+		KeyInfo:     keyInfo,
 	}
 }

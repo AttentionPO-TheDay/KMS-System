@@ -7,11 +7,21 @@
     </div>
 
     <article class="panel">
+      <div class="panel-head">
+        <div>
+          <h3>当前查询范围</h3>
+          <p class="muted">普通用户仅可查看自己的分发记录，用户名条件不会跨用户生效。</p>
+        </div>
+      </div>
+      <div class="detail-grid scope-grid">
+        <p><strong>用户 ID：</strong>{{ profile.userId || '-' }}</p>
+        <p><strong>用户名：</strong>{{ profile.userName || '-' }}</p>
+        <p><strong>API 前缀：</strong><code>{{ apiBase }}</code></p>
+      </div>
+    </article>
+
+    <article class="panel">
       <div class="toolbar">
-        <label>
-          <span>用户名</span>
-          <input v-model="filters.userName" type="text" placeholder="按用户名筛选" />
-        </label>
         <label>
           <span>密钥名称</span>
           <input v-model="filters.keyName" type="text" placeholder="按密钥名称筛选" />
@@ -39,7 +49,6 @@
         <button class="ghost-button" @click="resetFilters">重置</button>
         <button class="ghost-button" @click="handleExport">导出当前结果</button>
       </div>
-      <p class="muted">API 前缀：<code>{{ apiBase }}</code></p>
       <p class="muted">导出文件：<code>key-distribute-record-时间戳.xlsx</code></p>
       <p v-if="errorMessage" class="error-text">{{ errorMessage }}</p>
       <div v-if="records.length === 0" class="empty-state">暂无分发记录</div>
@@ -92,13 +101,18 @@
 import { computed, getCurrentInstance, onMounted, reactive, ref } from 'vue'
 import { apiBases } from '@/config/api-bases'
 import { getDistributeRecord, listDistributeRecords } from '@/services/distribute-api'
+import useUserStore from '@/store/modules/user'
 
 const { proxy } = getCurrentInstance()
+const userStore = useUserStore()
 const apiBase = apiBases.distributeApi
+const profile = reactive({
+  userId: '',
+  userName: ''
+})
 const filters = reactive({
   pageNum: 1,
   pageSize: 10,
-  userName: '',
   keyName: '',
   distributeType: '',
   distributeStatus: ''
@@ -109,7 +123,16 @@ const errorMessage = ref('')
 const total = ref(0)
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / filters.pageSize)))
 
-onMounted(() => {
+onMounted(async () => {
+  if (userStore.token && (!userStore.id || !userStore.name)) {
+    try {
+      await userStore.getInfo()
+    } catch (error) {
+      errorMessage.value = error.message
+    }
+  }
+  profile.userId = userStore.id || ''
+  profile.userName = userStore.name || ''
   loadRecords()
 })
 
@@ -135,7 +158,6 @@ function handleSearch() {
 function resetFilters() {
   filters.pageNum = 1
   filters.pageSize = 10
-  filters.userName = ''
   filters.keyName = ''
   filters.distributeType = ''
   filters.distributeStatus = ''
@@ -176,7 +198,6 @@ function statusText(status) {
 
 function buildExportParams() {
   return {
-    userName: normalizeFilter(filters.userName),
     keyName: normalizeFilter(filters.keyName),
     distributeType: normalizeFilter(filters.distributeType),
     distributeStatus: normalizeFilter(filters.distributeStatus)
@@ -238,6 +259,10 @@ function normalizeFilter(value) {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 10px 16px;
+}
+
+.scope-grid {
+  margin-top: 12px;
 }
 
 .detail-span {

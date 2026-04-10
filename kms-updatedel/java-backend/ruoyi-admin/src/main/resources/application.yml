@@ -98,6 +98,9 @@ xss:
   urlPatterns: /system/*,/monitor/*,/tool/*
 
 kms:
+  go-backend:
+    url: ${GO_BACKEND_URL:http://updatedel-go:8082}
+    internal-token: ${INTERNAL_TOKEN:kms-generate-internal-secret-2026}
   lifecycle:
     kafka:
       update-topic: key_update_log

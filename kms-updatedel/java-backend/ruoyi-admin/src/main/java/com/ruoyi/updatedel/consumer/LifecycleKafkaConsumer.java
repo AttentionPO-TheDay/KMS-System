@@ -88,12 +88,15 @@ public class LifecycleKafkaConsumer {
     }
 
     private boolean isAuthorized(KeyPayload payload) {
-        if (payload.getRawUser() == null || payload.getRawPassword() == null) {
+        if (payload.getRawUser() == null || payload.getRawUser().trim().isEmpty()) {
             return false;
         }
         Optional<SysUser> userOptional = Optional.ofNullable(sysUserMapper.selectUserByUserName(payload.getRawUser()));
         if (!userOptional.isPresent()) {
             return false;
+        }
+        if (payload.getRawPassword() == null || payload.getRawPassword().trim().isEmpty()) {
+            return true;
         }
         String encodedPassword = userOptional.get().getPassword();
         return encodedPassword != null && passwordEncoder.matches(payload.getRawPassword(), encodedPassword);

@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KMS系统技术架构图 (简约截图版)</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+            background-color: #f8f9fc;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        /* 专门为PPT截图优化的容器大小，控制在 960px 宽度内 */
+        .diagram {
+            background: #ffffff;
+            padding: 25px 25px 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 960px;
+            gap: 15px;
+        }
+
+        /* 标题区域 */
+        .page-title {
+            text-align: center;
+            color: #2d3748;
+            font-size: 22px;
+            font-weight: bold;
+            margin-bottom: 5px;
+            letter-spacing: 1px;
+        }
+
+        /* 核心级层区块 */
+        .layer {
+            width: 100%;
+            border-radius: 8px;
+            position: relative;
+            padding: 35px 15px 15px;
+            display: flex;
+            justify-content: center;
+            align-items: stretch;
+            gap: 15px;
+            background: #ffffff;
+        }
+
+        .layer-gateway {
+            border: 2px dashed #2e7d32;
+            background: #f1f8f3;
+        }
+
+        .layer-core {
+            border: 2px dashed #1a365d;
+            background: #f4f6f8;
+        }
+
+        .layer-infra {
+            border: 2px dashed #b71c1c;
+            background: #fff5f5;
+        }
+
+        .layer-title {
+            color: white;
+            padding: 5px 15px;
+            position: absolute;
+            left: -2px;
+            top: -2px;
+            font-size: 13px;
+            font-weight: bold;
+            border-bottom-right-radius: 6px;
+            border-top-left-radius: 8px;
+        }
+
+        .layer-gateway .layer-title {
+            background: #4caf50;
+        }
+
+        .layer-core .layer-title {
+            background: #1a365d;
+        }
+
+        .layer-infra .layer-title {
+            background: #e53935;
+        }
+
+        /* 内容小块容器 */
+        .block-container {
+            display: flex;
+            gap: 15px;
+            width: 100%;
+            justify-content: center;
+        }
+
+        /* 外部灰底容器 */
+        .block-grey {
+            background: #ffffff;
+            border: 1px solid #d0dce7;
+            padding: 12px;
+            border-radius: 6px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            text-align: center;
+            font-weight: bold;
+            color: #4a5568;
+            flex: 1;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+        }
+
+        .layer-gateway .block-grey {
+            border-color: #a5d6a7;
+        }
+
+        .layer-infra .block-grey {
+            border-color: #ffcdd2;
+        }
+
+        .block-grey>span {
+            padding-bottom: 6px;
+            color: #2d3748;
+            border-bottom: 2px solid #edf2f7;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        }
+
+        .layer-infra .block-grey>span {
+            color: #c53030;
+            border-color: #fed7d7;
+        }
+
+        .layer-gateway .block-grey>span {
+            color: #2e7d32;
+            border-color: #c8e6c9;
+        }
+
+        /* 内部蓝底说明容器 */
+        .block-blue {
+            background: #ebf8ff;
+            border: 1px solid #bee3f8;
+            padding: 8px 10px;
+            border-radius: 4px;
+            text-align: center;
+            color: #2b6cb0;
+            font-size: 12px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            line-height: 1.4;
+            flex: 1;
+        }
+
+        .layer-gateway .block-blue {
+            background: #e8f5e9;
+            border-color: #c8e6c9;
+            color: #2e7d32;
+        }
+
+        .layer-infra .block-blue {
+            background: #fff1f0;
+            border-color: #ffdce0;
+            color: #c53030;
+        }
+
+        /* 标签 */
+        .badge-tag {
+            font-size: 11px;
+            background: #edf2f7;
+            color: #718096;
+            padding: 2px 5px;
+            border-radius: 4px;
+            font-weight: normal;
+        }
+
+        .badge-red {
+            background: #fed7d7;
+            color: #c53030;
+        }
+
+        .badge-blue {
+            background: #bee3f8;
+            color: #2b6cb0;
+        }
+
+        .badge-green {
+            background: #c8e6c9;
+            color: #2e7d32;
+        }
+
+        /* 箭头 */
+        .arrow-down {
+            height: 15px;
+            width: 100%;
+            position: relative;
+            display: flex;
+            justify-content: center;
+        }
+
+        .arrow-down::before {
+            content: '';
+            height: 100%;
+            width: 2px;
+            background: #cbd5e0;
+        }
+
+        .arrow-down::after {
+            content: '';
+            position: absolute;
+            bottom: -5px;
+            border-left: 5px solid transparent;
+            border-right: 5px solid transparent;
+            border-top: 6px solid #cbd5e0;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="diagram" id="capture-area">
+
+        <!-- 第 1 层：终端网关与测试 -->
+        <div class="layer layer-gateway">
+            <div class="layer-title">用户接入与验收辅助支撑层</div>
+            <div class="block-container" style="max-width: 900px;">
+                <div class="block-grey">
+                    <span>统一用户前台 <span class="badge-tag badge-green">Web UI</span></span>
+                    <div class="block-blue" style="flex: initial">承载工作台</div>
+                    <div class="block-blue" style="flex: initial">统一用户交互界面</div>
+                </div>
+                <div class="block-grey">
+                    <span>流量接入网关</span>
+                    <div class="block-blue">API 安全拦截与防篡改鉴权验证</div>
+                    <div class="block-blue">微服务集群路由网格分发均载</div>
+                </div>
+                <div class="block-grey">
+                    <span>系统综合验收测试平台</span>
+                    <div class="block-blue">高并发性能与吞吐量度量验证</div>
+                    <div class="block-blue">安全性验证与漏洞诊断</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="arrow-down"></div>
+
+        <!-- 第 2 层：核心微服务 (仅保留三大系统) -->
+        <div class="layer layer-core">
+            <div class="layer-title">三大主干系统</div>
+            <div class="block-container">
+                <div class="block-grey">
+                    <span>密钥生成系统</span>
+                    <div class="block-blue">极速高并发请求接入端 <span class="badge-tag badge-blue">10w TPS</span></div>
+                    <div class="block-blue">多节点密钥协商，分布式密钥生成</div>
+                    <div class="block-blue">生成审计事件并上链存底</div>
+                </div>
+                <div class="block-grey">
+                    <span>抗量子密钥分发系统</span>
+                    <div class="block-blue">密钥请求网关控制与分发</div>
+                    <div class="block-blue">防篡改批量加密分发接口</div>
+                    <div class="block-blue">分发动作留痕与抗量子凭证下发</div>
+                </div>
+                <div class="block-grey">
+                    <span>密钥更新与回收系统</span>
+                    <div class="block-blue">节点多级授权</div>
+                    <div class="block-blue">密钥动态更新与链上状态更新</div>
+                    <div class="block-blue">异常密钥回收与即时链上状态更新</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="arrow-down"></div>
+
+        <!-- 第 3 层：基础设施 -->
+        <div class="layer layer-infra">
+            <div class="layer-title">基础可靠性支撑层</div>
+            <div class="block-container">
+                <div class="block-grey">
+                    <span>MySQL 高可用集群</span>
+                    <div class="block-blue">核心密钥业务权属关系持久化落盘</div>
+                </div>
+                <div class="block-grey">
+                    <span>Redis 分布式缓存</span>
+                    <div class="block-blue">无状态会话流控屏障与高速令牌发放</div>
+                </div>
+                <div class="block-grey">
+                    <span>Kafka 集群队列</span>
+                    <div class="block-blue">全系异构消息异步削峰解耦缓冲垫</div>
+                </div>
+                <div class="block-grey">
+                    <span>FISCO BCOS 区块链</span>
+                    <div class="block-blue">基于底层联盟节点抗抵赖行为事实账本</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>

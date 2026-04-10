@@ -8,6 +8,9 @@ public class PermissionRequest {
     private Long requestId;
     private Long userId;
     private String userName;
+    private String systemCode;
+    private String featureCode;
+    private String featureName;
     private Integer originalLevel;
     private Integer requestLevel;
     private String requestReason;

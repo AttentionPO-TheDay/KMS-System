@@ -20,4 +20,6 @@ public interface IPermissionRequestService {
     void rollback(Long requestId);
 
     int rollbackExpiredApprovedRequests();
+
+    boolean hasActivePermission(Long userId, String featureCode);
 }

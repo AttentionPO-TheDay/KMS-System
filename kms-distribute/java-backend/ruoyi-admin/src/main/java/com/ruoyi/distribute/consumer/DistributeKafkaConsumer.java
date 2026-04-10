@@ -185,13 +185,17 @@ public class DistributeKafkaConsumer {
     private SysUser authorize(JSONObject payload) {
         String rawUser = payload.getString("raw_user");
         String rawPassword = payload.getString("raw_password");
-        if (rawUser == null || rawPassword == null) {
+        if (rawUser == null || rawUser.trim().isEmpty()) {
             return null;
         }
 
         SysUser user = sysUserMapper.selectUserByUserName(rawUser);
         if (user == null || user.getPassword() == null) {
             return null;
+        }
+
+        if (rawPassword == null || rawPassword.trim().isEmpty()) {
+            return user;
         }
 
         return passwordEncoder.matches(rawPassword, user.getPassword()) ? user : null;

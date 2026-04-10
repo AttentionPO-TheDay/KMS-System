@@ -33,7 +33,7 @@ public class GoBackendClient {
 
     private static final String INTERNAL_TOKEN_HEADER = "X-Internal-Token";
 
-    @Value("${kms.go-backend.url:http://kms-generate-go:8081}")
+    @Value("${kms.go-backend.url:http://localhost:8081}")
     private String goBackendUrl;
 
     @Value("${kms.go-backend.internal-token:kms-generate-internal-secret-2026}")
@@ -57,6 +57,7 @@ public class GoBackendClient {
         body.put("key_domain", keymanage.getKeyDomain() != null ? keymanage.getKeyDomain() : "");
         body.put("key_name", keymanage.getKeyName() != null ? keymanage.getKeyName() : "example");
         body.put("key_use", keymanage.getKeyUse() != null ? keymanage.getKeyUse() : "加解密");
+        body.put("auto_update", keymanage.getAutoUpdate() != null ? keymanage.getAutoUpdate() : "false");
 
         return callGoApi("/generate/request/ENROLL_KEY", body);
     }
@@ -70,6 +71,7 @@ public class GoBackendClient {
         body.put("key_domain", keymanage.getKeyDomain() != null ? keymanage.getKeyDomain() : "");
         body.put("key_name", keymanage.getKeyName() != null ? keymanage.getKeyName() : "example");
         body.put("key_use", keymanage.getKeyUse() != null ? keymanage.getKeyUse() : "加解密");
+        body.put("auto_update", keymanage.getAutoUpdate() != null ? keymanage.getAutoUpdate() : "false");
 
         return callGoApi("/generate/request/REENROLL_KEY", body);
     }

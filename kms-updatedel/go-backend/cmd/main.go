@@ -19,6 +19,7 @@ import (
 
 	"key-service-lifecycle/config"
 	"key-service-lifecycle/controllers"
+	"key-service-lifecycle/middleware"
 	"key-service-lifecycle/service"
 	"key-service-lifecycle/utils"
 )
@@ -64,7 +65,7 @@ func main() {
 	reqCtrl := controllers.NewRequestController(lcService, idempService)
 
 	// 7. Routes — prefix /lifecycle/request/
-	api := app.Group("/lifecycle/request")
+	api := app.Group("/lifecycle/request", middleware.InternalAuth())
 	api.Post("/UPDATE_KEY", reqCtrl.UpdateKey)
 	api.Post("/REVOKE_KEY", reqCtrl.RevokeKey)
 

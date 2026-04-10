@@ -81,9 +81,9 @@
 
           <div class="quick-links">
             <el-button text type="primary" @click="router.push('/user/profile')">个人中心</el-button>
-            <el-button text type="primary" @click="router.push('/permissions')">我的权限申请</el-button>
-            <el-button text type="primary" @click="router.push('/generate')">去生成页</el-button>
-            <el-button text type="primary" @click="router.push('/updatedel')">去更新与回收页</el-button>
+            <el-button text type="primary" @click="router.push('/user_actions/permissions')">我的权限申请</el-button>
+            <el-button text type="primary" @click="router.push('/user_actions/generate')">去生成页</el-button>
+            <el-button text type="primary" @click="router.push('/user_actions/updatedel')">去更新与回收页</el-button>
           </div>
         </el-card>
       </el-col>
@@ -92,12 +92,17 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import useUserStore from '@/store/modules/user'
+import { listPermissionRequests } from '@/services/permission-api'
 
 const router = useRouter()
 const userStore = useUserStore()
+const featureAccess = reactive({
+  PUBLIC_KEY_LIST: false,
+  AUTO_UPDATE: false
+})
 
 const summaryCards = computed(() => [
   {
@@ -112,40 +117,40 @@ const summaryCards = computed(() => [
   },
   {
     title: '公共密钥权限',
-    value: Number(userStore.roleLevel) <= 1 ? '已具备' : '待申请',
+    value: Number(userStore.roleLevel) <= 1 || featureAccess.PUBLIC_KEY_LIST ? '已具备' : '待申请',
     desc: '用于查看生成域公共密钥列表'
   },
   {
     title: '自动更新权限',
-    value: Number(userStore.roleLevel) <= 0 ? '已具备' : '待申请',
+    value: Number(userStore.roleLevel) <= 0 || featureAccess.AUTO_UPDATE ? '已具备' : '待申请',
     desc: '用于生命周期域自动更新配置'
   }
 ])
 
 const featureCards = [
   {
-    path: '/generate',
+    path: '/user_actions/generate',
     title: '密钥生成',
     desc: '发起生成请求，查看生成记录、详情、公共参数和公共密钥列表。',
     tag: '生成域',
     tagType: 'success'
   },
   {
-    path: '/updatedel',
+    path: '/user_actions/updatedel',
     title: '更新与回收',
     desc: '管理我的密钥，执行更新、回收以及自动更新开关。',
     tag: '生命周期域',
     tagType: 'warning'
   },
   {
-    path: '/distribute',
+    path: '/user_actions/distribute',
     title: '分发记录',
     desc: '查询分发流水、状态与链上记录，定位分发执行结果。',
     tag: '分发域',
     tagType: 'info'
   },
   {
-    path: '/permissions',
+    path: '/user_actions/permissions',
     title: '权限申请',
     desc: '提交临时权限申请，查看审批状态并在完成操作后主动回退。',
     tag: '统一前台',
@@ -155,6 +160,28 @@ const featureCards = [
 
 function roleText(level) {
   return { 0: '管理员', 1: '中级用户', 2: '普通用户' }[level] || '普通用户'
+}
+
+onMounted(async () => {
+  if (!userStore.token) {
+    return
+  }
+  if (!userStore.id) {
+    await userStore.getInfo()
+  }
+  if (!userStore.id) {
+    return
+  }
+  const [generateData, lifecycleData] = await Promise.all([
+    listPermissionRequests('PUBLIC_KEY_LIST', Number(userStore.id)),
+    listPermissionRequests('AUTO_UPDATE', Number(userStore.id))
+  ])
+  featureAccess.PUBLIC_KEY_LIST = hasApprovedTemporaryRequest(generateData.rows)
+  featureAccess.AUTO_UPDATE = hasApprovedTemporaryRequest(lifecycleData.rows)
+})
+
+function hasApprovedTemporaryRequest(rows = []) {
+  return rows.some((item) => String(item?.status) === '1' && Number(item?.isTemp) === 1)
 }
 </script>
 
