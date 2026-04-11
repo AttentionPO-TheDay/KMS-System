@@ -19,6 +19,11 @@ public class PartialKey {
     /** SSCL无证书y坐标M */
     private BigInteger my;
 
+    /** SM2中间变量: 随机数w */
+    private BigInteger kgcRandomW;
+    /** SM2中间变量: 摘要lambda */
+    private BigInteger kgcLambda;
+
     public BigInteger getMx() {
         return mx;
     }
@@ -46,5 +51,21 @@ public class PartialKey {
     }
     public void setWA(ECPoint wA) {
         this.wA = wA;
+    }
+
+    public BigInteger getKgcRandomW() {
+        return kgcRandomW;
+    }
+
+    public void setKgcRandomW(BigInteger kgcRandomW) {
+        this.kgcRandomW = kgcRandomW;
+    }
+
+    public BigInteger getKgcLambda() {
+        return kgcLambda;
+    }
+
+    public void setKgcLambda(BigInteger kgcLambda) {
+        this.kgcLambda = kgcLambda;
     }
 }

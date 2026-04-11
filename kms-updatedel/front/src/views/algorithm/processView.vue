@@ -134,6 +134,23 @@
                 <pre v-if="step3Data.responseObj">{{ JSON.stringify(step3Data.responseObj, null, 2) }}</pre>
                 <pre v-else style="color:#666">等待更新确认...</pre>
               </div>
+
+              <div v-if="step3Data.responseObj && step3Data.responseObj.returnedMaterial && (step3Data.responseObj.returnedMaterial.kgcRandomW || step3Data.responseObj.returnedMaterial.kgcMx)" class="math-steps-box mt-15" style="background: rgba(230,162,60,0.1); padding: 15px; border-radius: 8px; border: 1px dashed rgba(230,162,60,0.4);">
+                <div class="label" style="color: #E6A23C; font-weight: bold; margin-bottom: 8px;">🔍 KGC 计算黑盒揭秘 (内部中间变量):</div>
+                <div v-if="step3Data.responseObj.returnedMaterial.kgcRandomW">
+                  <div style="font-family: monospace; font-size: 12px; color: #d4d4d4; margin-bottom: 5px; word-break: break-all;">
+                    > [SM2] KGC侧临时生成的新轮次随机构件 (w): {{ step3Data.responseObj.returnedMaterial.kgcRandomW }}
+                  </div>
+                  <div style="font-family: monospace; font-size: 12px; color: #d4d4d4; margin-bottom: 5px; word-break: break-all;">
+                    > [SM2] KGC侧结合新信息算出的摘要验证 (lambda): {{ step3Data.responseObj.returnedMaterial.kgcLambda }}
+                  </div>
+                </div>
+                <div v-if="step3Data.responseObj.returnedMaterial.kgcMx">
+                  <div style="font-family: monospace; font-size: 12px; color: #d4d4d4; margin-bottom: 5px; word-break: break-all;">
+                    > [SSCL] KGC侧更新的多项式求值变量 (M_x): {{ step3Data.responseObj.returnedMaterial.kgcMx }}
+                  </div>
+                </div>
+              </div>
             </div>
           </el-card>
         </transition>

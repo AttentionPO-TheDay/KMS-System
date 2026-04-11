@@ -39,8 +39,6 @@ type eccWorkerCtx struct {
 	temp32Arr [32]byte
 }
 
-var zeros64 [64]byte
-
 var (
 	globalECCGen *ECCGenerator
 	once         sync.Once
@@ -99,7 +97,7 @@ func newECCGenerator() *ECCGenerator {
 	return gen
 }
 
-func (gen *ECCGenerator) GenPartialKey(identityData string, uAStr string, keyUse string) (models.Keymanage, error) {
+func (gen *ECCGenerator) GenPartialKey(identityData string, uAStr string) (models.Keymanage, error) {
 	if len(uAStr) != 130 || !strings.HasPrefix(uAStr, "04") {
 		return models.Keymanage{}, errors.New("invalid uA format")
 	}
@@ -158,35 +156,33 @@ func (gen *ECCGenerator) GenPartialKey(identityData string, uAStr string, keyUse
 
 	ctx.tA.FillBytes(ctx.temp32)
 	startIdx := len(ctx.buffer)
-	ctx.buffer = append(ctx.buffer, zeros64[:]...)
+	ctx.buffer = append(ctx.buffer, make([]byte, 64) /* REPLACED */...)
 	hex.Encode(ctx.buffer[startIdx:], ctx.temp32)
 
 	ctx.buffer = append(ctx.buffer, `","finalPublicKey":"04`...)
 
 	wAx.FillBytes(ctx.temp32)
 	startIdx = len(ctx.buffer)
-	ctx.buffer = append(ctx.buffer, zeros64[:]...)
+	ctx.buffer = append(ctx.buffer, make([]byte, 64) /* REPLACED */...)
 	hex.Encode(ctx.buffer[startIdx:], ctx.temp32)
 
 	wAy.FillBytes(ctx.temp32)
 	startIdx = len(ctx.buffer)
-	ctx.buffer = append(ctx.buffer, zeros64[:]...)
+	ctx.buffer = append(ctx.buffer, make([]byte, 64) /* REPLACED */...)
 	hex.Encode(ctx.buffer[startIdx:], ctx.temp32)
 
-	// Appending intermediate variables for UI demystification IF needed for demo
-	if keyUse == "演示计算" || keyUse == "前置构建" {
-		ctx.buffer = append(ctx.buffer, `","kgcRandomW":"`...)
-		ctx.w.FillBytes(ctx.temp32)
-		startIdx = len(ctx.buffer)
-		ctx.buffer = append(ctx.buffer, zeros64[:]...)
-		hex.Encode(ctx.buffer[startIdx:], ctx.temp32)
+	// Appending intermediate variables for UI demystification
+	ctx.buffer = append(ctx.buffer, `","kgcRandomW":"`...)
+	ctx.w.FillBytes(ctx.temp32)
+	startIdx = len(ctx.buffer)
+	ctx.buffer = append(ctx.buffer, make([]byte, 64) /* REPLACED */...)
+	hex.Encode(ctx.buffer[startIdx:], ctx.temp32)
 
-		ctx.buffer = append(ctx.buffer, `","kgcLambda":"`...)
-		ctx.lambda.FillBytes(ctx.temp32)
-		startIdx = len(ctx.buffer)
-		ctx.buffer = append(ctx.buffer, zeros64[:]...)
-		hex.Encode(ctx.buffer[startIdx:], ctx.temp32)
-	}
+	ctx.buffer = append(ctx.buffer, `","kgcLambda":"`...)
+	ctx.lambda.FillBytes(ctx.temp32)
+	startIdx = len(ctx.buffer)
+	ctx.buffer = append(ctx.buffer, make([]byte, 64) /* REPLACED */...)
+	hex.Encode(ctx.buffer[startIdx:], ctx.temp32)
 
 	ctx.buffer = append(ctx.buffer, `"}`...)
 

@@ -1,0 +1,17 @@
+{
+  "agents": [
+    {
+      "agent_id": "aa6cab7d7308d0538",
+      "agent_type": "claude-code-guide",
+      "started_at": "2026-04-11T05:04:49.474Z",
+      "parent_mode": "none",
+      "status": "completed",
+      "completed_at": "2026-04-11T05:05:47.628Z",
+      "duration_ms": 58154
+    }
+  ],
+  "total_spawned": 1,
+  "total_completed": 1,
+  "total_failed": 0,
+  "last_updated": "2026-04-11T05:05:47.736Z"
+}

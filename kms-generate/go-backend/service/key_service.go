@@ -77,13 +77,13 @@ func (s *KeyManageService) EnrollKey(km *models.Keymanage, rawPassword string) (
 
 	switch km.EncrytName {
 	case "SM2":
-		resKm, err := s.eccGen.GenPartialKey(km.UserName, km.UA)
+		resKm, err := s.eccGen.GenPartialKey(km.UserName, km.UA, km.KeyUse)
 		if err != nil {
 			return "", err
 		}
 		km.KeyValue = resKm.KeyValue
 	case "SSCL":
-		resKm, err := s.ssclGen.GenPartialKey(km.UserName, km.UA, km.KeyDomain)
+		resKm, err := s.ssclGen.GenPartialKey(km.UserName, km.UA, km.KeyDomain, km.KeyUse)
 		if err != nil {
 			return "", err
 		}

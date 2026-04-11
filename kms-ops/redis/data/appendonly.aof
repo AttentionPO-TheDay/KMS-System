@@ -7402,3 +7402,19 @@ $4
 PXAT
 $13
 1775878188721
+*5
+$3
+SET
+$49
+login_tokens:89aff5dc-7a6a-48ca-97cc-7fde69949893
+$1243
+{"@type":"com.ruoyi.common.core.domain.model.LoginUser","browser":"Chrome 14","deptId":103L,"expireTime":1775879191678,"ipaddr":"172.19.0.1","loginLocation":"内网IP","loginTime":1775877391678,"os":"Windows 10","permissions":Set["*:*:*"],"token":"89aff5dc-7a6a-48ca-97cc-7fde69949893","user":{"admin":true,"createBy":"admin","createTime":"2026-04-09 06:34:19","delFlag":"0","dept":{"ancestors":"0,100,101","children":[],"deptId":103L,"deptName":"研发部门","leader":"yx","orderNum":1,"params":{"@type":"java.util.HashMap","@type":"java.util.HashMap"},"parentId":101L,"status":"0"},"deptId":103L,"email":"ry@163.com","loginDate":"2026-04-10 16:41:56","loginIp":"172.19.0.1","nickName":"test","params":{"@type":"java.util.HashMap","@type":"java.util.HashMap"},"password":"$2a$10$V2EoIpwiA2hK8WAEQvfeMe4gD1/hQjpT6.lfLazSGFaGr.D2Iky4O","phonenumber":"15888888888","remark":"管理员","roleLevel":0,"roles":[{"admin":true,"dataScope":"1","deptCheckStrictly":false,"flag":false,"menuCheckStrictly":false,"params":{"@type":"java.util.HashMap","@type":"java.util.HashMap"},"roleId":1L,"roleKey":"admin","roleName":"超级管理员","roleSort":1,"status":"0"}],"sex":"1","status":"0","userId":1L,"userName":"admin"},"userId":1L,"username":"admin"}
+$4
+PXAT
+$13
+1775879191681
+*2
+$3
+DEL
+$49
+login_tokens:89aff5dc-7a6a-48ca-97cc-7fde69949893

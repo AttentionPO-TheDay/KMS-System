@@ -245,8 +245,8 @@
   "hotPaths": [
     {
       "path": "C:\\Users\\luo\\.claude\\settings.json",
-      "accessCount": 2,
-      "lastAccessed": 1775840587346,
+      "accessCount": 5,
+      "lastAccessed": 1775915821469,
       "type": "file"
     },
     {
@@ -283,6 +283,12 @@
       "path": "C:\\Users\\luo\\.claude\\plugins\\marketplaces\\omc\\skills\\omc-setup\\phases\\04-welcome.md",
       "accessCount": 1,
       "lastAccessed": 1775841922769,
+      "type": "file"
+    },
+    {
+      "path": "C:\\Users\\luo\\.claude\\projects\\E--java-project-kms-code-copy\\26d75c58-e1e4-4140-9582-4cb9df69b446\\tool-results\\call_clyfyNBWbKgUDdH2Z7JLDrDi.txt",
+      "accessCount": 1,
+      "lastAccessed": 1775883917027,
       "type": "file"
     }
   ],

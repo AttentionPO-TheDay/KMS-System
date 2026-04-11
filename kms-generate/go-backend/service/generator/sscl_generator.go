@@ -131,7 +131,7 @@ func newSSCLGenerator() *SSCLGenerator {
 	return gen
 }
 
-func (gen *SSCLGenerator) GenPartialKey(identityData string, uAStr string, keyDomain string) (models.Keymanage, error) {
+func (gen *SSCLGenerator) GenPartialKey(identityData string, uAStr string, keyDomain string, keyUse string) (models.Keymanage, error) {
 	if len(uAStr) != 130 || !strings.HasPrefix(uAStr, "04") {
 		return models.Keymanage{}, errors.New("invalid uA format")
 	}
@@ -165,22 +165,32 @@ func (gen *SSCLGenerator) GenPartialKey(identityData string, uAStr string, keyDo
 
 	ctx.mx.FillBytes(ctx.temp32)
 	startIdx := len(ctx.buffer)
-	ctx.buffer = append(ctx.buffer, make([]byte, 64)...)
+	ctx.buffer = append(ctx.buffer, zeros64[:]...)
 	hex.Encode(ctx.buffer[startIdx:], ctx.temp32)
 
 	ctx.my.FillBytes(ctx.temp32)
 	startIdx = len(ctx.buffer)
-	ctx.buffer = append(ctx.buffer, make([]byte, 64)...)
+	ctx.buffer = append(ctx.buffer, zeros64[:]...)
 	hex.Encode(ctx.buffer[startIdx:], ctx.temp32)
 
 	ctx.buffer = append(ctx.buffer, `","SSCLEA":"`...)
 	gen.coefficients[0].FillBytes(ctx.temp32)
 	startIdx = len(ctx.buffer)
-	ctx.buffer = append(ctx.buffer, make([]byte, 64)...)
+	ctx.buffer = append(ctx.buffer, zeros64[:]...)
 	hex.Encode(ctx.buffer[startIdx:], ctx.temp32)
 
 	ctx.buffer = append(ctx.buffer, `","SSCLDomain":"`...)
 	ctx.buffer = append(ctx.buffer, keyDomain...)
+
+	// Appending intermediate variables for UI demystification IF needed for demo
+	if keyUse == "演示计算" || keyUse == "前置构建" {
+		ctx.buffer = append(ctx.buffer, `","kgcMx":"`...)
+		ctx.mx.FillBytes(ctx.temp32)
+		startIdx = len(ctx.buffer)
+		ctx.buffer = append(ctx.buffer, zeros64[:]...)
+		hex.Encode(ctx.buffer[startIdx:], ctx.temp32)
+	}
+
 	ctx.buffer = append(ctx.buffer, `"}`...)
 
 	return models.Keymanage{

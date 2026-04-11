@@ -7,7 +7,7 @@ import (
 
 func TestSSCLGenPartialKeyIncludesChainScalar(t *testing.T) {
 	gen := newSSCLGenerator()
-	res, err := gen.GenPartialKey("alice", gen.gStr, "test-domain")
+	res, err := gen.GenPartialKey("alice", gen.gStr, "test-domain", "")
 	if err != nil {
 		t.Fatalf("GenPartialKey returned error: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestSSCLGenPartialKeyRejectsPointOffCurve(t *testing.T) {
 	gen := newSSCLGenerator()
 	invalidUA := "04" + strings.Repeat("0", 128)
 
-	_, err := gen.GenPartialKey("alice", invalidUA, "test-domain")
+	_, err := gen.GenPartialKey("alice", invalidUA, "test-domain", "")
 	if err == nil {
 		t.Fatal("expected point validation error")
 	}
@@ -47,7 +47,7 @@ func BenchmarkSSCLGenPartialKey(b *testing.B) {
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			if _, err := gen.GenPartialKey("alice", gen.gStr, "bench-domain"); err != nil {
+			if _, err := gen.GenPartialKey("alice", gen.gStr, "bench-domain", ""); err != nil {
 				b.Fatalf("GenPartialKey returned error: %v", err)
 			}
 		}

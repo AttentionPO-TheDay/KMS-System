@@ -159,6 +159,8 @@ public class ECCGenerator implements ECConstants, IGenerator {
         PartialKey partialKey = new PartialKey();
         partialKey.setTA(tA);
         partialKey.setWA(wA);
+        partialKey.setKgcRandomW(w);
+        partialKey.setKgcLambda(lambda);
 
         return partialKey;
     }

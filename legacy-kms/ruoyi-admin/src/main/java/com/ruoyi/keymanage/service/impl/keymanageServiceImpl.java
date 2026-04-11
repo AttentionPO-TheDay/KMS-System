@@ -303,6 +303,8 @@ public class keymanageServiceImpl implements IKeymanageService
             JSONObject jsonObject = new JSONObject();
             jsonObject.put("partialKey", tAstr);
             jsonObject.put("finalPublicKey", publicKey);
+            if (partialKey.getKgcRandomW() != null) jsonObject.put("kgcRandomW", partialKey.getKgcRandomW().toString(16));
+            if (partialKey.getKgcLambda() != null) jsonObject.put("kgcLambda", partialKey.getKgcLambda().toString(16));
             keymanage.setKeyValue(jsonObject.toJSONString());
 
         } else if ("无证书非对称加密".equals(keymanage.getEncrytType()) && "SSCL".equals(keymanage.getEncrytName())) {
@@ -320,6 +322,7 @@ public class keymanageServiceImpl implements IKeymanageService
             String SSCLKey = "04" + mstr + Mstr;
             JSONObject jsonObject = new JSONObject();
             jsonObject.put("SSCLKey", SSCLKey);
+            jsonObject.put("kgcMx", mstr);
             jsonObject.put("SSCLDomian", keymanage.getKeyDomain());
             keymanage.setKeyValue(jsonObject.toJSONString());
         }
