@@ -18,8 +18,8 @@
           <el-input v-model="form.keyName" placeholder="如：TestKey-1" style="width: 200px" />
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" @click="startSimulation" :loading="isProcessing" class="btn-glow">
-            <el-icon><VideoPlay /></el-icon> {{ isProcessing ? '计算中...' : '启动实盘演示' }}
+          <el-button type="primary" @click="initSimulation" class="btn-glow">
+            <el-icon><VideoPlay /></el-icon> 开始演练流
           </el-button>
         </el-form-item>
       </el-form>
@@ -36,24 +36,29 @@
       <div class="flow-stages mt-30">
         <!-- Step 1: User Request Param -->
         <transition name="fade-slide">
-          <el-card v-show="activeStep >= 0" class="glass-card stage-card" style="border-left: 4px solid #409EFF">
+          <el-card class="glass-card stage-card" style="border-left: 4px solid #409EFF">
             <template #header>
               <div class="card-header">
-                <h3><el-icon><User /></el-icon> 用户端 - 发起生成请求</h3>
-                <el-tag size="small" type="primary" effect="dark" v-if="activeStep === 0"><i class="el-icon-loading"></i> 解析中</el-tag>
+                <h3><el-icon><User /></el-icon> 本地端 - 随机参数与请求载荷构造</h3>
+                <el-tag size="small" type="primary" effect="dark" v-if="activeStep === 0">待执行</el-tag>
                 <el-tag size="small" type="success" effect="dark" v-else>已完成</el-tag>
               </div>
             </template>
             <div class="payload-box">
+              <div v-if="activeStep === 0" style="margin-bottom: 20px;">
+                <el-button type="primary" size="small" @click="runStep1" :loading="isProcessing">第一步：执行并生成本地参数</el-button>
+              </div>
+
               <div class="label">【机密】本地随机生成的份额熵 (用户临时私钥 num2):</div>
-              <div class="value auth">{{ step1Data.privateShare || '等待生成...' }}</div>
+              <div class="value auth">{{ step1Data.privateShare || '点击按钮执行后显示...' }}</div>
               
               <div class="label mt-10">本地生成的公共切片公钥 (uA):</div>
-              <div class="value">{{ step1Data.uA || '等待生成...' }}</div>
+              <div class="value">{{ step1Data.uA || '点击按钮执行后显示...' }}</div>
               
               <div class="label mt-10">构造将发往服务端 KGC 的注册载荷:</div>
-              <div class="code-block" v-if="step1Data.payload">
-                <pre>{{ JSON.stringify(step1Data.payload, null, 2) }}</pre>
+              <div class="code-block">
+                <pre v-if="step1Data.payload">{{ JSON.stringify(step1Data.payload, null, 2) }}</pre>
+                <pre v-else style="color: #666">等待生成载荷...</pre>
               </div>
             </div>
           </el-card>
@@ -61,19 +66,25 @@
 
         <!-- Step 2: KGC processing & Response -->
         <transition name="fade-slide">
-          <el-card v-show="activeStep >= 1" class="glass-card stage-card mt-20" style="border-left: 4px solid #E6A23C">
+          <el-card class="glass-card stage-card mt-20" style="border-left: 4px solid #E6A23C">
             <template #header>
               <div class="card-header">
-                <h3><el-icon><Cpu /></el-icon> 中心端 - KGC 系统协同计算反馈</h3>
-                <el-tag size="small" type="warning" effect="dark" v-if="activeStep === 1"><i class="el-icon-loading"></i> 等待网络...</el-tag>
+                <h3><el-icon><Cpu /></el-icon> 中心端 - 向 KGC 系统发起交互</h3>
+                <el-tag size="small" type="info" effect="dark" v-if="activeStep < 1">等待前置步骤</el-tag>
+                <el-tag size="small" type="warning" effect="dark" v-else-if="activeStep === 1">待执行网络请求</el-tag>
                 <el-tag size="small" type="success" effect="dark" v-else>通信完成</el-tag>
               </div>
             </template>
             <div class="payload-box">
-              <p style="color:rgba(255,255,255,0.7); font-size:13px; margin-bottom:10px;">由于计算过程在可信受控服务端完成，此处捕获展现由 KGC 回传给该用户的碎片报文：</p>
+              <div v-if="activeStep === 1" style="margin-bottom: 20px;">
+                <el-button type="warning" size="small" @click="runStep2" :loading="isProcessing">第二步：向系统提交并获取远程分片片段</el-button>
+              </div>
+              <p style="color:rgba(255,255,255,0.7); font-size:13px; margin-bottom:10px;">由于计算过程在可信受控服务端完成，此处捕获展现由 KGC 回传给该用户的碎片报文情况：</p>
+              
               <div class="label mt-10">网络抓包 - KGC 真实返回的数据项：</div>
-              <div class="code-block response-block" v-if="step2Data.responseObj">
-                <pre>{{ JSON.stringify(step2Data.responseObj, null, 2) }}</pre>
+              <div class="code-block response-block">
+                <pre v-if="step2Data.responseObj">{{ JSON.stringify(step2Data.responseObj, null, 2) }}</pre>
+                <pre v-else style="color: #666">等待前置操作触发请求...</pre>
               </div>
             </div>
           </el-card>
@@ -81,36 +92,55 @@
 
         <!-- Step 3: Local Combine -->
         <transition name="fade-slide">
-          <el-card v-show="activeStep >= 2" class="glass-card stage-card mt-20" style="border-left: 4px solid #67C23A">
+          <el-card class="glass-card stage-card mt-20" style="border-left: 4px solid #67C23A">
             <template #header>
               <div class="card-header">
                 <h3><el-icon><Key /></el-icon> 用户端 - 最终组合与脱水 (固化最终产物)</h3>
-                <el-tag size="small" type="success" effect="dark" v-if="activeStep === 2"><i class="el-icon-loading"></i> 多项式组装中...</el-tag>
+                <el-tag size="small" type="info" effect="dark" v-if="activeStep < 2">等待前置步骤</el-tag>
+                <el-tag size="small" type="success" effect="dark" v-else-if="activeStep === 2">待计算生成</el-tag>
                 <el-tag size="small" type="success" effect="dark" v-else>拼装成功</el-tag>
               </div>
             </template>
             <div class="payload-box">
-              <div class="desc" v-if="form.encrytName==='SSCL'">读取本地影子私钥信息，融合 DA 门限值执行拉格朗日逆向代换：</div>
-              <div class="desc" v-else>将 KGC 半密私片段 与 用户的临时私片段 根据大素数有限群做加法求模运算：</div>
+              <div v-if="activeStep === 2" style="margin-bottom: 20px;">
+                <el-button type="success" size="small" @click="runStep3" :loading="isProcessing">第三步：本地利用数学法则完成最终算密</el-button>
+              </div>
+
+              <div class="desc" style="color: #a3aab5; margin-bottom: 10px;" v-if="form.encrytName==='SSCL'">操作说明：读取本地影子私钥信息，融合 DA 门限值执行拉格朗日逆向代换...</div>
+              <div class="desc" style="color: #a3aab5; margin-bottom: 10px;" v-else>操作说明：将 KGC 半密私片段 与 用户的临时私片段 根据大素数有限群 {N_SM2} 做加法求模运算...</div>
               
-              <div class="flex-box mt-15" v-if="step3Data.PrivateKey">
+              <!-- 中间计算过程展示 -->
+              <div class="math-steps-box mt-10" style="background: rgba(103,194,58,0.1); padding: 15px; border-radius: 8px; border: 1px dashed rgba(103,194,58,0.4);">
+                <div class="label" style="color: #67C23A; font-weight: bold; margin-bottom: 8px;">🔍 揭秘内部计算过程:</div>
+                <div v-if="step3Data.mathSteps && step3Data.mathSteps.length > 0">
+                  <div v-for="(step, i) in step3Data.mathSteps" :key="i" style="font-family: monospace; font-size: 12px; color: #d4d4d4; margin-bottom: 5px; word-break: break-all;">
+                    > {{ step }}
+                  </div>
+                </div>
+                <div v-else style="font-family: monospace; font-size: 12px; color: #666; margin-bottom: 5px;">
+                  等待触发计算...
+                </div>
+              </div>
+
+              <div class="flex-box mt-15">
                 <div class="item finalize-block final-priv">
                   <div class="title">🔐 最终绝对私钥 (仅存在于本地)</div>
-                  <div class="content break-all">{{ step3Data.PrivateKey }}</div>
+                  <div class="content break-all">{{ step3Data.PrivateKey || '计算中...' }}</div>
                 </div>
                 <div class="item finalize-block final-pub">
                   <div class="title">🌍 最终暴露公钥 (发信验证用)</div>
-                  <div class="content break-all">{{ step3Data.PublicKey }}</div>
+                  <div class="content break-all">{{ step3Data.PublicKey || '计算中...' }}</div>
                 </div>
               </div>
-              <div v-if="form.encrytName==='SSCL' && step3Data.DA" class="mt-15">
+              <div v-if="form.encrytName==='SSCL'" class="mt-15">
                 <div class="label">SSCL 所属域独有脱水印记 (DA):</div>
-                <div class="value">{{ step3Data.DA }}</div>
+                <div class="value">{{ step3Data.DA || '计算中...' }}</div>
               </div>
             </div>
           </el-card>
         </transition>
       </div>
+      <div v-if="fetchError" class="mt-20" style="color: #F56C6C; font-size: 13px; text-align: center;">{{ fetchError }}</div>
     </div>
   </div>
 </template>
@@ -124,10 +154,8 @@ import { BigInteger } from "jsbn"
 import { ec as EC } from 'elliptic'
 import BN from 'bn.js'
 
-// Import utilities as inline since utils file is not accessible strictly if context mismatch, but here we can define it inline.
 const sm2EC = new EC('p256')
 
-// Local utilities
 function leftPad(str, len) {
   let lenGap = len - str.length;
   if (lenGap <= 0) { return str; }
@@ -143,21 +171,10 @@ const hasStarted = ref(false)
 const activeStep = ref(-1)
 const isProcessing = ref(false)
 
-const step1Data = reactive({
-  privateShare: '',
-  uA: '',
-  payload: null
-})
-
-const step2Data = reactive({
-  responseObj: null
-})
-
-const step3Data = reactive({
-  PrivateKey: '',
-  PublicKey: '',
-  DA: ''
-})
+const step1Data = reactive({ privateShare: '', uA: '', payload: null })
+const step2Data = reactive({ responseObj: null, snapshotValue: null })
+const fetchError = ref('')
+const step3Data = reactive({ PrivateKey: '', PublicKey: '', DA: '', mathSteps: [] })
 
 // 默认使用持久化的演示用户 test (user_id=3, 密码 admin123)
 let sessionUserId = 3;
@@ -171,26 +188,29 @@ onMounted(async () => {
       sessionUserName = res.data.userName;
     }
   } catch (e) {
-    // 保持默认 test 用户
     console.log('使用内置演示用户 test 进行计算过程展示')
   }
 })
 
-async function startSimulation() {
+// 初始化并展示骨架框架
+function initSimulation() {
   hasStarted.value = true
   activeStep.value = 0
-  isProcessing.value = true
+  isProcessing.value = false
+  fetchError.value = ''
   
-  // Clear previous data
   step1Data.privateShare = ''
   step1Data.uA = ''
   step1Data.payload = null
   step2Data.responseObj = null
+  step2Data.snapshotValue = null
   step3Data.PrivateKey = ''
   step3Data.PublicKey = ''
   step3Data.DA = ''
+  step3Data.mathSteps = []
+}
 
-  // Step 1: Generate parts
+function runStep1() {
   const { publicKey, privateKey } = SM2.generateKeyPair()
   step1Data.privateShare = privateKey
   step1Data.uA = publicKey
@@ -208,16 +228,16 @@ async function startSimulation() {
     uA: publicKey
   }
   step1Data.payload = payload
-
-  await sleep(1500)
   activeStep.value = 1
+}
 
-  // Step 2: KGC Send
+async function runStep2() {
+  isProcessing.value = true
+  fetchError.value = ''
   try {
-    const response = await addKeymanage(payload)
-    const snapshot = response.data || payload
+    const response = await addKeymanage(step1Data.payload)
+    const snapshot = response.data || step1Data.payload
     
-    // Convert string to Object if possible for better visualization
     let visualValue = snapshot.keyValue;
     try {
       visualValue = JSON.parse(snapshot.keyValue)
@@ -228,40 +248,48 @@ async function startSimulation() {
         encrytName: snapshot.encrytName,
         returnedMaterial: visualValue
     }
-    
-    await sleep(2000)
+    step2Data.snapshotValue = snapshot
     activeStep.value = 2
-
-    // Step 3: Compute final
-    await performGenDA(snapshot, privateKey, publicKey)
-    
-    await sleep(1000)
-    activeStep.value = 3 // Finish
-
   } catch (err) {
     console.error(err)
+    fetchError.value = "服务端请求遭遇异常: " + (err.message || err.msg || err);
+  } finally {
+    isProcessing.value = false
   }
-  isProcessing.value = false
 }
 
-// 模拟异步耗时
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms))
+async function runStep3() {
+  isProcessing.value = true
+  try {
+    await performGenDA(step2Data.snapshotValue, step1Data.privateShare, step1Data.uA)
+    activeStep.value = 4 // Completed
+  } catch(e) {
+    console.error(e)
+    fetchError.value = "本地计算遭遇异常"
+  } finally {
+    isProcessing.value = false
+  }
 }
 
 const N_SM2 = new BigInteger('FFFFFFFEFFFFFFFFFFFFFFFFFFFFFFFF7203DF6B21C6052B53BBF40939D54123', 16)
 
 async function performGenDA(item, userPrivCode, userPubCode) {
   const { xIndex, yIndex, PPub } = await genUAContext(item.encrytType, item.encrytName)
+  step3Data.mathSteps = []
   
   if (item.encrytName === "SM2") {
     try {
       const keyValueObj = JSON.parse(item.keyValue)
       const partialKey = keyValueObj.partialKey
       const finalPublicKey = keyValueObj.finalPublicKey
+      step3Data.mathSteps.push(`提取 KGC 返回的服务端计算分片 T_A: ${partialKey}`)
+      step3Data.mathSteps.push(`提取 本地生成的随机熵分片 u_A (num2): ${userPrivCode}`)
+
       const num1 = new BigInteger(partialKey, 16)
       const num2 = new BigInteger(userPrivCode, 16)
+      step3Data.mathSteps.push(`模加运算: dA = (T_A + u_A) mod N_SM2`)
       const dA = (num1.add(num2)).mod(N_SM2)
+      step3Data.mathSteps.push(`得出 dA(hex) 结果`)
       
       if (dA.compareTo(new BigInteger('1')) > 0 && dA.compareTo(N_SM2.subtract(new BigInteger('1'))) < 0) {
         step3Data.PrivateKey = leftPad(dA.toString(16), 64)
@@ -276,14 +304,22 @@ async function performGenDA(item, userPrivCode, userPubCode) {
     try {
       const keyValueObj = JSON.parse(item.keyValue)
       const share = keyValueObj.SSCLKey
+      step3Data.mathSteps.push(`提取 KGC 返回的多项式门限响应分片: ${share}`)
+
       const xHex = share.slice(2, 66)
       const yHex = share.slice(66, 130)
       const m = new BigInteger(xHex, 16)
+      step3Data.mathSteps.push(`解析分片维度: X_coord: ${xHex}, Y_coord: ${yHex}`)
       
       const secret = getSSCLSecret(xIndex, yIndex, xHex, yHex, N_SM2)
+      step3Data.mathSteps.push(`门限重建: 通过拉格朗日插值获得中心侧门限隐秘值 S_KGC`)
+
       const dA = secret.multiply(m).mod(N_SM2)
+      step3Data.mathSteps.push(`代入转换: dA = S_KGC * M_x mod N_SM2`)
+
       const num1 = new BigInteger(userPrivCode, 16)
       const sk = num1.add(dA).mod(N_SM2)
+      step3Data.mathSteps.push(`最终公钥映射: S_A = (num1 + dA) mod N_SM2`)
       
       step3Data.PrivateKey = leftPad(sk.toString(16), 64)
       
@@ -300,11 +336,12 @@ async function performGenDA(item, userPrivCode, userPubCode) {
 async function genUAContext(encrytType, encrytName) {
   try {
     const response = await getComParam({ encrytType, encrytName })
-    const PPub = response.PPub
+    let obj = response.data || response;
+    const PPub = obj.PPub
     let xIndex = null, yIndex = null
     try {
-      xIndex = response.xIndex ? JSON.parse(response.xIndex) : null
-      yIndex = response.yIndex ? JSON.parse(response.yIndex) : null
+      xIndex = obj.xIndex ? JSON.parse(obj.xIndex) : null
+      yIndex = obj.yIndex ? JSON.parse(obj.yIndex) : null
     } catch(e) {}
     return { xIndex, yIndex, PPub }
   } catch(e) {
@@ -360,16 +397,13 @@ function sm2PointMultiply(hexPoint, hexScalar) {
   min-height: calc(100vh - 84px);
   color: #e5eaf3;
 }
-
 .page-title { margin-bottom: 25px; }
 .page-title h1 { font-size: 26px; color: #fff; margin: 0 0 8px 0; font-weight: 600; }
 .page-title .subtitle { color: rgba(255, 255, 255, 0.5); margin: 0; font-size: 14px; }
-
 .mt-20 { margin-top: 20px; }
 .mt-30 { margin-top: 30px; }
 .mt-10 { margin-top: 10px; }
 .mt-15 { margin-top: 15px; }
-
 .glass-card {
   background: rgba(255, 255, 255, 0.02);
   backdrop-filter: blur(24px);
@@ -377,96 +411,44 @@ function sm2PointMultiply(hexPoint, hexScalar) {
   border-radius: 12px;
   transition: all 0.3s ease;
 }
-
 .glass-card:hover {
   border-color: rgba(255, 255, 255, 0.15);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
 }
-
-.control-panel .form-inline {
-  display: flex; gap: 20px; align-items: center; 
-}
+.control-panel .form-inline { display: flex; gap: 20px; align-items: center; }
 :deep(.el-form-item) { margin-bottom: 0; }
-
-.btn-glow {
-  box-shadow: 0 0 10px rgba(64, 158, 255, 0.4);
-}
-
-.custom-steps {
-  max-width: 900px;
-  margin: 0 auto;
-}
-
+.btn-glow { box-shadow: 0 0 10px rgba(64, 158, 255, 0.4); }
+.custom-steps { max-width: 900px; margin: 0 auto; }
 :deep(.el-step__title) { font-weight: bold; color: rgba(255,255,255,0.8); }
 :deep(.el-step__description) { color: rgba(255,255,255,0.4); }
 :deep(.el-step__head.is-process) { color: #409EFF; border-color: #409EFF; }
 :deep(.el-step__title.is-process) { color: #fff; text-shadow: 0 0 8px rgba(64,158,255,0.5); }
 :deep(.el-step__title.is-success) { color: #67C23A; }
-
 .fade-slide-enter-active, .fade-slide-leave-active { transition: all 0.6s ease; }
 .fade-slide-enter-from { opacity: 0; transform: translateY(20px); }
-
-.stage-card {
-  margin-bottom: 20px;
-}
-
-.card-header {
-  display: flex; justify-content: space-between; align-items: center;
-}
-.card-header h3 {
-  margin: 0; font-size: 16px; color: #fff;
-  display: flex; align-items: center; gap: 8px;
-}
-
-.payload-box {
-  padding: 10px 5px;
-}
-
-.label {
-  font-size: 13px; color: #a3aab5; margin-bottom: 5px;
-}
-
+.stage-card { margin-bottom: 20px; }
+.card-header { display: flex; justify-content: space-between; align-items: center; }
+.card-header h3 { margin: 0; font-size: 16px; color: #fff; display: flex; align-items: center; gap: 8px; }
+.payload-box { padding: 10px 5px; }
+.label { font-size: 13px; color: #a3aab5; margin-bottom: 5px; }
 .value {
   font-family: 'Consolas', 'Monaco', monospace;
-  font-size: 13px;
-  background: rgba(0,0,0,0.3);
-  padding: 10px;
-  border-radius: 6px;
-  border: 1px solid rgba(255,255,255,0.1);
-  word-break: break-all;
-  color: #409EFF;
+  font-size: 13px; background: rgba(0,0,0,0.3); padding: 10px; border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.1); word-break: break-all; color: #409EFF;
 }
 .value.auth { color: #F56C6C; }
-
 .code-block pre {
-  font-family: 'Consolas', monospace;
-  font-size: 12px;
-  background: #1e1e1e;
-  padding: 10px; border-radius: 6px;
-  overflow-x: auto;
-  color: #d4d4d4; margin: 0;
-  border: 1px solid #333;
+  font-family: 'Consolas', monospace; font-size: 12px; background: #1e1e1e;
+  padding: 10px; border-radius: 6px; overflow-x: auto; color: #d4d4d4; margin: 0; border: 1px solid #333;
 }
-
-.response-block pre {
-  color: #E6A23C;
-  border-color: rgba(230, 162, 60, 0.3);
-}
-
+.response-block pre { color: #E6A23C; border-color: rgba(230, 162, 60, 0.3); }
 .flex-box { display: flex; gap: 20px; flex-wrap: wrap; }
 .item.finalize-block {
-  flex: 1; min-width: 300px;
-  background: rgba(0,0,0,0.3);
-  padding: 15px; border-radius: 8px;
-  border-top: 3px solid #67C23A;
+  flex: 1; min-width: 300px; background: rgba(0,0,0,0.3); padding: 15px; border-radius: 8px; border-top: 3px solid #67C23A;
 }
 .final-priv { border-color: #F56C6C !important; }
-
 .finalize-block .title { font-weight: bold; font-size: 14px; margin-bottom: 10px; color: #fff; }
-.finalize-block .content { 
-  font-family: monospace; font-size: 13px; color: #67C23A; line-height: 1.5; 
-}
+.finalize-block .content { font-family: monospace; font-size: 13px; color: #67C23A; line-height: 1.5; }
 .final-priv .content { color: #F56C6C; }
-
 .break-all { word-break: break-all; }
 </style>

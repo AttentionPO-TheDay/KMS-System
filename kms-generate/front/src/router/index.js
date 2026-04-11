@@ -52,21 +52,28 @@ const constantRoutes = [
     ]
   },
   {
-    path: '/algorithm',
+    path: '',
     component: Layout,
     hidden: false,
     children: [
       {
-        path: 'quick-view',
+        path: '/algorithm-quick',
         component: () => import('@/views/algorithm/quickView.vue'),
         name: 'AlgorithmQuickView',
         meta: { title: '生成算法速览', icon: 'guide' }
-      },
+      }
+    ]
+  },
+  {
+    path: '',
+    component: Layout,
+    hidden: false,
+    children: [
       {
-        path: 'process-view',
+        path: '/algorithm-process',
         component: () => import('@/views/algorithm/processView.vue'),
         name: 'AlgorithmProcessView',
-        meta: { title: '计算过程展示', icon: 'monitor' }
+        meta: { title: '生成计算逻辑揭秘', icon: 'data-line' }
       }
     ]
   },

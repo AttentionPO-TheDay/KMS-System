@@ -27,7 +27,11 @@
       "Bash(docker run:*)",
       "Bash(cmd.exe:*)",
       "Bash(MSYS_NO_PATHCONV=1 docker run:*)",
-      "Bash(npm --version)"
+      "Bash(npm --version)",
+      "Bash(node:*)",
+      "Bash(claude mcp:*)",
+      "Bash(export CLAUDE_CODE_GIT_BASH_PATH=\"C:\\\\\\\\Windows\\\\\\\\System32\\\\\\\\bash.exe\")",
+      "Bash(bash:*)"
     ]
   }
 }

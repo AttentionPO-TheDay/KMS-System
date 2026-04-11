@@ -1,0 +1,290 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1775840335439,
+  "projectRoot": "E:\\java_project\\kms-code-copy",
+  "techStack": {
+    "languages": [],
+    "frameworks": [],
+    "packageManager": null,
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": null,
+    "lintCommand": null,
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [],
+    "gitBranches": null
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "doc": {
+      "path": "doc",
+      "purpose": null,
+      "fileCount": 12,
+      "lastAccessed": 1775840335422,
+      "keyFiles": [
+        "docker-runbook.md",
+        "frontend-role-boundary.md",
+        "java-ruoyi-repair-guide.md",
+        "kms-agent-task-breakdown.md",
+        "kms-split-implementation-plan.md"
+      ]
+    },
+    "kms-acceptance": {
+      "path": "kms-acceptance",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1775840335422,
+      "keyFiles": [
+        "README.md"
+      ]
+    },
+    "kms-distribute": {
+      "path": "kms-distribute",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1775840335422,
+      "keyFiles": [
+        "README.md"
+      ]
+    },
+    "kms-generate": {
+      "path": "kms-generate",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1775840335422,
+      "keyFiles": [
+        "README.md"
+      ]
+    },
+    "kms-ops": {
+      "path": "kms-ops",
+      "purpose": null,
+      "fileCount": 10,
+      "lastAccessed": 1775840335423,
+      "keyFiles": [
+        "build-local.ps1",
+        "check.ps1",
+        "deploy-keyevidence.sh",
+        "docker-compose-before.yml",
+        "docker-compose.yml"
+      ]
+    },
+    "kms-updatedel": {
+      "path": "kms-updatedel",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1775840335423,
+      "keyFiles": [
+        "README.md"
+      ]
+    },
+    "kms-user": {
+      "path": "kms-user",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1775840335423,
+      "keyFiles": [
+        "README.md"
+      ]
+    },
+    "legacy-kms": {
+      "path": "legacy-kms",
+      "purpose": null,
+      "fileCount": 16,
+      "lastAccessed": 1775840335424,
+      "keyFiles": [
+        "captcha-test.html",
+        "check_users.sql",
+        "clickjacking_test.html",
+        "GeneratePassword.java",
+        "legacy-README.md"
+      ]
+    },
+    "legacy-kms-go": {
+      "path": "legacy-kms-go",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1775840335424,
+      "keyFiles": [
+        "go.mod",
+        "go.sum",
+        "key-service-v1"
+      ]
+    },
+    "security": {
+      "path": "security",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1775840335424,
+      "keyFiles": [
+        "security_test.ps1"
+      ]
+    },
+    "show": {
+      "path": "show",
+      "purpose": null,
+      "fileCount": 8,
+      "lastAccessed": 1775840335424,
+      "keyFiles": [
+        "kms-architecture-diagram-clean.html",
+        "kms-current-architecture-slide.html",
+        "kms-technical-architecture-diagram copy.html",
+        "kms-technical-architecture-diagram.html",
+        "kms-technical-architecture-overview.html"
+      ]
+    },
+    "tools": {
+      "path": "tools",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1775840335424,
+      "keyFiles": [
+        "BcryptHash.class"
+      ]
+    },
+    "kms-generate\\docs": {
+      "path": "kms-generate\\docs",
+      "purpose": "Documentation",
+      "fileCount": 1,
+      "lastAccessed": 1775840335425,
+      "keyFiles": [
+        "migration-map.md"
+      ]
+    },
+    "kms-generate\\tests": {
+      "path": "kms-generate\\tests",
+      "purpose": "Test files",
+      "fileCount": 0,
+      "lastAccessed": 1775840335425,
+      "keyFiles": []
+    },
+    "kms-updatedel\\docs": {
+      "path": "kms-updatedel\\docs",
+      "purpose": "Documentation",
+      "fileCount": 1,
+      "lastAccessed": 1775840335426,
+      "keyFiles": [
+        "migration-map.md"
+      ]
+    },
+    "kms-updatedel\\tests": {
+      "path": "kms-updatedel\\tests",
+      "purpose": "Test files",
+      "fileCount": 0,
+      "lastAccessed": 1775840335426,
+      "keyFiles": []
+    },
+    "kms-user\\docs": {
+      "path": "kms-user\\docs",
+      "purpose": "Documentation",
+      "fileCount": 1,
+      "lastAccessed": 1775840335426,
+      "keyFiles": [
+        "integration-plan.md"
+      ]
+    },
+    "legacy-kms\\bin": {
+      "path": "legacy-kms\\bin",
+      "purpose": "Executable scripts",
+      "fileCount": 3,
+      "lastAccessed": 1775840335426,
+      "keyFiles": [
+        "clean.bat",
+        "package.bat",
+        "run.bat"
+      ]
+    },
+    "legacy-kms-go\\config": {
+      "path": "legacy-kms-go\\config",
+      "purpose": "Configuration files",
+      "fileCount": 0,
+      "lastAccessed": 1775840335427,
+      "keyFiles": []
+    },
+    "legacy-kms-go\\controllers": {
+      "path": "legacy-kms-go\\controllers",
+      "purpose": "Controllers",
+      "fileCount": 1,
+      "lastAccessed": 1775840335427,
+      "keyFiles": [
+        "request_controller.go"
+      ]
+    },
+    "legacy-kms-go\\models": {
+      "path": "legacy-kms-go\\models",
+      "purpose": "Data models",
+      "fileCount": 1,
+      "lastAccessed": 1775840335427,
+      "keyFiles": [
+        "keymanage.go"
+      ]
+    },
+    "legacy-kms-go\\utils": {
+      "path": "legacy-kms-go\\utils",
+      "purpose": "Utility functions",
+      "fileCount": 1,
+      "lastAccessed": 1775840335427,
+      "keyFiles": [
+        "kafka_producer.go"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "C:\\Users\\luo\\.claude\\settings.json",
+      "accessCount": 2,
+      "lastAccessed": 1775840587346,
+      "type": "file"
+    },
+    {
+      "path": "C:\\Users\\luo\\.claude\\hud\\omc-hud.mjs",
+      "accessCount": 2,
+      "lastAccessed": 1775840614572,
+      "type": "file"
+    },
+    {
+      "path": "C:\\Users\\luo\\.claude\\plugins\\marketplaces\\omc\\skills\\omc-setup\\phases\\01-install-claude-md.md",
+      "accessCount": 1,
+      "lastAccessed": 1775840420869,
+      "type": "file"
+    },
+    {
+      "path": "C:\\Users\\luo\\.claude\\plugins\\marketplaces\\omc\\skills\\omc-setup\\phases\\02-configure.md",
+      "accessCount": 1,
+      "lastAccessed": 1775840504318,
+      "type": "file"
+    },
+    {
+      "path": "C:\\Users\\luo\\.claude\\plugins\\marketplaces\\omc\\skills\\omc-setup\\phases\\03-integrations.md",
+      "accessCount": 1,
+      "lastAccessed": 1775840855270,
+      "type": "file"
+    },
+    {
+      "path": "C:\\Users\\luo\\.claude.json",
+      "accessCount": 1,
+      "lastAccessed": 1775841898054,
+      "type": "file"
+    },
+    {
+      "path": "C:\\Users\\luo\\.claude\\plugins\\marketplaces\\omc\\skills\\omc-setup\\phases\\04-welcome.md",
+      "accessCount": 1,
+      "lastAccessed": 1775841922769,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}
