@@ -5,7 +5,7 @@
 ## 当前定位
 
 1. 作为生成系统管理员后台入口
-2. 保留生成记录、公共参数、权限审批、系统管理等能力
+2. 保留算法图解与演示、生成记录、公共参数、权限审批、系统管理等能力
 3. 普通用户主入口已经迁移到 `kms-user`
 
 ## 当前主要路由
@@ -13,13 +13,18 @@
 1. `/login`
 2. `/register`
 3. `/index`
-4. `/generate/keygenerate/index`
-5. `/generate/history/index`
-6. `/generate/commonparam/index`
-7. `/permission/request/index`
-8. `/userKeys`
-9. `/publickeys`
-10. `/user/profile`
+4. `/algorithm-demo`
+5. `/generate/keygenerate/index`
+6. `/generate/history/index`
+7. `/generate/commonparam/index`
+8. `/query/key-list`
+9. `/query/public-keys`
+10. `/query/blockchain`
+11. `/query/key-users`
+12. `/permission/request/index`
+13. `/userKeys`
+14. `/publickeys`
+15. `/user/profile`
 
 ## 开发配置
 
@@ -30,8 +35,9 @@
 ## 说明
 
 1. 页面代码按 `/generate-api` 作为业务 API 前缀
-2. 本地直接启动前端时会直接转发到生成系统 Java 后端 `9081`
-3. 生产构建基路径为 `/generate/`
+2. 管理员端算法说明已经合并为统一的 `/algorithm-demo` 页面
+3. 本地直接启动前端时会直接转发到生成系统 Java 后端 `9081`
+4. 生产构建基路径为 `/generate/`
 
 ## 启动和构建
 

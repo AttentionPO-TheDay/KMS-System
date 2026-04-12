@@ -101,10 +101,11 @@ Docker 网关路径与本地 Vite 开发代理不是一回事。
 当前本地开发应保持：
 
 1. `kms-generate/front`：`/generate-api` -> `http://localhost:9081`
-2. `kms-updatedel/front`：`/lifecycle-api` -> `http://localhost:9082`
-3. `kms-user/front`：`/generate-api` -> `http://localhost:9081`
-4. `kms-user/front`：`/lifecycle-api` -> `http://localhost:9082`
-5. `kms-user/front`：`/distribute-api` -> `http://localhost:8083`
+2. `kms-updatedel/front`：`/generate-api` -> `http://localhost:9081`
+3. `kms-updatedel/front`：`/lifecycle-api` -> `http://localhost:9082`
+4. `kms-user/front`：`/generate-api` -> `http://localhost:9081`
+5. `kms-user/front`：`/lifecycle-api` -> `http://localhost:9082`
+6. `kms-user/front`：`/distribute-api` -> `http://localhost:8083`
 
 这样前端本地联调与 Docker 网关中的 API 映射保持一致，不会再出现请求误转发到 `localhost:80` 导致的 `502` 和验证码加载失败。
 

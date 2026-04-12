@@ -13,25 +13,33 @@
 
 ## 2. 当前链路总览
 
-当前链路统一模式如下：
+当前仓库内主要存在两类链路：
 
 ```text
+A. 生成链路 / 专用接入流量
 Client
   -> Go 接入层
   -> Kafka topic
   -> Java 业务消费者
   -> MySQL / 审计 / 上链任务
   -> FISCO BCOS
+
+B. 当前前端主流程中的生命周期管理
+Client
+  -> Java 业务接口 (/lifecycle/keymanage/*)
+  -> MySQL / 操作记录 / 上链任务
+  -> FISCO BCOS
 ```
 
 其中：
 
 1. `kms-generate/go-backend` 负责生成请求接入
-2. `kms-updatedel/go-backend` 负责更新、回收请求接入
+2. `kms-updatedel/go-backend` 保留更新、回收接入与健康/指标接口
 3. `kms-generate/java-backend` 消费 `key_generate_log`
-4. `kms-updatedel/java-backend` 的 `LifecycleKafkaConsumer` 统一消费 `key_update_log`、`key_revoke_log`
-5. 生成与生命周期系统都会向 `key_chain_task` 投递后续上链任务
-6. `kms-distribute/java-backend` 会额外消费生成、更新、回收三类 topic，用于落分发记录
+4. `kms-updatedel/java-backend` 的 `LifecycleKafkaConsumer` 仍可消费 `key_update_log`、`key_revoke_log`
+5. 当前 `kms-user/front` 与 `kms-updatedel/front` 的更新、回收、自动更新和安全分析主要直接调用 `kms-updatedel/java-backend` 的 `/lifecycle/keymanage/*` 接口
+6. 生成与生命周期系统都会向 `key_chain_task` 投递后续上链任务
+7. `kms-distribute/java-backend` 会额外消费生成、更新、回收三类 topic，用于落分发记录
 
 ## 3. Kafka Topic 划分
 
@@ -141,16 +149,19 @@ Java 消费方：`kms-updatedel/java-backend` 中的 `LifecycleKafkaConsumer`
 
 1. `GET /lifecycle/keymanage/list`
 2. `GET /lifecycle/keymanage/{keyId}`
-3. `PUT /lifecycle/keymanage`
-4. `PUT /lifecycle/keymanage/auto-update`
-5. `DELETE /lifecycle/keymanage/{keyId}`
-6. `GET /permission/request/list`
-7. `GET /permission/request/{requestId}`
-8. `POST /permission/request/submit`
-9. `PUT /permission/request/approve/{requestId}`
-10. `PUT /permission/request/reject/{requestId}`
-11. `PUT /permission/request/rollback/{requestId}`
-12. `DELETE /permission/request/{requestId}`
+3. `GET /lifecycle/keymanage/analysis/{keyId}`
+4. `PUT /lifecycle/keymanage`
+5. `PUT /lifecycle/keymanage/auto-update`
+6. `DELETE /lifecycle/keymanage/{keyId}`
+7. `GET /permission/request/list`
+8. `GET /permission/request/{requestId}`
+9. `POST /permission/request/submit`
+10. `PUT /permission/request/approve/{requestId}`
+11. `PUT /permission/request/reject/{requestId}`
+12. `PUT /permission/request/rollback/{requestId}`
+13. `DELETE /permission/request/{requestId}`
+
+当前 `kms-user/front` 与 `kms-updatedel/front` 的生命周期相关页面主要通过这些 Java 接口直接完成更新、回收、自动更新和安全分析。
 
 ## 8. 分发系统的消息消费补充
 
@@ -171,7 +182,7 @@ Java 消费方：`kms-updatedel/java-backend` 中的 `LifecycleKafkaConsumer`
 2. 生命周期链路当前主要依赖 `key_id` 驱动更新与回收处理。
 3. `kms-updatedel` 当前不是两个独立消费者类分别消费更新和回收，而是由 `LifecycleKafkaConsumer` 统一处理。
 4. `kms-distribute` 不是单纯人工录入系统，还包含 Kafka 事件消费逻辑。
-5. 回收率统计当前由 `kms-updatedel/go-backend` 的 `/lifecycle/metrics` 提供受理层指标，不等于最终业务完成率。
+5. 回收率验收当前以生命周期 Java 最终 `status=3` 核验为准，`/lifecycle/metrics` 更适合作为接入层受理指标，而不是最终业务完成率。
 
 ## 10. 联调建议
 

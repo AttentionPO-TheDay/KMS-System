@@ -245,8 +245,8 @@
   "hotPaths": [
     {
       "path": "",
-      "accessCount": 171,
-      "lastAccessed": 1776024407971,
+      "accessCount": 187,
+      "lastAccessed": 1776025092944,
       "type": "directory"
     },
     {
@@ -262,21 +262,21 @@
       "type": "file"
     },
     {
+      "path": "kms-updatedel\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\updatedel\\service\\UpdatedelChainService.java",
+      "accessCount": 21,
+      "lastAccessed": 1776024981522,
+      "type": "file"
+    },
+    {
       "path": "kms-generate\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\generate\\controller\\GenerateKeymanageCompatController.java",
       "accessCount": 20,
       "lastAccessed": 1776009684497,
       "type": "file"
     },
     {
-      "path": "kms-updatedel\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\updatedel\\service\\UpdatedelChainService.java",
-      "accessCount": 20,
-      "lastAccessed": 1776022558552,
-      "type": "file"
-    },
-    {
       "path": "kms-updatedel\\java-backend\\ruoyi-admin\\src\\main\\resources\\application.yml",
-      "accessCount": 17,
-      "lastAccessed": 1776022575891,
+      "accessCount": 18,
+      "lastAccessed": 1776024943347,
       "type": "file"
     },
     {
@@ -298,15 +298,21 @@
       "type": "file"
     },
     {
+      "path": "kms-generate\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\generate\\controller\\ChainController.java",
+      "accessCount": 12,
+      "lastAccessed": 1776024981543,
+      "type": "file"
+    },
+    {
       "path": "kms-updatedel\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\updatedel\\consumer\\UpdatedelChainConsumer.java",
       "accessCount": 11,
       "lastAccessed": 1776022594979,
       "type": "file"
     },
     {
-      "path": "kms-generate\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\generate\\controller\\ChainController.java",
+      "path": "doc\\message-protocol.md",
       "accessCount": 11,
-      "lastAccessed": 1776022679007,
+      "lastAccessed": 1776024644095,
       "type": "file"
     },
     {
@@ -316,21 +322,21 @@
       "type": "file"
     },
     {
-      "path": "kms-generate\\front\\src\\views\\userKeys\\index.vue",
-      "accessCount": 9,
-      "lastAccessed": 1775997436715,
+      "path": "kms-generate\\java-backend\\ruoyi-admin\\src\\main\\resources\\application.yml",
+      "accessCount": 10,
+      "lastAccessed": 1776024943536,
       "type": "file"
     },
     {
       "path": "kms-generate\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\generate\\service\\impl\\GenerateChainServiceImpl.java",
-      "accessCount": 9,
-      "lastAccessed": 1776022558439,
+      "accessCount": 10,
+      "lastAccessed": 1776024981582,
       "type": "file"
     },
     {
-      "path": "kms-generate\\java-backend\\ruoyi-admin\\src\\main\\resources\\application.yml",
+      "path": "kms-generate\\front\\src\\views\\userKeys\\index.vue",
       "accessCount": 9,
-      "lastAccessed": 1776022575870,
+      "lastAccessed": 1775997436715,
       "type": "file"
     },
     {
@@ -343,12 +349,6 @@
       "path": "kms-generate\\README.md",
       "accessCount": 8,
       "lastAccessed": 1776023052933,
-      "type": "file"
-    },
-    {
-      "path": "doc\\message-protocol.md",
-      "accessCount": 8,
-      "lastAccessed": 1776023919844,
       "type": "file"
     },
     {
@@ -368,6 +368,18 @@
       "accessCount": 6,
       "lastAccessed": 1776022418820,
       "type": "directory"
+    },
+    {
+      "path": "doc\\docker-runbook.md",
+      "accessCount": 6,
+      "lastAccessed": 1776024644381,
+      "type": "file"
+    },
+    {
+      "path": "kms-ops\\README.md",
+      "accessCount": 6,
+      "lastAccessed": 1776024644671,
+      "type": "file"
     },
     {
       "path": "C:\\Users\\luo\\.claude\\settings.json",
@@ -391,18 +403,6 @@
       "path": "kms-ops\\nginx\\nginx.conf",
       "accessCount": 5,
       "lastAccessed": 1776020028998,
-      "type": "file"
-    },
-    {
-      "path": "kms-ops\\README.md",
-      "accessCount": 5,
-      "lastAccessed": 1776023919770,
-      "type": "file"
-    },
-    {
-      "path": "doc\\docker-runbook.md",
-      "accessCount": 5,
-      "lastAccessed": 1776023919812,
       "type": "file"
     },
     {

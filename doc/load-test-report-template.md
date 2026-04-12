@@ -95,30 +95,30 @@
 
 | 环节 | 状态 | 说明 |
 |------|------|------|
-| Client -> Java-Backend | PASS / FAIL |  |
-| Java-Backend -> Kafka | PASS / FAIL |  |
-| Kafka -> Go-Backend | PASS / FAIL |  |
-| Go-Backend -> FISCO | PASS / FAIL |  |
+| Client -> Go-Backend | PASS / FAIL |  |
+| Go-Backend -> Kafka | PASS / FAIL |  |
+| Kafka -> Java-Backend | PASS / FAIL |  |
+| Java-Backend -> FISCO | PASS / FAIL |  |
 | 全链路耗时 |  | ms |
 
 ### 4.2 更新链路
 
 | 环节 | 状态 | 说明 |
 |------|------|------|
-| Client -> Java-Backend | PASS / FAIL |  |
-| Java-Backend -> Kafka | PASS / FAIL |  |
-| Kafka -> Go-Backend | PASS / FAIL |  |
-| Go-Backend -> FISCO | PASS / FAIL |  |
+| Client -> Go-Backend | PASS / FAIL |  |
+| Go-Backend -> Kafka | PASS / FAIL |  |
+| Kafka -> Java-Backend | PASS / FAIL |  |
+| Java-Backend -> FISCO | PASS / FAIL |  |
 | 全链路耗时 |  | ms |
 
 ### 4.3 回收链路
 
 | 环节 | 状态 | 说明 |
 |------|------|------|
-| Client -> Java-Backend | PASS / FAIL |  |
-| Java-Backend -> Kafka | PASS / FAIL |  |
-| Kafka -> Go-Backend | PASS / FAIL |  |
-| Go-Backend -> FISCO | PASS / FAIL |  |
+| Client -> Go-Backend | PASS / FAIL |  |
+| Go-Backend -> Kafka | PASS / FAIL |  |
+| Kafka -> Java-Backend | PASS / FAIL |  |
+| Java-Backend -> FISCO | PASS / FAIL |  |
 | 全链路耗时 |  | ms |
 
 ---

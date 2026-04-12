@@ -14,6 +14,8 @@
 | KAFKA_ADDR | kafka:9092 | Kafka 地址 |
 | KAFKA_TOPIC | key_generate_log | Kafka Topic |
 | SERVER_PORT | 8081 | 服务端口 |
+| JAVA_BACKEND_BASE | http://localhost:9081 | Java 后端基础地址，`Register` 接口会转发到该服务 |
+| INTERNAL_TOKEN | kms-generate-internal-secret-2026 | Java 后端调用 Go 接口时使用的内部鉴权 token |
 
 ## 快速启动
 
@@ -32,10 +34,13 @@ go run cmd/main.go
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | /generate/request/ENROLL_KEY | 密钥生成 |
-| POST | /generate/request/REENROLL_KEY | 重新生成 |
-| POST | /generate/request/comparam | 获取公共参数 |
+| POST | /generate/request/Register | 用户注册，转发到 Java 后端 |
+| POST | /generate/request/ENROLL_KEY | 密钥生成（需 `X-Internal-Token`） |
+| POST | /generate/request/REENROLL_KEY | 重新生成（需 `X-Internal-Token`） |
+| POST | /generate/request/comparam | 获取公共参数（需 `X-Internal-Token`） |
 | GET | /generate/ping | 健康检查 |
+
+说明：`Register` 用于用户注册流程，不走内部鉴权；其余 `/generate/request/*` 接口仅允许已完成用户鉴权的 Java 后端转发调用，请在 Header 中携带 `X-Internal-Token`。
 
 ## ENROLL_KEY 请求示例
 

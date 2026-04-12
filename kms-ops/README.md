@@ -57,8 +57,9 @@
 为避免本地 Vite 开发时请求落到错误的 `localhost:80`，当前前端开发代理统一为：
 
 1. `kms-generate/front`：`/generate-api` -> `http://localhost:9081`
-2. `kms-updatedel/front`：`/lifecycle-api` -> `http://localhost:9082`
-3. `kms-user/front`：`/generate-api` -> `9081`，`/lifecycle-api` -> `9082`，`/distribute-api` -> `8083`
+2. `kms-updatedel/front`：`/generate-api` -> `http://localhost:9081`
+3. `kms-updatedel/front`：`/lifecycle-api` -> `http://localhost:9082`
+4. `kms-user/front`：`/generate-api` -> `9081`，`/lifecycle-api` -> `9082`，`/distribute-api` -> `8083`
 
 Docker 网关发布环境仍由 `kms-ops/nginx/nginx.conf` 统一处理，不依赖这些本地开发代理。
 

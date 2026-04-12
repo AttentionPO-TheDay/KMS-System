@@ -29,6 +29,8 @@ KMS 验收与压测系统。
 3. `GET /api/runs`
 4. `GET /api/runs/{id}`
 5. `POST /api/runs`
+6. `GET /api/security/runs`
+7. `POST /api/security/runs`
 
 ## 当前口径说明
 
