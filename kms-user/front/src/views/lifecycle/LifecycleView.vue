@@ -116,8 +116,33 @@
         </div>
 
         <div v-show="activeTab === 'autoupdate'" class="tab-pane relative-pane">
-          <article class="panel glass-panel">
+          <el-alert
+            v-if="!canManageAutoUpdate"
+            title="当前账号没有生命周期域自动更新配置的权限，请先到权限管理页申请临时权限。"
+            type="warning"
+            :closable="false"
+            show-icon
+            class="mb12"
+          >
+            <template #default>
+              <el-button type="primary" link @click="router.push('/user_actions/permissions')">前往申请权限</el-button>
+            </template>
+          </el-alert>
 
+          <el-alert
+            v-if="showAutoUpdateRollback"
+            title="当前自动更新配置权限为临时权限，完成配置后建议立即回退。"
+            type="info"
+            :closable="false"
+            show-icon
+            class="mb12"
+          >
+            <template #default>
+              <el-button type="primary" link @click="handleRollback">回退权限</el-button>
+            </template>
+          </el-alert>
+
+          <article class="panel glass-panel">
           <el-form :model="autoUpdateQuery" inline label-width="88px" class="query-form">
             <el-form-item label="密钥名称">
               <el-input v-model="autoUpdateQuery.keyName" placeholder="请输入密钥名称" clearable @keyup.enter="searchAutoUpdate" />
@@ -129,9 +154,8 @@
               </el-select>
             </el-form-item>
             <el-form-item>
-              <el-button type="primary" @click="searchAutoUpdate">搜索</el-button>
-              <el-button @click="resetAutoUpdate">重置</el-button>
-              <el-button type="warning" plain @click="router.push('/user_actions/permissions')">去申请临时权限</el-button>
+              <el-button type="primary" :disabled="!canManageAutoUpdate" @click="searchAutoUpdate">搜索</el-button>
+              <el-button :disabled="!canManageAutoUpdate" @click="resetAutoUpdate">重置</el-button>
             </el-form-item>
           </el-form>
 

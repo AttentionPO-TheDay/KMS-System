@@ -55,7 +55,7 @@ export const constantRoutes = [
         path: 'index',
         name: 'Generate',
         component: () => import('@/views/generate/GenerateView.vue'),
-        meta: { title: '生成申报', icon: 'edit' }
+        meta: { title: '密钥生成', icon: 'edit' }
       }
     ]
   },

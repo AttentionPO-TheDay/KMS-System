@@ -10673,3 +10673,14 @@ $4
 PXAT
 $13
 1776016047694
+*5
+$3
+SET
+$49
+login_tokens:60378fd9-4416-4e82-9469-99149de4f6d0
+$668
+{"@type":"com.ruoyi.common.core.domain.model.LoginUser","browser":"Chrome 14","expireTime":1776016784994,"ipaddr":"172.19.0.1","loginLocation":"内网IP","loginTime":1776014984994,"os":"Windows 10","permissions":Set[],"token":"60378fd9-4416-4e82-9469-99149de4f6d0","user":{"admin":false,"createTime":"2026-04-12 08:25:46","delFlag":"0","loginDate":"2026-04-12 16:25:50","loginIp":"172.19.0.1","nickName":"test1","params":{"@type":"java.util.HashMap","@type":"java.util.HashMap"},"password":"$2a$10$2Z7ls8BaWR1bln1a0QVUJ.83LNDDKIh2nFVPfbV6ktC9Z5j8OnOtK","roleLevel":2,"roles":[],"sex":"0","status":"0","userId":100L,"userName":"test1"},"userId":100L,"username":"test1"}
+$4
+PXAT
+$13
+1776016784997
