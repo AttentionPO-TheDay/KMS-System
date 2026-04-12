@@ -91,28 +91,28 @@ const summaryCards = computed(() => [
 
 const featureCards = [
   {
-    path: '/user_actions/generate',
+    path: '/generate/index',
     title: '密钥生成',
     desc: '发起生成请求，查看生成记录、详情、公共参数和公共密钥列表。',
     tag: '生成域',
     tagType: 'success'
   },
   {
-    path: '/user_actions/updatedel',
+    path: '/lifecycle/index',
     title: '更新与回收',
     desc: '管理我的密钥，执行更新、回收以及自动更新开关。',
     tag: '生命周期域',
     tagType: 'warning'
   },
   {
-    path: '/user_actions/distribute',
+    path: '/distribute/index',
     title: '分发记录',
     desc: '查询分发流水、状态与链上记录，定位分发执行结果。',
     tag: '分发域',
     tagType: 'info'
   },
   {
-    path: '/user_actions/permissions',
+    path: '/permissions/index',
     title: '权限申请',
     desc: '提交临时权限申请，查看审批状态并在完成操作后主动回退。',
     tag: '统一前台',
