@@ -65,6 +65,12 @@ services:
       KAFKA_LOG_DIRS: /var/lib/kafka/data
     volumes:
       - ./kafka/kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
     restart: always
     networks:
       - kms_net
@@ -124,7 +130,7 @@ services:
       - GOGC=500
     depends_on:
       kafka:
-        condition: service_started
+        condition: service_healthy
     restart: always
     networks:
       - kms_net
@@ -150,6 +156,7 @@ services:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
       - FISCO_HOST=fisco-node
       - FISCO_PRIVATE_KEY=${FISCO_PRIVATE_KEY:-}
+      - KMS_CHAIN_TOPIC=${KMS_CHAIN_TOPIC:-key_chain_task}
       - KMS_CHAIN_RESULT_TOPIC=${KMS_CHAIN_RESULT_TOPIC:-key_chain_result}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -157,7 +164,7 @@ services:
       mysql:
         condition: service_healthy
       kafka:
-        condition: service_started
+        condition: service_healthy
       fisco-node:
         condition: service_started
       fisco-console:
@@ -189,7 +196,7 @@ services:
       - GOGC=500
     depends_on:
       kafka:
-        condition: service_started
+        condition: service_healthy
       redis:
         condition: service_healthy
     restart: always
@@ -216,6 +223,7 @@ services:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
       - FISCO_HOST=fisco-node
       - FISCO_PRIVATE_KEY=${FISCO_PRIVATE_KEY:-}
+      - KMS_CHAIN_TOPIC=${KMS_CHAIN_TOPIC:-key_chain_task}
       - KMS_CHAIN_RESULT_TOPIC=${KMS_CHAIN_RESULT_TOPIC:-key_chain_result}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -223,7 +231,7 @@ services:
       mysql:
         condition: service_healthy
       kafka:
-        condition: service_started
+        condition: service_healthy
       fisco-node:
         condition: service_started
       fisco-console:
@@ -261,7 +269,7 @@ services:
       mysql:
         condition: service_healthy
       kafka:
-        condition: service_started
+        condition: service_healthy
       fisco-node:
         condition: service_started
       redis:

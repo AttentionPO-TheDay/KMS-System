@@ -8,7 +8,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -47,6 +50,62 @@ public class ChainController extends BaseController {
         if (keyIdsObj == null) {
             return error("keyIds 参数不能为空");
         }
-        return AjaxResult.success("查询成功", new HashMap<>());
+
+        List<Long> keyIds = parseKeyIds(keyIdsObj);
+        if (keyIds.isEmpty()) {
+            return error("keyIds 参数不能为空");
+        }
+
+        Map<Long, GenerateChainService.ChainSyncStatus> result = new LinkedHashMap<>();
+        for (Long keyId : keyIds) {
+            if (keyId == null) {
+                continue;
+            }
+            result.put(keyId, generateChainService.getChainStatus(keyId));
+        }
+        return AjaxResult.success("查询成功", result);
+    }
+
+    private List<Long> parseKeyIds(Object keyIdsObj) {
+        List<Long> keyIds = new ArrayList<>();
+        if (keyIdsObj instanceof Collection) {
+            for (Object item : (Collection<?>) keyIdsObj) {
+                Long keyId = toLong(item);
+                if (keyId != null) {
+                    keyIds.add(keyId);
+                }
+            }
+            return keyIds;
+        }
+
+        if (keyIdsObj instanceof String) {
+            String[] parts = ((String) keyIdsObj).split(",");
+            for (String part : parts) {
+                Long keyId = toLong(part);
+                if (keyId != null) {
+                    keyIds.add(keyId);
+                }
+            }
+        }
+        return keyIds;
+    }
+
+    private Long toLong(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Number) {
+            return ((Number) value).longValue();
+        }
+        try {
+            String text = String.valueOf(value).trim();
+            if (text.isEmpty()) {
+                return null;
+            }
+            return Long.valueOf(text);
+        } catch (NumberFormatException ex) {
+            log.warn("忽略非法 keyId: {}", value);
+            return null;
+        }
     }
 }

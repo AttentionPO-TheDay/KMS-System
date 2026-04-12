@@ -29,7 +29,7 @@
       <el-steps :active="activeStep" finish-status="success" align-center class="custom-steps">
         <el-step title="步骤 1: 用户侧协参数生成" description="本地生熵并向KGC提交参量" />
         <el-step title="步骤 2: 发起真实请求" description="KGC密码中心计算影子/门限分片" />
-        <el-step title="步骤 3: 用户侧拼装固化" description="无证书结合组装全量公私钥" />
+        <el-step title="步骤 3: 本地恢复结果" description="恢复并固化最终密钥材料" />
         <el-step title="演示完成" description="系统已入库并生效" />
       </el-steps>
 
@@ -49,9 +49,11 @@
                 <el-button type="primary" size="small" @click="runStep1" :loading="isProcessing">第一步：执行并生成本地参数</el-button>
               </div>
 
-              <div class="label">【机密】本地随机生成的份额熵 (用户临时私钥 num2):</div>
-              <div class="value auth">{{ step1Data.privateShare || '点击按钮执行后显示...' }}</div>
-              
+              <div class="desc" style="color: #a3aab5; margin-bottom: 10px;">
+                本地临时私钥份额（仅参与后续本地合成，不作为最终结果单独展示）：
+                <span class="inline-code inline-secret">{{ step1Data.privateShare || '点击按钮执行后显示...' }}</span>
+              </div>
+
               <div class="label mt-10">本地生成的公共切片公钥 (uA):</div>
               <div class="value">{{ step1Data.uA || '点击按钮执行后显示...' }}</div>
               
@@ -112,7 +114,7 @@
           <el-card class="glass-card stage-card mt-20" style="border-left: 4px solid #67C23A">
             <template #header>
               <div class="card-header">
-                <h3><el-icon><Key /></el-icon> 用户端 - 最终组合与脱水 (固化最终产物)</h3>
+                <h3><el-icon><Key /></el-icon> {{ form.encrytName === 'SSCL' ? '用户端 - 本地恢复最终结果' : '用户端 - 最终组合与固化' }}</h3>
                 <el-tag size="small" type="info" effect="dark" v-if="activeStep < 2">等待前置步骤</el-tag>
                 <el-tag size="small" type="success" effect="dark" v-else-if="activeStep === 2">待计算生成</el-tag>
                 <el-tag size="small" type="success" effect="dark" v-else>拼装成功</el-tag>
@@ -120,10 +122,10 @@
             </template>
             <div class="payload-box">
               <div v-if="activeStep === 2" style="margin-bottom: 20px;">
-                <el-button type="success" size="small" @click="runStep3" :loading="isProcessing">第三步：本地利用数学法则完成最终算密</el-button>
+                <el-button type="success" size="small" @click="runStep3" :loading="isProcessing">{{ form.encrytName === 'SSCL' ? '第三步：本地恢复 SSCL 最终结果' : '第三步：本地利用数学法则完成最终算密' }}</el-button>
               </div>
 
-              <div class="desc" style="color: #a3aab5; margin-bottom: 10px;" v-if="form.encrytName==='SSCL'">操作说明：读取本地影子私钥信息，融合 DA 门限值执行拉格朗日逆向代换...</div>
+              <div class="desc" style="color: #a3aab5; margin-bottom: 10px;" v-if="form.encrytName==='SSCL'">操作说明：读取 KGC 返回的 SSCLKey，结合公共参数 xIndex / yIndex 做拉格朗日插值恢复门限秘密，再与本地私钥合成最终私钥、公钥和 DA。</div>
               <div class="desc" style="color: #a3aab5; margin-bottom: 10px;" v-else>操作说明：将 KGC 半密私片段 与 用户的临时私片段 根据大素数有限群 {N_SM2} 做加法求模运算...</div>
               
               <!-- 中间计算过程展示 -->
@@ -139,19 +141,23 @@
                 </div>
               </div>
 
+              <div v-if="form.encrytName==='SSCL'" class="mt-15">
+                <div class="label">说明：第二步展示的是 KGC 返回的门限份额；以下内容为本地恢复得到的最终私钥、公钥和所属域。</div>
+              </div>
+
               <div class="flex-box mt-15">
                 <div class="item finalize-block final-priv">
-                  <div class="title">🔐 最终绝对私钥 (仅存在于本地)</div>
+                  <div class="title">🔐 最终私钥</div>
                   <div class="content break-all">{{ step3Data.PrivateKey || '计算中...' }}</div>
                 </div>
                 <div class="item finalize-block final-pub">
-                  <div class="title">🌍 最终暴露公钥 (发信验证用)</div>
+                  <div class="title">🌍 {{ form.encrytName === 'SSCL' ? '最终公钥' : '最终暴露公钥 (发信验证用)' }}</div>
                   <div class="content break-all">{{ step3Data.PublicKey || '计算中...' }}</div>
                 </div>
               </div>
               <div v-if="form.encrytName==='SSCL'" class="mt-15">
-                <div class="label">SSCL 所属域独有脱水印记 (DA):</div>
-                <div class="value">{{ step3Data.DA || '计算中...' }}</div>
+                <div class="label">所属域：</div>
+                <div class="value">{{ step3Data.keyDomain || step2Data.snapshotValue?.keyDomain || 'A' }}</div>
               </div>
             </div>
           </el-card>
@@ -191,7 +197,7 @@ const isProcessing = ref(false)
 const step1Data = reactive({ privateShare: '', uA: '', payload: null })
 const step2Data = reactive({ responseObj: null, snapshotValue: null })
 const fetchError = ref('')
-const step3Data = reactive({ PrivateKey: '', PublicKey: '', DA: '', mathSteps: [] })
+const step3Data = reactive({ PrivateKey: '', PublicKey: '', DA: '', uA: '', keyDomain: '', mathSteps: [] })
 
 // 默认使用持久化的演示用户 test (user_id=3, 密码 admin123)
 let sessionUserId = 3;
@@ -224,6 +230,8 @@ function initSimulation() {
   step3Data.PrivateKey = ''
   step3Data.PublicKey = ''
   step3Data.DA = ''
+  step3Data.uA = ''
+  step3Data.keyDomain = ''
   step3Data.mathSteps = []
 }
 
@@ -292,8 +300,13 @@ const N_SM2 = new BigInteger('FFFFFFFEFFFFFFFFFFFFFFFFFFFFFFFF7203DF6B21C6052B53
 
 async function performGenDA(item, userPrivCode, userPubCode) {
   const { xIndex, yIndex, PPub } = await genUAContext(item.encrytType, item.encrytName)
+  step3Data.PrivateKey = ''
+  step3Data.PublicKey = ''
+  step3Data.DA = ''
+  step3Data.uA = userPubCode || ''
+  step3Data.keyDomain = item.keyDomain || ''
   step3Data.mathSteps = []
-  
+
   if (item.encrytName === "SM2") {
     try {
       const keyValueObj = JSON.parse(item.keyValue)
@@ -321,7 +334,9 @@ async function performGenDA(item, userPrivCode, userPubCode) {
     try {
       const keyValueObj = JSON.parse(item.keyValue)
       const share = keyValueObj.SSCLKey
+      step3Data.keyDomain = keyValueObj.SSCLDomain || keyValueObj.SSCLDomian || item.keyDomain || 'A'
       step3Data.mathSteps.push(`提取 KGC 返回的多项式门限响应分片: ${share}`)
+      step3Data.mathSteps.push(`读取本地保留的用户部分公钥 uA: ${userPubCode}`)
 
       const xHex = share.slice(2, 66)
       const yHex = share.slice(66, 130)
@@ -336,16 +351,19 @@ async function performGenDA(item, userPrivCode, userPubCode) {
 
       const num1 = new BigInteger(userPrivCode, 16)
       const sk = num1.add(dA).mod(N_SM2)
-      step3Data.mathSteps.push(`最终公钥映射: S_A = (num1 + dA) mod N_SM2`)
-      
+      step3Data.mathSteps.push(`最终私钥合成: sk = (num1 + dA) mod N_SM2`)
+
       step3Data.PrivateKey = leftPad(sk.toString(16), 64)
-      
+
       let dAHex = dA.toString(16).padStart(64, '0').slice(-64)
       step3Data.DA = sm2PointMultiply(PPub, dAHex)
       let skHex = sk.toString(16).padStart(64, '0').slice(-64)
       step3Data.PublicKey = sm2PointMultiply(PPub, skHex)
+      step3Data.mathSteps.push(`椭圆曲线映射: DA = PPub * dA，PublicKey = PPub * sk`)
     } catch (e) {
       step3Data.PrivateKey = "SSCL计算异常:" + e.message
+      step3Data.PublicKey = ''
+      step3Data.DA = ''
     }
   }
 }
@@ -454,6 +472,20 @@ function sm2PointMultiply(hexPoint, hexScalar) {
   border: 1px solid rgba(255,255,255,0.1); word-break: break-all; color: #409EFF;
 }
 .value.auth { color: #F56C6C; }
+.inline-code {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 12px;
+  background: rgba(0,0,0,0.28);
+  border: 1px solid rgba(255,255,255,0.08);
+  word-break: break-all;
+}
+.inline-secret {
+  color: #F56C6C;
+}
 .code-block pre {
   font-family: 'Consolas', monospace; font-size: 12px; background: #1e1e1e;
   padding: 10px; border-radius: 6px; overflow-x: auto; color: #d4d4d4; margin: 0; border: 1px solid #333;

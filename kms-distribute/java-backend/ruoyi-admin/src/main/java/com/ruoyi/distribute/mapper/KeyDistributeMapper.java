@@ -44,6 +44,19 @@ public interface KeyDistributeMapper {
                                               @Param("remark") String remark);
 
     /**
+     * 为最近一条待绑定 keyId 的生成分发记录补绑 keyId 并回填链上结果
+     */
+    int bindLatestPendingGenerateRecord(@Param("keyId") Long keyId,
+                                        @Param("userId") Long userId,
+                                        @Param("userName") String userName,
+                                        @Param("keyName") String keyName,
+                                        @Param("encrytType") String encrytType,
+                                        @Param("encrytName") String encrytName,
+                                        @Param("chainHash") String chainHash,
+                                        @Param("blockHeight") Long blockHeight,
+                                        @Param("remark") String remark);
+
+    /**
      * 删除分发记录
      */
     int deleteKeyDistributeRecordById(Long recordId);

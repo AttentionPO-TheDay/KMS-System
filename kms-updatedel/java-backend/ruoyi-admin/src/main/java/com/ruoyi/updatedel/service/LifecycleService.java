@@ -16,6 +16,8 @@ import java.util.List;
 import java.util.Optional;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
@@ -23,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class LifecycleService {
+    private static final Logger log = LoggerFactory.getLogger(LifecycleService.class);
     private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final KeymanageMapper keymanageMapper;
@@ -58,6 +61,24 @@ public class LifecycleService {
         return keymanageMapper.selectkeymanageList(query);
     }
 
+    @Transactional
+    public Keymanage createKey(Keymanage key) {
+        key.setCreTime(now());
+        key.setUpdTime(now());
+        if (key.getStatus() == null || key.getStatus().trim().isEmpty()) {
+            key.setStatus(KeyStatus.ACTIVE.getCode());
+        }
+        if (key.getVersion() == null) {
+            key.setVersion(1);
+        }
+        key.setChainStatus("0");
+        key.setAutoUpdate(normalizeAutoUpdate(key.getAutoUpdate()));
+        key.setKeyValue(generateKeyValue(key));
+        keymanageMapper.insertkeymanage(key);
+        log.info("createKey 成功: keyId={}, encrytName={}", key.getKeyId(), key.getEncrytName());
+        return key;
+    }
+
     public Optional<Keymanage> findById(Long keyId) {
         return Optional.ofNullable(keymanageMapper.selectkeymanageByKeyId(keyId));
     }
@@ -74,6 +95,10 @@ public class LifecycleService {
             throw new IllegalStateException("该密钥已被回收，无法更新");
         }
 
+        log.info("rotateKey 开始: keyId={}, encrytType={}, encrytName={}, ua={}",
+            current.getKeyId(), current.getEncrytType(), current.getEncrytName(),
+            current.getUa() != null ? current.getUa().substring(0, Math.min(8, current.getUa().length())) + "..." : "null");
+
         Keymanage next = mergeForRotation(current, request);
         next.setVersion(current.getVersion() == null ? 2 : current.getVersion() + 1);
         next.setStatus(KeyStatus.ACTIVE.getCode());
@@ -85,6 +110,7 @@ public class LifecycleService {
         resetPendingChainState(next.getKeyId());
         keyOperationRecordService.createPendingRecord(next, "UPDATE", normalizeActionSource(actionSource), "结果已推送，等待用户接收");
         publishChainEvent(ChainSyncEvent.TYPE_ROTATE, next);
+        log.info("rotateKey 完成: keyId={}, newVersion={}", next.getKeyId(), next.getVersion());
         return requireExistingKey(next.getKeyId());
     }
 
@@ -141,15 +167,34 @@ public class LifecycleService {
     }
 
     private String generateKeyValue(Keymanage key) {
-        if ("对称加密".equals(key.getEncrytType()) && "AES".equalsIgnoreCase(key.getEncrytName())) {
+        String encrytType = key.getEncrytType() == null ? "" : key.getEncrytType().trim();
+        String encrytName = key.getEncrytName() == null ? "" : key.getEncrytName().trim().toUpperCase();
+
+        // AES symmetric encryption
+        if ((encrytType.contains("对称") || "AES".equals(encrytName)) && "AES".equals(encrytName)) {
+            log.info("generateKeyValue: AES 密钥生成, keyId={}", key.getKeyId());
             return generateAesKey();
         }
-        if ("无证书非对称加密".equals(key.getEncrytType()) && "SM2".equalsIgnoreCase(key.getEncrytName())) {
+        // SM2 certificateless asymmetric encryption
+        if ((encrytType.contains("非对称") || "SM2".equals(encrytName)) && "SM2".equals(encrytName)) {
+            log.info("generateKeyValue: SM2 密钥生成, keyId={}, ua={}", key.getKeyId(),
+                key.getUa() != null ? key.getUa().substring(0, Math.min(8, key.getUa().length())) + "..." : "null");
+            if (key.getUa() == null || key.getUa().trim().isEmpty()) {
+                throw new IllegalStateException("SM2 密钥更新失败: 用户部分公钥(ua)缺失，keyId=" + key.getKeyId());
+            }
             return eccKeyGenerator.generate(key.getUserName(), key.getUa());
         }
-        if ("无证书非对称加密".equals(key.getEncrytType()) && "SSCL".equalsIgnoreCase(key.getEncrytName())) {
+        // SSCL certificateless asymmetric encryption
+        if ((encrytType.contains("非对称") || "SSCL".equals(encrytName)) && "SSCL".equals(encrytName)) {
+            log.info("generateKeyValue: SSCL 密钥生成, keyId={}", key.getKeyId());
+            if (key.getUa() == null || key.getUa().trim().isEmpty()) {
+                throw new IllegalStateException("SSCL 密钥更新失败: 用户部分公钥(ua)缺失，keyId=" + key.getKeyId());
+            }
             return ssclKeyGenerator.generate(key.getUserName(), key.getUa(), key.getKeyDomain());
         }
+        // Fallback — unrecognized algorithm, log warning
+        log.warn("generateKeyValue: 未匹配到算法类型, keyId={}, encrytType='{}', encrytName='{}', 将返回旧密钥值",
+            key.getKeyId(), key.getEncrytType(), key.getEncrytName());
         return key.getKeyValue();
     }
 

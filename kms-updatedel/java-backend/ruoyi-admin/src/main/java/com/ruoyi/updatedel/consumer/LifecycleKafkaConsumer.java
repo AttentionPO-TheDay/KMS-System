@@ -9,10 +9,11 @@ import com.ruoyi.updatedel.mapper.KeymanageMapper;
 import com.ruoyi.updatedel.mapper.SysUserMapper;
 import com.ruoyi.updatedel.service.LifecycleService;
 import java.io.IOException;
+import java.util.List;
 import java.util.Optional;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Component;
@@ -38,13 +39,22 @@ public class LifecycleKafkaConsumer {
     }
 
     @KafkaListener(topics = "${kms.lifecycle.kafka.update-topic:key_update_log}", groupId = "${spring.kafka.consumer.group-id}")
-    public void consumeUpdate(String payloadText) {
-        handle(payloadText, true);
+    public void consumeUpdate(List<ConsumerRecord<String, String>> records) {
+        handleBatch(records, true);
     }
 
     @KafkaListener(topics = "${kms.lifecycle.kafka.revoke-topic:key_revoke_log}", groupId = "${spring.kafka.consumer.group-id}")
-    public void consumeRevoke(String payloadText) {
-        handle(payloadText, false);
+    public void consumeRevoke(List<ConsumerRecord<String, String>> records) {
+        handleBatch(records, false);
+    }
+
+    private void handleBatch(List<ConsumerRecord<String, String>> records, boolean rotate) {
+        for (ConsumerRecord<String, String> record : records) {
+            if (record == null || record.value() == null || record.value().trim().isEmpty()) {
+                continue;
+            }
+            handle(record.value(), rotate);
+        }
     }
 
     private void handle(String payloadText, boolean rotate) {

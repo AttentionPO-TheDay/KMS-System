@@ -318,7 +318,7 @@ const sm2Curve = weierstrass({
   n: BigInt('0xFFFFFFFEFFFFFFFFFFFFFFFFFFFFFFFF7203DF6B21C6052B53BBF40939D54123'),
   h: 1n,
   a: BigInt('0xFFFFFFFEFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000FFFFFFFFFFFFFFFC'),
-  b: BigInt('0x28E9FA9E9D9F5E344D5AEF9BAE4BCF6509A7F39789F515AB8F92DDBCBD414D94'),
+  b: BigInt('0x28E9FA9E9D9F5E344D5A9E4BCF6509A7F39789F515AB8F92DDBCBD414D940E93'),
   Gx: BigInt('0x32C4AE2C1F1981195F9904466A39C9948FE30BBFF2660BE1715A4589334C74C7'),
   Gy: BigInt('0xBC3736A2F4F6779C59BDCEE36B692153D0A9877CC62A474002DF32E52139F0A0')
 })
@@ -874,33 +874,43 @@ function downloadText(text, filename) {
 
 .summary-card,
 .material-card {
-  padding: 18px;
-  border: 1px solid #e5e7eb;
-  border-radius: 18px;
-  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  padding: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.05); /* Global card style will handle standard, but we override here if needed */
+  border-radius: 20px;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01));
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  transition: transform 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.summary-card:hover, .material-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(0, 229, 255, 0.2);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3), 0 0 20px rgba(0, 153, 255, 0.1);
 }
 
 .summary-card strong,
 .material-item strong {
   display: block;
-  margin-top: 6px;
-  font-size: 18px;
-  color: #111827;
+  margin-top: 8px;
+  font-size: 20px;
+  color: #fff;
+  font-weight: 500;
+  text-shadow: 0 0 10px rgba(0, 229, 255, 0.3);
 }
 
 .summary-card small,
 .muted {
-  color: #6b7280;
+  color: #94a3b8;
 }
 
 .summary-label,
 .material-item span {
-  font-size: 13px;
-  color: #64748b;
+  font-size: 14px;
+  color: #bae6fd;
 }
 
 .generate-layout {
-  grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr);
+  grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr);
   align-items: start;
 }
 
@@ -921,11 +931,18 @@ function downloadText(text, filename) {
 
 .profile-grid input {
   width: 100%;
-  padding: 10px 12px;
-  border: 1px solid #d1d5db;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
-  background: #f8fafc;
-  color: #0f172a;
+  background: rgba(0, 0, 0, 0.3);
+  color: #fff;
+  transition: all 0.3s;
+}
+
+.profile-grid input:focus {
+  outline: none;
+  border-color: #00e5ff;
+  box-shadow: 0 0 0 3px rgba(0, 229, 255, 0.15);
 }
 
 .panel-head {
@@ -956,9 +973,10 @@ function downloadText(text, filename) {
 }
 
 .material-item {
-  padding: 12px 0;
-  border-top: 1px solid #e5e7eb;
+  padding: 16px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
   align-items: flex-start;
+  animation: fade-in 0.5s ease forwards;
 }
 
 .material-item.full {
@@ -973,10 +991,13 @@ function downloadText(text, filename) {
 
 .material-item code {
   margin-top: 8px;
-  padding: 10px 12px;
+  padding: 12px 14px;
   border-radius: 12px;
-  background: #0f172a;
-  color: #e2e8f0;
+  background: rgba(0, 153, 255, 0.05);
+  border: 1px solid rgba(0, 153, 255, 0.2);
+  color: #00e5ff;
+  box-shadow: inset 0 0 10px rgba(0, 153, 255, 0.1);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
 }
 
 .action-row {
@@ -996,11 +1017,13 @@ function downloadText(text, filename) {
 
 .json-block {
   margin: 0;
-  padding: 16px;
+  padding: 20px;
   border-radius: 16px;
-  background: #0f172a;
-  color: #e2e8f0;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #bae6fd;
   overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
 }
 
 .detail-span {

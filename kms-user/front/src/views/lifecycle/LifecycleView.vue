@@ -653,7 +653,7 @@ async function submitUpdate() {
       keyDomain: normalizeText(updateForm.keyDomain),
       autoUpdate: updateForm.autoUpdateEnabled ? '1' : '0'
     })
-    proxy.$modal.msgSuccess('密钥更新成功，结果将推送到当前页待接收列表')
+    proxy.$modal.msgSuccess('密钥更新成功')
     updateDialogOpen.value = false
     await loadMyKeys()
     if (activeTab.value === 'autoupdate') {
@@ -688,7 +688,7 @@ function handleRevoke(row) {
       for (const keyId of ids) {
         await revokeLifecycleKey(keyId)
       }
-      proxy.$modal.msgSuccess('密钥回收成功，结果将推送到当前页待接收列表')
+      proxy.$modal.msgSuccess('密钥回收成功')
       await loadMyKeys()
       await loadAutoUpdateKeys()
       await loadResultList()
@@ -816,25 +816,37 @@ function formatDateTime(value) {
 }
 
 function statusText(status) {
+  const normalized = status == null ? '' : String(status)
   return {
-    1: '有效',
-    2: '已更新',
-    3: '已回收',
+    '0': '有效',
+    '1': '已冻结',
+    '2': '已更新',
+    '3': '已回收',
     Valid: '有效',
+    Active: '有效',
+    ACTIVE: '有效',
+    Frozen: '已冻结',
+    FROZEN: '已冻结',
     Replaced: '已更新',
+    Rotated: '已更新',
+    ROTATED: '已更新',
     Revoked: '已回收',
     REVOKED: '已回收'
-  }[status] || (status == null ? '-' : String(status))
+  }[normalized] || (status == null ? '-' : String(status))
 }
 
 function statusTagType(status) {
-  if (isRevoked(status)) {
+  const normalized = status == null ? '' : String(status)
+  if (isRevoked(normalized)) {
     return 'danger'
   }
-  if (status === '2' || status === 2 || status === 'Replaced') {
+  if (['1', '2', 'Frozen', 'FROZEN', 'Replaced', 'Rotated', 'ROTATED'].includes(normalized)) {
     return 'warning'
   }
-  return 'success'
+  if (['0', 'Valid', 'Active', 'ACTIVE'].includes(normalized)) {
+    return 'success'
+  }
+  return 'info'
 }
 
 function roleText(level) {
@@ -843,24 +855,32 @@ function roleText(level) {
 </script>
 
 <style scoped>
+.lifecycle-page {
+  animation: fade-in 0.5s ease;
+}
+
 .lifecycle-page .mb12 {
   margin-bottom: 12px;
 }
 
 .header-actions {
+  display: flex;
   align-items: flex-start;
+  justify-content: space-between;
   gap: 16px;
+  flex-wrap: wrap;
 }
 
 .profile-grid,
 .quick-actions {
   display: flex;
-  gap: 12px;
+  gap: 16px;
   flex-wrap: wrap;
 }
 
 .quick-actions {
   align-items: center;
+  padding: 8px 0;
 }
 
 .query-form {
@@ -869,8 +889,8 @@ function roleText(level) {
 
 .detail-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 10px 16px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px 24px;
 }
 
 @media (max-width: 768px) {

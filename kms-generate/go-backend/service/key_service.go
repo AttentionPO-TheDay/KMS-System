@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -133,7 +134,9 @@ func (s *KeyManageService) sendToKafka(km *models.Keymanage, rawPassword, action
 
 func (s *KeyManageService) kafkaWorker() {
 	for payload := range s.saveChan {
-		s.kafkaProducer.SendAsync(payload)
+		if err := s.kafkaProducer.SendAsync(payload); err != nil {
+			log.Printf("[WARN] failed to publish generate payload for user %s: %v", payload.RawUser, err)
+		}
 	}
 }
 

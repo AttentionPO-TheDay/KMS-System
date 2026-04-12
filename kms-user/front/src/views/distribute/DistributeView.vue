@@ -21,7 +21,7 @@
     </article>
 
     <article class="panel">
-      <div class="toolbar">
+      <div class="form-grid toolbar">
         <label>
           <span>密钥名称</span>
           <input v-model="filters.keyName" type="text" placeholder="按密钥名称筛选" />
@@ -167,7 +167,9 @@ function resetFilters() {
 function handleExport() {
   errorMessage.value = ''
   try {
-    proxy.download('/distribute-api/distribute/record/export', buildExportParams(), `key-distribute-record-${Date.now()}.xlsx`)
+    proxy.download('/distribute/record/export', buildExportParams(), `key-distribute-record-${Date.now()}.xlsx`, {
+      baseURL: apiBases.distributeApi
+    })
   } catch (error) {
     errorMessage.value = error.message || '导出失败'
   }
@@ -212,25 +214,13 @@ function normalizeFilter(value) {
 
 <style scoped>
 .toolbar {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 12px;
   align-items: end;
-}
-
-.toolbar label {
-  display: grid;
-  gap: 6px;
-}
-
-.toolbar input,
-.toolbar select {
-  width: 100%;
 }
 
 .record-list {
   display: grid;
-  gap: 12px;
+  gap: 16px;
+  margin-top: 16px;
 }
 
 .pagination {
@@ -238,14 +228,7 @@ function normalizeFilter(value) {
   justify-content: flex-end;
   align-items: center;
   gap: 12px;
-  margin-top: 16px;
-}
-
-.record-card {
-  border: 1px solid rgba(148, 163, 184, 0.24);
-  border-radius: 16px;
-  padding: 16px;
-  background: rgba(15, 23, 42, 0.03);
+  margin-top: 24px;
 }
 
 .record-head {
@@ -253,24 +236,20 @@ function normalizeFilter(value) {
   justify-content: space-between;
   gap: 12px;
   align-items: center;
+  margin-bottom: 8px;
 }
 
 .detail-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 10px 16px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px 24px;
 }
 
 .scope-grid {
-  margin-top: 12px;
+  margin-top: 16px;
 }
 
 .detail-span {
   grid-column: 1 / -1;
 }
-
-.status-0 { background: rgba(148, 163, 184, 0.18); }
-.status-1 { background: rgba(59, 130, 246, 0.18); }
-.status-2 { background: rgba(34, 197, 94, 0.18); }
-.status-3 { background: rgba(239, 68, 68, 0.18); }
 </style>

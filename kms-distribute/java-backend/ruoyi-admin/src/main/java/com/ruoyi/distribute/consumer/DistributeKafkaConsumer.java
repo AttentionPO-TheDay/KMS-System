@@ -173,8 +173,27 @@ public class DistributeKafkaConsumer {
                         remark
                 );
 
+                if (rows == 0 && "1".equals(distributeType)) {
+                    Keymanage snapshot = keySnapshotMapper.selectKeySnapshotById(keyId);
+                    if (snapshot != null) {
+                        rows = keyDistributeMapper.bindLatestPendingGenerateRecord(
+                                keyId,
+                                snapshot.getUserId(),
+                                snapshot.getUserName(),
+                                snapshot.getKeyName(),
+                                snapshot.getEncrytType(),
+                                snapshot.getEncrytName(),
+                                chainHash,
+                                blockHeight,
+                                remark
+                        );
+                    }
+                }
+
                 if (rows > 0) {
                     log.info("分发记录链上结果回填完成: keyId={}, actionType={}, chainStatus={}", keyId, actionType, chainStatus);
+                } else {
+                    log.warn("未找到可回填的分发记录: keyId={}, actionType={}, chainStatus={}", keyId, actionType, chainStatus);
                 }
             } catch (Exception e) {
                 log.error("处理链上结果消息异常: offset={}", record.offset(), e);

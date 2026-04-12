@@ -59,12 +59,8 @@ public class UpdatedelChainService {
 
     @PostConstruct
     public void init() {
-        try {
-            this.fiscoWrapper = new FiscoBcosWrapper(contractAddress, fiscoHost, fiscoPrivateKey);
-            log.info("Lifecycle FISCO wrapper initialized, contract: {}", contractAddress);
-        } catch (Exception e) {
-            log.error("Failed to initialize lifecycle FISCO wrapper", e);
-        }
+        this.fiscoWrapper = null;
+        log.info("Lifecycle FISCO wrapper will initialize lazily when chain sync is triggered");
     }
 
     public boolean processRotateChainSync(Keymanage keymanage) {
@@ -81,7 +77,7 @@ public class UpdatedelChainService {
                 return false;
             }
 
-            if (fiscoWrapper == null) {
+            if (!ensureFiscoWrapper()) {
                 markFailed(keymanage.getKeyId());
                 keyOperationRecordService.updateLatestResult(keymanage.getKeyId(), "UPDATE", "2", "2", null, null, "FISCO_NOT_READY");
                 publishChainResult(keymanage.getKeyId(), "UPDATE_KEY", "2", null, null, "FISCO_NOT_READY");
@@ -105,7 +101,7 @@ public class UpdatedelChainService {
         }
 
         try {
-            if (fiscoWrapper == null) {
+            if (!ensureFiscoWrapper()) {
                 markFailed(keymanage.getKeyId());
                 keyOperationRecordService.updateLatestResult(keymanage.getKeyId(), "REVOKE", "2", "2", null, null, "FISCO_NOT_READY");
                 publishChainResult(keymanage.getKeyId(), "REVOKE_KEY", "2", null, null, "FISCO_NOT_READY");
@@ -118,6 +114,22 @@ public class UpdatedelChainService {
             markFailed(keymanage.getKeyId());
             keyOperationRecordService.updateLatestResult(keymanage.getKeyId(), "REVOKE", "2", "2", null, null, e.getClass().getSimpleName());
             publishChainResult(keymanage.getKeyId(), "REVOKE_KEY", "2", null, null, e.getClass().getSimpleName());
+            return false;
+        }
+    }
+
+    private synchronized boolean ensureFiscoWrapper() {
+        if (this.fiscoWrapper != null) {
+            return true;
+        }
+        try {
+            this.fiscoWrapper = new FiscoBcosWrapper(contractAddress, fiscoHost, fiscoPrivateKey);
+            log.info("Lifecycle FISCO wrapper initialized lazily, contract: {}", contractAddress);
+            return true;
+        } catch (Exception e) {
+            Thread.interrupted();
+            this.fiscoWrapper = null;
+            log.error("Failed to initialize lifecycle FISCO wrapper lazily", e);
             return false;
         }
     }

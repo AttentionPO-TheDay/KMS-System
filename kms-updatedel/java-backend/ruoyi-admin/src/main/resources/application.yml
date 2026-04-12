@@ -72,6 +72,8 @@ spring:
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    listener:
+      type: batch
 
 token:
   header: Authorization
@@ -105,7 +107,7 @@ kms:
     kafka:
       update-topic: key_update_log
       revoke-topic: key_revoke_log
-      chain-task-topic: key_chain_task
+      chain-task-topic: ${KMS_CHAIN_TOPIC:key_chain_task}
       chain-result-topic: ${KMS_CHAIN_RESULT_TOPIC:key_chain_result}
 
 fisco:

@@ -1,3 +1,0 @@
-{"t":0,"agent":"a34f9ea","agent_type":"claude-code-guide","event":"agent_start","parent_mode":"none"}
-{"t":0,"agent":"a34f9ea","agent_type":"claude-code-guide","event":"agent_stop","success":true,"duration_ms":39220}
-{"t":0,"agent":"system","event":"skill_invoked","skill_name":"oh-my-claudecode:setup"}

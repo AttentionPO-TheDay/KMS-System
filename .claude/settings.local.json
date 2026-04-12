@@ -33,7 +33,8 @@
       "Bash(export CLAUDE_CODE_GIT_BASH_PATH=\"C:\\\\\\\\Windows\\\\\\\\System32\\\\\\\\bash.exe\")",
       "Bash(bash:*)",
       "mcp__github__search_code",
-      "Bash(wsl.exe:*)"
+      "Bash(wsl.exe:*)",
+      "mcp__plugin_oh-my-claudecode_t__lsp_diagnostics_directory"
     ]
   }
 }

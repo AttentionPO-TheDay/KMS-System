@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -50,6 +51,14 @@ func NewKeyLifecycleService() *KeyLifecycleService {
 	kmsOnce.Do(func() {
 		cfg := config.Get()
 		kp := utils.NewKafkaProducer(cfg.KafkaBrokers, cfg.UpdateTopic, cfg.RevokeTopic)
+		kp.SetErrorHandlers(
+			func(err error) {
+				atomic.AddUint64(&globalMetrics.UpdateErrors, 1)
+			},
+			func(err error) {
+				atomic.AddUint64(&globalMetrics.RevokeErrors, 1)
+			},
+		)
 
 		s := &KeyLifecycleService{
 			kafkaProducer: kp,
@@ -75,7 +84,10 @@ func (s *KeyLifecycleService) updateWorker() {
 		case <-s.stopCh:
 			return
 		case payload := <-s.updateChan:
-			s.kafkaProducer.SendUpdate(payload.KeyID, payload)
+			if err := s.kafkaProducer.SendUpdate(payload.KeyID, payload); err != nil {
+				atomic.AddUint64(&globalMetrics.UpdateErrors, 1)
+				log.Printf("[WARN] failed to publish update event for key %d: %v", payload.KeyID, err)
+			}
 		}
 	}
 }
@@ -86,7 +98,10 @@ func (s *KeyLifecycleService) revokeWorker() {
 		case <-s.stopCh:
 			return
 		case payload := <-s.revokeChan:
-			s.kafkaProducer.SendRevoke(payload.KeyID, payload)
+			if err := s.kafkaProducer.SendRevoke(payload.KeyID, payload); err != nil {
+				atomic.AddUint64(&globalMetrics.RevokeErrors, 1)
+				log.Printf("[WARN] failed to publish revoke event for key %d: %v", payload.KeyID, err)
+			}
 		}
 	}
 }

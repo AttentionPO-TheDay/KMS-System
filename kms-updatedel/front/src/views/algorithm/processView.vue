@@ -43,46 +43,26 @@
             </template>
             <div class="payload-box">
               <div v-if="activeStep === 0" style="margin-bottom: 20px; display: flex; gap: 10px;">
-                <el-button type="info" size="small" @click="runStep1" :loading="isProcessing">第一步：自数据库捞取模拟更新的旧密钥配置</el-button>
-                <el-button type="primary" size="small" @click="mockGenVisible = true">快捷操作：一步步生成全新的前置模拟密钥</el-button>
+                <el-button type="info" size="small" @click="runStep1" :loading="isProcessing">自数据库捞取模拟更新的旧密钥配置</el-button>
+                <el-button type="primary" size="small" @click="runQuickGenerate" :loading="isGenerating">前置生成：一键调用生成系统创建模拟密钥</el-button>
               </div>
 
               <div class="label">识别到用户下的一条有效旧密钥 (Target Key) :</div>
               <div class="value">
-                <span v-if="step1Data.oldKeyInfo">ID: {{ step1Data.oldKeyInfo.keyId }} | 算法: {{ step1Data.oldKeyInfo.encrytName }}</span>
+                <span v-if="step1Data.oldKeyInfo">ID: {{ step1Data.oldKeyInfo.keyId }} | 算法: {{ step1Data.oldKeyInfo.encrytName }} | 用户: {{ step1Data.oldKeyInfo.userName }} | 名称: {{ step1Data.oldKeyInfo.keyName }}</span>
                 <span v-else style="color:#666;">运行获取后展示...</span>
               </div>
               <div class="label mt-10">需要被废除的老旧公共特征值 (旧 uA):</div>
               <div class="value auth" style="color: #909399">
                 {{ step1Data.oldKeyInfo ? step1Data.oldKeyInfo.uA : '运行获取后展示...' }}
               </div>
+              <div v-if="step1Data.oldKeyInfo" class="label mt-10">旧密钥版本:</div>
+              <div v-if="step1Data.oldKeyInfo" class="value" style="color: #E6A23C">
+                Version {{ step1Data.oldKeyInfo.version || 1 }} | 状态: {{ step1Data.oldKeyInfo.status || '-' }}
+              </div>
             </div>
           </el-card>
         </transition>
-
-        <!-- Generate Simulation Dialog -->
-        <el-dialog v-model="mockGenVisible" title="一步步生成全新前置模拟密钥" width="700px" custom-class="glass-card" :close-on-click-modal="false" @close="resetMockGen">
-          <el-steps :active="mockGenStep" align-center style="margin-bottom: 20px;">
-            <el-step title="造参数"></el-step>
-            <el-step title="联中心"></el-step>
-            <el-step title="落数据"></el-step>
-          </el-steps>
-          
-          <div v-if="mockGenStep === 0" style="text-align: center; padding: 20px;">
-            <p style="color: #a3aab5; font-size: 13px; margin-bottom: 15px;">在本地环境模拟生成份额熵 uA 和私钥 num2。</p>
-            <el-button type="primary" @click="runMockGenStep1" :loading="isMockProcessing">执行：本地生熵</el-button>
-          </div>
-          
-          <div v-else-if="mockGenStep === 1" style="text-align: center; padding: 20px;">
-            <p style="color: #a3aab5; font-size: 13px; margin-bottom: 15px;">提取出的 uA：{{ mockGenData.uA }}<br><br>将此 uA 封入参数包，向服务器发起真实的生成注册请求。</p>
-            <el-button type="warning" @click="runMockGenStep2" :loading="isMockProcessing">执行：请求 KGC 协同</el-button>
-          </div>
-          
-          <div v-else-if="mockGenStep === 2" style="text-align: center; padding: 20px;">
-            <p style="color: #67c23a; font-size: 13px; margin-bottom: 15px;">中心计算完毕，密钥主体物料已返回并入库验证通过！<br><br>中心分段签名内容: {{ mockGenData.returnedMaterialPreview }}</p>
-            <el-button type="success" @click="runMockGenStep3">选定该密钥进入更新流</el-button>
-          </div>
-        </el-dialog>
 
         <!-- Step 2: New Random -->
         <transition name="fade-slide">
@@ -227,13 +207,8 @@ const operationType = ref('update')
 const hasStarted = ref(false)
 const activeStep = ref(-1)
 const isProcessing = ref(false)
+const isGenerating = ref(false)
 const fetchError = ref('')
-
-// Dialog state
-const mockGenVisible = ref(false)
-const mockGenStep = ref(0)
-const isMockProcessing = ref(false)
-const mockGenData = reactive({ privateShare: '', uA: '', returnedMaterialPreview: '', fullKeyInfo: null })
 
 const step1Data = reactive({ oldKeyInfo: null })
 const step2Data = reactive({ newPrivateShare: '', newUA: '' })
@@ -274,55 +249,33 @@ function initSimulation() {
   step4Data.mathSteps = []
 }
 
-// Dialog Logic
-function resetMockGen() {
-  mockGenStep.value = 0;
-  mockGenData.privateShare = '';
-  mockGenData.uA = '';
-  mockGenData.returnedMaterialPreview = '';
-  mockGenData.fullKeyInfo = null;
-}
-
-function runMockGenStep1() {
-  isMockProcessing.value = true;
-  setTimeout(() => {
-    const { publicKey, privateKey } = SM2.generateKeyPair()
-    mockGenData.privateShare = privateKey
-    mockGenData.uA = publicKey
-    mockGenStep.value = 1;
-    isMockProcessing.value = false;
-  }, 800)
-}
-
-async function runMockGenStep2() {
-  isMockProcessing.value = true;
+// 一键前置生成：直接调用生成系统后端接口完成密钥创建，不展示中间过程
+async function runQuickGenerate() {
+  isGenerating.value = true;
+  fetchError.value = '';
   try {
+    // 在本地生成 SM2 密钥对（uA 和私钥）
+    const { publicKey, privateKey } = SM2.generateKeyPair();
+
+    // 直接调用生成系统后端接口，一步完成注册
     const payload = {
       userId: sessionUserId, userName: sessionUserName || 'system',
       encrytType: '无证书非对称加密', encrytName: 'SM2',
       keyName: 'Vis-Test-Demo-' + Math.floor(Math.random() * 1000),
       keyUse: '前置构建', autoUpdate: 'false', status: 'Valid',
-      uA: mockGenData.uA
+      uA: publicKey
     };
     const response = await addKeymanage(payload);
     const snapshot = response.data || payload;
-    mockGenData.fullKeyInfo = snapshot;
-    let visualValue = snapshot.keyValue;
-    try { visualValue = JSON.parse(snapshot.keyValue) } catch(e){}
-    mockGenData.returnedMaterialPreview = typeof visualValue === 'object' ? visualValue.partialKey : visualValue;
-    mockGenStep.value = 2;
-  } catch (err) {
-    alert("自动生成测试密钥失败: " + err);
-  } finally {
-    isMockProcessing.value = false;
-  }
-}
 
-function runMockGenStep3() {
-  // Transfer to Step 1 context
-  step1Data.oldKeyInfo = mockGenData.fullKeyInfo;
-  activeStep.value = 1;
-  mockGenVisible.value = false;
+    // 直接将生成结果填入旧密钥信息，进入更新流程
+    step1Data.oldKeyInfo = snapshot;
+    activeStep.value = 1;
+  } catch (err) {
+    fetchError.value = '前置生成密钥失败: ' + (err.message || err);
+  } finally {
+    isGenerating.value = false;
+  }
 }
 
 async function runStep1() {

@@ -26,6 +26,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.math.BigInteger;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -219,11 +221,13 @@ public class GenerateKeymanageCompatController extends BaseController {
         Map<String, Object> normalized = new LinkedHashMap<>();
         normalized.put("G", source.get("G"));
         normalized.put("PPub", source.get("PPub"));
+
         Object order = source.get("N");
         if (order == null) {
             order = source.get("n");
         }
-        normalized.put("N", order);
+        normalized.put("N", normalizeBigIntegerValue(order));
+
         Object xIndex = source.get("xIndex");
         if (xIndex == null) {
             xIndex = source.get("xIndexs");
@@ -232,15 +236,58 @@ public class GenerateKeymanageCompatController extends BaseController {
         if (yIndex == null) {
             yIndex = source.get("yIndexs");
         }
-        normalized.put("xIndex", stringifyIfNeeded(xIndex));
-        normalized.put("yIndex", stringifyIfNeeded(yIndex));
+        normalized.put("xIndex", normalizeBigIntegerList(xIndex));
+        normalized.put("yIndex", normalizeBigIntegerList(yIndex));
         return normalized;
     }
 
-    private Object stringifyIfNeeded(Object value) {
-        if (value instanceof List) {
-            return JSON.toJSONString(value);
+    private Object normalizeBigIntegerValue(Object value) {
+        BigInteger parsed = parseBigInteger(value);
+        return parsed == null ? value : toFixedLengthHex(parsed);
+    }
+
+    private Object normalizeBigIntegerList(Object value) {
+        if (!(value instanceof List<?>)) {
+            return value;
         }
-        return value;
+        List<?> list = (List<?>) value;
+        List<String> normalized = new ArrayList<>(list.size());
+        for (Object item : list) {
+            BigInteger parsed = parseBigInteger(item);
+            normalized.add(parsed == null ? String.valueOf(item) : toFixedLengthHex(parsed));
+        }
+        return JSON.toJSONString(normalized);
+    }
+
+    private BigInteger parseBigInteger(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof BigInteger) {
+            return (BigInteger) value;
+        }
+        String text = String.valueOf(value).trim();
+        if (text.isEmpty()) {
+            return null;
+        }
+        if (text.startsWith("0x") || text.startsWith("0X")) {
+            return new BigInteger(text.substring(2), 16);
+        }
+        if (text.matches(".*[a-fA-F].*")) {
+            return new BigInteger(text, 16);
+        }
+        return new BigInteger(text, 10);
+    }
+
+    private String toFixedLengthHex(BigInteger value) {
+        String hex = value.toString(16);
+        if (hex.length() >= 64) {
+            return hex;
+        }
+        StringBuilder builder = new StringBuilder(64);
+        for (int i = hex.length(); i < 64; i++) {
+            builder.append('0');
+        }
+        return builder.append(hex).toString();
     }
 }

@@ -6,6 +6,7 @@ import com.alibaba.fastjson2.annotation.JSONField;
 public class Keymanage implements Serializable {
     private static final long serialVersionUID = 1L;
 
+    @JSONField(name = "key_id")
     private Long keyId;
     private Long userId;
 

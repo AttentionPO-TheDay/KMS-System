@@ -29,7 +29,8 @@ export function requestJson(base, path, options = {}) {
   }
 
   const config = {
-    url: `${base}${path}`,
+    baseURL: base,
+    url: path,
     method,
     headers: {
       ...headers,

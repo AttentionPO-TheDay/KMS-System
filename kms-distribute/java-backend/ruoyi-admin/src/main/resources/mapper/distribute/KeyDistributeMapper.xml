@@ -157,6 +157,30 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         )
     </update>
 
+    <update id="bindLatestPendingGenerateRecord">
+        update key_distribute_record
+        <trim prefix="SET" suffixOverrides=",">
+            key_id = #{keyId},
+            <if test="chainHash != null and chainHash != ''">chain_hash = #{chainHash},</if>
+            <if test="blockHeight != null">block_height = #{blockHeight},</if>
+            <if test="remark != null and remark != ''">remark = #{remark},</if>
+            upd_time = now()
+        </trim>
+        where record_id = (
+            select latest.record_id from (
+                select max(record_id) as record_id
+                from key_distribute_record
+                where key_id is null
+                  and distribute_type = '1'
+                  and user_id = #{userId}
+                  and user_name = #{userName}
+                  and key_name = #{keyName}
+                <if test="encrytType != null and encrytType != ''">and encryt_type = #{encrytType}</if>
+                <if test="encrytName != null and encrytName != ''">and encryt_name = #{encrytName}</if>
+            ) latest
+        )
+    </update>
+
     <delete id="deleteKeyDistributeRecordById" parameterType="Long">
         delete from key_distribute_record where record_id = #{recordId}
     </delete>

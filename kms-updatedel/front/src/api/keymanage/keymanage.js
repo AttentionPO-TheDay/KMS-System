@@ -3,7 +3,7 @@ import request from '@/utils/request'
 // 查询密钥管理列表
 export function listKeymanage(query) {
   return request({
-    url: '/keymanage/keymanage/list',
+    url: '/lifecycle/keymanage/list',
     method: 'get',
     params: query
   })
@@ -12,7 +12,7 @@ export function listKeymanage(query) {
 // 查询密钥管理详细
 export function getKeymanage(keyId) {
   return request({
-    url: '/keymanage/keymanage/' + keyId,
+    url: '/lifecycle/keymanage/' + keyId,
     method: 'get'
   })
 }
@@ -20,7 +20,7 @@ export function getKeymanage(keyId) {
 // 获取公共参数
 export function getComParam(data) {
   return request({
-    url: 'keymanage/keymanage/comparam',
+    url: '/lifecycle/keymanage/comparam',
     method: 'post',
     data: data
   })
@@ -29,7 +29,7 @@ export function getComParam(data) {
 // 新增密钥管理
 export function addKeymanage(data) {
   return request({
-    url: '/keymanage/keymanage',
+    url: '/lifecycle/keymanage',
     method: 'post',
     data: data
   })
@@ -38,7 +38,7 @@ export function addKeymanage(data) {
 // 修改密钥管理
 export function updateKeymanage(data) {
   return request({
-    url: '/keymanage/keymanage',
+    url: '/lifecycle/keymanage',
     method: 'put',
     data: data
   })
@@ -47,7 +47,7 @@ export function updateKeymanage(data) {
 // 删除密钥管理
 export function delKeymanage(keyId) {
   return request({
-    url: '/keymanage/keymanage/' + keyId,
+    url: '/lifecycle/keymanage/' + keyId,
     method: 'delete'
   })
 }
