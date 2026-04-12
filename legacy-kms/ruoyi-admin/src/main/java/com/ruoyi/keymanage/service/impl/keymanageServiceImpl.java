@@ -6,6 +6,8 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
@@ -44,6 +46,28 @@ public class keymanageServiceImpl implements IKeymanageService
 
     @Autowired
     private SSCLGenerator ssclGen;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    @Override
+    public KeyAnalysisResultDto getAssociationAnalysis(Long keyId) {
+        KeyAnalysisResultDto result = new KeyAnalysisResultDto();
+        Keymanage key = this.selectkeymanageByKeyId(keyId);
+        if (key == null) return null;
+        result.setBaseInfo(key);
+
+        String distSql = "SELECT distribute_time, user_name, distribute_type, distribute_status FROM key_distribute_record WHERE key_id = ? ORDER BY distribute_time DESC";
+        List<Map<String, Object>> distRecords = jdbcTemplate.queryForList(distSql, keyId);
+        result.setDistributeFootprints(distRecords);
+
+        String opSql = "SELECT action_time, action_type, action_source, result_status FROM key_operation_record WHERE key_id = ? ORDER BY action_time DESC";
+        List<Map<String, Object>> opRecords = jdbcTemplate.queryForList(opSql, keyId);
+        result.setOperationTrails(opRecords);
+
+        return result;
+    }
+
 
     /**
      * 查询密钥管理

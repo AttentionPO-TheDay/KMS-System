@@ -57,23 +57,10 @@ const constantRoutes = [
     hidden: false,
     children: [
       {
-        path: '/algorithm-quick',
-        component: () => import('@/views/algorithm/quickView.vue'),
-        name: 'AlgorithmQuickView',
-        meta: { title: '生成算法速览', icon: 'guide' }
-      }
-    ]
-  },
-  {
-    path: '',
-    component: Layout,
-    hidden: false,
-    children: [
-      {
-        path: '/algorithm-process',
-        component: () => import('@/views/algorithm/processView.vue'),
-        name: 'AlgorithmProcessView',
-        meta: { title: '生成计算逻辑揭秘', icon: 'data-line' }
+        path: '/algorithm-demo',
+        component: () => import('@/views/algorithm/index.vue'),
+        name: 'AlgorithmIntegratedView',
+        meta: { title: '算法图解与演示', icon: 'guide' }
       }
     ]
   },

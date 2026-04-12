@@ -59,6 +59,24 @@ public class LifecycleKeyController extends BaseController {
     }
 
     @PreAuthorize("isAuthenticated()")
+    @GetMapping("/analysis/{keyId}")
+    public AjaxResult getAnalysis(@PathVariable Long keyId) {
+        return lifecycleService.findById(keyId)
+            .map(key -> {
+                if (!canAccess(key)) {
+                    return AjaxResult.error("无权分析该密钥数据");
+                }
+                try {
+                    return AjaxResult.success(lifecycleService.getAssociationAnalysis(keyId));
+                } catch (Exception e) {
+                    log.error("密钥关联分析异常: keyId={}", keyId, e);
+                    return AjaxResult.error("分析失败: " + e.getMessage());
+                }
+            })
+            .orElseGet(() -> AjaxResult.error("密钥不存在: " + keyId));
+    }
+
+    @PreAuthorize("isAuthenticated()")
     @PostMapping
     public AjaxResult create(@RequestBody Keymanage request) {
         try {

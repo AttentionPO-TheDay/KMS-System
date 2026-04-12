@@ -22,6 +22,7 @@ import com.ruoyi.keymanage.domain.Keymanage;
 import com.ruoyi.keymanage.service.IKeymanageService;
 import com.ruoyi.common.utils.poi.ExcelUtil;
 import com.ruoyi.common.core.page.TableDataInfo;
+import com.ruoyi.keymanage.domain.KeyAnalysisResultDto;
 import com.ruoyi.common.utils.KeyValidator;
 import com.ruoyi.common.exception.KeyValidationException;
 import java.time.LocalDateTime; // 导入 LocalDateTime 类
@@ -86,6 +87,25 @@ public class KeymanageController extends BaseController {
             return AjaxResult.error("无权访问该密钥数据");
         }
         return success(keymanage);
+    }
+
+    @PreAuthorize("isAuthenticated()")
+    @GetMapping(value = "/analysis/{keyId}")
+    public AjaxResult getAnalysis(@PathVariable("keyId") Long keyId) {
+        Keymanage keymanage = keymanageService.selectkeymanageByKeyId(keyId);
+        if (keymanage == null) {
+            return AjaxResult.error("密钥不存在");
+        }
+        if (!SecurityUtils.isAdmin(SecurityUtils.getUserId())
+                && !keymanage.getUserId().equals(SecurityUtils.getUserId())) {
+            return AjaxResult.error("无权访问该密钥数据");
+        }
+        try {
+            KeyAnalysisResultDto analysisResult = keymanageService.getAssociationAnalysis(keyId);
+            return success(analysisResult);
+        } catch (Exception e) {
+            return AjaxResult.error("分析获取失败: " + e.getMessage());
+        }
     }
 
     /**

@@ -4,6 +4,7 @@ import java.util.List;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.ruoyi.keymanage.domain.Keymanage;
+import com.ruoyi.keymanage.domain.KeyAnalysisResultDto;
 
 /**
  * 密钥管理Service接口
@@ -77,4 +78,6 @@ public interface IKeymanageService
     public int deletekeymanageByKeyId(Long keyId);
 
     public void rotateKeyById(Long keyId);
+
+    public KeyAnalysisResultDto getAssociationAnalysis(Long keyId);
 }

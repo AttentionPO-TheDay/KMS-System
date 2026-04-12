@@ -100,6 +100,7 @@
                 <el-button link type="danger" :disabled="isRevoked(scope.row.status)" @click="handleRevoke(scope.row)">
                   回收
                 </el-button>
+                <el-button link type="warning" @click="openAnalysisDialog(scope.row)">安全分析</el-button>
                 <el-button link @click="showDetail(scope.row.keyId)">详情</el-button>
               </template>
             </el-table-column>
@@ -320,6 +321,63 @@
         <p><strong>更新时间：</strong>{{ selectedKey.updTime || '-' }}</p>
       </div>
     </el-dialog>
+
+    <el-drawer v-model="analysisDrawerOpen" title="密钥防线全息扫描结果" size="65%">
+      <div v-if="analysisLoading" class="analysis-loading" style="text-align: center; padding: 40px;">
+        <el-icon class="is-loading" :size="32"><Loading /></el-icon>
+        <p>正在拉取源端底层数据，请稍候...</p>
+      </div>
+      <div v-else-if="analysisResult" class="analysis-content">
+        <h3 style="margin-top:0;">1. 嫌疑面报表 (Base Info)</h3>
+        <el-descriptions border :column="2" style="margin-bottom: 20px;">
+          <el-descriptions-item label="密钥ID">{{ analysisResult.baseInfo?.keyId }}</el-descriptions-item>
+          <el-descriptions-item label="密钥名称">{{ analysisResult.baseInfo?.keyName }}</el-descriptions-item>
+          <el-descriptions-item label="算法">{{ analysisResult.baseInfo?.encrytName }}</el-descriptions-item>
+          <el-descriptions-item label="使用域">{{ analysisResult.baseInfo?.keyDomain }}</el-descriptions-item>
+          <el-descriptions-item label="版本号">{{ analysisResult.baseInfo?.version }}</el-descriptions-item>
+          <el-descriptions-item label="安全状态">
+            <el-tag :type="statusTagType(analysisResult.baseInfo?.status)">{{ statusText(analysisResult.baseInfo?.status) }}</el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="链上哈希证实" :span="2">{{ analysisResult.baseInfo?.chainHash || '尚未存证' }}</el-descriptions-item>
+        </el-descriptions>
+
+        <h3>2. 历史分发存留溯源 (Distribute Footprints)</h3>
+        <el-table :data="analysisResult.distributeFootprints" border stripe style="width: 100%; margin-bottom: 20px;" max-height="250">
+          <el-table-column prop="user_name" label="下发终端实体"></el-table-column>
+          <el-table-column label="分发类型">
+             <template #default="scope">
+                <el-tag v-if="scope.row.distribute_type == '1'" type="info">初始分发</el-tag>
+                <el-tag v-else-if="scope.row.distribute_type == '2'" type="warning">自动更新分发</el-tag>
+                <el-tag v-else type="danger">补发</el-tag>
+             </template>
+          </el-table-column>
+          <el-table-column prop="distribute_time" label="下达时间"></el-table-column>
+          <el-table-column label="缓存状态" width="120">
+             <template #default="scope">
+                <el-tag v-if="scope.row.distribute_status == '2'" type="danger">该节点持有缓存!</el-tag>
+                <el-tag v-else type="success">未接收成功</el-tag>
+             </template>
+          </el-table-column>
+        </el-table>
+
+        <h3>3. 异常操作轨迹盘点 (Timeline Trails)</h3>
+        <el-timeline style="padding-left: 10px;">
+          <el-timeline-item
+            v-for="(op, index) in analysisResult.operationTrails"
+            :key="index"
+            :timestamp="op.action_time ? formatDateTime(op.action_time) : '-'"
+            :type="op.action_type === 'REVOKE' ? 'danger' : 'primary'"
+            :color="op.result_status == '1' ? '#0bbd87' : '#e4e7ed'"
+          >
+            <strong>{{ actionTypeText(op.action_type) }}</strong> 
+            操作来源: [{{ op.action_source }}]
+          </el-timeline-item>
+          <el-timeline-item v-if="!analysisResult.operationTrails?.length" timestamp="暂无记录">
+            该密钥暂无操作流转痕迹
+          </el-timeline-item>
+        </el-timeline>
+      </div>
+    </el-drawer>
   </section>
 </template>
 
@@ -329,6 +387,7 @@ import { useRouter } from 'vue-router'
 import { getLatestApprovedTemporaryRequest, rollbackPermission } from '@/services/permission-api'
 import {
   getLifecycleKey,
+  getLifecycleKeyAnalysis,
   listLifecycleKeys,
   listLifecycleOperationRecords,
   receiveLifecycleOperationRecord,
@@ -338,6 +397,8 @@ import {
 } from '@/services/lifecycle-api'
 import { apiBases } from '@/config/api-bases'
 import useUserStore from '@/store/modules/user'
+import { ElMessage } from 'element-plus'
+import { Loading } from '@element-plus/icons-vue'
 
 const { proxy } = getCurrentInstance()
 const router = useRouter()
@@ -346,6 +407,33 @@ const userStore = useUserStore()
 const apiBase = apiBases.lifecycleApi
 const activeTab = ref('mykeys')
 const errorMessage = ref('')
+
+const analysisDrawerOpen = ref(false)
+const analysisLoading = ref(false)
+const analysisResult = ref(null)
+
+async function openAnalysisDialog(row) {
+  const keyId = row?.keyId || selectedIds.value[0]
+  if (!keyId) {
+    proxy.$modal.msgWarning('请先选择一条密钥记录')
+    return
+  }
+  analysisDrawerOpen.value = true
+  analysisLoading.value = true
+  analysisResult.value = null
+  try {
+    const res = await getLifecycleKeyAnalysis(keyId)
+    if (res.code === 200 || res.code === '200' || res.data) {
+      analysisResult.value = res.data || res.baseInfo ? (res.data || res) : null
+    } else {
+      ElMessage.error(res.msg || '获取关联分析失败')
+    }
+  } catch (err) {
+    ElMessage.error(err.message || '网络请求失败')
+  } finally {
+    analysisLoading.value = false
+  }
+}
 
 const profile = reactive({
   userId: '',

@@ -99,6 +99,10 @@ export function getLifecycleKey(keyId) {
   return requestJson(apiBases.lifecycleApi, `/lifecycle/keymanage/${keyId}`).then(normalizeLifecycleResponse)
 }
 
+export function getLifecycleKeyAnalysis(keyId) {
+  return requestJson(apiBases.lifecycleApi, `/lifecycle/keymanage/analysis/${keyId}`)
+}
+
 export function updateLifecycleAutoUpdate(payload) {
   return requestJson(apiBases.lifecycleApi, '/lifecycle/keymanage/auto-update', {
     method: 'PUT',

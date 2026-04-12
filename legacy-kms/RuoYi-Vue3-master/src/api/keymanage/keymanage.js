@@ -51,3 +51,11 @@ export function delKeymanage(keyId) {
     method: 'delete'
   })
 }
+
+// 关联分析
+export function getKeymanageAnalysis(keyId) {
+  return request({
+    url: '/keymanage/keymanage/analysis/' + keyId,
+    method: 'get'
+  })
+}

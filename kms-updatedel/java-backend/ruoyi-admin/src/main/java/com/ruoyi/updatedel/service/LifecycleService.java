@@ -22,6 +22,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.jdbc.core.JdbcTemplate;
+import com.ruoyi.updatedel.domain.KeyAnalysisResultDto;
+import java.util.Map;
 
 @Service
 public class LifecycleService {
@@ -34,6 +37,7 @@ public class LifecycleService {
     private final KafkaTemplate<String, String> kafkaTemplate;
     private final ObjectMapper objectMapper;
     private final KeyOperationRecordService keyOperationRecordService;
+    private final JdbcTemplate jdbcTemplate;
 
     @Value("${kms.lifecycle.kafka.chain-task-topic:key_chain_task}")
     private String chainTaskTopic;
@@ -47,7 +51,8 @@ public class LifecycleService {
         SsclKeyGenerator ssclKeyGenerator,
         KafkaTemplate<String, String> kafkaTemplate,
         ObjectMapper objectMapper,
-        KeyOperationRecordService keyOperationRecordService
+        KeyOperationRecordService keyOperationRecordService,
+        JdbcTemplate jdbcTemplate
     ) {
         this.keymanageMapper = keymanageMapper;
         this.eccKeyGenerator = eccKeyGenerator;
@@ -55,6 +60,7 @@ public class LifecycleService {
         this.kafkaTemplate = kafkaTemplate;
         this.objectMapper = objectMapper;
         this.keyOperationRecordService = keyOperationRecordService;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     public List<Keymanage> list(Keymanage query) {
@@ -81,6 +87,24 @@ public class LifecycleService {
 
     public Optional<Keymanage> findById(Long keyId) {
         return Optional.ofNullable(keymanageMapper.selectkeymanageByKeyId(keyId));
+    }
+
+    public KeyAnalysisResultDto getAssociationAnalysis(Long keyId) {
+        KeyAnalysisResultDto result = new KeyAnalysisResultDto();
+        Keymanage key = requireExistingKey(keyId);
+        result.setBaseInfo(key);
+
+        String distSql = "SELECT distribute_time, user_name, distribute_type, distribute_status " +
+                         "FROM key_distribute_record WHERE key_id = ? ORDER BY distribute_time DESC";
+        List<Map<String, Object>> distRecords = jdbcTemplate.queryForList(distSql, keyId);
+        result.setDistributeFootprints(distRecords);
+
+        String opSql = "SELECT action_time, action_type, action_source, result_status " +
+                       "FROM key_operation_record WHERE key_id = ? ORDER BY action_time DESC";
+        List<Map<String, Object>> opRecords = jdbcTemplate.queryForList(opSql, keyId);
+        result.setOperationTrails(opRecords);
+
+        return result;
     }
 
     @Transactional
