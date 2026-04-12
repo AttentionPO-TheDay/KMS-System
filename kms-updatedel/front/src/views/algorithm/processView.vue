@@ -232,12 +232,24 @@ onMounted(async () => {
   }
 })
 
+function normalizeKeyInfo(key) {
+  if (!key) {
+    return key
+  }
+  const normalizedUA = key.ua || key.uA || ''
+  return {
+    ...key,
+    ua: normalizedUA,
+    uA: normalizedUA
+  }
+}
+
 function initSimulation() {
   hasStarted.value = true
   activeStep.value = 0
   isProcessing.value = false
   fetchError.value = ''
-  
+
   // Clear
   step1Data.oldKeyInfo = null
   step2Data.newPrivateShare = ''
@@ -256,7 +268,7 @@ async function runQuickGenerate() {
   fetchError.value = '';
   try {
     // 在本地生成 SM2 密钥对（uA 和私钥）
-    const { publicKey, privateKey } = SM2.generateKeyPair();
+    const { publicKey } = SM2.generateKeyPair();
 
     // 直接调用生成系统后端接口，一步完成注册
     const payload = {
@@ -267,7 +279,7 @@ async function runQuickGenerate() {
       uA: publicKey
     };
     const response = await addGenerateKeymanage(payload);
-    const snapshot = response.data || payload;
+    const snapshot = normalizeKeyInfo(response.data || payload);
 
     // 直接将生成结果填入旧密钥信息，进入更新流程
     step1Data.oldKeyInfo = snapshot;
@@ -298,7 +310,7 @@ async function runStep1() {
       }
     }
 
-    step1Data.oldKeyInfo = targetKey
+    step1Data.oldKeyInfo = normalizeKeyInfo(targetKey)
     activeStep.value = 1
   } catch (e) {
     fetchError.value = "检索旧密钥失败: " + e.message
@@ -320,6 +332,7 @@ async function runStep3() {
   try {
     const targetKey = step1Data.oldKeyInfo
     const payload = Object.assign({}, targetKey)
+    payload.ua = step2Data.newUA
     payload.uA = step2Data.newUA
     step3Data.payload = payload
 

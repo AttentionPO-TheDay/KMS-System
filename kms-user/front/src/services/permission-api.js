@@ -60,7 +60,10 @@ export function submitPermissionRequest(featureCode, payload) {
 export function listPermissionRequests(featureCode, userId) {
   const feature = permissionFeatures[featureCode]
   const query = userId ? `?userId=${encodeURIComponent(userId)}` : ''
-  return request(feature.apiBase, `/permission/request/list${query}`).then((payload) => withFeatureMeta(featureCode, payload))
+  return request(feature.apiBase, `/permission/request/list${query}`).then((payload) => {
+    const filteredRows = (payload.rows || []).filter(r => r.featureCode === featureCode)
+    return withFeatureMeta(featureCode, { ...payload, rows: filteredRows })
+  })
 }
 
 export async function getLatestApprovedTemporaryRequest(featureCode, userId) {

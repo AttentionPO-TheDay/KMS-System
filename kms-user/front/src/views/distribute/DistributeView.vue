@@ -54,6 +54,10 @@
         <el-form-item>
           <el-button type="primary" @click="handleSearch">搜索</el-button>
           <el-button @click="resetFilters">重置</el-button>
+          <el-button type="primary" plain @click="loadRecords">立即刷新</el-button>
+          <el-button :type="autoRefreshEnabled ? 'warning' : 'info'" plain @click="toggleAutoRefresh">
+            {{ autoRefreshEnabled ? '关闭自动刷新（10秒）' : '开启自动刷新（10秒）' }}
+          </el-button>
           <el-button type="success" plain @click="handleExport">导出结果</el-button>
         </el-form-item>
       </el-form>
@@ -121,7 +125,7 @@
 </template>
 
 <script setup>
-import { computed, getCurrentInstance, onMounted, reactive, ref } from 'vue'
+import { computed, getCurrentInstance, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { apiBases } from '@/config/api-bases'
 import { getDistributeRecord, listDistributeRecords } from '@/services/distribute-api'
 import useUserStore from '@/store/modules/user'
@@ -145,6 +149,9 @@ const selectedRecord = ref(null)
 const errorMessage = ref('')
 const total = ref(0)
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / filters.pageSize)))
+const autoRefreshEnabled = ref(false)
+const AUTO_REFRESH_INTERVAL = 10000
+let autoRefreshTimer = null
 
 onMounted(async () => {
   if (userStore.token && (!userStore.id || !userStore.name)) {
@@ -157,6 +164,10 @@ onMounted(async () => {
   profile.userId = userStore.id || ''
   profile.userName = userStore.name || ''
   loadRecords()
+})
+
+onUnmounted(() => {
+  stopAutoRefresh()
 })
 
 async function loadRecords() {
@@ -201,6 +212,30 @@ function handleExport() {
 function changePage(pageNum) {
   filters.pageNum = pageNum
   loadRecords()
+}
+
+function toggleAutoRefresh() {
+  autoRefreshEnabled.value = !autoRefreshEnabled.value
+  if (autoRefreshEnabled.value) {
+    startAutoRefresh()
+    loadRecords()
+    return
+  }
+  stopAutoRefresh()
+}
+
+function startAutoRefresh() {
+  stopAutoRefresh()
+  autoRefreshTimer = window.setInterval(() => {
+    loadRecords()
+  }, AUTO_REFRESH_INTERVAL)
+}
+
+function stopAutoRefresh() {
+  if (autoRefreshTimer !== null) {
+    window.clearInterval(autoRefreshTimer)
+    autoRefreshTimer = null
+  }
 }
 
 async function showDetail(recordId) {

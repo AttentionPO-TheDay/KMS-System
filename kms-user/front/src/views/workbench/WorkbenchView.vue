@@ -29,7 +29,7 @@
     </el-row>
 
     <el-row :gutter="16">
-      <el-col :xs="24" :lg="16">
+      <el-col :span="24">
         <el-card shadow="never" class="section-card">
           <template #header>
             <div class="section-head">
@@ -46,44 +46,6 @@
               </div>
               <el-button type="primary" plain @click="router.push(item.path)">进入</el-button>
             </article>
-          </div>
-        </el-card>
-      </el-col>
-
-      <el-col :xs="24" :lg="8">
-        <el-card shadow="never" class="section-card">
-          <template #header>
-            <div class="section-head">
-              <span>使用提醒</span>
-            </div>
-          </template>
-
-          <div class="tips-list">
-            <el-alert
-              title="生成页已恢复用户侧密钥生成入口。"
-              type="success"
-              :closable="false"
-              show-icon
-            />
-            <el-alert
-              title="公共密钥查看和自动更新都属于临时权限，请在完成后及时回退。"
-              type="warning"
-              :closable="false"
-              show-icon
-            />
-            <el-alert
-              title="审批仍在各业务系统后台完成，用户前台只负责提交申请与回退。"
-              type="info"
-              :closable="false"
-              show-icon
-            />
-          </div>
-
-          <div class="quick-links">
-            <el-button text type="primary" @click="router.push('/user/profile')">个人中心</el-button>
-            <el-button text type="primary" @click="router.push('/user_actions/permissions')">我的权限申请</el-button>
-            <el-button text type="primary" @click="router.push('/user_actions/generate')">去生成页</el-button>
-            <el-button text type="primary" @click="router.push('/user_actions/updatedel')">去更新与回收页</el-button>
           </div>
         </el-card>
       </el-col>

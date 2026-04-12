@@ -131,6 +131,7 @@
             <el-form-item>
               <el-button type="primary" @click="searchAutoUpdate">搜索</el-button>
               <el-button @click="resetAutoUpdate">重置</el-button>
+              <el-button type="warning" plain @click="router.push('/user_actions/permissions')">去申请临时权限</el-button>
             </el-form-item>
           </el-form>
 
