@@ -20,7 +20,7 @@
       <right-toolbar v-model:showSearch="showSearch" @queryTable="getList"></right-toolbar>
     </el-row>
 
-    <el-table v-loading="loading" :data="paramList">
+    <el-table v-loading="loading" :data="paramList" tooltip-effect="light">
       <el-table-column label="算法名称" align="center" prop="algorithm" width="120" />
       <el-table-column label="所属域" align="center" prop="domain" width="100" />
       <el-table-column label="参数名称" align="center" prop="label" width="180" />

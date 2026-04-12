@@ -35,7 +35,9 @@
       "mcp__github__search_code",
       "Bash(wsl.exe:*)",
       "mcp__plugin_oh-my-claudecode_t__lsp_diagnostics_directory",
-      "Bash(git:*)"
+      "Bash(git:*)",
+      "mcp__filesystem__list_directory",
+      "mcp__filesystem__read_text_file"
     ]
   }
 }

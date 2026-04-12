@@ -245,8 +245,8 @@
   "hotPaths": [
     {
       "path": "",
-      "accessCount": 159,
-      "lastAccessed": 1776023419381,
+      "accessCount": 171,
+      "lastAccessed": 1776024407971,
       "type": "directory"
     },
     {
@@ -292,6 +292,12 @@
       "type": "directory"
     },
     {
+      "path": "doc\\project_overview.md",
+      "accessCount": 12,
+      "lastAccessed": 1776024370864,
+      "type": "file"
+    },
+    {
       "path": "kms-updatedel\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\updatedel\\consumer\\UpdatedelChainConsumer.java",
       "accessCount": 11,
       "lastAccessed": 1776022594979,
@@ -328,15 +334,21 @@
       "type": "file"
     },
     {
-      "path": "doc\\project_overview.md",
+      "path": "kms-generate\\front\\src",
       "accessCount": 9,
-      "lastAccessed": 1776023464042,
-      "type": "file"
+      "lastAccessed": 1776024164551,
+      "type": "directory"
     },
     {
       "path": "kms-generate\\README.md",
       "accessCount": 8,
       "lastAccessed": 1776023052933,
+      "type": "file"
+    },
+    {
+      "path": "doc\\message-protocol.md",
+      "accessCount": 8,
+      "lastAccessed": 1776023919844,
       "type": "file"
     },
     {
@@ -347,8 +359,8 @@
     },
     {
       "path": "kms-generate\\front\\package.json",
-      "accessCount": 6,
-      "lastAccessed": 1776003442101,
+      "accessCount": 7,
+      "lastAccessed": 1776023999394,
       "type": "file"
     },
     {
@@ -356,18 +368,6 @@
       "accessCount": 6,
       "lastAccessed": 1776022418820,
       "type": "directory"
-    },
-    {
-      "path": "kms-generate\\front\\src",
-      "accessCount": 6,
-      "lastAccessed": 1776022576015,
-      "type": "directory"
-    },
-    {
-      "path": "doc\\message-protocol.md",
-      "accessCount": 6,
-      "lastAccessed": 1776023464001,
-      "type": "file"
     },
     {
       "path": "C:\\Users\\luo\\.claude\\settings.json",
@@ -394,21 +394,21 @@
       "type": "file"
     },
     {
-      "path": "doc\\kms-split-implementation-plan.md",
-      "accessCount": 3,
-      "lastAccessed": 1775992916761,
+      "path": "kms-ops\\README.md",
+      "accessCount": 5,
+      "lastAccessed": 1776023919770,
       "type": "file"
     },
     {
       "path": "doc\\docker-runbook.md",
-      "accessCount": 3,
-      "lastAccessed": 1776023464125,
+      "accessCount": 5,
+      "lastAccessed": 1776023919812,
       "type": "file"
     },
     {
-      "path": "kms-ops\\README.md",
+      "path": "doc\\kms-split-implementation-plan.md",
       "accessCount": 3,
-      "lastAccessed": 1776023474791,
+      "lastAccessed": 1775992916761,
       "type": "file"
     },
     {

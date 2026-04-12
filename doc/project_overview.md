@@ -37,13 +37,13 @@ kms-code-copy/
 当前已实现的用户侧主入口包括：
 
 1. `/workbench` 统一工作台
-2. `/generate` 功能实现原理、密钥生成、生成记录与公共参数查询
-3. `/updatedel` 生命周期操作、安全分析与结果回执
+2. `/generate` 密钥生成、生成记录、公共库与公共参数查询
+3. `/lifecycle` 生命周期操作、安全分析与结果回执
 4. `/distribute` 分发记录查询
 5. `/permissions` 权限申请、记录与回退
 6. `/login`、`/register`、`/user/profile`
 
-当前用户流中，`/generate` 默认先展示“功能实现原理”，随后再进入生成表单；`/updatedel` 可以对单条密钥查看“安全分析”。
+当前用户流中，`/generate` 统一承接生成、记录、公共库与参数查询；`/lifecycle` 可以对单条密钥查看“安全分析”，并查看生命周期结果回执。
 
 前端通过独立 API 客户端直连不同后端：
 

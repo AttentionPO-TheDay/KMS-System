@@ -18,8 +18,8 @@
 当前已实现的页面和能力包括：
 
 1. `/workbench` 统一工作台
-2. `/generate` 功能实现原理、密钥生成、生成记录查询与公共参数查询
-3. `/updatedel` 密钥更新、回收、自动更新配置、安全分析与结果回执
+2. `/generate` 密钥生成、生成记录查询、公共库与公共参数查询
+3. `/lifecycle` 密钥更新、回收、自动更新配置、安全分析与结果回执
 4. `/distribute` 分发记录查询与详情查看
 5. `/permissions` 权限申请、记录聚合与回退
 6. `/login`、`/register`、`/user/profile`
@@ -62,9 +62,9 @@
 ## 当前说明
 
 1. `WorkbenchView.vue` 仍保留集成式工作台能力
-2. 新的主路径是按功能拆分的 `/generate`、`/updatedel`、`/distribute`、`/permissions`
-3. `/generate` 默认先展示“功能实现原理”，再进入生成、记录、公共库与参数查询页签
-4. `/updatedel` 当前除了更新、回收和自动更新外，还提供单条密钥“安全分析”与结果回执查看
+2. 新的主路径是按功能拆分的 `/generate`、`/lifecycle`、`/distribute`、`/permissions`
+3. `/generate` 当前统一承接生成、记录、公共库与参数查询
+4. `/lifecycle` 当前除了更新、回收和自动更新外，还提供单条密钥“安全分析”与结果回执查看
 5. 普通用户权限审批不在 `kms-user` 完成，而是在对应业务系统管理员后台完成
 
 ## 参考文档

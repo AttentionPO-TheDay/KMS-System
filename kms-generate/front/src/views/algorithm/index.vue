@@ -11,22 +11,18 @@
         <el-radio-group v-model="form.encrytName" class="algo-switch" @change="initSimulation">
           <el-radio-button label="SM2">无证书 SM2 算法</el-radio-button>
           <el-radio-button label="SSCL">无证书 SSCL 算法</el-radio-button>
+          <el-radio-button label="INTRO">功能实现简述</el-radio-button>
         </el-radio-group>
         
-        <div class="test-controls">
+        <div class="test-controls" v-if="form.encrytName !== 'INTRO'">
           <span class="label">测试密钥标签:</span>
           <el-input v-model="form.keyName" placeholder="如：TestKey-1" style="width: 200px" />
         </div>
       </div>
-      <div class="right-controls">
-        <el-button type="primary" plain @click="showIntroDialog = true">
-          <el-icon><Monitor /></el-icon>功能实现简述
-        </el-button>
-      </div>
     </div>
     
     <!-- 全局进度条 (置顶) -->
-    <el-steps :active="activeStep" finish-status="success" align-center class="custom-steps" style="margin-bottom: 30px;">
+    <el-steps v-if="form.encrytName !== 'INTRO'" :active="activeStep" finish-status="success" align-center class="custom-steps" style="margin-bottom: 30px;">
       <el-step title="第一步" description="本地部分公私钥生成" />
       <el-step title="第二步" description="真实请求" />
       <el-step title="第三步" description="本地恢复" />
@@ -34,7 +30,7 @@
     </el-steps>
 
     <!-- 一一对应布局 -->
-    <div class="step-by-step-layout">
+    <div class="step-by-step-layout" v-if="form.encrytName !== 'INTRO'">
     
       <!-- Step 1 Row -->
       <transition name="fade-slide">
@@ -209,9 +205,10 @@
       
     </div>
 
-    <!-- 功能实现简述 Dialog -->
-    <el-dialog v-model="showIntroDialog" title="功能实现简述" width="1000px" append-to-body>
-      <div class="principle-cards">
+
+    <!-- 功能实现简述 布局 -->
+    <transition name="fade-slide">
+      <div class="principle-cards intro-panel" v-if="form.encrytName === 'INTRO'">
         <!-- Card 1 -->
         <div class="principle-card">
           <div class="card-title"><span class="icon">🔗</span> 多节点密钥协商</div>
@@ -233,7 +230,7 @@
 
         <!-- Card 2 -->
         <div class="principle-card">
-          <div class="card-title"><span class="icon">🌐</span> 分布式分域架构</div>
+          <div class="card-title"><span class="icon">🌐</span> 分布式密钥生成</div>
           <div class="visual-box distributed-box">
             <div class="domain-cluster">
               <div class="center-node domain-a sm">域 A</div>
@@ -274,7 +271,7 @@
           <p class="muted card-desc-bottom">简介：跨域交互时进行特征剥离与密码学混淆，实现“只知发往某域、不知对应何人”的极致隐私保护。</p>
         </div>
       </div>
-    </el-dialog>
+    </transition>
   </div>
 </template>
 
@@ -306,7 +303,6 @@ const form = reactive({
 // 初始化即停留在步骤 0，移除独立的“开启演练流”按钮
 const activeStep = ref(0)
 const isProcessing = ref(false)
-const showIntroDialog = ref(false)
 
 const step1Data = reactive({ privateShare: '', uA: '', payload: null })
 const step2Data = reactive({ responseObj: null, snapshotValue: null })
@@ -707,9 +703,11 @@ function sm2PointMultiply(hexPoint, hexScalar) {
 /* ----------------------------------
    Feature Principles Styles 
    ----------------------------------*/
-::v-deep .el-dialog__body {
-  background: #111827;
+.intro-panel {
   padding: 20px;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .principle-cards {
