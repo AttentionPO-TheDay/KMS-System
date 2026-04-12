@@ -88,7 +88,7 @@ func (c *RequestController) EnrollKey(ctx *fiber.Ctx) error {
 	}
 	autoUpdate := req.AutoUpdate
 	if autoUpdate == "" {
-		autoUpdate = "false"
+		autoUpdate = "0"
 	}
 
 	km := &models.Keymanage{

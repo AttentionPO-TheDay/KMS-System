@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1775840335439,
+  "lastScanned": 1775977757785,
   "projectRoot": "E:\\java_project\\kms-code-copy",
   "techStack": {
     "languages": [],
@@ -33,7 +33,7 @@
       "path": "doc",
       "purpose": null,
       "fileCount": 12,
-      "lastAccessed": 1775840335422,
+      "lastAccessed": 1775977757755,
       "keyFiles": [
         "docker-runbook.md",
         "frontend-role-boundary.md",
@@ -46,7 +46,7 @@
       "path": "kms-acceptance",
       "purpose": null,
       "fileCount": 2,
-      "lastAccessed": 1775840335422,
+      "lastAccessed": 1775977757755,
       "keyFiles": [
         "README.md"
       ]
@@ -55,7 +55,7 @@
       "path": "kms-distribute",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1775840335422,
+      "lastAccessed": 1775977757755,
       "keyFiles": [
         "README.md"
       ]
@@ -64,7 +64,7 @@
       "path": "kms-generate",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1775840335422,
+      "lastAccessed": 1775977757756,
       "keyFiles": [
         "README.md"
       ]
@@ -73,7 +73,7 @@
       "path": "kms-ops",
       "purpose": null,
       "fileCount": 10,
-      "lastAccessed": 1775840335423,
+      "lastAccessed": 1775977757756,
       "keyFiles": [
         "build-local.ps1",
         "check.ps1",
@@ -86,7 +86,7 @@
       "path": "kms-updatedel",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1775840335423,
+      "lastAccessed": 1775977757756,
       "keyFiles": [
         "README.md"
       ]
@@ -95,7 +95,7 @@
       "path": "kms-user",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1775840335423,
+      "lastAccessed": 1775977757756,
       "keyFiles": [
         "README.md"
       ]
@@ -104,7 +104,7 @@
       "path": "legacy-kms",
       "purpose": null,
       "fileCount": 16,
-      "lastAccessed": 1775840335424,
+      "lastAccessed": 1775977757757,
       "keyFiles": [
         "captcha-test.html",
         "check_users.sql",
@@ -117,7 +117,7 @@
       "path": "legacy-kms-go",
       "purpose": null,
       "fileCount": 3,
-      "lastAccessed": 1775840335424,
+      "lastAccessed": 1775977757757,
       "keyFiles": [
         "go.mod",
         "go.sum",
@@ -128,7 +128,7 @@
       "path": "security",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1775840335424,
+      "lastAccessed": 1775977757758,
       "keyFiles": [
         "security_test.ps1"
       ]
@@ -137,7 +137,7 @@
       "path": "show",
       "purpose": null,
       "fileCount": 8,
-      "lastAccessed": 1775840335424,
+      "lastAccessed": 1775977757758,
       "keyFiles": [
         "kms-architecture-diagram-clean.html",
         "kms-current-architecture-slide.html",
@@ -150,7 +150,7 @@
       "path": "tools",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1775840335424,
+      "lastAccessed": 1775977757758,
       "keyFiles": [
         "BcryptHash.class"
       ]
@@ -159,7 +159,7 @@
       "path": "kms-generate\\docs",
       "purpose": "Documentation",
       "fileCount": 1,
-      "lastAccessed": 1775840335425,
+      "lastAccessed": 1775977757760,
       "keyFiles": [
         "migration-map.md"
       ]
@@ -168,14 +168,14 @@
       "path": "kms-generate\\tests",
       "purpose": "Test files",
       "fileCount": 0,
-      "lastAccessed": 1775840335425,
+      "lastAccessed": 1775977757760,
       "keyFiles": []
     },
     "kms-updatedel\\docs": {
       "path": "kms-updatedel\\docs",
       "purpose": "Documentation",
       "fileCount": 1,
-      "lastAccessed": 1775840335426,
+      "lastAccessed": 1775977757761,
       "keyFiles": [
         "migration-map.md"
       ]
@@ -184,14 +184,14 @@
       "path": "kms-updatedel\\tests",
       "purpose": "Test files",
       "fileCount": 0,
-      "lastAccessed": 1775840335426,
+      "lastAccessed": 1775977757761,
       "keyFiles": []
     },
     "kms-user\\docs": {
       "path": "kms-user\\docs",
       "purpose": "Documentation",
       "fileCount": 1,
-      "lastAccessed": 1775840335426,
+      "lastAccessed": 1775977757762,
       "keyFiles": [
         "integration-plan.md"
       ]
@@ -200,7 +200,7 @@
       "path": "legacy-kms\\bin",
       "purpose": "Executable scripts",
       "fileCount": 3,
-      "lastAccessed": 1775840335426,
+      "lastAccessed": 1775977757762,
       "keyFiles": [
         "clean.bat",
         "package.bat",
@@ -211,14 +211,14 @@
       "path": "legacy-kms-go\\config",
       "purpose": "Configuration files",
       "fileCount": 0,
-      "lastAccessed": 1775840335427,
+      "lastAccessed": 1775977757763,
       "keyFiles": []
     },
     "legacy-kms-go\\controllers": {
       "path": "legacy-kms-go\\controllers",
       "purpose": "Controllers",
       "fileCount": 1,
-      "lastAccessed": 1775840335427,
+      "lastAccessed": 1775977757763,
       "keyFiles": [
         "request_controller.go"
       ]
@@ -227,7 +227,7 @@
       "path": "legacy-kms-go\\models",
       "purpose": "Data models",
       "fileCount": 1,
-      "lastAccessed": 1775840335427,
+      "lastAccessed": 1775977757764,
       "keyFiles": [
         "keymanage.go"
       ]
@@ -236,7 +236,7 @@
       "path": "legacy-kms-go\\utils",
       "purpose": "Utility functions",
       "fileCount": 1,
-      "lastAccessed": 1775840335427,
+      "lastAccessed": 1775977757764,
       "keyFiles": [
         "kafka_producer.go"
       ]
@@ -244,15 +244,63 @@
   },
   "hotPaths": [
     {
+      "path": "",
+      "accessCount": 13,
+      "lastAccessed": 1775991507088,
+      "type": "directory"
+    },
+    {
       "path": "C:\\Users\\luo\\.claude\\settings.json",
       "accessCount": 5,
       "lastAccessed": 1775915821469,
       "type": "file"
     },
     {
+      "path": "kms-ops\\docker-compose.yml",
+      "accessCount": 4,
+      "lastAccessed": 1775983895179,
+      "type": "file"
+    },
+    {
       "path": "C:\\Users\\luo\\.claude\\hud\\omc-hud.mjs",
       "accessCount": 2,
       "lastAccessed": 1775840614572,
+      "type": "file"
+    },
+    {
+      "path": "kms-ops",
+      "accessCount": 2,
+      "lastAccessed": 1775916095740,
+      "type": "directory"
+    },
+    {
+      "path": "kms-ops\\.env",
+      "accessCount": 2,
+      "lastAccessed": 1775916431837,
+      "type": "file"
+    },
+    {
+      "path": "kms-ops\\start.sh",
+      "accessCount": 2,
+      "lastAccessed": 1775916431873,
+      "type": "file"
+    },
+    {
+      "path": "kms-ops\\reinit.sh",
+      "accessCount": 2,
+      "lastAccessed": 1775916431936,
+      "type": "file"
+    },
+    {
+      "path": "C:\\Users\\luo\\.cpa",
+      "accessCount": 2,
+      "lastAccessed": 1775918342398,
+      "type": "directory"
+    },
+    {
+      "path": "C:\\Users\\luo\\.cpa\\config.yaml",
+      "accessCount": 2,
+      "lastAccessed": 1775918590689,
       "type": "file"
     },
     {
@@ -289,6 +337,42 @@
       "path": "C:\\Users\\luo\\.claude\\projects\\E--java-project-kms-code-copy\\26d75c58-e1e4-4140-9582-4cb9df69b446\\tool-results\\call_clyfyNBWbKgUDdH2Z7JLDrDi.txt",
       "accessCount": 1,
       "lastAccessed": 1775883917027,
+      "type": "file"
+    },
+    {
+      "path": "kms-ops\\fisco\\webase-front\\conf\\application-docker.yml",
+      "accessCount": 1,
+      "lastAccessed": 1775916105153,
+      "type": "file"
+    },
+    {
+      "path": "kms-ops\\nginx\\docker-compose.yml",
+      "accessCount": 1,
+      "lastAccessed": 1775916105244,
+      "type": "file"
+    },
+    {
+      "path": "C:\\Users\\luo\\.cpa\\docker-compose.yml",
+      "accessCount": 1,
+      "lastAccessed": 1775918320684,
+      "type": "file"
+    },
+    {
+      "path": "doc\\docker-runbook.md",
+      "accessCount": 1,
+      "lastAccessed": 1775983892204,
+      "type": "file"
+    },
+    {
+      "path": "C:\\Users\\luo\\AppData\\Local\\Temp\\claude\\E--java-project-kms-code-copy\\9bd4bc8c-47f6-475b-8530-1a0b9904ce37\\tasks\\bu7qd1794.output",
+      "accessCount": 1,
+      "lastAccessed": 1775989828960,
+      "type": "file"
+    },
+    {
+      "path": "C:\\Users\\luo\\AppData\\Local\\Temp\\claude\\E--java-project-kms-code-copy\\9bd4bc8c-47f6-475b-8530-1a0b9904ce37\\tasks\\blhfejgcq.output",
+      "accessCount": 1,
+      "lastAccessed": 1775989829018,
       "type": "file"
     }
   ],

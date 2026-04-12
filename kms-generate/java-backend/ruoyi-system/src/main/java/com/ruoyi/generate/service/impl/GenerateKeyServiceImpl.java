@@ -79,7 +79,7 @@ public class GenerateKeyServiceImpl implements GenerateKeyService {
         keymanage.setCreTime(isBlank(keymanage.getCreTime()) ? now : keymanage.getCreTime());
         keymanage.setUpdTime(isBlank(keymanage.getUpdTime()) ? keymanage.getCreTime() : keymanage.getUpdTime());
         keymanage.setVersion(keymanage.getVersion() == null || keymanage.getVersion() < 1 ? 1 : keymanage.getVersion());
-        keymanage.setAutoUpdate(isBlank(keymanage.getAutoUpdate()) ? "false" : keymanage.getAutoUpdate());
+        keymanage.setAutoUpdate(isBlank(keymanage.getAutoUpdate()) ? "0" : keymanage.getAutoUpdate());
         keymanage.setStatus(isBlank(keymanage.getStatus()) ? KeyStatus.ACTIVE.getCode() : keymanage.getStatus());
         keymanage.setChainStatus(isBlank(keymanage.getChainStatus()) ? "0" : keymanage.getChainStatus());
         keymanage.setKeyDomain(isBlank(keymanage.getKeyDomain()) ? "A" : keymanage.getKeyDomain().trim());

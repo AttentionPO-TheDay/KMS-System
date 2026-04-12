@@ -114,9 +114,7 @@ public class GenerateKafkaConsumer {
                 // 5. 设置默认状态
                 km.setVersion(1);
                 km.setStatus("0"); // ACTIVE
-                if (km.getAutoUpdate() == null) {
-                    km.setAutoUpdate("false");
-                }
+                km.setAutoUpdate(normalizeAutoUpdate(km.getAutoUpdate()));
                 km.setChainStatus("0"); // 待上链
 
                 validKeysToInsert.add(km);
@@ -154,5 +152,23 @@ public class GenerateKafkaConsumer {
         long totalCost = System.currentTimeMillis() - batchStartTime;
         log.debug("本次消费处理完成，耗时 {} ms，有效消息 {} 条",
                 totalCost, validKeysToInsert.size());
+    }
+
+    /**
+     * 统一 autoUpdate 字段为 "0"/"1"，与 kms-updatedel 的 LifecycleService 保持一致
+     * 避免生成系统存 "true"/"false"、生命周期系统按 "1"/"0" 查询导致自动更新失效
+     */
+    private String normalizeAutoUpdate(String autoUpdate) {
+        if (autoUpdate == null || autoUpdate.trim().isEmpty()) {
+            return "0";
+        }
+        String value = autoUpdate.trim();
+        if ("true".equalsIgnoreCase(value) || "enabled".equalsIgnoreCase(value)) {
+            return "1";
+        }
+        if ("false".equalsIgnoreCase(value) || "disabled".equalsIgnoreCase(value)) {
+            return "0";
+        }
+        return value;
     }
 }

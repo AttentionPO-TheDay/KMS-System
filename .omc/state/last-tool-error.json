@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"wsl.exe -d Ubuntu-22.04 bash -lc 'set -e; export NVM_DIR=\\\"$HOME/.nvm\\\"; . \\\"$NVM_DIR/nvm.sh\\\"; nvm install --lts; nvm alias default lts/* >/dev/null; nvm use --lts >/dev/null; hash -r; ec...",
+  "error": "Exit code 1\nbash: line 1: /nvm.sh: No such file or directory",
+  "timestamp": "2026-04-12T10:48:22.387Z",
+  "retry_count": 2
+}
