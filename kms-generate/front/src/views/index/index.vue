@@ -38,6 +38,7 @@
       </el-col>
     </el-row>
 
+
     <el-row :gutter="20" class="action-section" style="margin-top: 20px;">
       <el-col :span="12">
         <div class="glass-card">
@@ -427,4 +428,5 @@ onUnmounted(() => {
 .btn-text {
   font-size: 14px;
 }
+
 </style>

@@ -7,14 +7,21 @@
 
     <!-- 顶部统一控制台 -->
     <div class="top-controls">
-      <el-radio-group v-model="form.encrytName" class="algo-switch" @change="initSimulation">
-        <el-radio-button label="SM2">无证书 SM2 算法</el-radio-button>
-        <el-radio-button label="SSCL">无证书 SSCL 算法</el-radio-button>
-      </el-radio-group>
-      
-      <div class="test-controls">
-        <span class="label">测试密钥标签:</span>
-        <el-input v-model="form.keyName" placeholder="如：TestKey-1" style="width: 200px" />
+      <div class="left-controls" style="display: flex; gap: 40px; align-items: center;">
+        <el-radio-group v-model="form.encrytName" class="algo-switch" @change="initSimulation">
+          <el-radio-button label="SM2">无证书 SM2 算法</el-radio-button>
+          <el-radio-button label="SSCL">无证书 SSCL 算法</el-radio-button>
+        </el-radio-group>
+        
+        <div class="test-controls">
+          <span class="label">测试密钥标签:</span>
+          <el-input v-model="form.keyName" placeholder="如：TestKey-1" style="width: 200px" />
+        </div>
+      </div>
+      <div class="right-controls">
+        <el-button type="primary" plain @click="showIntroDialog = true">
+          <el-icon><Monitor /></el-icon>功能实现简述
+        </el-button>
       </div>
     </div>
     
@@ -201,6 +208,73 @@
       <div v-if="fetchError" class="mt-20 desc" style="color: #F56C6C; text-align: center;">{{ fetchError }}</div>
       
     </div>
+
+    <!-- 功能实现简述 Dialog -->
+    <el-dialog v-model="showIntroDialog" title="功能实现简述" width="1000px" append-to-body>
+      <div class="principle-cards">
+        <!-- Card 1 -->
+        <div class="principle-card">
+          <div class="card-title"><span class="icon">🔗</span> 多节点密钥协商</div>
+          <div class="visual-box">
+            <div class="center-node domain-a">生成中心 A</div>
+            <div class="user-nodes">
+              <div class="user-node u1">💻</div>
+              <div class="user-node u2">🖥️</div>
+              <div class="user-node u3">📱</div>
+            </div>
+            <div class="sync-lines-1">
+              <div class="line l1"></div>
+              <div class="line l2"></div>
+              <div class="line l3"></div>
+            </div>
+          </div>
+          <p class="muted card-desc-bottom">简介：同一生成中心掩护下，域内多终端节点共同完成高强度、无证书的密钥协商过程。</p>
+        </div>
+
+        <!-- Card 2 -->
+        <div class="principle-card">
+          <div class="card-title"><span class="icon">🌐</span> 分布式分域架构</div>
+          <div class="visual-box distributed-box">
+            <div class="domain-cluster">
+              <div class="center-node domain-a sm">域 A</div>
+              <div class="orbit"></div>
+              <div class="user-dot a1">💻</div>
+              <div class="user-dot a2">📱</div>
+            </div>
+            <div class="domain-cluster">
+              <div class="center-node domain-b sm">域 B</div>
+              <div class="orbit"></div>
+              <div class="user-dot b1">🖥️</div>
+              <div class="user-dot b2">💻</div>
+            </div>
+          </div>
+          <p class="muted card-desc-bottom">简介：全网分布式部署，各中心主密钥逻辑隔离。分散的业务终端被安全区隔在独立的密码域中。</p>
+        </div>
+
+        <!-- Card 3 -->
+        <div class="principle-card">
+          <div class="card-title"><span class="icon">🕵️</span> 组间匿名传输</div>
+          <div class="visual-box crossing-box">
+            <div class="domain-side">
+              <div class="domain-label">域 A (发送)</div>
+              <div class="user-dot source">💻</div>
+            </div>
+            
+            <div class="transmission-path">
+              <div class="obfuscator">混淆代理</div>
+              <div class="packet"></div>
+              <div class="packet-anonymous">❓</div>
+            </div>
+
+            <div class="domain-side">
+              <div class="domain-label">域 B (接收)</div>
+              <div class="shield">🛡️</div>
+            </div>
+          </div>
+          <p class="muted card-desc-bottom">简介：跨域交互时进行特征剥离与密码学混淆，实现“只知发往某域、不知对应何人”的极致隐私保护。</p>
+        </div>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -208,6 +282,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { getComParam, addKeymanage } from "@/api/generate/keymanage"
 import { getUserProfile } from "@/api/system/user"
+import { Monitor, User, Cpu, Key } from '@element-plus/icons-vue'
 import { SM2 } from 'gm-crypto'
 import { BigInteger } from "jsbn"
 import { ec as EC } from 'elliptic'
@@ -231,6 +306,7 @@ const form = reactive({
 // 初始化即停留在步骤 0，移除独立的“开启演练流”按钮
 const activeStep = ref(0)
 const isProcessing = ref(false)
+const showIntroDialog = ref(false)
 
 const step1Data = reactive({ privateShare: '', uA: '', payload: null })
 const step2Data = reactive({ responseObj: null, snapshotValue: null })
@@ -475,7 +551,7 @@ function sm2PointMultiply(hexPoint, hexScalar) {
 .top-controls {
   display: flex;
   align-items: center;
-  gap: 40px;
+  justify-content: space-between;
   margin-bottom: 30px;
   background: rgba(255, 255, 255, 0.02);
   padding: 15px 24px;
@@ -627,4 +703,242 @@ function sm2PointMultiply(hexPoint, hexScalar) {
 .finalize-block .content { font-family: monospace; font-size: 12px; color: #67C23A; line-height: 1.5; }
 .final-priv .content { color: #F56C6C; }
 .break-all { word-break: break-all; }
+
+/* ----------------------------------
+   Feature Principles Styles 
+   ----------------------------------*/
+::v-deep .el-dialog__body {
+  background: #111827;
+  padding: 20px;
+}
+
+.principle-cards {
+  display: flex;
+  gap: 20px;
+  align-items: stretch;
+}
+
+.principle-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 12px;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.card-title {
+  font-size: 16px;
+  font-weight: 500;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.card-desc-bottom {
+  font-size: 13px;
+  margin-top: 20px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.65);
+  text-align: justify;
+}
+
+.visual-box {
+  flex-grow: 1;
+  min-height: 160px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 12px;
+  border: 1px solid rgba(0, 153, 255, 0.1);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 10px;
+}
+
+/* Common Node Elements */
+.center-node {
+  padding: 10px 20px;
+  border-radius: 16px;
+  color: #fff !important;
+  font-weight: bold;
+  z-index: 2;
+  text-align: center;
+}
+.center-node.sm {
+  padding: 6px 12px;
+  font-size: 12px;
+  border-radius: 10px;
+}
+.domain-a { 
+  background: linear-gradient(135deg, #00e5ff, #0077ff); 
+  box-shadow: 0 0 16px rgba(0, 229, 255, 0.5); 
+}
+.domain-b { 
+  background: linear-gradient(135deg, #a855f7, #6366f1); 
+  box-shadow: 0 0 16px rgba(168, 85, 247, 0.5); 
+}
+
+/* Animation 1: Multi-node Key Agreement */
+.user-nodes {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.user-node {
+  position: absolute;
+  font-size: 24px;
+  z-index: 3;
+}
+.u1 { transform: translate(-70px, -50px); }
+.u2 { transform: translate(70px, -50px); }
+.u3 { transform: translate(0, 70px); }
+
+.sync-lines-1 .line {
+  position: absolute;
+  background: linear-gradient(90deg, transparent, #00e5ff, transparent);
+  height: 2px;
+  width: 50px;
+  top: 50%;
+  left: 50%;
+  transform-origin: left center;
+  opacity: 0.6;
+}
+.line.l1 { transform: translate(-50%, -50%) rotate(-143deg) translateX(30px); animation: pulse-line 1.5s infinite; }
+.line.l2 { transform: translate(-50%, -50%) rotate(-37deg) translateX(30px); animation: pulse-line 1.5s infinite 0.2s; }
+.line.l3 { transform: translate(-50%, -50%) rotate(90deg) translateX(30px); animation: pulse-line 1.5s infinite 0.4s; }
+
+@keyframes pulse-line {
+  0% { transform: translate(-50%, -50%) var(--r) translateX(40px) scaleX(0.5); opacity: 0; }
+  50% { opacity: 1; }
+  100% { transform: translate(-50%, -50%) var(--r) translateX(20px) scaleX(1); opacity: 0; }
+}
+.l1 { --r: rotate(-143deg); }
+.l2 { --r: rotate(-37deg); }
+.l3 { --r: rotate(90deg); }
+
+/* Animation 2: Distributed Concept */
+.distributed-box {
+  flex-direction: row;
+  justify-content: space-around;
+  gap: 10px;
+}
+.domain-cluster {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 90px;
+  height: 90px;
+}
+.orbit {
+  position: absolute;
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+  animation: spin 10s linear infinite;
+}
+.user-dot {
+  position: absolute;
+  font-size: 16px;
+}
+.a1 { transform: rotate(0deg) translateX(45px) rotate(0deg); }
+.a2 { transform: rotate(180deg) translateX(45px) rotate(-180deg); }
+.b1 { transform: rotate(90deg) translateX(45px) rotate(-90deg); }
+.b2 { transform: rotate(270deg) translateX(45px) rotate(-270deg); }
+@keyframes spin { 100% { transform: rotate(360deg); } }
+
+/* Animation 3: Cross-domain Anonymous */
+.crossing-box {
+  justify-content: space-between;
+}
+.domain-side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  z-index: 2;
+}
+.domain-label {
+  font-size: 12px;
+  color: #bae6fd;
+  border: 1px solid rgba(186, 230, 253, 0.2);
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.3);
+}
+.source {
+  font-size: 28px;
+}
+.shield {
+  font-size: 28px;
+  filter: drop-shadow(0 0 10px #6366f1);
+}
+.transmission-path {
+  position: absolute;
+  left: 28%;
+  right: 28%;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.obfuscator {
+  position: absolute;
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  font-size: 12px;
+  color: #fff;
+  z-index: 3;
+}
+.packet, .packet-anonymous {
+  position: absolute;
+  left: 0;
+  top: -8px;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.packet::after {
+  content: '';
+  width: 8px;
+  height: 8px;
+  background: #00e5ff;
+  border-radius: 50%;
+  box-shadow: 0 0 10px #00e5ff;
+}
+.packet {
+  animation: travel-first 3s infinite linear;
+}
+.packet-anonymous {
+  animation: travel-second 3s infinite linear;
+  opacity: 0;
+  font-size: 14px;
+}
+@keyframes travel-first {
+  0% { left: 0; opacity: 1; }
+  45% { left: 45%; opacity: 1; }
+  50% { left: 50%; opacity: 0; }
+  100% { left: 50%; opacity: 0; }
+}
+@keyframes travel-second {
+  0% { left: 50%; opacity: 0; }
+  50% { left: 50%; opacity: 0; }
+  55% { left: 55%; opacity: 1; }
+  100% { left: 100%; opacity: 1; }
+}
 </style>

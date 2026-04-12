@@ -10,8 +10,9 @@
 2. 密钥回收
 3. 自动更新配置
 4. 生命周期查询
-5. 权限申请、审批、回退
-6. 更新/回收事件消费与后续上链
+5. 密钥安全分析
+6. 权限申请、审批、回退
+7. 更新/回收事件消费与后续上链
 
 ## 当前目录
 
@@ -36,16 +37,17 @@
 
 1. `GET /lifecycle/keymanage/list`
 2. `GET /lifecycle/keymanage/{keyId}`
-3. `PUT /lifecycle/keymanage`
-4. `PUT /lifecycle/keymanage/auto-update`
-5. `DELETE /lifecycle/keymanage/{keyId}`
-6. `GET /permission/request/list`
-7. `GET /permission/request/{requestId}`
-8. `POST /permission/request/submit`
-9. `PUT /permission/request/approve/{requestId}`
-10. `PUT /permission/request/reject/{requestId}`
-11. `PUT /permission/request/rollback/{requestId}`
-12. `DELETE /permission/request/{requestId}`
+3. `GET /lifecycle/keymanage/analysis/{keyId}`
+4. `PUT /lifecycle/keymanage`
+5. `PUT /lifecycle/keymanage/auto-update`
+6. `DELETE /lifecycle/keymanage/{keyId}`
+7. `GET /permission/request/list`
+8. `GET /permission/request/{requestId}`
+9. `POST /permission/request/submit`
+10. `PUT /permission/request/approve/{requestId}`
+11. `PUT /permission/request/reject/{requestId}`
+12. `PUT /permission/request/rollback/{requestId}`
+13. `DELETE /permission/request/{requestId}`
 
 默认端口：`9082`
 
@@ -63,6 +65,8 @@
 1. `front/` 当前仍保留权限审批和系统管理能力
 2. 普通用户主入口已经迁移到 `kms-user`
 3. 生命周期管理员后台仍然保留为独立前端
+4. 管理员端可对单条密钥执行“安全分析”，查看基础信息、历史分发足迹与操作轨迹
+5. 前端部分只读查询会通过 `VITE_APP_GENERATE_API`（默认 `/generate-api`）读取生成系统数据
 
 ## 参考文档
 
