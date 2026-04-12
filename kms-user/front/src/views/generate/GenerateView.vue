@@ -1,12 +1,24 @@
 <template>
   <section class="page generate-page">
-    <div class="page-header">
-      <p class="eyebrow">Generate</p>
-      <h2>密钥生成与记录查询</h2>
-      <p>用户端已按生成系统当前真实能力收敛，只保留可直接走通的证书无关生成链路。</p>
-    </div>
+    <div class="generate-dashboard">
+      <nav class="inner-sidenav">
+        <div class="nav-item" :class="{ active: activeTab === 'generate' }" @click="activeTab = 'generate'">
+          <span class="icon">🚀</span> 密钥生成
+        </div>
+        <div class="nav-item" :class="{ active: activeTab === 'records' }" @click="activeTab = 'records'">
+          <span class="icon">📊</span> 历史记录
+        </div>
+        <div class="nav-item" :class="{ active: activeTab === 'public' }" @click="activeTab = 'public'">
+          <span class="icon">🌐</span> 公共库
+        </div>
+        <div class="nav-item" :class="{ active: activeTab === 'params' }" @click="activeTab = 'params'">
+          <span class="icon">⚙️</span> 参数查询
+        </div>
+      </nav>
 
-    <div class="summary-grid">
+      <main class="inner-main-content">
+        <div v-show="activeTab === 'generate'" class="tab-pane">
+          <div class="summary-grid">
       <article class="summary-card">
         <span class="summary-label">当前用户</span>
         <strong>{{ profile.userName || '未登录' }}</strong>
@@ -24,27 +36,19 @@
       </article>
     </div>
 
-    <el-card class="panel" shadow="never">
+    <el-card class="panel glass-panel" shadow="never">
       <template #header>
         <div class="panel-head">
           <div>
-            <h3>发起生成</h3>
+            <h3>密钥生成</h3>
             <p class="muted">提交前会先在当前浏览器生成一份用户侧密钥材料，并把公钥份额 `uA` 发送到后端。</p>
           </div>
           <RouterLink class="inline-link" to="/user_actions/permissions">查看权限申请</RouterLink>
         </div>
       </template>
 
-      <el-alert
-        title="当前统一用户端不再展示 AES / RSA / 摘要算法伪入口，避免前端可填但后端必失败。"
-        type="info"
-        :closable="false"
-        show-icon
-        class="mb16"
-      />
-
       <div class="generate-layout">
-        <div class="generate-main">
+        <div class="generate-main generation-box">
           <div class="profile-grid">
             <label>
               <span>用户 ID</span>
@@ -53,10 +57,6 @@
             <label>
               <span>用户名</span>
               <input :value="profile.userName || '-'" type="text" disabled />
-            </label>
-            <label>
-              <span>API 前缀</span>
-              <input :value="apiBase" type="text" disabled />
             </label>
           </div>
 
@@ -99,29 +99,37 @@
             <h3>本地材料</h3>
             <el-tag type="success">浏览器侧</el-tag>
           </div>
-          <p class="muted">私钥份额只保留在当前页面中，不会提交到后端。提交时仅发送 `uA`。</p>
-          <div class="material-item">
-            <span>生成时间</span>
-            <strong>{{ localMaterial.generatedAt || '-' }}</strong>
+          <p class="muted">本地部分私钥只保留在当前页面中，不会提交到后端。提交时仅发送 `uA`。</p>
+
+          <div v-if="!localMaterial.publicKey" style="display: flex; justify-content: center; padding: 40px 0;">
+            <el-button type="primary" plain @click="regenerateLocalMaterial">点击生成本地公私钥</el-button>
           </div>
-          <div class="material-item full">
-            <span>公钥份额 uA</span>
-            <code>{{ localMaterial.publicKey || '-' }}</code>
-          </div>
-          <div class="material-item full">
-            <span>私钥份额</span>
-            <code>{{ maskedPrivateKey }}</code>
-          </div>
-          <div class="action-row compact">
-            <el-button text type="primary" @click="copyLocalMaterial">复制材料摘要</el-button>
-            <el-button text type="primary" @click="downloadLocalMaterial">下载材料</el-button>
-          </div>
+          <template v-else>
+            <div class="material-item">
+              <span>生成时间</span>
+              <strong>{{ localMaterial.generatedAt || '-' }}</strong>
+            </div>
+            <div class="material-item full">
+              <span>本地部分公钥 uA</span>
+              <code>{{ localMaterial.publicKey || '-' }}</code>
+            </div>
+            <div class="material-item full">
+              <span>本地部分私钥 (浏览器侧生成且不在网络中传输)</span>
+              <code class="danger-text" style="color: #ff4d4f;">{{ maskedPrivateKey }}</code>
+            </div>
+            <div class="action-row compact">
+              <el-button text type="primary" @click="copyLocalMaterial">复制材料摘要</el-button>
+              <el-button text type="primary" @click="downloadLocalMaterial">下载材料</el-button>
+            </div>
+          </template>
         </aside>
       </div>
 
       <p v-if="errorMessage" class="error-text">{{ errorMessage }}</p>
     </el-card>
+        </div>
 
+        <div v-show="activeTab === 'records'" class="tab-pane">
     <el-card class="panel" shadow="never">
       <template #header>
         <div class="panel-head">
@@ -175,7 +183,9 @@
         </el-table-column>
       </el-table>
     </el-card>
+        </div>
 
+        <div v-show="activeTab === 'public'" class="tab-pane">
     <el-card class="panel" shadow="never">
       <template #header>
         <div class="panel-head">
@@ -229,7 +239,9 @@
         <el-table-column label="创建时间" prop="creTime" width="180" />
       </el-table>
     </el-card>
+        </div>
 
+        <div v-show="activeTab === 'params'" class="tab-pane">
     <el-card class="panel" shadow="never">
       <template #header>
         <div class="panel-head">
@@ -258,6 +270,9 @@
       </el-form>
       <pre v-if="commonParams" class="json-block">{{ JSON.stringify(commonParams, null, 2) }}</pre>
     </el-card>
+        </div>
+      </main>
+    </div>
 
     <el-dialog v-model="resultOpen" title="本地最终结果" width="760px" append-to-body destroy-on-close>
       <el-alert title="请立即保存用户侧私钥材料。刷新页面后将无法再次恢复。" type="warning" :closable="false" show-icon class="mb16" />
@@ -335,6 +350,7 @@ const publicKeys = ref([])
 const commonParams = ref(null)
 const errorMessage = ref('')
 const publicListLoading = ref(false)
+const activeTab = ref('generate')
 const approvedPublicRequestId = ref(null)
 const encrytNameOptions = ref([])
 
@@ -416,7 +432,7 @@ watch(
 
 onMounted(async () => {
   handleEncrytTypeChange(generateForm.encrytType)
-  regenerateLocalMaterial()
+  // [NEW] Default do not auto generate local materials
   await ensureProfile()
   fillDefaultFilters()
   await loadKeys()
@@ -1011,8 +1027,15 @@ function downloadText(text, filename) {
   margin-top: 12px;
 }
 
-.query-form {
-  margin-bottom: 12px;
+.mb16 {
+  margin-top: 16px;
+}
+
+.generation-box {
+  padding: 24px;
+  border: 1px dashed rgba(0, 229, 255, 0.3);
+  border-radius: 16px;
+  background: rgba(0, 153, 255, 0.02);
 }
 
 .json-block {
@@ -1022,23 +1045,85 @@ function downloadText(text, filename) {
   background: rgba(0, 0, 0, 0.4);
   border: 1px solid rgba(255, 255, 255, 0.1);
   color: #bae6fd;
-  overflow: auto;
+  overflow-y: auto;
+  max-height: 400px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  word-break: break-all;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
 }
 
-.detail-span {
-  grid-column: 1 / -1;
+.generate-dashboard {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+  margin-top: 20px;
 }
 
-.mb12 {
-  margin-top: 12px;
+.inner-sidenav {
+  width: 220px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 12px;
 }
 
-.mb16 {
-  margin-top: 16px;
+.inner-sidenav .nav-item {
+  padding: 12px 16px;
+  border-radius: 10px;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.7);
+  transition: all 0.3s;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-weight: 500;
+}
+
+.inner-sidenav .nav-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+}
+
+.inner-sidenav .nav-item.active {
+  background: rgba(0, 153, 255, 0.2);
+  color: #00e5ff;
+  border: 1px solid rgba(0, 153, 255, 0.3);
+  box-shadow: 0 4px 12px rgba(0, 153, 255, 0.1);
+}
+
+.inner-sidenav .icon {
+  font-size: 18px;
+}
+
+.inner-main-content {
+  flex-grow: 1;
+  min-width: 0;
+}
+
+.tab-pane {
+  animation: fade-in 0.3s ease-out;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @media (max-width: 960px) {
+  .generate-dashboard {
+    flex-direction: column;
+  }
+  .inner-sidenav {
+    width: 100%;
+    flex-direction: row;
+    overflow-x: auto;
+  }
   .generate-layout {
     grid-template-columns: 1fr;
   }

@@ -1,10 +1,5 @@
 <template>
   <section class="page">
-    <div class="page-header">
-      <p class="eyebrow">Distribute</p>
-      <h2>分发记录与下载</h2>
-      <p>统一前端已直接对接分发系统后端，支持查询记录、查看详情并导出当前筛选结果。</p>
-    </div>
 
     <article class="panel">
       <div class="panel-head">
@@ -16,84 +11,112 @@
       <div class="detail-grid scope-grid">
         <p><strong>用户 ID：</strong>{{ profile.userId || '-' }}</p>
         <p><strong>用户名：</strong>{{ profile.userName || '-' }}</p>
-        <p><strong>API 前缀：</strong><code>{{ apiBase }}</code></p>
       </div>
     </article>
 
-    <article class="panel">
-      <div class="form-grid toolbar">
-        <label>
-          <span>密钥名称</span>
-          <input v-model="filters.keyName" type="text" placeholder="按密钥名称筛选" />
-        </label>
-        <label>
-          <span>分发类型</span>
-          <select v-model="filters.distributeType">
-            <option value="">全部</option>
-            <option value="1">初始分发</option>
-            <option value="2">更新分发</option>
-            <option value="3">回收后补发</option>
-          </select>
-        </label>
-        <label>
-          <span>分发状态</span>
-          <select v-model="filters.distributeStatus">
-            <option value="">全部</option>
-            <option value="0">待分发</option>
-            <option value="1">分发中</option>
-            <option value="2">分发成功</option>
-            <option value="3">分发失败</option>
-          </select>
-        </label>
-        <button @click="handleSearch">搜索</button>
-        <button class="ghost-button" @click="resetFilters">重置</button>
-        <button class="ghost-button" @click="handleExport">导出当前结果</button>
+    <div class="metric-grid mb16">
+      <div class="metric-card glass-panel">
+        <span class="metric-icon">📑</span>
+        <div class="metric-info">
+          <span class="label">符合当前筛选的总记录</span>
+          <strong class="value">{{ total }}</strong>
+        </div>
       </div>
+      <div class="metric-card glass-panel">
+        <span class="metric-icon">🔍</span>
+        <div class="metric-info">
+          <span class="label">本页加载记录数</span>
+          <strong class="value">{{ records.length }}</strong>
+        </div>
+      </div>
+    </div>
+
+    <article class="panel glass-panel">
+      <el-form :model="filters" inline class="query-form mb16">
+        <el-form-item label="密钥名称">
+          <el-input v-model="filters.keyName" @keyup.enter="handleSearch" placeholder="按密钥名称筛选" clearable />
+        </el-form-item>
+        <el-form-item label="分发类型">
+          <el-select v-model="filters.distributeType" @change="handleSearch" clearable placeholder="全部">
+            <el-option label="初始分发" value="1" />
+            <el-option label="更新分发" value="2" />
+            <el-option label="回收后补发" value="3" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="分发状态">
+          <el-select v-model="filters.distributeStatus" @change="handleSearch" clearable placeholder="全部">
+            <el-option label="待分发" value="0" />
+            <el-option label="分发中" value="1" />
+            <el-option label="分发成功" value="2" />
+            <el-option label="分发失败" value="3" />
+          </el-select>
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="handleSearch">搜索</el-button>
+          <el-button @click="resetFilters">重置</el-button>
+          <el-button type="success" plain @click="handleExport">导出结果</el-button>
+        </el-form-item>
+      </el-form>
       <p class="muted">导出文件：<code>key-distribute-record-时间戳.xlsx</code></p>
       <p v-if="errorMessage" class="error-text">{{ errorMessage }}</p>
-      <div v-if="records.length === 0" class="empty-state">暂无分发记录</div>
-      <div v-else class="record-list">
-        <article v-for="record in records" :key="record.recordId" class="record-card">
-          <div class="record-head">
-            <strong>{{ record.keyName || '未命名密钥' }}</strong>
-            <span class="badge" :class="`status-${record.distributeStatus || '0'}`">
-              {{ statusText(record.distributeStatus) }}
+      
+      <el-table :data="records" class="mt16" empty-text="暂无分发记录">
+        <el-table-column label="记录 ID" prop="recordId" width="90" />
+        <el-table-column label="密钥名称" prop="keyName" min-width="160" />
+        <el-table-column label="用户名" prop="userName" width="120" />
+        <el-table-column label="加密算法" prop="encrytName" width="120" />
+        <el-table-column label="分发类型" width="120">
+          <template #default="scope">{{ typeText(scope.row.distributeType) }}</template>
+        </el-table-column>
+        <el-table-column label="分发状态" width="120">
+          <template #default="scope">
+            <span class="style-badge" :class="`status-${scope.row.distributeStatus || '0'}`">
+              {{ statusText(scope.row.distributeStatus) }}
             </span>
-          </div>
-          <p>记录 ID：{{ record.recordId }}</p>
-          <p>用户名：{{ record.userName || '-' }}</p>
-          <p>加密算法：{{ record.encrytName || '-' }}</p>
-          <p>分发类型：{{ typeText(record.distributeType) }}</p>
-          <p>分发时间：{{ record.distributeTime || '-' }}</p>
-          <button class="ghost-button" @click="showDetail(record.recordId)">查看详情</button>
-        </article>
-      </div>
-      <div v-if="total > filters.pageSize" class="pagination">
-        <button class="ghost-button" :disabled="filters.pageNum <= 1" @click="changePage(filters.pageNum - 1)">上一页</button>
-        <span>第 {{ filters.pageNum }} / {{ totalPages }} 页，共 {{ total }} 条</span>
-        <button class="ghost-button" :disabled="filters.pageNum >= totalPages" @click="changePage(filters.pageNum + 1)">下一页</button>
+          </template>
+        </el-table-column>
+        <el-table-column label="分发时间" prop="distributeTime" width="180" />
+        <el-table-column label="操作" width="100" fixed="right">
+          <template #default="scope">
+            <el-button link type="primary" @click="showDetail(scope.row.recordId)">详情</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <div v-show="total > 0" class="pagination">
+        <el-pagination
+          background
+          layout="total, prev, pager, next"
+          :total="total"
+          v-model:current-page="filters.pageNum"
+          :page-size="filters.pageSize"
+          @current-change="changePage"
+        />
       </div>
     </article>
 
-    <article v-if="selectedRecord" class="panel">
-      <div class="panel-head">
-        <h3>记录详情</h3>
-        <button class="ghost-button" @click="selectedRecord = null">关闭</button>
-      </div>
-      <div class="detail-grid">
+    <el-dialog :model-value="!!selectedRecord" title="记录详情" width="600px" append-to-body @update:model-value="(val) => { if(!val) selectedRecord = null }" destroy-on-close>
+      <div v-if="selectedRecord" class="detail-grid">
         <p><strong>记录 ID：</strong>{{ selectedRecord.recordId }}</p>
         <p><strong>密钥 ID：</strong>{{ selectedRecord.keyId }}</p>
         <p><strong>用户名：</strong>{{ selectedRecord.userName || '-' }}</p>
         <p><strong>密钥名称：</strong>{{ selectedRecord.keyName || '-' }}</p>
         <p><strong>加密算法：</strong>{{ selectedRecord.encrytName || '-' }}</p>
         <p><strong>分发类型：</strong>{{ typeText(selectedRecord.distributeType) }}</p>
-        <p><strong>分发状态：</strong>{{ statusText(selectedRecord.distributeStatus) }}</p>
+        <p><strong>分发状态：</strong>
+          <span class="style-badge" :class="`status-${selectedRecord.distributeStatus || '0'}`">
+            {{ statusText(selectedRecord.distributeStatus) }}
+          </span>
+        </p>
         <p><strong>分发时间：</strong>{{ selectedRecord.distributeTime || '-' }}</p>
         <p><strong>区块高度：</strong>{{ selectedRecord.blockHeight ?? '-' }}</p>
         <p><strong>区块链 Hash：</strong>{{ selectedRecord.chainHash || '-' }}</p>
         <p class="detail-span"><strong>备注：</strong>{{ selectedRecord.remark || '-' }}</p>
       </div>
-    </article>
+      <template #footer>
+        <el-button @click="selectedRecord = null">关闭</el-button>
+      </template>
+    </el-dialog>
   </section>
 </template>
 
@@ -213,14 +236,60 @@ function normalizeFilter(value) {
 </script>
 
 <style scoped>
+.metric-grid {
+  display: flex;
+  gap: 20px;
+  margin-bottom: 24px;
+}
+
+.metric-card {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 24px;
+  background: rgba(255, 255, 255, 0.02);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+}
+
+.metric-icon {
+  font-size: 32px;
+  background: linear-gradient(135deg, rgba(0, 229, 255, 0.3), rgba(0, 153, 255, 0.5));
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 15px rgba(0, 229, 255, 0.4);
+}
+
+.metric-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.metric-info .label {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-bottom: 6px;
+}
+
+.metric-info .value {
+  font-size: 28px;
+  font-weight: 600;
+  color: #00e5ff;
+}
+
 .toolbar {
   align-items: end;
 }
 
-.record-list {
-  display: grid;
-  gap: 16px;
-  margin-top: 16px;
+.toolbar-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .pagination {
@@ -231,25 +300,29 @@ function normalizeFilter(value) {
   margin-top: 24px;
 }
 
-.record-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
 .detail-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 16px 24px;
 }
 
-.scope-grid {
-  margin-top: 16px;
+.style-badge {
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
 }
+.status-0 { background: rgba(255, 255, 255, 0.1); color: #fff; }
+.status-1 { background: rgba(0, 153, 255, 0.2); color: #00e5ff; }
+.status-2 { background: rgba(0, 255, 128, 0.2); color: #00ff80; }
+.status-3 { background: rgba(255, 80, 80, 0.2); color: #ff5050; }
 
 .detail-span {
   grid-column: 1 / -1;
+}
+
+@media (max-width: 768px) {
+  .metric-grid {
+    flex-direction: column;
+  }
 }
 </style>

@@ -1,16 +1,10 @@
 <template>
   <section class="page lifecycle-page">
-    <div class="page-header">
-      <p class="eyebrow">Updatedel</p>
-      <h2>密钥更新与回收</h2>
-      <p>集中处理我的密钥、手动更新、密钥回收、自动更新与结果查询接收。</p>
-    </div>
 
     <article class="panel">
       <div class="panel-head header-actions">
         <div>
           <h3>当前用户</h3>
-          <p class="muted">API 前缀：<code>{{ apiBase }}</code></p>
         </div>
         <el-button @click="reloadCurrentTab">刷新当前页</el-button>
       </div>
@@ -30,19 +24,33 @@
       </div>
     </article>
 
-    <article class="panel">
-      <div class="quick-actions">
-        <el-button type="success" :disabled="selectedIds.length !== 1" @click="openUpdateDialog()">密钥更新</el-button>
-        <el-button type="danger" :disabled="selectedIds.length === 0" @click="handleRevoke()">密钥回收</el-button>
-        <el-button type="warning" plain @click="activeTab = 'autoupdate'">密钥自动更新</el-button>
-        <el-button type="primary" plain @click="activeTab = 'results'">查询与接收</el-button>
-        <RouterLink class="inline-link" to="/user_actions/permissions">进入权限申请</RouterLink>
-      </div>
-    </article>
+    <div class="lifecycle-dashboard">
+      <nav class="inner-sidenav">
+        <div class="nav-item" :class="{ active: activeTab === 'mykeys' }" @click="activeTab = 'mykeys'">
+          <span class="icon">🔑</span> 我的密钥库
+        </div>
+        <div class="nav-item" :class="{ active: activeTab === 'autoupdate' }" @click="activeTab = 'autoupdate'">
+          <span class="icon">⚡</span> 自动更新配置
+        </div>
+        <div class="nav-item" :class="{ active: activeTab === 'results' }" @click="activeTab = 'results'">
+          <span class="icon">📥</span> 操作结果回执
+        </div>
+      </nav>
 
-    <el-tabs v-model="activeTab" class="user-tabs">
-      <el-tab-pane label="我的密钥" name="mykeys">
-        <article class="panel">
+      <main class="inner-main-content">
+        <!-- Floating Action Bar -->
+        <transition name="fade-slide">
+          <div v-if="activeTab === 'mykeys' && selectedIds.length > 0" class="floating-action-bar">
+            <span class="selection-count">已选择 {{ selectedIds.length }} 项</span>
+            <div class="fab-actions">
+              <el-button type="success" :disabled="selectedIds.length !== 1" @click="openUpdateDialog()">操作更新</el-button>
+              <el-button type="danger" @click="handleRevoke()">一键回收</el-button>
+            </div>
+          </div>
+        </transition>
+
+        <div v-show="activeTab === 'mykeys'" class="tab-pane relative-pane">
+          <article class="panel glass-panel">
           <el-form :model="myKeyQuery" inline label-width="88px" class="query-form">
             <el-form-item label="密钥名称">
               <el-input v-model="myKeyQuery.keyName" placeholder="请输入密钥名称" clearable @keyup.enter="searchMyKeys" />
@@ -105,35 +113,10 @@
             @pagination="loadMyKeys"
           />
         </article>
-      </el-tab-pane>
+        </div>
 
-      <el-tab-pane label="密钥自动更新" name="autoupdate">
-        <article class="panel">
-          <el-alert
-            v-if="!canManageAutoUpdate"
-            title="当前账号没有自动更新操作权限，可前往权限管理页申请临时权限。"
-            type="warning"
-            :closable="false"
-            show-icon
-            class="mb12"
-          >
-            <template #default>
-              <RouterLink class="inline-link" to="/user_actions/permissions">去申请权限</RouterLink>
-            </template>
-          </el-alert>
-
-          <el-alert
-            v-if="showAutoUpdateRollback && canManageAutoUpdate"
-            title="当前自动更新权限为临时权限，完成操作后建议立即回退。"
-            type="info"
-            :closable="false"
-            show-icon
-            class="mb12"
-          >
-            <template #default>
-              <el-button type="primary" link @click="handleRollback">回退权限</el-button>
-            </template>
-          </el-alert>
+        <div v-show="activeTab === 'autoupdate'" class="tab-pane relative-pane">
+          <article class="panel glass-panel">
 
           <el-form :model="autoUpdateQuery" inline label-width="88px" class="query-form">
             <el-form-item label="密钥名称">
@@ -174,7 +157,7 @@
                 <el-button
                   link
                   type="primary"
-                  :disabled="!canManageAutoUpdate || isRevoked(scope.row.status)"
+                  :disabled="isRevoked(scope.row.status)"
                   @click="toggleAutoUpdate(scope.row)"
                 >
                   {{ isAutoUpdateEnabled(scope.row.autoUpdate) ? '关闭' : '开启' }}
@@ -191,10 +174,10 @@
             @pagination="loadAutoUpdateKeys"
           />
         </article>
-      </el-tab-pane>
+        </div>
 
-      <el-tab-pane label="查询与接收" name="results">
-        <article class="panel">
+        <div v-show="activeTab === 'results'" class="tab-pane relative-pane">
+          <article class="panel glass-panel">
           <el-form :model="resultQuery" inline label-width="88px" class="query-form">
             <el-form-item label="操作类型">
               <el-select v-model="resultQuery.actionType" placeholder="全部" clearable>
@@ -259,8 +242,9 @@
             @pagination="loadResultList"
           />
         </article>
-      </el-tab-pane>
-    </el-tabs>
+        </div>
+      </main>
+    </div>
 
     <el-dialog v-model="updateDialogOpen" title="密钥更新" width="520px" append-to-body>
       <el-form ref="updateFormRef" :model="updateForm" :rules="updateRules" label-width="96px">
@@ -699,13 +683,8 @@ function handleRevoke(row) {
 }
 
 function toggleAutoUpdate(row) {
-  if (!canManageAutoUpdate.value) {
-    proxy.$modal.msgWarning('当前没有自动更新操作权限，请先申请临时权限')
-    router.push('/user_actions/permissions')
-    return
-  }
   if (isRevoked(row.status)) {
-    proxy.$modal.msgWarning('已回收密钥不允许配置自动更新')
+    ElMessage.warning('该密钥已回收，不可开启自动更新')
     return
   }
 
@@ -898,6 +877,101 @@ function roleText(level) {
   .quick-actions {
     flex-direction: column;
     align-items: stretch;
+  }
+}
+
+.lifecycle-dashboard {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+  margin-top: 20px;
+}
+.inner-sidenav {
+  width: 220px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 12px;
+}
+.inner-sidenav .nav-item {
+  padding: 12px 16px;
+  border-radius: 10px;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.7);
+  transition: all 0.3s;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-weight: 500;
+}
+.inner-sidenav .nav-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+}
+.inner-sidenav .nav-item.active {
+  background: rgba(0, 153, 255, 0.2);
+  color: #00e5ff;
+  border: 1px solid rgba(0, 153, 255, 0.3);
+  box-shadow: 0 4px 12px rgba(0, 153, 255, 0.1);
+}
+.nav-link {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  text-align: center;
+}
+.inner-main-content {
+  flex-grow: 1;
+  min-width: 0;
+  position: relative;
+}
+.tab-pane {
+  animation: fade-in 0.3s ease-out;
+}
+.floating-action-bar {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  background: rgba(20, 25, 35, 0.85);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(0, 229, 255, 0.3);
+  padding: 12px 24px;
+  border-radius: 30px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 16px rgba(0, 153, 255, 0.2);
+}
+.selection-count {
+  color: #00e5ff;
+  font-weight: bold;
+}
+.fab-actions {
+  display: flex;
+  gap: 8px;
+}
+.fade-slide-enter-active, .fade-slide-leave-active {
+  transition: opacity 0.3s, transform 0.3s;
+}
+.fade-slide-enter-from, .fade-slide-leave-to {
+  opacity: 0;
+  transform: translate(-50%, -20px);
+}
+@media (max-width: 960px) {
+  .lifecycle-dashboard {
+    flex-direction: column;
+  }
+  .inner-sidenav {
+    width: 100%;
+    flex-direction: row;
+    overflow-x: auto;
   }
 }
 </style>

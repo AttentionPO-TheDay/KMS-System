@@ -47,57 +47,51 @@ export const constantRoutes = [
     ]
   },
   {
-    path: '/lifecycle',
-    redirect: '/user_actions/updatedel',
-    hidden: true
-  },
-  {
     path: '/generate',
-    redirect: '/user_actions/generate',
-    hidden: true
-  },
-  {
-    path: '/updatedel',
-    redirect: '/user_actions/updatedel',
-    hidden: true
-  },
-  {
-    path: '/distribute',
-    redirect: '/user_actions/distribute',
-    hidden: true
-  },
-  {
-    path: '/permissions',
-    redirect: '/user_actions/permissions',
-    hidden: true
-  },
-  {
-    path: '/user_actions',
     component: Layout,
     hidden: false,
-    name: 'UserActions',
-    meta: { title: '用户中心', icon: 'user' },
     children: [
       {
-        path: 'generate',
+        path: 'index',
         name: 'Generate',
         component: () => import('@/views/generate/GenerateView.vue'),
-        meta: { title: '生成申请', icon: 'edit' }
-      },
+        meta: { title: '生成申报', icon: 'edit' }
+      }
+    ]
+  },
+  {
+    path: '/lifecycle',
+    component: Layout,
+    hidden: false,
+    children: [
       {
-        path: 'updatedel',
+        path: 'index',
         name: 'Updatedel',
         component: () => import('@/views/lifecycle/LifecycleView.vue'),
         meta: { title: '更新与回收', icon: 'time-range' }
-      },
+      }
+    ]
+  },
+  {
+    path: '/distribute',
+    component: Layout,
+    hidden: false,
+    children: [
       {
-        path: 'distribute',
+        path: 'index',
         name: 'Distribute',
         component: () => import('@/views/distribute/DistributeView.vue'),
         meta: { title: '分发下载', icon: 'download' }
-      },
+      }
+    ]
+  },
+  {
+    path: '/permissions',
+    component: Layout,
+    hidden: false,
+    children: [
       {
-        path: 'permissions',
+        path: 'index',
         name: 'Permissions',
         component: () => import('@/views/permissions/PermissionView.vue'),
         meta: { title: '权限管理', icon: 'lock' }

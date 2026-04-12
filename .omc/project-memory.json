@@ -245,14 +245,14 @@
   "hotPaths": [
     {
       "path": "",
-      "accessCount": 102,
-      "lastAccessed": 1776008280856,
+      "accessCount": 110,
+      "lastAccessed": 1776011483040,
       "type": "directory"
     },
     {
       "path": "kms-generate\\front\\src\\views\\algorithm\\processView.vue",
-      "accessCount": 41,
-      "lastAccessed": 1775997436610,
+      "accessCount": 42,
+      "lastAccessed": 1776010535613,
       "type": "file"
     },
     {
@@ -262,21 +262,21 @@
       "type": "file"
     },
     {
-      "path": "kms-updatedel\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\updatedel\\service\\UpdatedelChainService.java",
-      "accessCount": 16,
-      "lastAccessed": 1776008328036,
+      "path": "kms-generate\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\generate\\controller\\GenerateKeymanageCompatController.java",
+      "accessCount": 20,
+      "lastAccessed": 1776009684497,
       "type": "file"
     },
     {
-      "path": "kms-generate\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\generate\\controller\\GenerateKeymanageCompatController.java",
-      "accessCount": 15,
-      "lastAccessed": 1776008328169,
+      "path": "kms-updatedel\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\updatedel\\service\\UpdatedelChainService.java",
+      "accessCount": 19,
+      "lastAccessed": 1776009684511,
       "type": "file"
     },
     {
       "path": "kms-updatedel\\java-backend\\ruoyi-admin\\src\\main\\resources\\application.yml",
-      "accessCount": 13,
-      "lastAccessed": 1775998715780,
+      "accessCount": 15,
+      "lastAccessed": 1776009768439,
       "type": "file"
     },
     {
@@ -292,15 +292,15 @@
       "type": "directory"
     },
     {
-      "path": "kms-generate\\front\\src\\views\\userKeys\\index.vue",
-      "accessCount": 9,
-      "lastAccessed": 1775997436715,
+      "path": "kms-updatedel\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\updatedel\\consumer\\UpdatedelChainConsumer.java",
+      "accessCount": 10,
+      "lastAccessed": 1776009703952,
       "type": "file"
     },
     {
-      "path": "kms-updatedel\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\updatedel\\consumer\\UpdatedelChainConsumer.java",
-      "accessCount": 8,
-      "lastAccessed": 1775996042939,
+      "path": "kms-generate\\front\\src\\views\\userKeys\\index.vue",
+      "accessCount": 9,
+      "lastAccessed": 1775997436715,
       "type": "file"
     },
     {
@@ -311,14 +311,26 @@
     },
     {
       "path": "kms-generate\\java-backend\\ruoyi-admin\\src\\main\\resources\\application.yml",
-      "accessCount": 6,
-      "lastAccessed": 1775998715725,
+      "accessCount": 8,
+      "lastAccessed": 1776009768429,
+      "type": "file"
+    },
+    {
+      "path": "kms-updatedel\\front\\src\\views\\algorithm\\processView.vue",
+      "accessCount": 7,
+      "lastAccessed": 1776011879926,
       "type": "file"
     },
     {
       "path": "kms-generate\\front\\package.json",
       "accessCount": 6,
       "lastAccessed": 1776003442101,
+      "type": "file"
+    },
+    {
+      "path": "kms-generate\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\generate\\consumer\\ChainTaskConsumer.java",
+      "accessCount": 6,
+      "lastAccessed": 1776009704195,
       "type": "file"
     },
     {
@@ -346,9 +358,9 @@
       "type": "directory"
     },
     {
-      "path": "kms-generate\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\generate\\consumer\\ChainTaskConsumer.java",
-      "accessCount": 4,
-      "lastAccessed": 1775993172971,
+      "path": "kms-generate\\front\\src\\api\\generate\\keymanage.js",
+      "accessCount": 5,
+      "lastAccessed": 1776010535601,
       "type": "file"
     },
     {
@@ -367,12 +379,6 @@
       "path": "doc\\kms-split-implementation-plan.md",
       "accessCount": 3,
       "lastAccessed": 1775992916761,
-      "type": "file"
-    },
-    {
-      "path": "kms-generate\\front\\src\\api\\generate\\keymanage.js",
-      "accessCount": 3,
-      "lastAccessed": 1775997405026,
       "type": "file"
     },
     {
@@ -523,12 +529,6 @@
       "path": "kms-generate\\java-backend\\ruoyi-system\\src\\main\\java\\com\\ruoyi\\generate\\service\\generator\\SSCLGenerator.java",
       "accessCount": 1,
       "lastAccessed": 1775992585356,
-      "type": "file"
-    },
-    {
-      "path": "kms-updatedel\\front\\src\\views\\algorithm\\processView.vue",
-      "accessCount": 1,
-      "lastAccessed": 1775992599083,
       "type": "file"
     },
     {

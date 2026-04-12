@@ -54,7 +54,7 @@
               </div>
               <div class="label mt-10">需要被废除的老旧公共特征值 (旧 uA):</div>
               <div class="value auth" style="color: #909399">
-                {{ step1Data.oldKeyInfo ? step1Data.oldKeyInfo.uA : '运行获取后展示...' }}
+                {{ step1Data.oldKeyInfo ? (step1Data.oldKeyInfo.uA || step1Data.oldKeyInfo.ua) : '运行获取后展示...' }}
               </div>
               <div v-if="step1Data.oldKeyInfo" class="label mt-10">旧密钥版本:</div>
               <div v-if="step1Data.oldKeyInfo" class="value" style="color: #E6A23C">
@@ -186,7 +186,8 @@
 
 <script setup name="ProcessView">
 import { ref, reactive, onMounted } from 'vue'
-import { listKeymanage, getComParam, updateKeymanage, addKeymanage } from "@/api/keymanage/keymanage"
+import { listKeymanage, updateKeymanage } from "@/api/keymanage/keymanage"
+import { addGenerateKeymanage, getGenerateComParam } from "@/api/generate/keymanage"
 import { getUserProfile } from "@/api/system/user"
 import { SM2 } from 'gm-crypto'
 import { BigInteger } from "jsbn"
@@ -265,7 +266,7 @@ async function runQuickGenerate() {
       keyUse: '前置构建', autoUpdate: 'false', status: 'Valid',
       uA: publicKey
     };
-    const response = await addKeymanage(payload);
+    const response = await addGenerateKeymanage(payload);
     const snapshot = response.data || payload;
 
     // 直接将生成结果填入旧密钥信息，进入更新流程
@@ -419,7 +420,7 @@ async function performGenDA(item, userPrivCode, userPubCode) {
 
 async function genUAContext(encrytType, encrytName) {
   try {
-    const response = await getComParam({ encrytType, encrytName })
+    const response = await getGenerateComParam({ encrytType, encrytName })
     let obj = response.data || response;
     let xIndex = null, yIndex = null
     try { xIndex = obj.xIndex ? JSON.parse(obj.xIndex) : null; yIndex = obj.yIndex ? JSON.parse(obj.yIndex) : null } catch(e) {}

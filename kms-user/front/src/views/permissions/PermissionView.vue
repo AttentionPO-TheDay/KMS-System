@@ -1,85 +1,92 @@
 <template>
   <section class="page">
-    <div class="page-header">
-      <p class="eyebrow">Permission</p>
-      <h2>权限申请与回退</h2>
-      <p>第一阶段仅开放“查看公共密钥列表”和“密钥自动更新”两类临时权限申请。</p>
-    </div>
 
-    <article class="panel">
-      <h3>申请人信息</h3>
-      <div class="form-grid">
-        <label>
-          <span>用户 ID</span>
-          <input :value="profile.userId" type="number" min="1" disabled />
-        </label>
-        <label>
-          <span>用户名</span>
-          <input :value="profile.userName" type="text" disabled />
-        </label>
-        <label>
-          <span>当前等级</span>
-          <select :value="profile.originalLevel" disabled>
-            <option :value="2">普通用户</option>
-            <option :value="1">中级用户</option>
-            <option :value="0">管理员</option>
-          </select>
-        </label>
-      </div>
-      <p class="muted">
-        <template v-if="isAuthenticated">申请人信息来自统一登录态，并随请求透传到各业务系统。</template>
-        <template v-else>请先在左侧完成登录，权限申请会复用同一份用户会话。</template>
-      </p>
-    </article>
-
-    <div class="card-grid two-col">
-      <article class="card action-card">
-        <h3>查看公共密钥列表</h3>
-        <p>生成域权限。普通用户申请通过后可临时查看公共密钥列表，目标等级为中级用户。</p>
-        <textarea v-model="reasons.PUBLIC_KEY_LIST" rows="4" placeholder="请填写申请理由"></textarea>
-        <button @click="submit('PUBLIC_KEY_LIST')" :disabled="loading.PUBLIC_KEY_LIST || hasFeatureAccess('PUBLIC_KEY_LIST')">
-          {{ hasFeatureAccess('PUBLIC_KEY_LIST') ? '当前已具备该权限' : loading.PUBLIC_KEY_LIST ? '提交中...' : '提交生成域申请' }}
-        </button>
-      </article>
-
-      <article class="card action-card">
-        <h3>密钥自动更新</h3>
-        <p>更新与回收域权限。普通用户申请通过后可临时操作自动更新，目标等级为管理员。</p>
-        <textarea v-model="reasons.AUTO_UPDATE" rows="4" placeholder="请填写申请理由"></textarea>
-        <button @click="submit('AUTO_UPDATE')" :disabled="loading.AUTO_UPDATE || hasFeatureAccess('AUTO_UPDATE')">
-          {{ hasFeatureAccess('AUTO_UPDATE') ? '当前已具备该权限' : loading.AUTO_UPDATE ? '提交中...' : '提交更新与回收申请' }}
-        </button>
-      </article>
-    </div>
-
-    <article class="panel">
-      <div class="panel-head">
-        <h3>我的申请记录</h3>
-        <button class="ghost-button" @click="loadRecords">刷新</button>
-      </div>
-      <p v-if="errorMessage" class="error-text">{{ errorMessage }}</p>
-      <div v-if="records.length === 0" class="empty-state">暂无申请记录</div>
-      <div v-else class="record-list">
-        <article v-for="record in records" :key="`${record.systemCode}-${record.requestId}`" class="record-card">
-          <div class="record-head">
-            <strong>{{ record.featureName }}</strong>
-            <span class="badge" :class="`status-${record.status}`">{{ statusText(record.status) }}</span>
-          </div>
-          <p>系统：{{ systemText(record.systemCode) }}</p>
-          <p>申请等级：{{ levelText(record.requestLevel) }}</p>
-          <p>申请理由：{{ record.requestReason }}</p>
-          <p v-if="record.approveBy">审批人：{{ record.approveBy }}</p>
-          <p v-if="record.approveNote">审批备注：{{ record.approveNote }}</p>
-          <button
-            v-if="record.status === '1' && Number(record.isTemp) === 1"
-            class="danger-button"
-            @click="rollback(record)"
-          >
-            回退权限
-          </button>
+    <div class="permission-dashboard">
+      <aside class="apply-side">
+        <article class="panel glass-panel profile-panel">
+          <h3>👤 申请人信息</h3>
+          <el-form label-position="top" class="mt16">
+            <el-form-item label="用户 ID">
+              <el-input :value="profile.userId" disabled />
+            </el-form-item>
+            <el-form-item label="用户名">
+              <el-input :value="profile.userName" disabled />
+            </el-form-item>
+            <el-form-item label="当前内置等级">
+              <el-input :value="levelText(profile.originalLevel)" disabled />
+            </el-form-item>
+          </el-form>
+          <p class="muted small mt10" style="font-size: 12px; opacity: 0.7;">
+            <template v-if="isAuthenticated">会话自动透传各业务节点</template>
+            <template v-else>未登录</template>
+          </p>
         </article>
-      </div>
-    </article>
+
+        <article class="panel glass-panel action-card">
+          <h3>🌐 生成域：公共密钥</h3>
+          <p class="muted">提供临时查看公共库的权限 (目标：中级用户)</p>
+          <el-input type="textarea" v-model="reasons.PUBLIC_KEY_LIST" :rows="3" placeholder="请简述申请该数据权限的合理性..." class="mt10" />
+          <el-button type="primary" class="full-width mt10" @click="submit('PUBLIC_KEY_LIST')" :disabled="loading.PUBLIC_KEY_LIST || hasFeatureAccess('PUBLIC_KEY_LIST')">
+            {{ hasFeatureAccess('PUBLIC_KEY_LIST') ? '✔️ 当前已具备该权限' : (loading.PUBLIC_KEY_LIST ? '提交中...' : '提交审批申请') }}
+          </el-button>
+        </article>
+
+        <article class="panel glass-panel action-card">
+          <h3>⚡ 状态域：自动更新</h3>
+          <p class="muted">提供一键开启密钥托管更新的能力 (目标：管理员)</p>
+          <el-input type="textarea" v-model="reasons.AUTO_UPDATE" :rows="3" placeholder="请简述开启安全托管的原因..." class="mt10" />
+          <el-button type="primary" class="full-width mt10" @click="submit('AUTO_UPDATE')" :disabled="loading.AUTO_UPDATE || hasFeatureAccess('AUTO_UPDATE')">
+            {{ hasFeatureAccess('AUTO_UPDATE') ? '✔️ 当前已具备该权限' : (loading.AUTO_UPDATE ? '提交中...' : '提交审批申请') }}
+          </el-button>
+        </article>
+      </aside>
+
+      <main class="history-main">
+        <article class="panel glass-panel full-height">
+          <div class="panel-head flex-between">
+            <h3>📜 审批时间轴记录</h3>
+            <el-button plain size="small" @click="loadRecords">↻ 刷新记录</el-button>
+          </div>
+          
+          <p v-if="errorMessage" class="error-text">{{ errorMessage }}</p>
+          
+          <div v-if="records.length === 0" class="empty-state">
+            暂无历史申请记录
+          </div>
+          
+          <el-timeline v-else class="mt16 custom-timeline">
+            <el-timeline-item
+              v-for="record in records"
+              :key="`${record.systemCode}-${record.requestId}`"
+              :type="timelineItemType(record.status)"
+              :timestamp="getTimelineDate(record)"
+              placement="top"
+            >
+              <div class="timeline-card">
+                <div class="timeline-head">
+                  <strong>{{ record.featureName }}</strong>
+                  <div style="display: flex; gap: 8px; align-items: center;">
+                    <span class="style-badge" :class="`status-${record.status}`">{{ statusText(record.status) }}</span>
+                    <el-button
+                      v-if="record.status === '1' && Number(record.isTemp) === 1"
+                      type="danger" size="small"
+                      @click="rollback(record)"
+                    >
+                      安全回退
+                    </el-button>
+                  </div>
+                </div>
+                <div class="timeline-body">
+                  <div class="info-row"><span>目标能力组：</span>{{ levelText(record.requestLevel) }}</div>
+                  <div class="info-row"><span>申请理由：</span>{{ record.requestReason }}</div>
+                  <div v-if="record.approveBy" class="info-row"><span>审批回执 ({{ record.approveBy }})：</span>{{ record.approveNote || '已受理' }}</div>
+                </div>
+              </div>
+            </el-timeline-item>
+          </el-timeline>
+        </article>
+      </main>
+    </div>
   </section>
 </template>
 
@@ -257,4 +264,116 @@ function systemText(systemCode) {
 function statusText(status) {
   return { 0: '待审批', 1: '已通过', 2: '已拒绝', 3: '已回退' }[status] || '未知'
 }
+
+function timelineItemType(status) {
+  return { '0': 'primary', '1': 'success', '2': 'danger', '3': 'warning' }[String(status)] || 'info'
+}
+
+function getTimelineDate(record) {
+  const value = record?.requestTime
+  return value ? new Date(value).toLocaleString() : '-'
+}
 </script>
+
+<style scoped>
+.permission-dashboard {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+  margin-top: 24px;
+}
+
+.apply-side {
+  width: 32%;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.history-main {
+  flex-grow: 1;
+  min-width: 0;
+}
+
+.full-height {
+  min-height: 700px;
+}
+
+.full-width {
+  width: 100%;
+}
+
+.mt10 {
+  margin-top: 10px;
+}
+
+.mt16 {
+  margin-top: 16px;
+}
+
+.flex-between {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.custom-timeline {
+  padding-left: 2px;
+}
+
+.custom-timeline :deep(.el-timeline-item__timestamp) {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.timeline-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 16px;
+  margin-top: 8px;
+}
+
+.timeline-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  padding-bottom: 8px;
+}
+
+.timeline-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.info-row {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.info-row span {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.style-badge {
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.status-0 { background: rgba(0, 153, 255, 0.15); color: #4db8ff; border: 1px solid rgba(0, 153, 255, 0.3); }
+.status-1 { background: rgba(103, 194, 58, 0.15); color: #85ce61; border: 1px solid rgba(103, 194, 58, 0.3); }
+.status-2 { background: rgba(245, 108, 108, 0.15); color: #f56c6c; border: 1px solid rgba(245, 108, 108, 0.3); }
+.status-3 { background: rgba(144, 147, 153, 0.15); color: #a6a9ad; border: 1px solid rgba(144, 147, 153, 0.3); }
+
+@media (max-width: 960px) {
+  .permission-dashboard {
+    flex-direction: column;
+  }
+  .apply-side {
+    width: 100%;
+  }
+}
+</style>

@@ -30,6 +30,11 @@ export default defineConfig(({ mode, command }) => {
       open: true,
       proxy: {
         // https://cn.vitejs.dev/config/#server-proxy
+        '/generate-api': {
+          target: 'http://localhost:9081',
+          changeOrigin: true,
+          rewrite: (p) => p.replace(/^\/generate-api/, '')
+        },
         '/lifecycle-api': {
           target: 'http://localhost:9082',
           changeOrigin: true,
