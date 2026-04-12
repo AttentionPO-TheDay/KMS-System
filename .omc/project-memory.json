@@ -245,8 +245,8 @@
   "hotPaths": [
     {
       "path": "",
-      "accessCount": 100,
-      "lastAccessed": 1776003442525,
+      "accessCount": 102,
+      "lastAccessed": 1776008280856,
       "type": "directory"
     },
     {
@@ -257,20 +257,20 @@
     },
     {
       "path": "kms-ops\\docker-compose.yml",
-      "accessCount": 29,
-      "lastAccessed": 1776003403025,
+      "accessCount": 31,
+      "lastAccessed": 1776004424650,
       "type": "file"
     },
     {
       "path": "kms-updatedel\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\updatedel\\service\\UpdatedelChainService.java",
-      "accessCount": 14,
-      "lastAccessed": 1775995950800,
+      "accessCount": 16,
+      "lastAccessed": 1776008328036,
       "type": "file"
     },
     {
       "path": "kms-generate\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\generate\\controller\\GenerateKeymanageCompatController.java",
-      "accessCount": 14,
-      "lastAccessed": 1775997988317,
+      "accessCount": 15,
+      "lastAccessed": 1776008328169,
       "type": "file"
     },
     {
@@ -305,8 +305,8 @@
     },
     {
       "path": "kms-generate\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\generate\\service\\impl\\GenerateChainServiceImpl.java",
-      "accessCount": 7,
-      "lastAccessed": 1775995891604,
+      "accessCount": 8,
+      "lastAccessed": 1776008314300,
       "type": "file"
     },
     {
@@ -430,6 +430,12 @@
       "type": "file"
     },
     {
+      "path": "kms-generate\\README.md",
+      "accessCount": 2,
+      "lastAccessed": 1776008733799,
+      "type": "file"
+    },
+    {
       "path": "C:\\Users\\luo\\.claude\\plugins\\marketplaces\\omc\\skills\\omc-setup\\phases\\01-install-claude-md.md",
       "accessCount": 1,
       "lastAccessed": 1775840420869,
@@ -529,12 +535,6 @@
       "path": "kms-acceptance\\front\\src\\App.vue",
       "accessCount": 1,
       "lastAccessed": 1775992722550,
-      "type": "file"
-    },
-    {
-      "path": "kms-generate\\README.md",
-      "accessCount": 1,
-      "lastAccessed": 1775992731027,
       "type": "file"
     },
     {
