@@ -239,8 +239,23 @@ function normalizeKeyInfo(key) {
   const normalizedUA = key.ua || key.uA || ''
   return {
     ...key,
+    keyId: key.keyId ?? key.key_id ?? null,
+    userId: key.userId ?? key.user_id ?? null,
+    userName: key.userName ?? key.user_name ?? '',
     ua: normalizedUA,
-    uA: normalizedUA
+    uA: normalizedUA,
+    encrytType: key.encrytType ?? key.encryt_type ?? '',
+    encrytName: key.encrytName ?? key.encryt_name ?? '',
+    keyName: key.keyName ?? key.key_name ?? '',
+    keyUse: key.keyUse ?? key.key_use ?? '',
+    keyValue: key.keyValue ?? key.key_value ?? '',
+    keyDomain: key.keyDomain ?? key.key_domain ?? '',
+    autoUpdate: key.autoUpdate ?? key.auto_update ?? '',
+    status: key.status ?? '',
+    version: key.version ?? null,
+    chainHash: key.chainHash ?? key.chain_hash ?? '',
+    blockHeight: key.blockHeight ?? key.block_height ?? null,
+    chainStatus: key.chainStatus ?? key.chain_status ?? ''
   }
 }
 
@@ -278,12 +293,14 @@ async function runQuickGenerate() {
       keyUse: '前置构建', autoUpdate: 'false', status: 'Valid',
       uA: publicKey
     };
-    const response = await addGenerateKeymanage(payload);
-    const snapshot = normalizeKeyInfo(response.data || payload);
+    await addGenerateKeymanage(payload);
 
-    // 直接将生成结果填入旧密钥信息，进入更新流程
-    step1Data.oldKeyInfo = snapshot;
-    activeStep.value = 1;
+    // 等待 Kafka 消费者完成实际的数据库写入（约 2 秒）
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    // 调用 runStep1 从数据库获取刚才最新生成的真实密钥信息（包含真正的 keyId）
+    await runStep1();
+
   } catch (err) {
     fetchError.value = '前置生成密钥失败: ' + (err.message || err);
   } finally {

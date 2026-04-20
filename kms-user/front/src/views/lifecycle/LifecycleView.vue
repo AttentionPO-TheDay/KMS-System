@@ -92,7 +92,7 @@
               </template>
             </el-table-column>
             <el-table-column label="更新时间" align="center" prop="updTime" width="180" />
-            <el-table-column label="操作" align="center" width="220" fixed="right">
+            <el-table-column label="操作" align="center" width="260" fixed="right">
               <template #default="scope">
                 <el-button link type="primary" :disabled="isRevoked(scope.row.status)" @click="openUpdateDialog(scope.row)">
                   更新
@@ -126,7 +126,7 @@
             class="mb12"
           >
             <template #default>
-              <el-button type="primary" link @click="router.push('/user_actions/permissions')">前往申请权限</el-button>
+              <el-button type="primary" link @click="router.push('/permissions/index')">前往申请权限</el-button>
             </template>
           </el-alert>
 
@@ -1086,5 +1086,29 @@ function roleText(level) {
     flex-direction: row;
     overflow-x: auto;
   }
+}
+
+/* Fix Element Plus table fixed column transparent background in dark mode */
+:deep(.el-table) .el-table-fixed-column--right {
+  background-color: #141923 !important;
+}
+:deep(.el-table) th.el-table-fixed-column--right {
+  background-color: #141923 !important;
+}
+:deep(.el-table) td.el-table-fixed-column--right {
+  background-color: #141923 !important;
+}
+:deep(.el-table__fixed-right::before),
+:deep(.el-table__fixed::before) {
+  background-color: #141923 !important;
+}
+:deep(.el-table--striped) .el-table__body tr.el-table__row--striped td.el-table-fixed-column--right {
+  background-color: #1a202d !important;
+}
+:deep(.el-table) .el-table__body tr:hover > td.el-table-fixed-column--right {
+  background-color: #1c2333 !important;
+}
+:deep(.el-table) .el-table__body tr.hover-row > td.el-table-fixed-column--right {
+  background-color: #1c2333 !important;
 }
 </style>

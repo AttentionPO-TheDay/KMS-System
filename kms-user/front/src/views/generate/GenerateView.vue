@@ -43,7 +43,6 @@
             <h3>密钥生成</h3>
             <p class="muted">提交前会先在当前浏览器生成一份用户侧密钥材料，并把公钥份额 `uA` 发送到后端。</p>
           </div>
-          <RouterLink class="inline-link" to="/user_actions/permissions">查看权限申请</RouterLink>
         </div>
       </template>
 
@@ -193,7 +192,7 @@
             <h3>公共密钥列表</h3>
             <p class="muted">该能力需要生成域临时权限，审批通过后只展示脱敏后的公共值。</p>
           </div>
-          <RouterLink class="inline-link" to="/user_actions/permissions">去申请权限</RouterLink>
+          <RouterLink class="inline-link" to="/permissions/index">去申请权限</RouterLink>
         </div>
       </template>
 

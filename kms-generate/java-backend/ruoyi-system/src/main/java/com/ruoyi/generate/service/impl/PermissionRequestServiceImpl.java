@@ -55,6 +55,9 @@ public class PermissionRequestServiceImpl implements IPermissionRequestService {
         request.setFeatureCode(FEATURE_CODE);
         request.setFeatureName(FEATURE_NAME);
         request.setStatus("0");
+        if (request.getOriginalLevel() != null && request.getOriginalLevel() == 1) {
+            request.setOriginalLevel(2);
+        }
         if (request.getIsTemp() == null) {
             request.setIsTemp(1);
         }
@@ -72,7 +75,7 @@ public class PermissionRequestServiceImpl implements IPermissionRequestService {
         request.setApproveTime(now);
         request.setApproveNote(approveNote);
         permissionRequestMapper.updatePermissionRequest(request);
-        if (!isTemporaryRequest(request)) {
+        if (isTemporaryRequest(request) || !isTemporaryRequest(request)) {
             permissionRequestMapper.updateUserRoleLevel(request.getUserId(), request.getRequestLevel());
         }
     }
@@ -99,12 +102,21 @@ public class PermissionRequestServiceImpl implements IPermissionRequestService {
         if (!"1".equals(request.getStatus())) {
             throw new IllegalArgumentException("当前申请未处于已通过状态，无法回退");
         }
-        if (!isTemporaryRequest(request)) {
-            permissionRequestMapper.updateUserRoleLevel(request.getUserId(), request.getOriginalLevel());
-        }
         request.setStatus("3");
         request.setRollbackTime(new Date());
         permissionRequestMapper.updatePermissionRequest(request);
+
+        if (isTemporaryRequest(request) || !isTemporaryRequest(request)) {
+            PermissionRequest query = new PermissionRequest();
+            query.setUserId(request.getUserId());
+            query.setStatus("1");
+            List<PermissionRequest> list = permissionRequestMapper.selectPermissionRequestList(query);
+            if (list == null || list.isEmpty()) {
+                permissionRequestMapper.updateUserRoleLevel(request.getUserId(), 2);
+            } else {
+                permissionRequestMapper.updateUserRoleLevel(request.getUserId(), 1);
+            }
+        }
     }
 
     @Transactional
