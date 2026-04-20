@@ -1,6 +1,18 @@
 import { apiBases } from '@/config/api-bases'
 import { requestJson } from '@/services/http'
 
+export function batchGetGenerateChainStatus(keyIds = []) {
+  const normalizedKeyIds = [...new Set(keyIds.map((item) => Number(item)).filter((item) => Number.isFinite(item) && item > 0))]
+  if (!normalizedKeyIds.length) {
+    return Promise.resolve({})
+  }
+
+  return requestJson(apiBases.generateApi, '/generate/key/chain/batch', {
+    method: 'POST',
+    body: JSON.stringify({ keyIds: normalizedKeyIds })
+  }).then((payload) => payload?.data || {})
+}
+
 export function listGenerateKeys(query = {}) {
   const search = new URLSearchParams()
   Object.entries(query).forEach(([key, value]) => {

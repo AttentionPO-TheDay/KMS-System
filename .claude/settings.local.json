@@ -37,7 +37,17 @@
       "mcp__plugin_oh-my-claudecode_t__lsp_diagnostics_directory",
       "Bash(git:*)",
       "mcp__filesystem__list_directory",
-      "mcp__filesystem__read_text_file"
+      "mcp__filesystem__read_text_file",
+      "mcp__filesystem__directory_tree",
+      "Bash(docker events *)",
+      "Bash(docker stop *)",
+      "Bash(pwsh *)",
+      "Bash(command -v pwsh)",
+      "Bash(command -v powershell)",
+      "Bash(powershell *)",
+      "Bash(npm -v)",
+      "Bash(docker compose *)",
+      "Bash(docker exec kms_kafka *)"
     ]
   }
 }

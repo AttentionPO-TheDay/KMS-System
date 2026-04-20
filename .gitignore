@@ -55,3 +55,14 @@ yarn-error.log
 /kms-ops/runtime/
 /kms-ops/front/generate/
 /kms-ops/front/updatedel/
+/kms-ops/front/user/assets/
+/kms-ops/redis/data/
+
+# Temp files
+tmp.go
+
+# AI Tools
+.claude
+.omc
+.gemini
+.cursor

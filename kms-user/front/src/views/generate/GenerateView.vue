@@ -43,7 +43,7 @@
             <h3>密钥生成</h3>
             <p class="muted">提交前会先在当前浏览器生成一份用户侧密钥材料，并把公钥份额 `uA` 发送到后端。</p>
           </div>
-          <RouterLink class="inline-link" to="/user_actions/permissions">查看权限申请</RouterLink>
+          <RouterLink class="inline-link" to="/permissions/index">查看权限申请</RouterLink>
         </div>
       </template>
 
@@ -193,7 +193,7 @@
             <h3>公共密钥列表</h3>
             <p class="muted">该能力需要生成域临时权限，审批通过后只展示脱敏后的公共值。</p>
           </div>
-          <RouterLink class="inline-link" to="/user_actions/permissions">去申请权限</RouterLink>
+          <RouterLink class="inline-link" to="/permissions/index">去申请权限</RouterLink>
         </div>
       </template>
 
@@ -306,6 +306,8 @@
         <p><strong>密钥用途：</strong>{{ selectedKey.keyUse || '-' }}</p>
         <p><strong>所属域：</strong>{{ selectedKey.keyDomain || '-' }}</p>
         <p><strong>链上状态：</strong>{{ chainStatusText(selectedKey.chainStatus) }}</p>
+        <p><strong>交易哈希：</strong>{{ selectedKey.chainHash || '-' }}</p>
+        <p><strong>区块高度：</strong>{{ selectedKey.blockHeight ?? '-' }}</p>
         <p><strong>创建时间：</strong>{{ selectedKey.creTime || '-' }}</p>
         <p><strong>更新时间：</strong>{{ selectedKey.updTime || '-' }}</p>
         <p class="detail-span"><strong>密钥值：</strong>{{ selectedKey.keyValue || '-' }}</p>
@@ -321,7 +323,7 @@ import { SM2 } from 'gm-crypto'
 import { BigInteger } from 'jsbn'
 import { weierstrass } from '@noble/curves/abstract/weierstrass.js'
 import { apiBases } from '@/config/api-bases'
-import { createGenerateKey, getCommonParams, getGenerateKey, listGenerateKeys, listPublicGenerateKeys } from '@/services/generate-api'
+import { batchGetGenerateChainStatus, createGenerateKey, getCommonParams, getGenerateKey, listGenerateKeys, listPublicGenerateKeys } from '@/services/generate-api'
 import { getLatestApprovedTemporaryRequest, rollbackPermission } from '@/services/permission-api'
 import useUserStore from '@/store/modules/user'
 
@@ -618,7 +620,21 @@ async function loadKeys() {
   listLoading.value = true
   try {
     const data = await listGenerateKeys(filters)
-    keys.value = data.rows || []
+    const rows = data.rows || []
+    const chainStatusMap = await batchGetGenerateChainStatus(rows.map((item) => item.keyId))
+    keys.value = rows.map((item) => {
+      const latestChainStatus = chainStatusMap?.[item.keyId]
+      if (!latestChainStatus || typeof latestChainStatus !== 'object') {
+        return item
+      }
+      return {
+        ...item,
+        chainStatus: latestChainStatus.chainStatus ?? item.chainStatus,
+        chainHash: latestChainStatus.chainHash ?? item.chainHash,
+        blockHeight: latestChainStatus.blockHeight ?? item.blockHeight,
+        status: latestChainStatus.status ?? item.status
+      }
+    })
   } catch (error) {
     keys.value = []
     errorMessage.value = error.message

@@ -47,13 +47,17 @@ go run cmd/main.go
 ```json
 {
   "user": "testuser",
-  "password": "password123",
   "encryt_type": "无证书非对称加密",
   "encryt_name": "SSCL",
   "ua": "04...",
-  "key_domain": "default"
+  "key_domain": "default",
+  "key_name": "example",
+  "key_use": "加解密",
+  "auto_update": "0"
 }
 ```
+
+说明：该接口通过 `X-Internal-Token` 信任已完成鉴权的 Java 后端转发请求，不再接收明文 `password`；`key_name`、`key_use`、`auto_update` 不传时会分别回落到 `example`、`加解密`、`0`。
 
 ## 压测脚本
 

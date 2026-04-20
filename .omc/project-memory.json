@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1775977757785,
-  "projectRoot": "E:\\java_project\\kms-code-copy",
+  "lastScanned": 1776656179916,
+  "projectRoot": "/mnt/e/java_project/kms-code-copy",
   "techStack": {
     "languages": [],
     "frameworks": [],
@@ -32,21 +32,21 @@
     "doc": {
       "path": "doc",
       "purpose": null,
-      "fileCount": 12,
-      "lastAccessed": 1775977757755,
+      "fileCount": 13,
+      "lastAccessed": 1776656179540,
       "keyFiles": [
+        "blockchain-runtime.md",
         "docker-runbook.md",
         "frontend-role-boundary.md",
         "java-ruoyi-repair-guide.md",
-        "kms-agent-task-breakdown.md",
-        "kms-split-implementation-plan.md"
+        "kms-agent-task-breakdown.md"
       ]
     },
     "kms-acceptance": {
       "path": "kms-acceptance",
       "purpose": null,
       "fileCount": 2,
-      "lastAccessed": 1775977757755,
+      "lastAccessed": 1776656179560,
       "keyFiles": [
         "README.md"
       ]
@@ -55,7 +55,7 @@
       "path": "kms-distribute",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1775977757755,
+      "lastAccessed": 1776656179573,
       "keyFiles": [
         "README.md"
       ]
@@ -64,7 +64,7 @@
       "path": "kms-generate",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1775977757756,
+      "lastAccessed": 1776656179585,
       "keyFiles": [
         "README.md"
       ]
@@ -72,21 +72,21 @@
     "kms-ops": {
       "path": "kms-ops",
       "purpose": null,
-      "fileCount": 10,
-      "lastAccessed": 1775977757756,
+      "fileCount": 11,
+      "lastAccessed": 1776656179597,
       "keyFiles": [
+        "README.md",
         "build-local.ps1",
         "check.ps1",
         "deploy-keyevidence.sh",
-        "docker-compose-before.yml",
-        "docker-compose.yml"
+        "docker-compose-before.yml"
       ]
     },
     "kms-updatedel": {
       "path": "kms-updatedel",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1775977757756,
+      "lastAccessed": 1776656179609,
       "keyFiles": [
         "README.md"
       ]
@@ -95,7 +95,7 @@
       "path": "kms-user",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1775977757756,
+      "lastAccessed": 1776656179621,
       "keyFiles": [
         "README.md"
       ]
@@ -104,20 +104,20 @@
       "path": "legacy-kms",
       "purpose": null,
       "fileCount": 16,
-      "lastAccessed": 1775977757757,
+      "lastAccessed": 1776656179634,
       "keyFiles": [
-        "captcha-test.html",
-        "check_users.sql",
-        "clickjacking_test.html",
         "GeneratePassword.java",
-        "legacy-README.md"
+        "LICENSE",
+        "TestCaptcha.java",
+        "captcha-test.html",
+        "check_users.sql"
       ]
     },
     "legacy-kms-go": {
       "path": "legacy-kms-go",
       "purpose": null,
       "fileCount": 3,
-      "lastAccessed": 1775977757757,
+      "lastAccessed": 1776656179649,
       "keyFiles": [
         "go.mod",
         "go.sum",
@@ -128,7 +128,7 @@
       "path": "security",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1775977757758,
+      "lastAccessed": 1776656179667,
       "keyFiles": [
         "security_test.ps1"
       ]
@@ -137,7 +137,7 @@
       "path": "show",
       "purpose": null,
       "fileCount": 8,
-      "lastAccessed": 1775977757758,
+      "lastAccessed": 1776656179685,
       "keyFiles": [
         "kms-architecture-diagram-clean.html",
         "kms-current-architecture-slide.html",
@@ -150,93 +150,93 @@
       "path": "tools",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1775977757758,
+      "lastAccessed": 1776656179702,
       "keyFiles": [
         "BcryptHash.class"
       ]
     },
-    "kms-generate\\docs": {
-      "path": "kms-generate\\docs",
+    "kms-generate/docs": {
+      "path": "kms-generate/docs",
       "purpose": "Documentation",
       "fileCount": 1,
-      "lastAccessed": 1775977757760,
+      "lastAccessed": 1776656179747,
       "keyFiles": [
         "migration-map.md"
       ]
     },
-    "kms-generate\\tests": {
-      "path": "kms-generate\\tests",
+    "kms-generate/tests": {
+      "path": "kms-generate/tests",
       "purpose": "Test files",
       "fileCount": 0,
-      "lastAccessed": 1775977757760,
+      "lastAccessed": 1776656179761,
       "keyFiles": []
     },
-    "kms-updatedel\\docs": {
-      "path": "kms-updatedel\\docs",
+    "kms-updatedel/docs": {
+      "path": "kms-updatedel/docs",
       "purpose": "Documentation",
       "fileCount": 1,
-      "lastAccessed": 1775977757761,
+      "lastAccessed": 1776656179787,
       "keyFiles": [
         "migration-map.md"
       ]
     },
-    "kms-updatedel\\tests": {
-      "path": "kms-updatedel\\tests",
+    "kms-updatedel/tests": {
+      "path": "kms-updatedel/tests",
       "purpose": "Test files",
       "fileCount": 0,
-      "lastAccessed": 1775977757761,
+      "lastAccessed": 1776656179800,
       "keyFiles": []
     },
-    "kms-user\\docs": {
-      "path": "kms-user\\docs",
+    "kms-user/docs": {
+      "path": "kms-user/docs",
       "purpose": "Documentation",
       "fileCount": 1,
-      "lastAccessed": 1775977757762,
+      "lastAccessed": 1776656179819,
       "keyFiles": [
         "integration-plan.md"
       ]
     },
-    "legacy-kms\\bin": {
-      "path": "legacy-kms\\bin",
+    "legacy-kms/bin": {
+      "path": "legacy-kms/bin",
       "purpose": "Executable scripts",
       "fileCount": 3,
-      "lastAccessed": 1775977757762,
+      "lastAccessed": 1776656179837,
       "keyFiles": [
         "clean.bat",
         "package.bat",
         "run.bat"
       ]
     },
-    "legacy-kms-go\\config": {
-      "path": "legacy-kms-go\\config",
+    "legacy-kms-go/config": {
+      "path": "legacy-kms-go/config",
       "purpose": "Configuration files",
       "fileCount": 0,
-      "lastAccessed": 1775977757763,
+      "lastAccessed": 1776656179853,
       "keyFiles": []
     },
-    "legacy-kms-go\\controllers": {
-      "path": "legacy-kms-go\\controllers",
+    "legacy-kms-go/controllers": {
+      "path": "legacy-kms-go/controllers",
       "purpose": "Controllers",
       "fileCount": 1,
-      "lastAccessed": 1775977757763,
+      "lastAccessed": 1776656179866,
       "keyFiles": [
         "request_controller.go"
       ]
     },
-    "legacy-kms-go\\models": {
-      "path": "legacy-kms-go\\models",
+    "legacy-kms-go/models": {
+      "path": "legacy-kms-go/models",
       "purpose": "Data models",
       "fileCount": 1,
-      "lastAccessed": 1775977757764,
+      "lastAccessed": 1776656179880,
       "keyFiles": [
         "keymanage.go"
       ]
     },
-    "legacy-kms-go\\utils": {
-      "path": "legacy-kms-go\\utils",
+    "legacy-kms-go/utils": {
+      "path": "legacy-kms-go/utils",
       "purpose": "Utility functions",
       "fileCount": 1,
-      "lastAccessed": 1775977757764,
+      "lastAccessed": 1776656179895,
       "keyFiles": [
         "kafka_producer.go"
       ]
@@ -245,302 +245,302 @@
   "hotPaths": [
     {
       "path": "",
-      "accessCount": 187,
-      "lastAccessed": 1776025092944,
+      "accessCount": 23,
+      "lastAccessed": 1776669615915,
       "type": "directory"
     },
     {
-      "path": "kms-generate\\front\\src\\views\\algorithm\\processView.vue",
-      "accessCount": 42,
-      "lastAccessed": 1776010535613,
+      "path": "kms-user\\front\\src\\views\\generate\\GenerateView.vue",
+      "accessCount": 11,
+      "lastAccessed": 1776658915133,
       "type": "file"
     },
     {
-      "path": "kms-ops\\docker-compose.yml",
-      "accessCount": 33,
-      "lastAccessed": 1776022558425,
-      "type": "file"
-    },
-    {
-      "path": "kms-updatedel\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\updatedel\\service\\UpdatedelChainService.java",
-      "accessCount": 21,
-      "lastAccessed": 1776024981522,
-      "type": "file"
-    },
-    {
-      "path": "kms-generate\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\generate\\controller\\GenerateKeymanageCompatController.java",
-      "accessCount": 20,
-      "lastAccessed": 1776009684497,
-      "type": "file"
-    },
-    {
-      "path": "kms-updatedel\\java-backend\\ruoyi-admin\\src\\main\\resources\\application.yml",
-      "accessCount": 18,
-      "lastAccessed": 1776024943347,
-      "type": "file"
-    },
-    {
-      "path": "kms-updatedel\\front\\src\\views\\algorithm\\processView.vue",
-      "accessCount": 15,
-      "lastAccessed": 1776012066234,
-      "type": "file"
-    },
-    {
-      "path": "kms-generate",
-      "accessCount": 13,
-      "lastAccessed": 1776023423387,
+      "path": "kms-user\\front\\src",
+      "accessCount": 7,
+      "lastAccessed": 1776669600506,
       "type": "directory"
     },
     {
-      "path": "doc\\project_overview.md",
-      "accessCount": 12,
-      "lastAccessed": 1776024370864,
+      "path": "kms-user\\front\\src\\views\\lifecycle\\LifecycleView.vue",
+      "accessCount": 6,
+      "lastAccessed": 1776658885271,
+      "type": "file"
+    },
+    {
+      "path": "kms-generate\\java-backend",
+      "accessCount": 5,
+      "lastAccessed": 1776670029371,
+      "type": "directory"
+    },
+    {
+      "path": "kms-user\\front\\src\\services\\generate-api.js",
+      "accessCount": 4,
+      "lastAccessed": 1776658884892,
+      "type": "file"
+    },
+    {
+      "path": "kms-user\\front\\src\\services\\permission-api.js",
+      "accessCount": 3,
+      "lastAccessed": 1776658442260,
       "type": "file"
     },
     {
       "path": "kms-generate\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\generate\\controller\\ChainController.java",
-      "accessCount": 12,
-      "lastAccessed": 1776024981543,
-      "type": "file"
-    },
-    {
-      "path": "kms-updatedel\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\updatedel\\consumer\\UpdatedelChainConsumer.java",
-      "accessCount": 11,
-      "lastAccessed": 1776022594979,
-      "type": "file"
-    },
-    {
-      "path": "doc\\message-protocol.md",
-      "accessCount": 11,
-      "lastAccessed": 1776024644095,
-      "type": "file"
-    },
-    {
-      "path": "kms-updatedel\\README.md",
-      "accessCount": 10,
-      "lastAccessed": 1776023428780,
-      "type": "file"
-    },
-    {
-      "path": "kms-generate\\java-backend\\ruoyi-admin\\src\\main\\resources\\application.yml",
-      "accessCount": 10,
-      "lastAccessed": 1776024943536,
-      "type": "file"
-    },
-    {
-      "path": "kms-generate\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\generate\\service\\impl\\GenerateChainServiceImpl.java",
-      "accessCount": 10,
-      "lastAccessed": 1776024981582,
-      "type": "file"
-    },
-    {
-      "path": "kms-generate\\front\\src\\views\\userKeys\\index.vue",
-      "accessCount": 9,
-      "lastAccessed": 1775997436715,
-      "type": "file"
-    },
-    {
-      "path": "kms-generate\\front\\src",
-      "accessCount": 9,
-      "lastAccessed": 1776024164551,
-      "type": "directory"
-    },
-    {
-      "path": "kms-generate\\README.md",
-      "accessCount": 8,
-      "lastAccessed": 1776023052933,
-      "type": "file"
-    },
-    {
-      "path": "kms-generate\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\generate\\consumer\\ChainTaskConsumer.java",
-      "accessCount": 7,
-      "lastAccessed": 1776022594917,
-      "type": "file"
-    },
-    {
-      "path": "kms-generate\\front\\package.json",
-      "accessCount": 7,
-      "lastAccessed": 1776023999394,
-      "type": "file"
-    },
-    {
-      "path": "kms-ops",
-      "accessCount": 6,
-      "lastAccessed": 1776022418820,
-      "type": "directory"
-    },
-    {
-      "path": "doc\\docker-runbook.md",
-      "accessCount": 6,
-      "lastAccessed": 1776024644381,
-      "type": "file"
-    },
-    {
-      "path": "kms-ops\\README.md",
-      "accessCount": 6,
-      "lastAccessed": 1776024644671,
-      "type": "file"
-    },
-    {
-      "path": "C:\\Users\\luo\\.claude\\settings.json",
-      "accessCount": 5,
-      "lastAccessed": 1775915821469,
-      "type": "file"
-    },
-    {
-      "path": "kms-ops\\start.sh",
-      "accessCount": 5,
-      "lastAccessed": 1775998425799,
-      "type": "file"
-    },
-    {
-      "path": "kms-generate\\front\\src\\api\\generate\\keymanage.js",
-      "accessCount": 5,
-      "lastAccessed": 1776010535601,
-      "type": "file"
-    },
-    {
-      "path": "kms-ops\\nginx\\nginx.conf",
-      "accessCount": 5,
-      "lastAccessed": 1776020028998,
-      "type": "file"
-    },
-    {
-      "path": "doc\\kms-split-implementation-plan.md",
       "accessCount": 3,
-      "lastAccessed": 1775992916761,
+      "lastAccessed": 1776658806126,
       "type": "file"
     },
     {
-      "path": "C:\\Users\\luo\\.claude\\hud\\omc-hud.mjs",
+      "path": "kms-generate\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\generate\\controller\\GenerateController.java",
       "accessCount": 2,
-      "lastAccessed": 1775840614572,
+      "lastAccessed": 1776658295017,
       "type": "file"
     },
     {
-      "path": "kms-ops\\.env",
+      "path": "kms-user\\front\\src\\router\\index.js",
       "accessCount": 2,
-      "lastAccessed": 1775916431837,
+      "lastAccessed": 1776658295177,
       "type": "file"
     },
     {
-      "path": "kms-ops\\reinit.sh",
+      "path": "kms-generate\\front\\src\\router\\index.js",
       "accessCount": 2,
-      "lastAccessed": 1775916431936,
+      "lastAccessed": 1776658322180,
       "type": "file"
     },
     {
-      "path": "C:\\Users\\luo\\.cpa",
+      "path": "kms-user\\front\\src\\services\\lifecycle-api.js",
       "accessCount": 2,
-      "lastAccessed": 1775918342398,
+      "lastAccessed": 1776658430383,
+      "type": "file"
+    },
+    {
+      "path": "kms-user\\front\\src\\views\\permissions\\PermissionView.vue",
+      "accessCount": 2,
+      "lastAccessed": 1776658430437,
+      "type": "file"
+    },
+    {
+      "path": "kms-user\\front\\src\\views",
+      "accessCount": 2,
+      "lastAccessed": 1776658453236,
       "type": "directory"
     },
     {
-      "path": "C:\\Users\\luo\\.cpa\\config.yaml",
+      "path": "kms-generate\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\generate\\controller\\PermissionRequestController.java",
       "accessCount": 2,
-      "lastAccessed": 1775918590689,
+      "lastAccessed": 1776658466434,
       "type": "file"
     },
     {
-      "path": "kms-acceptance\\front\\src\\main.js",
+      "path": "kms-generate\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\generate\\controller\\GenerateKeymanageCompatController.java",
       "accessCount": 2,
-      "lastAccessed": 1775992741979,
+      "lastAccessed": 1776658466468,
       "type": "file"
     },
     {
-      "path": "kms-generate\\front\\src\\views\\generate\\index.vue",
+      "path": "kms-updatedel\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\updatedel\\controller\\LifecycleKeyController.java",
       "accessCount": 2,
-      "lastAccessed": 1775995134116,
+      "lastAccessed": 1776658466516,
       "type": "file"
     },
     {
-      "path": "C:\\Users\\luo\\.claude\\plugins\\marketplaces\\omc\\skills\\omc-setup\\phases\\01-install-claude-md.md",
-      "accessCount": 1,
-      "lastAccessed": 1775840420869,
+      "path": "kms-updatedel\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\updatedel\\controller\\PermissionRequestController.java",
+      "accessCount": 2,
+      "lastAccessed": 1776658466619,
       "type": "file"
     },
     {
-      "path": "C:\\Users\\luo\\.claude\\plugins\\marketplaces\\omc\\skills\\omc-setup\\phases\\02-configure.md",
-      "accessCount": 1,
-      "lastAccessed": 1775840504318,
+      "path": "C:\\Users\\luo\\.claude\\backups\\.claude.json.backup.1776659086311",
+      "accessCount": 2,
+      "lastAccessed": 1776661300982,
       "type": "file"
     },
     {
-      "path": "C:\\Users\\luo\\.claude\\plugins\\marketplaces\\omc\\skills\\omc-setup\\phases\\03-integrations.md",
-      "accessCount": 1,
-      "lastAccessed": 1775840855270,
+      "path": "kms-user\\front\\package.json",
+      "accessCount": 2,
+      "lastAccessed": 1776666501843,
       "type": "file"
     },
     {
-      "path": "C:\\Users\\luo\\.claude.json",
-      "accessCount": 1,
-      "lastAccessed": 1775841898054,
-      "type": "file"
-    },
-    {
-      "path": "C:\\Users\\luo\\.claude\\plugins\\marketplaces\\omc\\skills\\omc-setup\\phases\\04-welcome.md",
-      "accessCount": 1,
-      "lastAccessed": 1775841922769,
-      "type": "file"
-    },
-    {
-      "path": "C:\\Users\\luo\\.claude\\projects\\E--java-project-kms-code-copy\\26d75c58-e1e4-4140-9582-4cb9df69b446\\tool-results\\call_clyfyNBWbKgUDdH2Z7JLDrDi.txt",
-      "accessCount": 1,
-      "lastAccessed": 1775883917027,
-      "type": "file"
-    },
-    {
-      "path": "kms-ops\\fisco\\webase-front\\conf\\application-docker.yml",
-      "accessCount": 1,
-      "lastAccessed": 1775916105153,
-      "type": "file"
-    },
-    {
-      "path": "kms-ops\\nginx\\docker-compose.yml",
-      "accessCount": 1,
-      "lastAccessed": 1775916105244,
-      "type": "file"
-    },
-    {
-      "path": "C:\\Users\\luo\\.cpa\\docker-compose.yml",
-      "accessCount": 1,
-      "lastAccessed": 1775918320684,
-      "type": "file"
-    },
-    {
-      "path": "C:\\Users\\luo\\AppData\\Local\\Temp\\claude\\E--java-project-kms-code-copy\\9bd4bc8c-47f6-475b-8530-1a0b9904ce37\\tasks\\bu7qd1794.output",
-      "accessCount": 1,
-      "lastAccessed": 1775989828960,
-      "type": "file"
-    },
-    {
-      "path": "C:\\Users\\luo\\AppData\\Local\\Temp\\claude\\E--java-project-kms-code-copy\\9bd4bc8c-47f6-475b-8530-1a0b9904ce37\\tasks\\blhfejgcq.output",
-      "accessCount": 1,
-      "lastAccessed": 1775989829018,
-      "type": "file"
-    },
-    {
-      "path": "kms-ops\\stop.sh",
-      "accessCount": 1,
-      "lastAccessed": 1775991523412,
-      "type": "file"
-    },
-    {
-      "path": "kms-ops\\nginx",
-      "accessCount": 1,
-      "lastAccessed": 1775992121577,
+      "path": "README.md",
+      "accessCount": 2,
+      "lastAccessed": 1776666514310,
       "type": "directory"
     },
     {
-      "path": "kms-generate\\java-backend\\ruoyi-system\\src\\main\\java\\com\\ruoyi\\generate\\service\\generator\\SSCLGenerator.java",
+      "path": "kms-user\\front\\src\\views\\workbench\\WorkbenchView.vue",
       "accessCount": 1,
-      "lastAccessed": 1775992585356,
+      "lastAccessed": 1776658158116,
+      "type": "file"
+    },
+    {
+      "path": "kms-updatedel\\front\\src\\router\\index.js",
+      "accessCount": 1,
+      "lastAccessed": 1776658172666,
+      "type": "file"
+    },
+    {
+      "path": "kms-generate\\front\\src\\api\\permission\\permission.js",
+      "accessCount": 1,
+      "lastAccessed": 1776658190390,
+      "type": "file"
+    },
+    {
+      "path": "kms-updatedel\\front\\src\\api\\permission\\permission.js",
+      "accessCount": 1,
+      "lastAccessed": 1776658190452,
+      "type": "file"
+    },
+    {
+      "path": "kms-generate\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\generate\\controller\\HealthController.java",
+      "accessCount": 1,
+      "lastAccessed": 1776658216603,
+      "type": "file"
+    },
+    {
+      "path": "kms-updatedel\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\updatedel\\controller\\LifecycleDashboardController.java",
+      "accessCount": 1,
+      "lastAccessed": 1776658216656,
+      "type": "file"
+    },
+    {
+      "path": "kms-updatedel\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\updatedel\\controller\\KeyOperationRecordController.java",
+      "accessCount": 1,
+      "lastAccessed": 1776658216709,
+      "type": "file"
+    },
+    {
+      "path": "kms-generate\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\generate\\controller\\GenerateUserController.java",
+      "accessCount": 1,
+      "lastAccessed": 1776658216786,
       "type": "file"
     },
     {
       "path": "kms-acceptance\\front\\src\\App.vue",
       "accessCount": 1,
-      "lastAccessed": 1775992722550,
+      "lastAccessed": 1776658227744,
+      "type": "file"
+    },
+    {
+      "path": "kms-generate\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\generate\\controller",
+      "accessCount": 1,
+      "lastAccessed": 1776658238448,
+      "type": "directory"
+    },
+    {
+      "path": "kms-user",
+      "accessCount": 1,
+      "lastAccessed": 1776658308481,
+      "type": "directory"
+    },
+    {
+      "path": "kms-updatedel",
+      "accessCount": 1,
+      "lastAccessed": 1776658308548,
+      "type": "directory"
+    },
+    {
+      "path": "kms-generate",
+      "accessCount": 1,
+      "lastAccessed": 1776658308581,
+      "type": "directory"
+    },
+    {
+      "path": "kms-updatedel\\front\\src\\views\\algorithm\\processView.vue",
+      "accessCount": 1,
+      "lastAccessed": 1776658322121,
+      "type": "file"
+    },
+    {
+      "path": "kms-generate\\front\\src\\views\\generateHistory\\index.vue",
+      "accessCount": 1,
+      "lastAccessed": 1776658322243,
+      "type": "file"
+    },
+    {
+      "path": "kms-user\\front\\src\\services\\http.js",
+      "accessCount": 1,
+      "lastAccessed": 1776658442327,
+      "type": "file"
+    },
+    {
+      "path": "kms-updatedel\\java-backend\\ruoyi-admin\\src\\main\\java",
+      "accessCount": 1,
+      "lastAccessed": 1776658442403,
+      "type": "directory"
+    },
+    {
+      "path": "kms-generate\\java-backend\\ruoyi-admin\\src\\main\\java",
+      "accessCount": 1,
+      "lastAccessed": 1776658442442,
+      "type": "directory"
+    },
+    {
+      "path": "kms-generate\\java-backend\\ruoyi-admin\\src\\main\\java\\com\\ruoyi\\generate\\service\\GenerateChainService.java",
+      "accessCount": 1,
+      "lastAccessed": 1776658847848,
+      "type": "file"
+    },
+    {
+      "path": "C:\\Users\\luo\\.claude",
+      "accessCount": 1,
+      "lastAccessed": 1776659208431,
+      "type": "directory"
+    },
+    {
+      "path": "C:\\Users\\luo\\AppData\\Local\\Temp\\claude\\E--java-project-kms-code-copy\\8a78b969-ee4d-40fd-82ed-2e355e26691f\\tasks\\b2yywzfmm.output",
+      "accessCount": 1,
+      "lastAccessed": 1776660087790,
+      "type": "file"
+    },
+    {
+      "path": "C:\\Users\\luo\\.claude\\settings.local.json",
+      "accessCount": 1,
+      "lastAccessed": 1776661290266,
+      "type": "file"
+    },
+    {
+      "path": "C:\\Users\\luo\\.claude\\settings.json",
+      "accessCount": 1,
+      "lastAccessed": 1776661290354,
+      "type": "file"
+    },
+    {
+      "path": "C:\\Users\\luo\\.claude\\settings-claude.json",
+      "accessCount": 1,
+      "lastAccessed": 1776661290415,
+      "type": "file"
+    },
+    {
+      "path": "C:\\Users\\luo\\.claude.json",
+      "accessCount": 1,
+      "lastAccessed": 1776661301019,
+      "type": "file"
+    },
+    {
+      "path": "kms-generate\\front\\package.json",
+      "accessCount": 1,
+      "lastAccessed": 1776666544394,
+      "type": "file"
+    },
+    {
+      "path": "kms-updatedel\\front\\package.json",
+      "accessCount": 1,
+      "lastAccessed": 1776666544430,
+      "type": "file"
+    },
+    {
+      "path": "kms-acceptance\\front\\package.json",
+      "accessCount": 1,
+      "lastAccessed": 1776666544455,
+      "type": "file"
+    },
+    {
+      "path": "C:\\Users\\luo\\AppData\\Local\\Temp\\claude\\D--sinrotic-code-java-project-kms-code-copy\\3c1bb278-ba63-4c1b-9192-d24672109603\\tasks\\blb4sp072.output",
+      "accessCount": 1,
+      "lastAccessed": 1776666551511,
       "type": "file"
     }
   ],

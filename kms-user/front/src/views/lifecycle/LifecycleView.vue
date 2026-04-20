@@ -126,7 +126,7 @@
             class="mb12"
           >
             <template #default>
-              <el-button type="primary" link @click="router.push('/user_actions/permissions')">前往申请权限</el-button>
+              <el-button type="primary" link @click="router.push('/permissions/index')">前往申请权限</el-button>
             </template>
           </el-alert>
 
