@@ -20,6 +20,8 @@ go run .
 5. `POST /api/runs`
 6. `GET /api/security/runs`
 7. `POST /api/security/runs`
+8. `GET /api/proof/runs`
+9. `POST /api/proof/runs`
 
 ## 环境变量
 

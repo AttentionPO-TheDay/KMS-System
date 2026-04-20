@@ -4,6 +4,9 @@ import com.ruoyi.updatedel.domain.KeyOperationRecord;
 import com.ruoyi.updatedel.domain.Keymanage;
 import com.ruoyi.updatedel.mapper.KeymanageMapper;
 import com.ruoyi.updatedel.mapper.KeyOperationRecordMapper;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -39,6 +42,7 @@ public class KeyOperationRecordService {
         record.setActionSource(actionSource);
         record.setResultStatus("0");
         record.setChainStatus(keymanage.getChainStatus());
+        applyProofFields(record, keymanage);
         record.setResultMessage(resultMessage);
         record.setReceiveStatus("0");
         record.setActionTime(new Date());
@@ -65,6 +69,7 @@ public class KeyOperationRecordService {
             record.setActionSource(actionSource);
             record.setResultStatus("0");
             record.setChainStatus(keymanage.getChainStatus());
+            applyProofFields(record, keymanage);
             record.setResultMessage(resultMessage);
             record.setReceiveStatus("0");
             record.setActionTime(actionTime);
@@ -87,6 +92,69 @@ public class KeyOperationRecordService {
 
     public Optional<KeyOperationRecord> findById(Long recordId) {
         return Optional.ofNullable(keyOperationRecordMapper.selectKeyOperationRecordById(recordId));
+    }
+
+    public List<KeyOperationRecord> listBatchProofRecords(String batchId, String actionType) {
+        if (batchId == null || batchId.trim().isEmpty()) {
+            return new ArrayList<>();
+        }
+        String normalizedActionType = actionType == null || actionType.trim().isEmpty() ? "UPDATE" : actionType.trim();
+        return keyOperationRecordMapper.selectBatchRecords(batchId, normalizedActionType);
+    }
+
+    @Transactional
+    public void refreshBatchProof(String batchId, String actionType) {
+        if (batchId == null || batchId.trim().isEmpty()) {
+            return;
+        }
+        List<KeyOperationRecord> records = keyOperationRecordMapper.selectBatchRecords(batchId, actionType);
+        if (records == null || records.isEmpty()) {
+            return;
+        }
+
+        int expectedCount = 0;
+        for (KeyOperationRecord record : records) {
+            if (record.getExpectedCount() != null && record.getExpectedCount() > expectedCount) {
+                expectedCount = record.getExpectedCount();
+            }
+        }
+        if (expectedCount <= 0) {
+            expectedCount = records.size();
+        }
+
+        Map<Integer, KeyOperationRecord> byIndex = new LinkedHashMap<>();
+        boolean duplicateIndex = false;
+        for (KeyOperationRecord record : records) {
+            Integer nodeIndex = record.getNodeIndex() == null ? byIndex.size() : record.getNodeIndex();
+            if (byIndex.containsKey(nodeIndex)) {
+                duplicateIndex = true;
+            }
+            byIndex.put(nodeIndex, record);
+        }
+
+        String verifyStatus = "0";
+        String verifyMessage = "waiting for leaf commitments " + records.size() + "/" + expectedCount;
+        if (duplicateIndex) {
+            verifyStatus = "2";
+            verifyMessage = "duplicate node index";
+        } else if (records.size() >= expectedCount && hasFullIndexRange(byIndex, expectedCount)) {
+            verifyStatus = "1";
+            verifyMessage = "tree proof verified";
+        }
+
+        records.sort((left, right) -> Integer.compare(
+            left.getNodeIndex() == null ? 0 : left.getNodeIndex(),
+            right.getNodeIndex() == null ? 0 : right.getNodeIndex()
+        ));
+        StringBuilder rootBuilder = new StringBuilder();
+        for (KeyOperationRecord record : records) {
+            if (rootBuilder.length() > 0) {
+                rootBuilder.append('|');
+            }
+            rootBuilder.append(valueOrDefault(record.getConsistencyHash(), record.getCommitment()));
+        }
+        String batchRoot = sha256(rootBuilder.toString());
+        keyOperationRecordMapper.updateBatchProof(batchId, actionType, batchRoot, verifyStatus, verifyMessage);
     }
 
     @Transactional
@@ -170,6 +238,50 @@ public class KeyOperationRecordService {
         data.put("autoUpdate", autoUpdateSeries);
         data.put("revoke", revokeSeries);
         return data;
+    }
+
+    private void applyProofFields(KeyOperationRecord record, Keymanage keymanage) {
+        record.setBatchId(keymanage.getBatchId());
+        record.setParentBatchId(keymanage.getParentBatchId());
+        record.setRootBatchId(keymanage.getRootBatchId());
+        record.setTreePath(keymanage.getTreePath());
+        record.setTreeLevel(keymanage.getTreeLevel());
+        record.setNodeIndex(keymanage.getNodeIndex());
+        record.setExpectedCount(keymanage.getExpectedCount());
+        record.setTreeFanout(keymanage.getTreeFanout());
+        record.setProofMode(keymanage.getProofMode());
+        record.setCommitment(keymanage.getCommitment());
+        record.setConsistencyHash(keymanage.getConsistencyHash());
+        record.setBatchRoot(keymanage.getBatchRoot());
+        record.setVerifyStatus(keymanage.getVerifyStatus());
+        record.setVerifyMessage(keymanage.getVerifyMessage());
+    }
+
+    private boolean hasFullIndexRange(Map<Integer, KeyOperationRecord> recordsByIndex, int expectedCount) {
+        for (int i = 0; i < expectedCount; i++) {
+            if (!recordsByIndex.containsKey(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private String valueOrDefault(String candidate, String fallback) {
+        return candidate == null || candidate.trim().isEmpty() ? fallback : candidate;
+    }
+
+    private String sha256(String value) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] bytes = digest.digest(value.getBytes(StandardCharsets.UTF_8));
+            StringBuilder builder = new StringBuilder(bytes.length * 2);
+            for (byte current : bytes) {
+                builder.append(String.format("%02x", current));
+            }
+            return builder.toString();
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 digest unavailable", ex);
+        }
     }
 
     private <T> List<List<T>> chunks(List<T> source, int batchSize) {

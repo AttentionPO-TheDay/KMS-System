@@ -22,4 +22,34 @@ public class KeyPayload {
 
     @JsonProperty("key_info")
     private Keymanage keyInfo;
+
+    @JsonProperty("batch_id")
+    private String batchId;
+
+    @JsonProperty("parent_batch_id")
+    private String parentBatchId;
+
+    @JsonProperty("root_batch_id")
+    private String rootBatchId;
+
+    @JsonProperty("tree_path")
+    private String treePath;
+
+    @JsonProperty("tree_level")
+    private Integer treeLevel;
+
+    @JsonProperty("node_index")
+    private Integer nodeIndex;
+
+    @JsonProperty("expected_count")
+    private Integer expectedCount;
+
+    @JsonProperty("tree_fanout")
+    private Integer treeFanout;
+
+    @JsonProperty("proof_mode")
+    private String proofMode;
+
+    @JsonProperty("commitment_seed")
+    private String commitmentSeed;
 }

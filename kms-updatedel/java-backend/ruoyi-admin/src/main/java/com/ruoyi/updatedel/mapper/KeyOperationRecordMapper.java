@@ -22,6 +22,14 @@ public interface KeyOperationRecordMapper {
                            @Param("blockHeight") Long blockHeight,
                            @Param("resultMessage") String resultMessage);
 
+    List<KeyOperationRecord> selectBatchRecords(@Param("batchId") String batchId, @Param("actionType") String actionType);
+
+    int updateBatchProof(@Param("batchId") String batchId,
+                         @Param("actionType") String actionType,
+                         @Param("batchRoot") String batchRoot,
+                         @Param("verifyStatus") String verifyStatus,
+                         @Param("verifyMessage") String verifyMessage);
+
     int markReceived(@Param("recordId") Long recordId, @Param("userId") Long userId);
 
     KeyOperationRecord selectKeyOperationRecordById(Long recordId);

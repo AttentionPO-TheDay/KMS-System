@@ -134,6 +134,7 @@ public class LifecycleKafkaConsumer {
                 }
                 Keymanage request = payload.getKeyInfo() == null ? new Keymanage() : payload.getKeyInfo();
                 request.setKeyId(payload.getKeyId());
+                applyProofContext(payload, request);
                 lifecycleService.rotateKey(request);
                 log.debug("UPDATE_KEY consumed successfully, keyId={}, traceId={}", payload.getKeyId(), payload.getTraceId());
             } else {
@@ -175,5 +176,18 @@ public class LifecycleKafkaConsumer {
         boolean authorized = isAuthorized(payload);
         authCache.put(cacheKey, authorized);
         return authorized;
+    }
+
+    private void applyProofContext(KeyPayload payload, Keymanage request) {
+        request.setBatchId(payload.getBatchId());
+        request.setParentBatchId(payload.getParentBatchId());
+        request.setRootBatchId(payload.getRootBatchId());
+        request.setTreePath(payload.getTreePath());
+        request.setTreeLevel(payload.getTreeLevel());
+        request.setNodeIndex(payload.getNodeIndex());
+        request.setExpectedCount(payload.getExpectedCount());
+        request.setTreeFanout(payload.getTreeFanout());
+        request.setProofMode(payload.getProofMode());
+        request.setCommitmentSeed(payload.getCommitmentSeed());
     }
 }

@@ -8,6 +8,8 @@ import com.ruoyi.updatedel.domain.Keymanage;
 import com.ruoyi.updatedel.mapper.KeymanageMapper;
 import com.ruoyi.updatedel.service.generator.EccKeyGenerator;
 import com.ruoyi.updatedel.service.generator.SsclKeyGenerator;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -141,10 +143,13 @@ public class LifecycleService {
         next.setChainStatus("0");
         next.setUpdTime(now());
         next.setKeyValue(generateKeyValue(next));
+        String normalizedActionSource = normalizeActionSource(actionSource);
+        applyUpdateProofMetadata(next, request, current, normalizedActionSource);
 
         keymanageMapper.updatekeymanage(next);
         resetPendingChainState(next.getKeyId());
-        keyOperationRecordService.createPendingRecord(next, "UPDATE", normalizeActionSource(actionSource), "结果已推送，等待用户接收");
+        keyOperationRecordService.createPendingRecord(next, "UPDATE", normalizedActionSource, "结果已推送，等待用户接收");
+        keyOperationRecordService.refreshBatchProof(next.getBatchId(), "UPDATE");
         publishChainEvent(ChainSyncEvent.TYPE_ROTATE, Collections.singletonList(next));
         log.info("rotateKey 完成: keyId={}, newVersion={}", next.getKeyId(), next.getVersion());
         return requireExistingKey(next.getKeyId());
@@ -242,6 +247,43 @@ public class LifecycleService {
         return merged;
     }
 
+    private void applyUpdateProofMetadata(Keymanage next, Keymanage request, Keymanage current, String actionSource) {
+        String batchId = valueOrDefault(request.getBatchId(), "single-" + next.getKeyId() + "-" + next.getVersion());
+        String rootBatchId = valueOrDefault(request.getRootBatchId(), batchId);
+        String parentBatchId = valueOrDefault(request.getParentBatchId(), rootBatchId);
+        String treePath = valueOrDefault(request.getTreePath(), rootBatchId + "/0");
+        Integer nodeIndex = request.getNodeIndex() == null ? 0 : request.getNodeIndex();
+        Integer expectedCount = request.getExpectedCount() == null || request.getExpectedCount() <= 0 ? 1 : request.getExpectedCount();
+        Integer treeFanout = request.getTreeFanout() == null || request.getTreeFanout() <= 0 ? 1 : request.getTreeFanout();
+        Integer treeLevel = request.getTreeLevel() == null ? 0 : request.getTreeLevel();
+        String proofMode = valueOrDefault(request.getProofMode(), "semi_honest");
+        String commitmentSeed = valueOrDefault(request.getCommitmentSeed(), batchId);
+
+        next.setBatchId(batchId);
+        next.setRootBatchId(rootBatchId);
+        next.setParentBatchId(parentBatchId);
+        next.setTreePath(treePath);
+        next.setTreeLevel(treeLevel);
+        next.setNodeIndex(nodeIndex);
+        next.setExpectedCount(expectedCount);
+        next.setTreeFanout(treeFanout);
+        next.setProofMode(proofMode);
+        next.setCommitmentSeed(commitmentSeed);
+        next.setCommitment(sha256(joinProofParts(
+            next.getKeyId(),
+            current.getVersion(),
+            next.getVersion(),
+            batchId,
+            parentBatchId,
+            treePath,
+            actionSource,
+            commitmentSeed
+        )));
+        next.setConsistencyHash(sha256(joinProofParts(parentBatchId, nodeIndex, next.getCommitment())));
+        next.setVerifyStatus("0");
+        next.setVerifyMessage("waiting for batch proof");
+    }
+
     private String generateKeyValue(Keymanage key) {
         String encrytType = key.getEncrytType() == null ? "" : key.getEncrytType().trim();
         String encrytName = key.getEncrytName() == null ? "" : key.getEncrytName().trim().toUpperCase();
@@ -331,6 +373,31 @@ public class LifecycleService {
 
     private String valueOrDefault(String candidate, String fallback) {
         return candidate == null || candidate.trim().isEmpty() ? fallback : candidate;
+    }
+
+    private String joinProofParts(Object... parts) {
+        StringBuilder builder = new StringBuilder();
+        for (Object part : parts) {
+            if (builder.length() > 0) {
+                builder.append('|');
+            }
+            builder.append(part == null ? "" : part);
+        }
+        return builder.toString();
+    }
+
+    private String sha256(String value) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] bytes = digest.digest(value.getBytes(StandardCharsets.UTF_8));
+            StringBuilder builder = new StringBuilder(bytes.length * 2);
+            for (byte current : bytes) {
+                builder.append(String.format("%02x", current));
+            }
+            return builder.toString();
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 digest unavailable", ex);
+        }
     }
 
     private String normalizeActionSource(String actionSource) {

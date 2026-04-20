@@ -69,6 +69,7 @@ type HealthResponse struct {
 	AcceptanceUser     string `json:"acceptanceUser"`
 	GenerateKeyPoolURL string `json:"generateKeyPoolUrl"`
 	LifecycleVerifyURL string `json:"lifecycleVerifyUrl"`
+	LifecycleProofURL  string `json:"lifecycleProofUrl"`
 }
 
 type SecurityRunRequest struct {
@@ -98,6 +99,87 @@ type SecurityRunResult struct {
 	Notes      []string               `json:"notes,omitempty"`
 	Requests   []SecurityRequestTrace `json:"requests,omitempty"`
 	RawOutput  string                 `json:"rawOutput,omitempty"`
+}
+
+type ProofRunRequest struct {
+	BatchSize        int    `json:"batchSize"`
+	TreeFanout       int    `json:"treeFanout"`
+	ProofMode        string `json:"proofMode"`
+	LifecycleBaseURL string `json:"lifecycleBaseUrl"`
+}
+
+type ProofCheck struct {
+	Name    string   `json:"name"`
+	Passed  bool     `json:"passed"`
+	Message string   `json:"message"`
+	Details []string `json:"details,omitempty"`
+}
+
+type ProofRecord struct {
+	RecordID        int64  `json:"recordId"`
+	KeyID           int64  `json:"keyId"`
+	KeyVersion      int    `json:"keyVersion"`
+	BatchID         string `json:"batchId"`
+	ParentBatchID   string `json:"parentBatchId"`
+	RootBatchID     string `json:"rootBatchId"`
+	TreePath        string `json:"treePath"`
+	TreeLevel       int    `json:"treeLevel"`
+	NodeIndex       int    `json:"nodeIndex"`
+	ExpectedCount   int    `json:"expectedCount"`
+	TreeFanout      int    `json:"treeFanout"`
+	ProofMode       string `json:"proofMode"`
+	Commitment      string `json:"commitment"`
+	ConsistencyHash string `json:"consistencyHash"`
+	BatchRoot       string `json:"batchRoot"`
+	VerifyStatus    string `json:"verifyStatus"`
+	VerifyMessage   string `json:"verifyMessage"`
+	ResultStatus    string `json:"resultStatus"`
+	ChainStatus     string `json:"chainStatus"`
+}
+
+type ProofSummary struct {
+	BatchID                     string `json:"batchId"`
+	ActionType                  string `json:"actionType"`
+	ExpectedCount               int    `json:"expectedCount"`
+	ReceivedCount               int    `json:"receivedCount"`
+	BatchRoot                   string `json:"batchRoot"`
+	VerifyStatus                string `json:"verifyStatus"`
+	VerifyMessage               string `json:"verifyMessage"`
+	AllCommitmentsPresent       bool   `json:"allCommitmentsPresent"`
+	AllConsistencyHashesPresent bool   `json:"allConsistencyHashesPresent"`
+	DuplicateNodeIndex          bool   `json:"duplicateNodeIndex"`
+}
+
+type lifecycleProofResponse struct {
+	Summary ProofSummary  `json:"summary"`
+	Data    []ProofRecord `json:"data"`
+}
+
+type batchUpdateResponse struct {
+	BatchID   string `json:"batch_id"`
+	Accepted  int    `json:"accepted"`
+	Duplicate int    `json:"duplicates"`
+	Total     int    `json:"total"`
+	Status    string `json:"status"`
+	Message   string `json:"msg"`
+}
+
+type ProofRunResult struct {
+	ID         string        `json:"id"`
+	Status     string        `json:"status"`
+	Passed     bool          `json:"passed"`
+	StartedAt  string        `json:"startedAt"`
+	FinishedAt string        `json:"finishedAt,omitempty"`
+	BatchID    string        `json:"batchId,omitempty"`
+	BatchSize  int           `json:"batchSize"`
+	TreeFanout int           `json:"treeFanout"`
+	ProofMode  string        `json:"proofMode"`
+	Summary    ProofSummary  `json:"summary"`
+	TreeCheck  ProofCheck    `json:"treeCheck"`
+	ProofCheck ProofCheck    `json:"proofCheck"`
+	Records    []ProofRecord `json:"records,omitempty"`
+	Notes      []string      `json:"notes,omitempty"`
+	Error      string        `json:"error,omitempty"`
 }
 
 type RunSummary struct {
@@ -170,6 +252,7 @@ type acceptanceConfig struct {
 	GenerateInternalToken  string
 	GenerateKeyPoolURL     string
 	LifecycleVerifyURL     string
+	LifecycleProofURL      string
 	GenerateJavaBaseURL    string
 	LifecycleJavaBaseURL   string
 	AcceptanceUser         string
@@ -189,6 +272,8 @@ type server struct {
 	runOrder       []string
 	securityRuns   map[string]*SecurityRunResult
 	securityOrder  []string
+	proofRuns      map[string]*ProofRunResult
+	proofOrder     []string
 	scenarios      map[string]Scenario
 	dataDir        string
 	runsFile       string
@@ -215,6 +300,7 @@ func main() {
 	srv := &server{
 		runs:           make(map[string]*RunResult),
 		securityRuns:   make(map[string]*SecurityRunResult),
+		proofRuns:      make(map[string]*ProofRunResult),
 		scenarios:      defaultScenarios(cfg),
 		dataDir:        dataDir,
 		runsFile:       filepath.Join(dataDir, "runs.json"),
@@ -238,6 +324,8 @@ func main() {
 	app.Post("/api/runs", srv.handleCreateRun)
 	app.Get("/api/security/runs", srv.handleSecurityRuns)
 	app.Post("/api/security/runs", srv.handleCreateSecurityRun)
+	app.Get("/api/proof/runs", srv.handleProofRuns)
+	app.Post("/api/proof/runs", srv.handleCreateProofRun)
 
 	port := envOrDefault("PORT", "9090")
 	log.Printf("kms-acceptance backend listening on :%s", port)
@@ -250,6 +338,7 @@ func loadAcceptanceConfig() acceptanceConfig {
 		GenerateInternalToken:  envOrDefault("ACCEPTANCE_INTERNAL_TOKEN", envOrDefault("INTERNAL_TOKEN", "kms-generate-internal-secret-2026")),
 		GenerateKeyPoolURL:     envOrDefault("ACCEPTANCE_GENERATE_KEY_POOL_URL", "http://127.0.0.1:9081/internal/generate/keys/recent"),
 		LifecycleVerifyURL:     envOrDefault("ACCEPTANCE_LIFECYCLE_VERIFY_URL", "http://127.0.0.1:9082/internal/lifecycle/key-status"),
+		LifecycleProofURL:      envOrDefault("ACCEPTANCE_LIFECYCLE_PROOF_URL", "http://127.0.0.1:9082/internal/lifecycle/batch-proof"),
 		GenerateJavaBaseURL:    envOrDefault("ACCEPTANCE_GENERATE_JAVA_BASE_URL", "http://127.0.0.1:9081"),
 		LifecycleJavaBaseURL:   envOrDefault("ACCEPTANCE_LIFECYCLE_JAVA_BASE_URL", "http://127.0.0.1:9082"),
 		AcceptanceUser:         acceptanceUser,
@@ -401,6 +490,7 @@ func (s *server) handleHealth(c *fiber.Ctx) error {
 		AcceptanceUser:     s.cfg.AcceptanceUser,
 		GenerateKeyPoolURL: s.cfg.GenerateKeyPoolURL,
 		LifecycleVerifyURL: s.cfg.LifecycleVerifyURL,
+		LifecycleProofURL:  s.cfg.LifecycleProofURL,
 	})
 }
 
@@ -483,6 +573,68 @@ func (s *server) handleCreateSecurityRun(c *fiber.Ctx) error {
 	run.Requests = append([]SecurityRequestTrace{}, result.Requests...)
 	run.RawOutput = result.RawOutput
 	s.storeSecurityRun(run)
+
+	if run.Status == "error" {
+		return c.Status(http.StatusBadGateway).JSON(run)
+	}
+	return c.JSON(run)
+}
+
+func (s *server) handleProofRuns(c *fiber.Ctx) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	list := make([]*ProofRunResult, 0, len(s.proofOrder))
+	for i := len(s.proofOrder) - 1; i >= 0; i-- {
+		id := s.proofOrder[i]
+		list = append(list, s.proofRuns[id])
+	}
+	return c.JSON(fiber.Map{"data": list})
+}
+
+func (s *server) handleCreateProofRun(c *fiber.Ctx) error {
+	var req ProofRunRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "invalid request body"})
+	}
+	if req.BatchSize <= 0 {
+		req.BatchSize = 5
+	}
+	if req.BatchSize > 32 {
+		req.BatchSize = 32
+	}
+	if req.TreeFanout <= 0 {
+		req.TreeFanout = 4
+	}
+	if strings.TrimSpace(req.ProofMode) == "" {
+		req.ProofMode = "semi_honest"
+	}
+	if strings.TrimSpace(req.LifecycleBaseURL) == "" {
+		req.LifecycleBaseURL = s.scenarios["update-tps"].BaseURL
+	}
+
+	run := &ProofRunResult{
+		ID:         s.nextID(),
+		Status:     "running",
+		StartedAt:  time.Now().Format(time.RFC3339),
+		BatchSize:  req.BatchSize,
+		TreeFanout: req.TreeFanout,
+		ProofMode:  req.ProofMode,
+	}
+	s.storeProofRun(run)
+
+	result := s.executeProofRun(req)
+	run.Status = result.Status
+	run.Passed = result.Passed
+	run.FinishedAt = time.Now().Format(time.RFC3339)
+	run.BatchID = result.BatchID
+	run.Summary = result.Summary
+	run.TreeCheck = result.TreeCheck
+	run.ProofCheck = result.ProofCheck
+	run.Records = append([]ProofRecord{}, result.Records...)
+	run.Notes = append([]string{}, result.Notes...)
+	run.Error = result.Error
+	s.storeProofRun(run)
 
 	if run.Status == "error" {
 		return c.Status(http.StatusBadGateway).JSON(run)
@@ -876,6 +1028,208 @@ func (s *server) fetchLifecycleStatuses(keyIDs []int64) ([]internalVerifyRecord,
 	return payload.Data, nil
 }
 
+func (s *server) executeProofRun(req ProofRunRequest) ProofRunResult {
+	keyIDs, err := s.fetchGeneratedKeyIDs(req.BatchSize, time.Now().Add(-time.Duration(s.cfg.KeyPoolLookbackMinutes)*time.Minute), "")
+	if err != nil {
+		return ProofRunResult{Status: "error", Error: "load visual test key pool failed: " + err.Error()}
+	}
+
+	batchResp, err := s.submitBatchUpdate(req, keyIDs)
+	if err != nil {
+		return ProofRunResult{Status: "error", Error: err.Error()}
+	}
+	result := ProofRunResult{
+		BatchID:    batchResp.BatchID,
+		BatchSize:  req.BatchSize,
+		TreeFanout: req.TreeFanout,
+		ProofMode:  req.ProofMode,
+		Notes: []string{
+			fmt.Sprintf("selected %d generated keys for visual proof test", len(keyIDs)),
+			fmt.Sprintf("batch update accepted %d/%d, duplicates=%d", batchResp.Accepted, batchResp.Total, batchResp.Duplicate),
+		},
+	}
+	if batchResp.BatchID == "" {
+		result.Status = "error"
+		result.Error = "batch update did not return batch_id"
+		return result
+	}
+
+	proof, err := s.waitBatchProof(batchResp.BatchID, batchResp.Accepted)
+	if err != nil {
+		result.Status = "error"
+		result.Error = err.Error()
+		return result
+	}
+	result.Summary = proof.Summary
+	result.Records = proof.Data
+	result.TreeCheck = buildTreeVisualCheck(proof.Summary, proof.Data)
+	result.ProofCheck = buildSemiHonestVisualCheck(proof.Summary, proof.Data, req.ProofMode)
+	result.Passed = result.TreeCheck.Passed && result.ProofCheck.Passed
+	if result.Passed {
+		result.Status = "passed"
+	} else {
+		result.Status = "failed_threshold"
+	}
+	return result
+}
+
+func (s *server) submitBatchUpdate(req ProofRunRequest, keyIDs []int64) (batchUpdateResponse, error) {
+	endpoint := strings.TrimRight(req.LifecycleBaseURL, "/") + "/lifecycle/request/BATCH_UPDATE_KEYS"
+	body := map[string]interface{}{
+		"keyIds":     keyIDs,
+		"user":       s.cfg.AcceptanceUser,
+		"keyName":    "visual-tree-proof",
+		"keyUse":     "tree-proof-acceptance",
+		"keyDomain":  "acceptance",
+		"autoUpdate": "false",
+		"treeFanout": req.TreeFanout,
+		"proofMode":  req.ProofMode,
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return batchUpdateResponse{}, err
+	}
+	httpReq, err := http.NewRequestWithContext(context.Background(), http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return batchUpdateResponse{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
+	httpReq.Header.Set("X-Internal-Token", s.cfg.GenerateInternalToken)
+
+	resp, err := s.client.Do(httpReq)
+	if err != nil {
+		return batchUpdateResponse{}, fmt.Errorf("submit batch update failed: %w", err)
+	}
+	defer resp.Body.Close()
+	var result batchUpdateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return batchUpdateResponse{}, fmt.Errorf("decode batch update response failed: %w", err)
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		return result, fmt.Errorf("batch update api returned %d: %s", resp.StatusCode, result.Message)
+	}
+	return result, nil
+}
+
+func (s *server) waitBatchProof(batchID string, accepted int) (lifecycleProofResponse, error) {
+	var latest lifecycleProofResponse
+	deadline := time.Now().Add(time.Duration(s.cfg.VerifyWaitSeconds) * time.Second)
+	if s.cfg.VerifyWaitSeconds <= 0 {
+		deadline = time.Now().Add(30 * time.Second)
+	}
+	for {
+		proof, err := s.fetchBatchProof(batchID)
+		if err != nil {
+			return proof, err
+		}
+		latest = proof
+		if proof.Summary.VerifyStatus == "1" || proof.Summary.VerifyStatus == "2" {
+			return proof, nil
+		}
+		if accepted > 0 && proof.Summary.ReceivedCount >= accepted && proof.Summary.BatchRoot != "" {
+			return proof, nil
+		}
+		if time.Now().After(deadline) {
+			return latest, nil
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func (s *server) fetchBatchProof(batchID string) (lifecycleProofResponse, error) {
+	endpoint, err := url.Parse(s.cfg.LifecycleProofURL)
+	if err != nil {
+		return lifecycleProofResponse{}, fmt.Errorf("invalid lifecycle proof url: %w", err)
+	}
+	query := endpoint.Query()
+	query.Set("batchId", batchID)
+	query.Set("actionType", "UPDATE")
+	endpoint.RawQuery = query.Encode()
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return lifecycleProofResponse{}, err
+	}
+	req.Header.Set("X-Internal-Token", s.cfg.GenerateInternalToken)
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return lifecycleProofResponse{}, fmt.Errorf("query lifecycle proof failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= http.StatusBadRequest {
+		return lifecycleProofResponse{}, fmt.Errorf("lifecycle proof api returned %d", resp.StatusCode)
+	}
+
+	var payload lifecycleProofResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return lifecycleProofResponse{}, fmt.Errorf("decode lifecycle proof payload failed: %w", err)
+	}
+	return payload, nil
+}
+
+func buildTreeVisualCheck(summary ProofSummary, records []ProofRecord) ProofCheck {
+	details := []string{
+		fmt.Sprintf("received leaves %d/%d", summary.ReceivedCount, summary.ExpectedCount),
+		fmt.Sprintf("batch root %s", shortHash(summary.BatchRoot)),
+	}
+	seen := make(map[int]struct{}, len(records))
+	pathsPresent := true
+	for _, record := range records {
+		if record.TreePath == "" || record.ParentBatchID == "" || record.RootBatchID == "" {
+			pathsPresent = false
+		}
+		if _, ok := seen[record.NodeIndex]; ok {
+			summary.DuplicateNodeIndex = true
+		}
+		seen[record.NodeIndex] = struct{}{}
+	}
+	passed := summary.BatchID != "" &&
+		summary.ExpectedCount > 0 &&
+		summary.ReceivedCount == summary.ExpectedCount &&
+		!summary.DuplicateNodeIndex &&
+		pathsPresent &&
+		summary.BatchRoot != ""
+	message := "tree batch has complete leaves, paths and root hash"
+	if !passed {
+		message = "tree batch is incomplete or has invalid node metadata"
+	}
+	return ProofCheck{Name: "tree-structure", Passed: passed, Message: message, Details: details}
+}
+
+func buildSemiHonestVisualCheck(summary ProofSummary, records []ProofRecord, proofMode string) ProofCheck {
+	modeMatched := true
+	for _, record := range records {
+		if !strings.EqualFold(record.ProofMode, proofMode) {
+			modeMatched = false
+			break
+		}
+	}
+	details := []string{
+		fmt.Sprintf("commitments present %t", summary.AllCommitmentsPresent),
+		fmt.Sprintf("consistency hashes present %t", summary.AllConsistencyHashesPresent),
+		fmt.Sprintf("verify status %s", summary.VerifyStatus),
+	}
+	passed := summary.AllCommitmentsPresent &&
+		summary.AllConsistencyHashesPresent &&
+		summary.VerifyStatus == "1" &&
+		summary.BatchRoot != "" &&
+		modeMatched
+	message := "commitments, consistency hashes and batch root are verified"
+	if !passed {
+		message = "proof metadata is missing or verification has not passed"
+	}
+	return ProofCheck{Name: "semi-honest-proof", Passed: passed, Message: message, Details: details}
+}
+
+func shortHash(value string) string {
+	if len(value) <= 16 {
+		return value
+	}
+	return value[:12] + "..." + value[len(value)-4:]
+}
+
 func (s *server) executeSecurityRun(caseID string) SecurityRunResult {
 	args := []string{
 		"-NoProfile",
@@ -996,6 +1350,16 @@ func (s *server) storeSecurityRun(run *SecurityRunResult) {
 	}
 	clone := *run
 	s.securityRuns[run.ID] = &clone
+}
+
+func (s *server) storeProofRun(run *ProofRunResult) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.proofRuns[run.ID]; !exists {
+		s.proofOrder = append(s.proofOrder, run.ID)
+	}
+	clone := *run
+	s.proofRuns[run.ID] = &clone
 }
 
 func (s *server) nextID() string {

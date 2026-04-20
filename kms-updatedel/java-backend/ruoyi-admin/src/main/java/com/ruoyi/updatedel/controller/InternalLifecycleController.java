@@ -1,6 +1,8 @@
 package com.ruoyi.updatedel.controller;
 
 import com.ruoyi.updatedel.domain.Keymanage;
+import com.ruoyi.updatedel.domain.KeyOperationRecord;
+import com.ruoyi.updatedel.service.KeyOperationRecordService;
 import com.ruoyi.updatedel.service.LifecycleService;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -17,12 +19,15 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/internal/lifecycle")
 public class InternalLifecycleController {
     private final LifecycleService lifecycleService;
+    private final KeyOperationRecordService keyOperationRecordService;
 
     @Value("${kms.go-backend.internal-token:kms-generate-internal-secret-2026}")
     private String internalToken;
 
-    public InternalLifecycleController(LifecycleService lifecycleService) {
+    public InternalLifecycleController(LifecycleService lifecycleService,
+                                       KeyOperationRecordService keyOperationRecordService) {
         this.lifecycleService = lifecycleService;
+        this.keyOperationRecordService = keyOperationRecordService;
     }
 
     @GetMapping("/key-status")
@@ -42,6 +47,71 @@ public class InternalLifecycleController {
         }
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("data", items);
+        return payload;
+    }
+
+    @GetMapping("/batch-proof")
+    public Map<String, Object> batchProof(@RequestHeader(value = "X-Internal-Token", required = false) String token,
+                                          @RequestParam("batchId") String batchId,
+                                          @RequestParam(value = "actionType", defaultValue = "UPDATE") String actionType) {
+        requireAuthorized(token);
+        List<KeyOperationRecord> records = keyOperationRecordService.listBatchProofRecords(batchId, actionType);
+
+        int expectedCount = 0;
+        String batchRoot = null;
+        String verifyStatus = null;
+        String verifyMessage = null;
+        boolean allCommitmentsPresent = true;
+        boolean allConsistencyHashesPresent = true;
+        Map<Integer, Boolean> indexSeen = new LinkedHashMap<>();
+        boolean duplicateNodeIndex = false;
+
+        for (KeyOperationRecord record : records) {
+            if (record.getExpectedCount() != null && record.getExpectedCount() > expectedCount) {
+                expectedCount = record.getExpectedCount();
+            }
+            if (batchRoot == null && record.getBatchRoot() != null) {
+                batchRoot = record.getBatchRoot();
+            }
+            if (verifyStatus == null && record.getVerifyStatus() != null) {
+                verifyStatus = record.getVerifyStatus();
+            }
+            if (verifyMessage == null && record.getVerifyMessage() != null) {
+                verifyMessage = record.getVerifyMessage();
+            }
+            if (record.getCommitment() == null || record.getCommitment().trim().isEmpty()) {
+                allCommitmentsPresent = false;
+            }
+            if (record.getConsistencyHash() == null || record.getConsistencyHash().trim().isEmpty()) {
+                allConsistencyHashesPresent = false;
+            }
+            Integer nodeIndex = record.getNodeIndex();
+            if (nodeIndex != null) {
+                if (indexSeen.containsKey(nodeIndex)) {
+                    duplicateNodeIndex = true;
+                }
+                indexSeen.put(nodeIndex, true);
+            }
+        }
+        if (expectedCount <= 0) {
+            expectedCount = records.size();
+        }
+
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("batchId", batchId);
+        summary.put("actionType", actionType);
+        summary.put("expectedCount", expectedCount);
+        summary.put("receivedCount", records.size());
+        summary.put("batchRoot", batchRoot);
+        summary.put("verifyStatus", verifyStatus);
+        summary.put("verifyMessage", verifyMessage);
+        summary.put("allCommitmentsPresent", allCommitmentsPresent);
+        summary.put("allConsistencyHashesPresent", allConsistencyHashesPresent);
+        summary.put("duplicateNodeIndex", duplicateNodeIndex);
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("summary", summary);
+        payload.put("data", records);
         return payload;
     }
 

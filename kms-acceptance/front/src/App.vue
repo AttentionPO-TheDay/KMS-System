@@ -121,8 +121,10 @@ const securityAssets = [
 const scenarios = ref([])
 const runs = ref([])
 const securityRuns = ref([])
+const proofRuns = ref([])
 const health = ref(null)
 const loading = ref(false)
+const proofLoading = ref(false)
 const securityLoadingCaseId = ref('')
 const error = ref('')
 const apiBase = import.meta.env.VITE_APP_ACCEPTANCE_API || '/acceptance-api'
@@ -139,12 +141,38 @@ const form = ref({
   wrkPath: ''
 })
 
+const proofForm = ref({
+  batchSize: 5,
+  treeFanout: 4,
+  proofMode: 'semi_honest',
+  lifecycleBaseUrl: ''
+})
+
 const activeScenario = computed(() => {
   return scenarios.value.find((item) => item.id === form.value.scenarioId) || null
 })
 
 const passCount = computed(() => runs.value.filter((item) => item.status === 'passed').length)
 const securityCaseCount = computed(() => securitySuites.reduce((total, suite) => total + suite.cases.length, 0))
+const latestProofRun = computed(() => proofRuns.value[0] || null)
+const proofParentGroups = computed(() => {
+  const run = latestProofRun.value
+  if (!run || !run.records) {
+    return []
+  }
+  const groups = new Map()
+  for (const record of run.records) {
+    const key = record.parentBatchId || 'parent'
+    if (!groups.has(key)) {
+      groups.set(key, [])
+    }
+    groups.get(key).push(record)
+  }
+  return Array.from(groups.entries()).map(([parent, leaves]) => ({
+    parent,
+    leaves: leaves.sort((a, b) => Number(a.nodeIndex || 0) - Number(b.nodeIndex || 0))
+  }))
+})
 
 function applyScenario(scenario) {
   if (!scenario) {
@@ -186,6 +214,12 @@ async function loadSecurityRuns() {
   const response = await fetch(`${apiBase}/security/runs`)
   const payload = await response.json()
   securityRuns.value = payload.data || []
+}
+
+async function loadProofRuns() {
+  const response = await fetch(`${apiBase}/proof/runs`)
+  const payload = await response.json()
+  proofRuns.value = payload.data || []
 }
 
 async function runScenario() {
@@ -248,6 +282,34 @@ async function runSecurityCase(caseId) {
   }
 }
 
+async function runProofVisualTest() {
+  error.value = ''
+  proofLoading.value = true
+  try {
+    const response = await fetch(`${apiBase}/proof/runs`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        batchSize: Number(proofForm.value.batchSize),
+        treeFanout: Number(proofForm.value.treeFanout),
+        proofMode: proofForm.value.proofMode,
+        lifecycleBaseUrl: proofForm.value.lifecycleBaseUrl
+      })
+    })
+    const payload = await response.json()
+    if (!response.ok) {
+      throw new Error(payload.message || payload.error || '可视化证明测试执行失败')
+    }
+    await loadProofRuns()
+  } catch (err) {
+    error.value = err.message
+  } finally {
+    proofLoading.value = false
+  }
+}
+
 function latestSecurityRun(caseId) {
   return securityRuns.value.find((item) => item.caseId === caseId) || null
 }
@@ -281,8 +343,32 @@ function metricLabel(item) {
   return `${item.metricCheck.value?.toFixed?.(2) || item.metricCheck.value}% / ${item.metricCheck.target}%`
 }
 
+function proofStatusClass(check) {
+  if (!check) {
+    return 'warn'
+  }
+  return check.passed ? 'ok' : 'accent-orange'
+}
+
+function proofStatusLabel(check) {
+  if (!check) {
+    return '未执行'
+  }
+  return check.passed ? '通过' : '未通过'
+}
+
+function shortHash(value) {
+  if (!value) {
+    return '-'
+  }
+  if (value.length <= 18) {
+    return value
+  }
+  return `${value.slice(0, 12)}...${value.slice(-4)}`
+}
+
 onMounted(async () => {
-  await Promise.all([loadHealth(), loadScenarios(), loadRuns(), loadSecurityRuns()])
+  await Promise.all([loadHealth(), loadScenarios(), loadRuns(), loadSecurityRuns(), loadProofRuns()])
 })
 </script>
 
@@ -464,6 +550,109 @@ onMounted(async () => {
         </article>
         <p v-if="runs.length === 0" class="empty-text">还没有测试记录。</p>
       </div>
+    </section>
+
+    <section class="panel proof-panel">
+      <div class="panel-header">
+        <div>
+          <h2>树型更新与半诚实证明可视化测试</h2>
+          <p class="proof-intro">小批量触发 BATCH_UPDATE_KEYS，自动读取批次证明记录，展示树型节点、承诺摘要、一致性摘要与批次根验证结果。</p>
+        </div>
+        <span class="badge" :class="latestProofRun?.passed ? 'ok' : 'warn'">
+          {{ latestProofRun?.passed ? '最近一次通过' : '等待验证' }}
+        </span>
+      </div>
+
+      <div class="proof-config">
+        <label class="field">
+          <span>批量 key 数</span>
+          <input v-model="proofForm.batchSize" type="number" min="1" max="32" />
+        </label>
+        <label class="field">
+          <span>树扇出</span>
+          <input v-model="proofForm.treeFanout" type="number" min="2" max="128" />
+        </label>
+        <label class="field">
+          <span>证明模式</span>
+          <input v-model="proofForm.proofMode" />
+        </label>
+        <label class="field">
+          <span>Lifecycle Go Base URL</span>
+          <input v-model="proofForm.lifecycleBaseUrl" placeholder="为空时使用后端默认 UPDATE_KEY 地址" />
+        </label>
+        <div class="proof-actions">
+          <button class="primary" :disabled="proofLoading" @click="runProofVisualTest">
+            {{ proofLoading ? '执行中...' : '执行可视化测试' }}
+          </button>
+          <button class="ghost" @click="loadProofRuns">刷新结果</button>
+        </div>
+      </div>
+
+      <div v-if="latestProofRun" class="proof-grid">
+        <article class="proof-card">
+          <div class="proof-card-head">
+            <h3>树型结构测试</h3>
+            <span class="badge" :class="proofStatusClass(latestProofRun.treeCheck)">{{ proofStatusLabel(latestProofRun.treeCheck) }}</span>
+          </div>
+          <p>{{ latestProofRun.treeCheck?.message }}</p>
+          <div class="proof-tree">
+            <div class="tree-root">
+              <span>Batch Root</span>
+              <strong>{{ shortHash(latestProofRun.summary?.batchRoot) }}</strong>
+            </div>
+            <div class="tree-parents">
+              <div v-for="group in proofParentGroups" :key="group.parent" class="tree-parent">
+                <div class="parent-node">
+                  <span>Parent</span>
+                  <strong>{{ shortHash(group.parent) }}</strong>
+                </div>
+                <div class="leaf-row">
+                  <div v-for="leaf in group.leaves" :key="leaf.recordId" class="leaf-node">
+                    <span>#{{ leaf.nodeIndex }}</span>
+                    <strong>Key {{ leaf.keyId }}</strong>
+                    <small>{{ leaf.treePath }}</small>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="proof-card">
+          <div class="proof-card-head">
+            <h3>半诚实证明测试</h3>
+            <span class="badge" :class="proofStatusClass(latestProofRun.proofCheck)">{{ proofStatusLabel(latestProofRun.proofCheck) }}</span>
+          </div>
+          <p>{{ latestProofRun.proofCheck?.message }}</p>
+          <div class="proof-flow">
+            <div>
+              <span>更新承诺</span>
+              <strong>{{ latestProofRun.summary?.allCommitmentsPresent ? '完整' : '缺失' }}</strong>
+            </div>
+            <div>
+              <span>一致性摘要</span>
+              <strong>{{ latestProofRun.summary?.allConsistencyHashesPresent ? '完整' : '缺失' }}</strong>
+            </div>
+            <div>
+              <span>验证状态</span>
+              <strong>{{ latestProofRun.summary?.verifyStatus || '-' }}</strong>
+            </div>
+            <div>
+              <span>验证说明</span>
+              <strong>{{ latestProofRun.summary?.verifyMessage || '-' }}</strong>
+            </div>
+          </div>
+          <div class="proof-records">
+            <article v-for="record in latestProofRun.records || []" :key="record.recordId">
+              <span>Key {{ record.keyId }} / v{{ record.keyVersion }}</span>
+              <code>commitment {{ shortHash(record.commitment) }}</code>
+              <code>consistency {{ shortHash(record.consistencyHash) }}</code>
+            </article>
+          </div>
+        </article>
+      </div>
+
+      <p v-else class="empty-text">还没有可视化证明测试记录。</p>
     </section>
 
     <section class="panel security-panel">
@@ -779,8 +968,160 @@ button:disabled {
   gap: 16px;
 }
 
+.proof-panel,
 .security-panel {
   margin-top: 24px;
+}
+
+.proof-intro {
+  margin-top: 8px;
+  color: #9fb3c8;
+  line-height: 1.6;
+}
+
+.proof-config {
+  display: grid;
+  grid-template-columns: 0.7fr 0.7fr 0.9fr 1.5fr auto;
+  gap: 14px;
+  align-items: end;
+  margin-bottom: 20px;
+}
+
+.proof-config .field {
+  margin-bottom: 0;
+}
+
+.proof-actions {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 0;
+}
+
+.proof-grid {
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr;
+  gap: 16px;
+}
+
+.proof-card {
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.68);
+}
+
+.proof-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.proof-card p,
+.tree-root span,
+.parent-node span,
+.leaf-node span,
+.leaf-node small,
+.proof-flow span,
+.proof-records span {
+  color: #9fb3c8;
+}
+
+.proof-tree {
+  margin-top: 18px;
+  display: grid;
+  gap: 16px;
+}
+
+.tree-root,
+.parent-node,
+.leaf-node,
+.proof-flow div,
+.proof-records article {
+  border-radius: 8px;
+  border: 1px solid rgba(125, 211, 252, 0.22);
+  background: rgba(2, 6, 23, 0.55);
+}
+
+.tree-root {
+  padding: 16px;
+  text-align: center;
+}
+
+.tree-root strong,
+.parent-node strong,
+.leaf-node strong {
+  display: block;
+  margin-top: 6px;
+  word-break: break-all;
+}
+
+.tree-parents {
+  display: grid;
+  gap: 14px;
+}
+
+.tree-parent {
+  display: grid;
+  gap: 10px;
+}
+
+.parent-node {
+  padding: 12px;
+}
+
+.leaf-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+}
+
+.leaf-node {
+  min-height: 104px;
+  padding: 12px;
+}
+
+.leaf-node small {
+  display: block;
+  margin-top: 8px;
+  word-break: break-all;
+}
+
+.proof-flow {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.proof-flow div {
+  padding: 14px;
+}
+
+.proof-flow strong {
+  display: block;
+  margin-top: 6px;
+  word-break: break-word;
+}
+
+.proof-records {
+  margin-top: 16px;
+  display: grid;
+  gap: 10px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.proof-records article {
+  padding: 12px;
+}
+
+.proof-records code {
+  display: block;
+  margin-top: 6px;
+  color: #7dd3fc;
+  word-break: break-all;
 }
 
 .security-intro,
@@ -937,6 +1278,8 @@ pre {
 
   .history-metrics,
   .hero-cards,
+  .proof-grid,
+  .proof-config,
   .security-suite-grid {
     grid-template-columns: repeat(2, 1fr);
   }
@@ -951,6 +1294,9 @@ pre {
   .field-row.triple,
   .history-metrics,
   .hero-cards,
+  .proof-grid,
+  .proof-config,
+  .proof-flow,
   .asset-grid,
   .security-suite-grid {
     grid-template-columns: 1fr;

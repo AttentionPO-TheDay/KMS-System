@@ -67,6 +67,7 @@ func main() {
 	// 7. Routes — prefix /lifecycle/request/
 	api := app.Group("/lifecycle/request", middleware.InternalAuth())
 	api.Post("/UPDATE_KEY", reqCtrl.UpdateKey)
+	api.Post("/BATCH_UPDATE_KEYS", reqCtrl.BatchUpdateKeys)
 	api.Post("/REVOKE_KEY", reqCtrl.RevokeKey)
 
 	// 8. Monitoring endpoint — prefix /lifecycle/

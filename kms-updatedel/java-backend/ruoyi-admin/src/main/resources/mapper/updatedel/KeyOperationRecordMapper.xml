@@ -19,6 +19,20 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         <result property="chainStatus" column="chain_status"/>
         <result property="chainHash" column="chain_hash"/>
         <result property="blockHeight" column="block_height"/>
+        <result property="batchId" column="batch_id"/>
+        <result property="parentBatchId" column="parent_batch_id"/>
+        <result property="rootBatchId" column="root_batch_id"/>
+        <result property="treePath" column="tree_path"/>
+        <result property="treeLevel" column="tree_level"/>
+        <result property="nodeIndex" column="node_index"/>
+        <result property="expectedCount" column="expected_count"/>
+        <result property="treeFanout" column="tree_fanout"/>
+        <result property="proofMode" column="proof_mode"/>
+        <result property="commitment" column="commitment"/>
+        <result property="consistencyHash" column="consistency_hash"/>
+        <result property="batchRoot" column="batch_root"/>
+        <result property="verifyStatus" column="verify_status"/>
+        <result property="verifyMessage" column="verify_message"/>
         <result property="resultMessage" column="result_message"/>
         <result property="receiveStatus" column="receive_status"/>
         <result property="actionTime" column="action_time"/>
@@ -30,6 +44,8 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     <sql id="selectKeyOperationRecordVo">
         select record_id, key_id, user_id, user_name, key_name, encryt_type, encryt_name, key_version,
                action_type, action_source, result_status, chain_status, chain_hash, block_height,
+               batch_id, parent_batch_id, root_batch_id, tree_path, tree_level, node_index, expected_count,
+               tree_fanout, proof_mode, commitment, consistency_hash, batch_root, verify_status, verify_message,
                result_message, receive_status, action_time, receive_time, create_time, update_time
         from key_operation_record
     </sql>
@@ -38,10 +54,14 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         insert into key_operation_record (
             key_id, user_id, user_name, key_name, encryt_type, encryt_name, key_version,
             action_type, action_source, result_status, chain_status, chain_hash, block_height,
+            batch_id, parent_batch_id, root_batch_id, tree_path, tree_level, node_index, expected_count,
+            tree_fanout, proof_mode, commitment, consistency_hash, batch_root, verify_status, verify_message,
             result_message, receive_status, action_time, receive_time, create_time, update_time
         ) values (
             #{keyId}, #{userId}, #{userName}, #{keyName}, #{encrytType}, #{encrytName}, #{keyVersion},
             #{actionType}, #{actionSource}, #{resultStatus}, #{chainStatus}, #{chainHash}, #{blockHeight},
+            #{batchId}, #{parentBatchId}, #{rootBatchId}, #{treePath}, #{treeLevel}, #{nodeIndex}, #{expectedCount},
+            #{treeFanout}, #{proofMode}, #{commitment}, #{consistencyHash}, #{batchRoot}, #{verifyStatus}, #{verifyMessage},
             #{resultMessage}, #{receiveStatus}, #{actionTime}, #{receiveTime}, now(), now()
         )
     </insert>
@@ -50,12 +70,16 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         insert into key_operation_record (
             key_id, user_id, user_name, key_name, encryt_type, encryt_name, key_version,
             action_type, action_source, result_status, chain_status, chain_hash, block_height,
+            batch_id, parent_batch_id, root_batch_id, tree_path, tree_level, node_index, expected_count,
+            tree_fanout, proof_mode, commitment, consistency_hash, batch_root, verify_status, verify_message,
             result_message, receive_status, action_time, receive_time, create_time, update_time
         ) values
         <foreach collection="records" item="item" separator=",">
             (
                 #{item.keyId}, #{item.userId}, #{item.userName}, #{item.keyName}, #{item.encrytType}, #{item.encrytName}, #{item.keyVersion},
                 #{item.actionType}, #{item.actionSource}, #{item.resultStatus}, #{item.chainStatus}, #{item.chainHash}, #{item.blockHeight},
+                #{item.batchId}, #{item.parentBatchId}, #{item.rootBatchId}, #{item.treePath}, #{item.treeLevel}, #{item.nodeIndex}, #{item.expectedCount},
+                #{item.treeFanout}, #{item.proofMode}, #{item.commitment}, #{item.consistencyHash}, #{item.batchRoot}, #{item.verifyStatus}, #{item.verifyMessage},
                 #{item.resultMessage}, #{item.receiveStatus}, #{item.actionTime}, #{item.receiveTime}, now(), now()
             )
         </foreach>
@@ -71,6 +95,9 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="actionType != null and actionType != ''">and action_type = #{actionType}</if>
             <if test="actionSource != null and actionSource != ''">and action_source = #{actionSource}</if>
             <if test="resultStatus != null and resultStatus != ''">and result_status = #{resultStatus}</if>
+            <if test="batchId != null and batchId != ''">and batch_id = #{batchId}</if>
+            <if test="proofMode != null and proofMode != ''">and proof_mode = #{proofMode}</if>
+            <if test="verifyStatus != null and verifyStatus != ''">and verify_status = #{verifyStatus}</if>
             <if test="receiveStatus != null and receiveStatus != ''">and receive_status = #{receiveStatus}</if>
         </where>
         order by action_time desc, record_id desc
@@ -94,6 +121,23 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
           and result_status = '0'
         order by record_id desc
         limit 1
+    </update>
+
+    <select id="selectBatchRecords" resultMap="keyOperationRecordResult">
+        <include refid="selectKeyOperationRecordVo"/>
+        where batch_id = #{batchId}
+          and action_type = #{actionType}
+        order by node_index asc, record_id asc
+    </select>
+
+    <update id="updateBatchProof">
+        update key_operation_record
+        set batch_root = #{batchRoot},
+            verify_status = #{verifyStatus},
+            verify_message = #{verifyMessage},
+            update_time = now()
+        where batch_id = #{batchId}
+          and action_type = #{actionType}
     </update>
 
     <update id="markReceived">
