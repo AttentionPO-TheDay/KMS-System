@@ -55,7 +55,9 @@ yarn-error.log
 /kms-ops/runtime/
 /kms-ops/front/generate/
 /kms-ops/front/updatedel/
-/kms-ops/front/user/assets/
+/kms-ops/front/distribute/
+/kms-ops/front/user/
+/kms-ops/front/acceptance/
 /kms-ops/redis/data/
 
 # Temp files
