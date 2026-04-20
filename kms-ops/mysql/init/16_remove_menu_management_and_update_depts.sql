@@ -1,3 +1,4 @@
+SET NAMES utf8mb4;
 -- 移除统一后台中的菜单管理，并按最新要求调整公司/部门初始化数据
 
 DELETE FROM sys_role_menu

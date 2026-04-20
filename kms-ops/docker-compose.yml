@@ -8,12 +8,12 @@ services:
   mysql:
     image: mysql:8.0
     container_name: kms_mysql
-    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_general_ci
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_general_ci --default-time-zone='+08:00'
     environment:
       - "MYSQL_ROOT_PASSWORD=root123456"
       - "MYSQL_DATABASE=kms"
     ports:
-      - "3306:3306"
+      - "3307:3306"
     volumes:
       - ./mysql/data:/var/lib/mysql
       - ./mysql/init:/docker-entrypoint-initdb.d
@@ -87,7 +87,7 @@ services:
     volumes:
       - ./fisco/nodes/127.0.0.1:/data
     working_dir: /data/node0
-    command: bash -c "chmod +x /data/fisco-bcos && /data/fisco-bcos -c config.ini"
+    command: bash -c "chmod +x /data/fisco-bcos && chmod +x /data/*.sh && chmod +x /data/node*/*.sh && bash /data/start_all.sh && tail -f /dev/null"
     ports:
       - "20200:20200"
       - "8545:8545"

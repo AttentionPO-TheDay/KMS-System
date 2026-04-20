@@ -27,11 +27,18 @@
       <el-table-column type="selection" width="55" align="center" />
       <el-table-column label="申请ID" align="center" prop="requestId" width="80" />
       <el-table-column label="申请用户" align="center" prop="userName" width="120" />
-      <el-table-column label="当前等级" align="center" prop="originalLevel" width="100">
+      <el-table-column label="当前等级" align="center" width="100">
         <template #default="scope">
-          <el-tag v-if="scope.row.originalLevel === 0" type="danger">管理员</el-tag>
-          <el-tag v-else-if="scope.row.originalLevel === 1" type="warning">中级用户</el-tag>
-          <el-tag v-else type="info">普通用户</el-tag>
+          <template v-if="scope.row.status === '1'">
+            <el-tag v-if="scope.row.requestLevel === 0" type="danger">管理员</el-tag>
+            <el-tag v-else-if="scope.row.requestLevel === 1" type="warning">中级用户</el-tag>
+            <el-tag v-else type="info">普通用户</el-tag>
+          </template>
+          <template v-else>
+            <el-tag v-if="scope.row.originalLevel === 0" type="danger">管理员</el-tag>
+            <el-tag v-else-if="scope.row.originalLevel === 1" type="warning">中级用户</el-tag>
+            <el-tag v-else type="info">普通用户</el-tag>
+          </template>
         </template>
       </el-table-column>
       <el-table-column label="申请等级" align="center" prop="requestLevel" width="100">

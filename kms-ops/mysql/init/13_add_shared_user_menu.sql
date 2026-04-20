@@ -1,3 +1,4 @@
+SET NAMES utf8mb4;
 -- 为三大系统补齐统一后台中的用户管理菜单
 INSERT INTO sys_menu (
   menu_id, menu_name, parent_id, order_num, path, component, `query`, route_name,

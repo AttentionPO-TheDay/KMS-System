@@ -51,7 +51,7 @@ public class PermissionRequestService {
         request.setSystemCode(SYSTEM_CODE);
         request.setFeatureCode(FEATURE_CODE);
         request.setFeatureName(FEATURE_NAME);
-        request.setOriginalLevel(user.getRoleLevel());
+        request.setOriginalLevel(user.getRoleLevel() == 1 ? 2 : user.getRoleLevel());
         request.setStatus("0");
         request.setIsTemp(request.getIsTemp() == null ? 1 : request.getIsTemp());
         request.setRequestTime(new Date());
@@ -64,7 +64,7 @@ public class PermissionRequestService {
     public void approve(Long requestId, String approveBy, String approveNote) {
         PermissionRequest request = requirePendingRequest(requestId);
         permissionRequestMapper.markApproved(requestId, approveBy, approveNote);
-        if (!isTemporaryRequest(request)) {
+        if (isTemporaryRequest(request) || !isTemporaryRequest(request)) {
             sysUserMapper.updateRoleLevel(request.getUserId(), request.getRequestLevel());
         }
     }
@@ -82,10 +82,18 @@ public class PermissionRequestService {
         if (!"1".equals(request.getStatus())) {
             throw new IllegalStateException("该申请未通过审批，无需回退");
         }
-        if (!isTemporaryRequest(request)) {
-            sysUserMapper.updateRoleLevel(request.getUserId(), request.getOriginalLevel());
-        }
         permissionRequestMapper.markRolledBack(requestId);
+        if (isTemporaryRequest(request) || !isTemporaryRequest(request)) {
+            PermissionRequest query = new PermissionRequest();
+            query.setUserId(request.getUserId());
+            query.setStatus("1");
+            List<PermissionRequest> list = permissionRequestMapper.selectPermissionRequestList(query);
+            if (list == null || list.isEmpty()) {
+                sysUserMapper.updateRoleLevel(request.getUserId(), 2);
+            } else {
+                sysUserMapper.updateRoleLevel(request.getUserId(), 1);
+            }
+        }
     }
 
     public List<PermissionRequest> findExpiredApproved(Date expireBefore) {
@@ -99,10 +107,7 @@ public class PermissionRequestService {
         int rollbackCount = 0;
 
         for (PermissionRequest request : expiredRequests) {
-            if (!isTemporaryRequest(request)) {
-                sysUserMapper.updateRoleLevel(request.getUserId(), request.getOriginalLevel());
-            }
-            permissionRequestMapper.markRolledBack(request.getRequestId());
+            rollback(request.getRequestId());
             rollbackCount++;
         }
 

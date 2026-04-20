@@ -1,3 +1,4 @@
+SET NAMES utf8mb4;
 -- 菜单 SQL
 insert into sys_menu (menu_id, menu_name, parent_id, order_num, path, component, is_frame, is_cache, menu_type, visible, status, perms, icon, create_by, create_time, update_by, update_time, remark)
 values('3000', '用户管理', '0', '1', 'keyuser', 'keyuser/keyuser/index', 1, 0, 'C', '0', '0', 'keyuser:keyuser:list', 'peoples', 'admin', sysdate(), '', null, '用户管理菜单');
