@@ -46,6 +46,21 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         )
     </insert>
 
+    <insert id="insertKeyOperationRecordBatch">
+        insert into key_operation_record (
+            key_id, user_id, user_name, key_name, encryt_type, encryt_name, key_version,
+            action_type, action_source, result_status, chain_status, chain_hash, block_height,
+            result_message, receive_status, action_time, receive_time, create_time, update_time
+        ) values
+        <foreach collection="records" item="item" separator=",">
+            (
+                #{item.keyId}, #{item.userId}, #{item.userName}, #{item.keyName}, #{item.encrytType}, #{item.encrytName}, #{item.keyVersion},
+                #{item.actionType}, #{item.actionSource}, #{item.resultStatus}, #{item.chainStatus}, #{item.chainHash}, #{item.blockHeight},
+                #{item.resultMessage}, #{item.receiveStatus}, #{item.actionTime}, #{item.receiveTime}, now(), now()
+            )
+        </foreach>
+    </insert>
+
     <select id="selectKeyOperationRecordList" parameterType="com.ruoyi.updatedel.domain.KeyOperationRecord" resultMap="keyOperationRecordResult">
         <include refid="selectKeyOperationRecordVo"/>
         <where>

@@ -11,9 +11,12 @@ import com.ruoyi.updatedel.service.generator.SsclKeyGenerator;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import org.slf4j.Logger;
@@ -44,6 +47,15 @@ public class LifecycleService {
 
     @Value("${kms.lifecycle.auto-update.interval-minutes:30}")
     private long autoUpdateIntervalMinutes;
+
+    @Value("${kms.lifecycle.batch-size:500}")
+    private int lifecycleBatchSize;
+
+    @Value("${kms.lifecycle.chain-sync-enabled:true}")
+    private boolean chainSyncEnabled;
+
+    @Value("${kms.lifecycle.chain-event-batch-size:500}")
+    private int chainEventBatchSize;
 
     public LifecycleService(
         KeymanageMapper keymanageMapper,
@@ -133,7 +145,7 @@ public class LifecycleService {
         keymanageMapper.updatekeymanage(next);
         resetPendingChainState(next.getKeyId());
         keyOperationRecordService.createPendingRecord(next, "UPDATE", normalizeActionSource(actionSource), "结果已推送，等待用户接收");
-        publishChainEvent(ChainSyncEvent.TYPE_ROTATE, next);
+        publishChainEvent(ChainSyncEvent.TYPE_ROTATE, Collections.singletonList(next));
         log.info("rotateKey 完成: keyId={}, newVersion={}", next.getKeyId(), next.getVersion());
         return requireExistingKey(next.getKeyId());
     }
@@ -153,7 +165,47 @@ public class LifecycleService {
         resetPendingChainState(keyId);
         Keymanage revoked = requireExistingKey(keyId);
         keyOperationRecordService.createPendingRecord(revoked, "REVOKE", normalizeActionSource(actionSource), "结果已推送，等待用户接收");
-        publishChainEvent(ChainSyncEvent.TYPE_REVOKE, revoked);
+        publishChainEvent(ChainSyncEvent.TYPE_REVOKE, Collections.singletonList(revoked));
+    }
+
+    @Transactional
+    public int revokeKeys(String userName, List<Long> keyIds) {
+        return revokeKeys(userName, keyIds, "MANUAL");
+    }
+
+    @Transactional
+    public int revokeKeys(String userName, List<Long> keyIds, String actionSource) {
+        if (userName == null || userName.trim().isEmpty() || keyIds == null || keyIds.isEmpty()) {
+            return 0;
+        }
+
+        int affected = 0;
+        for (List<Long> chunk : chunks(distinctKeyIds(keyIds), effectiveBatchSize(lifecycleBatchSize))) {
+            List<Keymanage> candidates = keymanageMapper.selectRevokeCandidates(userName, chunk, KeyStatus.REVOKED.getCode());
+            if (candidates == null || candidates.isEmpty()) {
+                continue;
+            }
+
+            List<Long> candidateIds = new ArrayList<>(candidates.size());
+            String currentTime = now();
+            for (Keymanage candidate : candidates) {
+                candidateIds.add(candidate.getKeyId());
+                candidate.setStatus(KeyStatus.REVOKED.getCode());
+                candidate.setChainStatus("0");
+                candidate.setChainHash(null);
+                candidate.setBlockHeight(null);
+                candidate.setUpdTime(currentTime);
+            }
+
+            int currentAffected = keymanageMapper.revokeBatch(userName, candidateIds, KeyStatus.REVOKED.getCode());
+            if (currentAffected <= 0) {
+                continue;
+            }
+            affected += currentAffected;
+            keyOperationRecordService.createPendingRecords(candidates, "REVOKE", normalizeActionSource(actionSource), "结果已推送，等待用户接收");
+            publishChainEvent(ChainSyncEvent.TYPE_REVOKE, candidates);
+        }
+        return affected;
     }
 
     public void updateAutoUpdate(Long keyId, String autoUpdate) {
@@ -246,6 +298,19 @@ public class LifecycleService {
         }
     }
 
+    private void publishChainEvent(String actionType, List<Keymanage> keys) {
+        if (!chainSyncEnabled || keys == null || keys.isEmpty()) {
+            return;
+        }
+        try {
+            for (List<Keymanage> chunk : chunks(keys, effectiveBatchSize(chainEventBatchSize))) {
+                kafkaTemplate.send(chainTaskTopic, objectMapper.writeValueAsString(new ChainSyncEvent(actionType, chunk)));
+            }
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException("chain event serialize failed", ex);
+        }
+    }
+
     private void resetPendingChainState(Long keyId) {
         keymanageMapper.resetChainState(keyId, "0");
     }
@@ -282,5 +347,31 @@ public class LifecycleService {
 
     private long autoUpdateIntervalMinutes() {
         return autoUpdateIntervalMinutes;
+    }
+
+    private List<Long> distinctKeyIds(List<Long> keyIds) {
+        Set<Long> distinct = new LinkedHashSet<>();
+        for (Long keyId : keyIds) {
+            if (keyId != null) {
+                distinct.add(keyId);
+            }
+        }
+        return new ArrayList<>(distinct);
+    }
+
+    private <T> List<List<T>> chunks(List<T> source, int batchSize) {
+        List<List<T>> result = new ArrayList<>();
+        if (source == null || source.isEmpty()) {
+            return result;
+        }
+        int size = effectiveBatchSize(batchSize);
+        for (int i = 0; i < source.size(); i += size) {
+            result.add(source.subList(i, Math.min(i + size, source.size())));
+        }
+        return result;
+    }
+
+    private int effectiveBatchSize(int configuredSize) {
+        return configuredSize <= 0 ? 500 : configuredSize;
     }
 }

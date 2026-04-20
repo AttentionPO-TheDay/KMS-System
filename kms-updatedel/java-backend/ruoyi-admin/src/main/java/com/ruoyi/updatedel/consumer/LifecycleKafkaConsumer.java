@@ -9,8 +9,13 @@ import com.ruoyi.updatedel.mapper.KeymanageMapper;
 import com.ruoyi.updatedel.mapper.SysUserMapper;
 import com.ruoyi.updatedel.service.LifecycleService;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,14 +43,22 @@ public class LifecycleKafkaConsumer {
         this.lifecycleService = lifecycleService;
     }
 
-    @KafkaListener(topics = "${kms.lifecycle.kafka.update-topic:key_update_log}", groupId = "${spring.kafka.consumer.group-id}")
+    @KafkaListener(
+        topics = "${kms.lifecycle.kafka.update-topic:key_update_log}",
+        groupId = "${spring.kafka.consumer.group-id}",
+        concurrency = "${kms.lifecycle.kafka.consumer-concurrency:6}"
+    )
     public void consumeUpdate(List<ConsumerRecord<String, String>> records) {
         handleBatch(records, true);
     }
 
-    @KafkaListener(topics = "${kms.lifecycle.kafka.revoke-topic:key_revoke_log}", groupId = "${spring.kafka.consumer.group-id}")
+    @KafkaListener(
+        topics = "${kms.lifecycle.kafka.revoke-topic:key_revoke_log}",
+        groupId = "${spring.kafka.consumer.group-id}",
+        concurrency = "${kms.lifecycle.kafka.consumer-concurrency:6}"
+    )
     public void consumeRevoke(List<ConsumerRecord<String, String>> records) {
-        handleBatch(records, false);
+        handleRevokeBatch(records);
     }
 
     private void handleBatch(List<ConsumerRecord<String, String>> records, boolean rotate) {
@@ -55,6 +68,43 @@ public class LifecycleKafkaConsumer {
             }
             handle(record.value(), rotate);
         }
+    }
+
+    private void handleRevokeBatch(List<ConsumerRecord<String, String>> records) {
+        Map<String, Set<Long>> keyIdsByUser = new LinkedHashMap<>();
+        Map<String, Boolean> authCache = new LinkedHashMap<>();
+        int payloadCount = 0;
+        int skippedCount = 0;
+
+        for (ConsumerRecord<String, String> record : records) {
+            if (record == null || record.value() == null || record.value().trim().isEmpty()) {
+                skippedCount++;
+                continue;
+            }
+            try {
+                KeyPayload payload = objectMapper.readValue(record.value(), KeyPayload.class);
+                payloadCount++;
+                if (payload.getKeyId() == null || !isAuthorized(payload, authCache)) {
+                    skippedCount++;
+                    continue;
+                }
+                keyIdsByUser.computeIfAbsent(payload.getRawUser(), ignored -> new LinkedHashSet<>())
+                    .add(payload.getKeyId());
+            } catch (IOException ex) {
+                skippedCount++;
+                log.warn("lifecycle kafka revoke payload parse error, offset={}", record.offset(), ex);
+            } catch (Exception ex) {
+                skippedCount++;
+                log.warn("lifecycle kafka revoke payload pre-process error, offset={}", record.offset(), ex);
+            }
+        }
+
+        int affectedCount = 0;
+        for (Map.Entry<String, Set<Long>> entry : keyIdsByUser.entrySet()) {
+            affectedCount += lifecycleService.revokeKeys(entry.getKey(), new ArrayList<>(entry.getValue()));
+        }
+        log.info("REVOKE_KEY batch consumed, records={}, payloads={}, users={}, affected={}, skipped={}",
+            records.size(), payloadCount, keyIdsByUser.size(), affectedCount, skippedCount);
     }
 
     private void handle(String payloadText, boolean rotate) {
@@ -85,10 +135,10 @@ public class LifecycleKafkaConsumer {
                 Keymanage request = payload.getKeyInfo() == null ? new Keymanage() : payload.getKeyInfo();
                 request.setKeyId(payload.getKeyId());
                 lifecycleService.rotateKey(request);
-                log.info("UPDATE_KEY consumed successfully, keyId={}, traceId={}", payload.getKeyId(), payload.getTraceId());
+                log.debug("UPDATE_KEY consumed successfully, keyId={}, traceId={}", payload.getKeyId(), payload.getTraceId());
             } else {
                 lifecycleService.revokeKey(payload.getKeyId());
-                log.info("REVOKE_KEY consumed successfully, keyId={}, traceId={}", payload.getKeyId(), payload.getTraceId());
+                log.debug("REVOKE_KEY consumed successfully, keyId={}, traceId={}", payload.getKeyId(), payload.getTraceId());
             }
         } catch (IOException ex) {
             log.error("lifecycle kafka payload parse error", ex);
@@ -110,5 +160,20 @@ public class LifecycleKafkaConsumer {
         }
         String encodedPassword = userOptional.get().getPassword();
         return encodedPassword != null && passwordEncoder.matches(payload.getRawPassword(), encodedPassword);
+    }
+
+    private boolean isAuthorized(KeyPayload payload, Map<String, Boolean> authCache) {
+        if (payload.getRawUser() == null || payload.getRawUser().trim().isEmpty()) {
+            return false;
+        }
+        String rawPassword = payload.getRawPassword() == null ? "" : payload.getRawPassword();
+        String cacheKey = payload.getRawUser() + "\n" + rawPassword;
+        Boolean cached = authCache.get(cacheKey);
+        if (cached != null) {
+            return cached;
+        }
+        boolean authorized = isAuthorized(payload);
+        authCache.put(cacheKey, authorized);
+        return authorized;
     }
 }

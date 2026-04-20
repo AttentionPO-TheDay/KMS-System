@@ -10,6 +10,8 @@ import org.apache.ibatis.annotations.Param;
 public interface KeyOperationRecordMapper {
     int insertKeyOperationRecord(KeyOperationRecord record);
 
+    int insertKeyOperationRecordBatch(@Param("records") List<KeyOperationRecord> records);
+
     List<KeyOperationRecord> selectKeyOperationRecordList(KeyOperationRecord query);
 
     int updateLatestResult(@Param("keyId") Long keyId,

@@ -150,6 +150,31 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         where key_id = #{keyId}
     </update>
 
+    <select id="selectRevokeCandidates" resultMap="keymanageResult">
+        <include refid="selectKeymanageVo"/>
+        where user_name = #{userName}
+          and (status is null or status != #{revokedStatus})
+          and key_id in
+        <foreach collection="keyIds" item="keyId" open="(" separator="," close=")">
+            #{keyId}
+        </foreach>
+    </select>
+
+    <update id="revokeBatch">
+        update keymanage
+        set status = #{status},
+            chain_status = '0',
+            chain_hash = null,
+            block_height = null,
+            upd_time = now()
+        where user_name = #{userName}
+          and (status is null or status != #{status})
+          and key_id in
+        <foreach collection="keyIds" item="keyId" open="(" separator="," close=")">
+            #{keyId}
+        </foreach>
+    </update>
+
     <update id="updateChainStatus">
         update keymanage
         <trim prefix="set" suffixOverrides=",">

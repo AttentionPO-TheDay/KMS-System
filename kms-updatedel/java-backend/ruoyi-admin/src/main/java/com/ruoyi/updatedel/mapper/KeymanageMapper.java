@@ -55,6 +55,14 @@ public interface KeymanageMapper {
 
     int revoke(@Param("keyId") Long keyId, @Param("status") String status);
 
+    List<Keymanage> selectRevokeCandidates(@Param("userName") String userName,
+                                           @Param("keyIds") List<Long> keyIds,
+                                           @Param("revokedStatus") String revokedStatus);
+
+    int revokeBatch(@Param("userName") String userName,
+                    @Param("keyIds") List<Long> keyIds,
+                    @Param("status") String status);
+
     int updateChainStatus(@Param("keyId") Long keyId, @Param("chainStatus") String chainStatus,
                           @Param("chainHash") String chainHash, @Param("blockHeight") Long blockHeight);
 

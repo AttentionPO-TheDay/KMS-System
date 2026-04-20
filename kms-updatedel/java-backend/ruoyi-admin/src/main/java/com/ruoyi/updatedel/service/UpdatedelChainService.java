@@ -48,6 +48,9 @@ public class UpdatedelChainService {
     @Value("${kms.lifecycle.kafka.chain-result-topic:key_chain_result}")
     private String chainResultTopic;
 
+    @Value("${kms.lifecycle.chain-detail-log-enabled:false}")
+    private boolean chainDetailLogEnabled;
+
     private FiscoBcosWrapper fiscoWrapper;
 
     public UpdatedelChainService(KeymanageMapper keymanageMapper, KafkaTemplate<String, String> kafkaTemplate,
@@ -87,7 +90,7 @@ public class UpdatedelChainService {
             TransactionReceipt receipt = fiscoWrapper.rotateKey(keymanage.getKeyId(), finalPA, keymanage.getVersion());
             return handleRotateReceipt(keymanage.getKeyId(), receipt);
         } catch (Exception e) {
-            log.error("Rotate chain sync failed, keyId={}", keymanage.getKeyId(), e);
+            logDetailFailure("Rotate chain sync failed", keymanage.getKeyId(), e);
             markFailed(keymanage.getKeyId());
             keyOperationRecordService.updateLatestResult(keymanage.getKeyId(), "UPDATE", "2", "2", null, null, e.getClass().getSimpleName());
             publishChainResult(keymanage.getKeyId(), "UPDATE_KEY", "2", null, null, e.getClass().getSimpleName());
@@ -110,7 +113,7 @@ public class UpdatedelChainService {
             TransactionReceipt receipt = fiscoWrapper.changeKeyStatus(keymanage.getKeyId(), REVOKED_STATUS);
             return handleRevokeReceipt(keymanage.getKeyId(), receipt);
         } catch (Exception e) {
-            log.error("Revoke chain sync failed, keyId={}", keymanage.getKeyId(), e);
+            logDetailFailure("Revoke chain sync failed", keymanage.getKeyId(), e);
             markFailed(keymanage.getKeyId());
             keyOperationRecordService.updateLatestResult(keymanage.getKeyId(), "REVOKE", "2", "2", null, null, e.getClass().getSimpleName());
             publishChainResult(keymanage.getKeyId(), "REVOKE_KEY", "2", null, null, e.getClass().getSimpleName());
@@ -129,7 +132,7 @@ public class UpdatedelChainService {
         } catch (Exception e) {
             Thread.interrupted();
             this.fiscoWrapper = null;
-            log.error("Failed to initialize lifecycle FISCO wrapper lazily", e);
+            logDetailFailure("Failed to initialize lifecycle FISCO wrapper lazily", null, e);
             return false;
         }
     }
@@ -141,7 +144,7 @@ public class UpdatedelChainService {
 
         List<KeyEvidence.KeyRotatedEventResponse> events = fiscoWrapper.getKeyRotatedEvents(receipt);
         if (events.isEmpty()) {
-            log.error("Lifecycle rotate missing KeyRotated event, keyId={}", keyId);
+            logDetailFailure("Lifecycle rotate missing KeyRotated event", keyId, null);
             markFailed(keyId);
             keyOperationRecordService.updateLatestResult(keyId, "UPDATE", "2", "2", receipt.getTransactionHash(), parseBlockHeight(receipt.getBlockNumber()), "MISSING_ROTATE_EVENT");
             publishChainResult(keyId, "UPDATE_KEY", "2", receipt.getTransactionHash(), parseBlockHeight(receipt.getBlockNumber()), "MISSING_ROTATE_EVENT");
@@ -150,7 +153,7 @@ public class UpdatedelChainService {
 
         KeyEvidence.KeyRotatedEventResponse lastEvent = events.get(events.size() - 1);
         if (lastEvent.status == null || lastEvent.status.intValue() != ACTIVE_STATUS) {
-            log.error("Lifecycle rotate event status invalid, keyId={}, status={}", keyId, lastEvent.status);
+            logDetailFailure("Lifecycle rotate event status invalid, status=" + lastEvent.status, keyId, null);
             markFailed(keyId);
             keyOperationRecordService.updateLatestResult(keyId, "UPDATE", "2", "2", receipt.getTransactionHash(), parseBlockHeight(receipt.getBlockNumber()), "INVALID_ROTATE_STATUS");
             publishChainResult(keyId, "UPDATE_KEY", "2", receipt.getTransactionHash(), parseBlockHeight(receipt.getBlockNumber()), "INVALID_ROTATE_STATUS");
@@ -171,7 +174,7 @@ public class UpdatedelChainService {
 
         List<KeyEvidence.StatusChangedEventResponse> events = fiscoWrapper.getStatusChangedEvents(receipt);
         if (events.isEmpty()) {
-            log.error("Lifecycle revoke missing StatusChanged event, keyId={}", keyId);
+            logDetailFailure("Lifecycle revoke missing StatusChanged event", keyId, null);
             markFailed(keyId);
             keyOperationRecordService.updateLatestResult(keyId, "REVOKE", "2", "2", receipt.getTransactionHash(), parseBlockHeight(receipt.getBlockNumber()), "MISSING_STATUS_EVENT");
             publishChainResult(keyId, "REVOKE_KEY", "2", receipt.getTransactionHash(), parseBlockHeight(receipt.getBlockNumber()), "MISSING_STATUS_EVENT");
@@ -180,7 +183,7 @@ public class UpdatedelChainService {
 
         KeyEvidence.StatusChangedEventResponse lastEvent = events.get(events.size() - 1);
         if (lastEvent.newStatus == null || lastEvent.newStatus.intValue() != REVOKED_STATUS) {
-            log.error("Lifecycle revoke event status invalid, keyId={}, newStatus={}", keyId, lastEvent.newStatus);
+            logDetailFailure("Lifecycle revoke event status invalid, newStatus=" + lastEvent.newStatus, keyId, null);
             markFailed(keyId);
             keyOperationRecordService.updateLatestResult(keyId, "REVOKE", "2", "2", receipt.getTransactionHash(), parseBlockHeight(receipt.getBlockNumber()), "INVALID_REVOKE_STATUS");
             publishChainResult(keyId, "REVOKE_KEY", "2", receipt.getTransactionHash(), parseBlockHeight(receipt.getBlockNumber()), "INVALID_REVOKE_STATUS");
@@ -197,7 +200,7 @@ public class UpdatedelChainService {
     private boolean isReceiptStatusOk(Long keyId, TransactionReceipt receipt, String actionType) {
         if (receipt == null || !receipt.isStatusOK()) {
             if (receipt != null) {
-                log.error("Lifecycle chain sync failed, keyId={}, status={}, message={}", keyId, receipt.getStatus(), receipt.getMessage());
+                logDetailFailure("Lifecycle chain sync failed, status=" + receipt.getStatus() + ", message=" + receipt.getMessage(), keyId, null);
                 keyOperationRecordService.updateLatestResult(keyId,
                     "UPDATE_KEY".equals(actionType) ? "UPDATE" : "REVOKE",
                     "2", "2", receipt.getTransactionHash(), parseBlockHeight(receipt.getBlockNumber()), receipt.getMessage());
@@ -269,7 +272,7 @@ public class UpdatedelChainService {
             }
             return calculateSM2FinalPublicKey(keymanage.getUserName(), wA);
         } catch (Exception e) {
-            log.error("Failed to calculate PA, keyId={}", keymanage.getKeyId(), e);
+            logDetailFailure("Failed to calculate PA", keymanage.getKeyId(), e);
             return null;
         }
     }
@@ -277,12 +280,12 @@ public class UpdatedelChainService {
     private String calculateSSCLPublicKey(Keymanage keymanage, JSONObject keyValue, String ssclKey) {
         String eAHex = keyValue.getString("SSCLEA");
         if (eAHex == null || eAHex.length() != 64) {
-            log.error("SSCL rotate chain sync missing SSCLEA, keyId={}", keymanage.getKeyId());
+            logDetailFailure("SSCL rotate chain sync missing SSCLEA", keymanage.getKeyId(), null);
             return null;
         }
         String ua = keymanage.getUa();
         if (ua == null || ua.length() != 130 || !ua.startsWith("04")) {
-            log.error("Invalid lifecycle uA for SSCL chain sync, keyId={}", keymanage.getKeyId());
+            logDetailFailure("Invalid lifecycle uA for SSCL chain sync", keymanage.getKeyId(), null);
             return null;
         }
 
@@ -353,7 +356,9 @@ public class UpdatedelChainService {
 
     private ECPoint parseUncompressedPoint(org.bouncycastle.math.ec.custom.gm.SM2P256V1Curve curve, String pointHex, String fieldName) {
         if (pointHex == null || pointHex.length() != 130 || !pointHex.startsWith("04")) {
-            log.error("{} format invalid: {}", fieldName, pointHex);
+            if (chainDetailLogEnabled) {
+                log.warn("{} format invalid: {}", fieldName, pointHex);
+            }
             return null;
         }
 
@@ -375,6 +380,17 @@ public class UpdatedelChainService {
             System.arraycopy(source, 0, target, 32 - source.length, source.length);
         }
         return target;
+    }
+
+    private void logDetailFailure(String message, Long keyId, Exception e) {
+        if (!chainDetailLogEnabled) {
+            return;
+        }
+        if (e == null) {
+            log.warn("{}, keyId={}", message, keyId);
+        } else {
+            log.warn("{}, keyId={}", message, keyId, e);
+        }
     }
 
     private static class FiscoBcosWrapper {

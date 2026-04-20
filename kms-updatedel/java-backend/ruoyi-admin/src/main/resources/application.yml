@@ -22,6 +22,10 @@ logging:
   level:
     com.ruoyi: INFO
     com.ruoyi.updatedel: INFO
+    com.ruoyi.updatedel.consumer.LifecycleKafkaConsumer: ${KMS_LIFECYCLE_LOG_LEVEL:WARN}
+    com.ruoyi.updatedel.service.LifecycleService: ${KMS_LIFECYCLE_LOG_LEVEL:WARN}
+    com.ruoyi.updatedel.consumer.UpdatedelChainConsumer: ${KMS_LIFECYCLE_CHAIN_LOG_LEVEL:WARN}
+    com.ruoyi.updatedel.service.UpdatedelChainService: ${KMS_LIFECYCLE_CHAIN_LOG_LEVEL:WARN}
     org.springframework: warn
     org.springframework.security.web.firewall: FATAL
     org.springframework.kafka: error
@@ -66,9 +70,13 @@ spring:
       auto-offset-reset: latest
       enable-auto-commit: true
       auto-commit-interval: 1000
-      max-poll-records: 500
+      max-poll-records: ${KMS_LIFECYCLE_MAX_POLL_RECORDS:1000}
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        max.poll.interval.ms: ${KMS_LIFECYCLE_MAX_POLL_INTERVAL_MS:600000}
+        fetch.min.bytes: ${KMS_LIFECYCLE_FETCH_MIN_BYTES:1048576}
+        fetch.max.wait.ms: ${KMS_LIFECYCLE_FETCH_MAX_WAIT_MS:100}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
@@ -104,9 +112,21 @@ kms:
     url: ${GO_BACKEND_URL:http://updatedel-go:8082}
     internal-token: ${INTERNAL_TOKEN:kms-generate-internal-secret-2026}
   lifecycle:
+    batch-size: ${KMS_LIFECYCLE_BATCH_SIZE:500}
+    chain-sync-enabled: ${KMS_LIFECYCLE_CHAIN_SYNC_ENABLED:true}
+    chain-consumer-enabled: ${KMS_LIFECYCLE_CHAIN_CONSUMER_ENABLED:true}
+    chain-event-batch-size: ${KMS_LIFECYCLE_CHAIN_EVENT_BATCH_SIZE:500}
+    chain-consumer-concurrency: ${KMS_LIFECYCLE_CHAIN_CONSUMER_CONCURRENCY:2}
+    chain-worker-threads: ${KMS_LIFECYCLE_CHAIN_WORKER_THREADS:4}
+    chain-batch-size: ${KMS_LIFECYCLE_CHAIN_BATCH_SIZE:20}
+    chain-max-poll-records: ${KMS_LIFECYCLE_CHAIN_MAX_POLL_RECORDS:10}
+    chain-max-poll-interval-ms: ${KMS_LIFECYCLE_CHAIN_MAX_POLL_INTERVAL_MS:900000}
+    chain-failure-sample-size: ${KMS_LIFECYCLE_CHAIN_FAILURE_SAMPLE_SIZE:5}
+    chain-detail-log-enabled: ${KMS_LIFECYCLE_CHAIN_DETAIL_LOG_ENABLED:false}
     kafka:
       update-topic: key_update_log
       revoke-topic: key_revoke_log
+      consumer-concurrency: ${KMS_LIFECYCLE_CONSUMER_CONCURRENCY:6}
       chain-task-topic: ${KMS_CHAIN_TOPIC:key_chain_task}
       chain-result-topic: ${KMS_CHAIN_RESULT_TOPIC:key_chain_result}
 

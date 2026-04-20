@@ -46,6 +46,36 @@ public class KeyOperationRecordService {
     }
 
     @Transactional
+    public void createPendingRecords(List<Keymanage> keymanages, String actionType, String actionSource, String resultMessage) {
+        if (keymanages == null || keymanages.isEmpty()) {
+            return;
+        }
+        List<KeyOperationRecord> records = new ArrayList<>(keymanages.size());
+        Date actionTime = new Date();
+        for (Keymanage keymanage : keymanages) {
+            KeyOperationRecord record = new KeyOperationRecord();
+            record.setKeyId(keymanage.getKeyId());
+            record.setUserId(keymanage.getUserId());
+            record.setUserName(keymanage.getUserName());
+            record.setKeyName(keymanage.getKeyName());
+            record.setEncrytType(keymanage.getEncrytType());
+            record.setEncrytName(keymanage.getEncrytName());
+            record.setKeyVersion(keymanage.getVersion());
+            record.setActionType(actionType);
+            record.setActionSource(actionSource);
+            record.setResultStatus("0");
+            record.setChainStatus(keymanage.getChainStatus());
+            record.setResultMessage(resultMessage);
+            record.setReceiveStatus("0");
+            record.setActionTime(actionTime);
+            records.add(record);
+        }
+        for (List<KeyOperationRecord> chunk : chunks(records, 500)) {
+            keyOperationRecordMapper.insertKeyOperationRecordBatch(chunk);
+        }
+    }
+
+    @Transactional
     public void updateLatestResult(Long keyId, String actionType, String resultStatus, String chainStatus,
                                    String chainHash, Long blockHeight, String resultMessage) {
         keyOperationRecordMapper.updateLatestResult(keyId, actionType, resultStatus, chainStatus, chainHash, blockHeight, resultMessage);
@@ -140,5 +170,17 @@ public class KeyOperationRecordService {
         data.put("autoUpdate", autoUpdateSeries);
         data.put("revoke", revokeSeries);
         return data;
+    }
+
+    private <T> List<List<T>> chunks(List<T> source, int batchSize) {
+        List<List<T>> result = new ArrayList<>();
+        if (source == null || source.isEmpty()) {
+            return result;
+        }
+        int size = batchSize <= 0 ? 500 : batchSize;
+        for (int i = 0; i < source.size(); i += size) {
+            result.add(source.subList(i, Math.min(i + size, source.size())));
+        }
+        return result;
     }
 }
