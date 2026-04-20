@@ -26,7 +26,7 @@
 
 <script setup>
 import Logo from './Logo'
-import SidebarItem from './SidebarItem'
+import SidebarItem from './sidebarItem'
 import variables from '@/assets/styles/variables.module.scss'
 import useAppStore from '@/store/modules/app'
 import useSettingsStore from '@/store/modules/settings'

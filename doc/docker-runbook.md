@@ -60,11 +60,30 @@
 
 ## 启动方式
 
-在 `kms-ops/` 目录执行：
+当前部署口径分两步：
+
+1. 先构建运行产物
 
 ```bash
-docker compose up -d
+bash ./kms-ops/build-local.sh
 ```
+
+2. 再启动运行环境
+
+```bash
+bash ./kms-ops/start.sh
+```
+
+`start.sh` 会在新服务器首次启动时自动生成运行态数据，包括：
+
+1. `kms-ops/mysql/data/`
+2. `kms-ops/redis/data/`
+3. `kms-ops/kafka/kafka_data/`
+4. `kms-ops/nodes/` 下的单节点 FISCO 数据
+5. `kms-ops/fisco/console/account/` 与 `deploylog.txt`
+6. 若 `.env` 不存在，则自动从 `kms-ops/.env.example` 初始化
+
+区块链当前采用单节点持久化模式，节点数据统一保存在 `kms-ops/nodes/127.0.0.1/`。
 
 停止：
 

@@ -85,9 +85,9 @@ services:
     dns:
       - 8.8.8.8
     volumes:
-      - ./fisco/nodes/127.0.0.1:/data
+      - ./nodes/127.0.0.1:/data
     working_dir: /data/node0
-    command: bash -c "chmod +x /data/fisco-bcos && chmod +x /data/*.sh && chmod +x /data/node*/*.sh && bash /data/start_all.sh && tail -f /dev/null"
+    command: bash -c "chmod +x /data/node0/start.sh && bash /data/node0/start.sh && tail -f /dev/null"
     ports:
       - "20200:20200"
       - "8545:8545"
@@ -106,9 +106,8 @@ services:
     depends_on:
       fisco-node:
         condition: service_started
+    network_mode: "service:fisco-node"
     restart: always
-    networks:
-      - kms_net
 
   # ========================================
   # 2. kms-generate 系统 (密钥生成)

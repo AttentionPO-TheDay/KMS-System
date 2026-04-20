@@ -51,6 +51,14 @@ yarn-error.log
 /kms-ops/mysql/data/
 /kms-ops/kafka/kafka_data/
 /kms-ops/fisco/nodes/
+/kms-ops/nodes/
+/kms-ops/fisco/console/account/
+/kms-ops/fisco/console/accounts/
+/kms-ops/fisco/console/log/
+/kms-ops/fisco/console/deploylog.txt
+/kms-ops/fisco/console/contracts/.compiled/
+/kms-ops/fisco/webase-front/log/
+/kms-ops/.env
 /kms-ops/nginx/logs/
 /kms-ops/runtime/
 /kms-ops/front/generate/

@@ -5,6 +5,40 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
+DOCKER_COMPOSE=()
+
+init_docker_compose() {
+    if docker compose version >/dev/null 2>&1; then
+        DOCKER_COMPOSE=(docker compose)
+        return 0
+    fi
+
+    if sudo -n docker compose version >/dev/null 2>&1; then
+        DOCKER_COMPOSE=(sudo docker compose)
+        return 0
+    fi
+
+    if command -v run_compose >/dev/null 2>&1; then
+        DOCKER_COMPOSE=(run_compose)
+        return 0
+    fi
+
+    if sudo -n run_compose version >/dev/null 2>&1; then
+        DOCKER_COMPOSE=(sudo run_compose)
+        return 0
+    fi
+
+    echo "[ERROR] docker compose is not available or requires sudo without cached credentials" >&2
+    exit 1
+}
+
+run_compose() {
+    if [ ${#DOCKER_COMPOSE[@]} -eq 0 ]; then
+        init_docker_compose
+    fi
+    "${DOCKER_COMPOSE[@]}" "$@"
+}
+
 ENV_FILE="$SCRIPT_DIR/.env"
 CONSOLE_SERVICE="fisco-console"
 CONSOLE_WORKDIR="/app"
@@ -35,17 +69,17 @@ set_env_value() {
 }
 
 extract_latest_address() {
-    docker-compose exec -T "$CONSOLE_SERVICE" bash -lc "cd $CONSOLE_WORKDIR && grep 'KeyEvidence' deploylog.txt | tail -n 1" | sed -n 's/.*\(0x[a-fA-F0-9]\{40\}\).*/\1/p'
+    run_compose exec -T "$CONSOLE_SERVICE" bash -lc "if [ -f /tmp/keyevidence-deploy.log ]; then cat /tmp/keyevidence-deploy.log; fi; if [ -f $CONSOLE_WORKDIR/deploylog.txt ]; then grep 'KeyEvidence' $CONSOLE_WORKDIR/deploylog.txt | tail -n 1; fi" | sed -n 's/.*\(0x[a-fA-F0-9]\{40\}\).*/\1/p' | tail -n 1
 }
 
 extract_private_key_hex() {
-    docker-compose exec -T "$CONSOLE_SERVICE" bash -lc "cd $CONSOLE_WORKDIR && pem_file=\$(ls -t account/*.pem accounts/*.pem 2>/dev/null | head -n 1); if [ -z \"\$pem_file\" ]; then exit 1; fi; openssl ec -in \"\$pem_file\" -text -noout 2>/dev/null | sed -n '3,5p' | tr -d ': \\n'"
+    run_compose exec -T "$CONSOLE_SERVICE" bash -lc "cd $CONSOLE_WORKDIR && pem_file=\$(ls -t account/*.pem account/ecdsa/*.pem accounts/*.pem 2>/dev/null | head -n 1); if [ -z \"\$pem_file\" ]; then exit 1; fi; openssl ec -in \"\$pem_file\" -text -noout 2>/dev/null | sed -n '3,5p' | tr -d ': \\n'"
 }
 
 wait_console_ready() {
     local retries=20
     while [ "$retries" -gt 0 ]; do
-        if docker-compose exec -T "$CONSOLE_SERVICE" bash -lc "cd $CONSOLE_WORKDIR && test -f console.sh" >/dev/null 2>&1; then
+        if run_compose exec -T "$CONSOLE_SERVICE" bash -lc "cd $CONSOLE_WORKDIR && test -f console.sh" >/dev/null 2>&1; then
             return 0
         fi
         retries=$((retries - 1))
@@ -58,7 +92,7 @@ require_file "$ENV_FILE"
 require_file "$SCRIPT_DIR/docker-compose.yml"
 
 log_info "Ensuring FISCO node and console are running"
-docker-compose up -d fisco-node "$CONSOLE_SERVICE"
+run_compose up -d fisco-node "$CONSOLE_SERVICE"
 
 if ! wait_console_ready; then
     log_error "FISCO console is not ready"
@@ -66,10 +100,10 @@ if ! wait_console_ready; then
 fi
 
 log_info "Compiling KeyEvidence contract in console"
-docker-compose exec -T "$CONSOLE_SERVICE" bash -lc "cd $CONSOLE_WORKDIR && chmod +x *.sh && bash ./sol2java.sh -p com.temp.pkg -s contracts/solidity >/tmp/keyevidence-compile.log 2>&1 || { cat /tmp/keyevidence-compile.log; exit 1; }"
+run_compose exec -T "$CONSOLE_SERVICE" bash -lc "cd $CONSOLE_WORKDIR && chmod +x *.sh && bash ./sol2java.sh -p com.temp.pkg -s contracts/solidity >/tmp/keyevidence-compile.log 2>&1 || { cat /tmp/keyevidence-compile.log; exit 1; }"
 
 log_info "Deploying KeyEvidence contract"
-docker-compose exec -T "$CONSOLE_SERVICE" bash -lc "cd $CONSOLE_WORKDIR && chmod +x *.sh && ./console.sh deploy KeyEvidence >/tmp/keyevidence-deploy.log 2>&1 || { cat /tmp/keyevidence-deploy.log; exit 1; }"
+run_compose exec -T "$CONSOLE_SERVICE" bash -lc "cd $CONSOLE_WORKDIR && chmod +x *.sh && ./console.sh deploy KeyEvidence >/tmp/keyevidence-deploy.log 2>&1 || { cat /tmp/keyevidence-deploy.log; exit 1; }"
 
 CONTRACT_ADDRESS="$(extract_latest_address)"
 if [ -z "$CONTRACT_ADDRESS" ]; then
@@ -90,7 +124,7 @@ set_env_value "KMS_CHAIN_RESULT_TOPIC" "key_chain_result"
 log_info "Updated .env with contract address: $CONTRACT_ADDRESS"
 
 log_info "Recreating Java services with unified blockchain config"
-docker-compose up -d --force-recreate generate-java updatedel-java kms-distribute
+run_compose up -d --force-recreate generate-java updatedel-java kms-distribute
 
 log_info "KeyEvidence deployed successfully"
 log_info "FISCO_CONTRACT_ADDRESS=$CONTRACT_ADDRESS"

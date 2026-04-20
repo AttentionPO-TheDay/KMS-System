@@ -114,11 +114,27 @@ npm run build:prod
 
 ## 启动方式
 
-在 `kms-ops/` 目录执行：
+首次部署或新服务器启动，先在仓库根目录执行：
 
 ```bash
-docker compose up -d
+bash ./kms-ops/build-local.sh
 ```
+
+再在 `kms-ops/` 目录执行：
+
+```bash
+bash ./start.sh
+```
+
+`start.sh` 会自动：
+
+1. 检查 `runtime/` 和前端静态产物是否已构建
+2. 初始化 MySQL / Redis / Kafka 运行目录
+3. 生成单节点 FISCO 数据到 `kms-ops/nodes/`
+4. 同步链证书到 `kms-ops/fisco/console/conf/`
+5. 启动 Docker 编排
+6. 在 `.env` 尚未写入合约地址时自动部署 `KeyEvidence`
+7. 若 `.env` 不存在，则自动从 `.env.example` 初始化
 
 停止：
 
