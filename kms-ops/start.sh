@@ -115,8 +115,18 @@ if ! chmod -R 0777 kafka/kafka_data 2>/dev/null; then
 fi
 
 # 启动所有容器
+# build-local.sh 会重建 runtime/front 目录，绑定挂载需要重建容器才能看到新 inode。
 echo "[INFO] 启动所有容器..."
-run_compose up -d
+run_compose up -d --force-recreate \
+    fisco-node \
+    fisco-console \
+    generate-go \
+    generate-java \
+    updatedel-go \
+    updatedel-java \
+    kms-distribute \
+    acceptance-backend \
+    nginx
 
 # 等待中间件就绪
 echo "[INFO] 等待中间件启动..."

@@ -57,6 +57,9 @@ yarn-error.log
 /kms-ops/fisco/console/log/
 /kms-ops/fisco/console/deploylog.txt
 /kms-ops/fisco/console/contracts/.compiled/
+/kms-ops/fisco/console/conf/*.crt
+/kms-ops/fisco/console/conf/*.key
+/kms-ops/fisco/console/conf/*.pem
 /kms-ops/fisco/webase-front/log/
 /kms-ops/.env
 /kms-ops/nginx/logs/

@@ -1,5 +1,9 @@
 import request from '@/utils/request'
 
+const generateApiConfig = {
+  baseURL: '/generate-api'
+}
+
 function normalizeTable(res) {
   return {
     ...res,
@@ -10,6 +14,7 @@ function normalizeTable(res) {
 
 export function listQueryKeys(query) {
   return request({
+    ...generateApiConfig,
     url: '/generate/key/list',
     method: 'get',
     params: query
@@ -18,6 +23,7 @@ export function listQueryKeys(query) {
 
 export function listQueryPublicKeys(query) {
   return request({
+    ...generateApiConfig,
     url: '/generate/key/public-list',
     method: 'get',
     params: query
@@ -26,6 +32,7 @@ export function listQueryPublicKeys(query) {
 
 export function getKeyChainStatus(keyId) {
   return request({
+    ...generateApiConfig,
     url: `/generate/key/chain/${keyId}`,
     method: 'get'
   }).then(res => res.data || res)
@@ -33,6 +40,7 @@ export function getKeyChainStatus(keyId) {
 
 export function listBusinessUsers() {
   return request({
+    ...generateApiConfig,
     url: '/generate/user/non-admin-list',
     method: 'get'
   }).then(res => res.data || [])

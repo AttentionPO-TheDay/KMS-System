@@ -165,6 +165,13 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         where result_status = '2'
     </select>
 
+    <select id="selectRecentDashboardRecordsSince" parameterType="java.util.Date" resultType="com.ruoyi.updatedel.domain.KeyOperationRecord">
+        select action_type, action_source, action_time
+        from key_operation_record
+        where action_time &gt;= #{startTime}
+        order by action_time asc, record_id asc
+    </select>
+
     <select id="selectRecentRecordsSince" parameterType="java.util.Date" resultMap="keyOperationRecordResult">
         <include refid="selectKeyOperationRecordVo"/>
         where action_time &gt;= #{startTime}

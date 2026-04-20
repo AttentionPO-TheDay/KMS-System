@@ -15,11 +15,15 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class KeyOperationRecordService {
+    private static final Logger log = LoggerFactory.getLogger(KeyOperationRecordService.class);
+
     private final KeyOperationRecordMapper keyOperationRecordMapper;
     private final KeymanageMapper keymanageMapper;
 
@@ -176,7 +180,6 @@ public class KeyOperationRecordService {
     public Map<String, Object> buildDashboardSummary() {
         LocalDate today = LocalDate.now();
         Date startTime = Date.from(today.minusDays(6).atStartOfDay(ZoneId.systemDefault()).toInstant());
-        List<KeyOperationRecord> recentRecords = keyOperationRecordMapper.selectRecentRecordsSince(startTime);
 
         List<String> labels = new ArrayList<>();
         List<Integer> manualUpdateSeries = new ArrayList<>();
@@ -195,28 +198,33 @@ public class KeyOperationRecordService {
         operationDistribution.put("自动更新", 0);
         operationDistribution.put("密钥回收", 0);
 
-        for (KeyOperationRecord record : recentRecords) {
-            if (record.getActionTime() == null) {
-                continue;
-            }
-            LocalDate actionDate = record.getActionTime().toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
-            int dayIndex = (int) (today.toEpochDay() - actionDate.toEpochDay());
-            if (dayIndex < 0 || dayIndex >= 7) {
-                continue;
-            }
-            int seriesIndex = 6 - dayIndex;
-            if ("UPDATE".equals(record.getActionType())) {
-                if ("AUTO".equals(record.getActionSource())) {
-                    autoUpdateSeries.set(seriesIndex, autoUpdateSeries.get(seriesIndex) + 1);
-                    operationDistribution.put("自动更新", operationDistribution.get("自动更新") + 1);
-                } else {
-                    manualUpdateSeries.set(seriesIndex, manualUpdateSeries.get(seriesIndex) + 1);
-                    operationDistribution.put("手动更新", operationDistribution.get("手动更新") + 1);
+        try {
+            List<KeyOperationRecord> recentRecords = keyOperationRecordMapper.selectRecentDashboardRecordsSince(startTime);
+            for (KeyOperationRecord record : recentRecords) {
+                if (record.getActionTime() == null) {
+                    continue;
                 }
-            } else if ("REVOKE".equals(record.getActionType())) {
-                revokeSeries.set(seriesIndex, revokeSeries.get(seriesIndex) + 1);
-                operationDistribution.put("密钥回收", operationDistribution.get("密钥回收") + 1);
+                LocalDate actionDate = record.getActionTime().toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
+                int dayIndex = (int) (today.toEpochDay() - actionDate.toEpochDay());
+                if (dayIndex < 0 || dayIndex >= 7) {
+                    continue;
+                }
+                int seriesIndex = 6 - dayIndex;
+                if ("UPDATE".equals(record.getActionType())) {
+                    if ("AUTO".equals(record.getActionSource())) {
+                        autoUpdateSeries.set(seriesIndex, autoUpdateSeries.get(seriesIndex) + 1);
+                        operationDistribution.put("自动更新", operationDistribution.get("自动更新") + 1);
+                    } else {
+                        manualUpdateSeries.set(seriesIndex, manualUpdateSeries.get(seriesIndex) + 1);
+                        operationDistribution.put("手动更新", operationDistribution.get("手动更新") + 1);
+                    }
+                } else if ("REVOKE".equals(record.getActionType())) {
+                    revokeSeries.set(seriesIndex, revokeSeries.get(seriesIndex) + 1);
+                    operationDistribution.put("密钥回收", operationDistribution.get("密钥回收") + 1);
+                }
             }
+        } catch (Exception ex) {
+            log.error("Failed to build dashboard trend data", ex);
         }
 
         Map<String, Object> payload = new LinkedHashMap<>();

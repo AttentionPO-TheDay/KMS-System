@@ -40,5 +40,7 @@ public interface KeyOperationRecordMapper {
 
     int countFailedResults();
 
+    List<KeyOperationRecord> selectRecentDashboardRecordsSince(@Param("startTime") Date startTime);
+
     List<KeyOperationRecord> selectRecentRecordsSince(@Param("startTime") Date startTime);
 }
