@@ -1,7 +1,0 @@
-{
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"cd \\\"E:/java_project/kms-code-copy/kms-user/front\\\" && node --input-type=module -e \\\"import { ec as EC } from 'elliptic'; import BN from 'bn.js'; const sm2EC = new EC('p256'); const point ...",
-  "error": "Exit code 1\nfile:///E:/java_project/kms-code-copy/kms-user/front/[eval1]:1\r\nimport { ec as EC } from 'elliptic'; import BN from 'bn.js'; const sm2EC = new EC('p256'); const point = sm2EC.curve.point(new BN('32C4AE2C1F1981195F9904466A39C9948FE30BBFF2660BE1715A4589334C74C7',16), new BN('BC3736A2F4F6779C59BDCEE36B692153D0A9877CC62A474002DF32E52139F0A0',16)); const result = point.mul(new BN('1',16)); console.log(result.getX().toString('hex').length, result.getY().toString('hex').length)\r\n         ^^...",
-  "timestamp": "2026-04-12T12:56:23.300Z",
-  "retry_count": 2
-}

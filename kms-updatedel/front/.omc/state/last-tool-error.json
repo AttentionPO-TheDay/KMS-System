@@ -1,7 +1,0 @@
-{
-  "tool_name": "mcp__filesystem__read_text_file",
-  "tool_input_preview": "{\"path\":\"C:\\\\Users\\\\luo\\\\.claude\\\\projects\\\\E--java-project-kms-code-copy\\\\3cecd2cc-d462-44f4-b78a-5b1aa78dea37\\\\tool-results\\\\bv1xyvnkx.txt\",\"tail\":25}",
-  "error": "Access denied - path outside allowed directories: C:\\Users\\luo\\.claude\\projects\\E--java-project-kms-code-copy\\3cecd2cc-d462-44f4-b78a-5b1aa78dea37\\tool-results\\bv1xyvnkx.txt not in E:\\java_project\\kms-code-copy",
-  "timestamp": "2026-04-12T19:19:57.217Z",
-  "retry_count": 2
-}
