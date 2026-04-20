@@ -1,3 +1,4 @@
+SET NAMES utf8mb4;
 CREATE TABLE IF NOT EXISTS key_distribute_record (
     record_id         BIGINT(20)      NOT NULL AUTO_INCREMENT COMMENT '记录ID',
     key_id            BIGINT(20)      DEFAULT NULL COMMENT '密钥ID',

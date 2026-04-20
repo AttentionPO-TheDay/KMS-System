@@ -1,3 +1,4 @@
+SET NAMES utf8mb4;
 -- 修复 sys_menu 中缺失的一级菜单，避免 /getRouters 返回孤儿子菜单
 INSERT INTO sys_menu (
   menu_id, menu_name, parent_id, order_num, path, component, `query`, route_name,

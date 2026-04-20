@@ -1,3 +1,4 @@
+SET NAMES utf8mb4;
 -- 给超级管理员补齐统一后台菜单授权，否则 /getRouters 不会返回这些菜单
 INSERT INTO sys_role_menu (role_id, menu_id)
 SELECT 1, 4

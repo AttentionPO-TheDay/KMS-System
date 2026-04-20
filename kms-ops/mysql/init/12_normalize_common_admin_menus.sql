@@ -1,3 +1,4 @@
+SET NAMES utf8mb4;
 -- 统一三大系统共用后台菜单的名称、排序和图标
 UPDATE sys_menu SET menu_name = '系统管理', order_num = 80, path = 'system', icon = 'system', visible = '0', status = '0'
 WHERE menu_id = 4;

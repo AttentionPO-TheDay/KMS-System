@@ -1,3 +1,4 @@
+SET NAMES utf8mb4;
 -- Add permission approval menu
 INSERT INTO sys_menu (menu_name, parent_id, order_num, path, component, is_frame, is_cache, menu_type, visible, status, perms, icon, create_by, create_time, remark)
 VALUES ('Permission Approval', 0, 5, 'permission', NULL, 1, 0, 'M', '0', '0', NULL, 'edit', 'admin', NOW(), 'Permission approval menu');
