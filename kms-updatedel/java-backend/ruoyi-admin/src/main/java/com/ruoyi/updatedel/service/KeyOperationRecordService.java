@@ -17,12 +17,15 @@ import java.util.Map;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.TransientDataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class KeyOperationRecordService {
     private static final Logger log = LoggerFactory.getLogger(KeyOperationRecordService.class);
+    private static final int BATCH_PROOF_REFRESH_RETRIES = 5;
+    private static final long BATCH_PROOF_REFRESH_BACKOFF_MS = 120L;
 
     private final KeyOperationRecordMapper keyOperationRecordMapper;
     private final KeymanageMapper keymanageMapper;
@@ -106,6 +109,21 @@ public class KeyOperationRecordService {
         return keyOperationRecordMapper.selectBatchRecords(batchId, normalizedActionType);
     }
 
+    public void refreshBatchProofWithRetry(String batchId, String actionType) {
+        for (int attempt = 1; attempt <= BATCH_PROOF_REFRESH_RETRIES; attempt++) {
+            try {
+                refreshBatchProof(batchId, actionType);
+                return;
+            } catch (TransientDataAccessException ex) {
+                if (attempt == BATCH_PROOF_REFRESH_RETRIES) {
+                    log.warn("refresh batch proof failed after retries, batchId={}, actionType={}", batchId, actionType, ex);
+                    return;
+                }
+                sleepBeforeRetry(attempt);
+            }
+        }
+    }
+
     @Transactional
     public void refreshBatchProof(String batchId, String actionType) {
         if (batchId == null || batchId.trim().isEmpty()) {
@@ -159,6 +177,14 @@ public class KeyOperationRecordService {
         }
         String batchRoot = sha256(rootBuilder.toString());
         keyOperationRecordMapper.updateBatchProof(batchId, actionType, batchRoot, verifyStatus, verifyMessage);
+    }
+
+    private void sleepBeforeRetry(int attempt) {
+        try {
+            Thread.sleep(BATCH_PROOF_REFRESH_BACKOFF_MS * attempt);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     @Transactional

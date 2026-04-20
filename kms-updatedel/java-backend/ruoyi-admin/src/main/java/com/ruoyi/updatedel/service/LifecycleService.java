@@ -27,6 +27,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.jdbc.core.JdbcTemplate;
 import com.ruoyi.updatedel.domain.KeyAnalysisResultDto;
 import java.util.Map;
@@ -149,7 +151,7 @@ public class LifecycleService {
         keymanageMapper.updatekeymanage(next);
         resetPendingChainState(next.getKeyId());
         keyOperationRecordService.createPendingRecord(next, "UPDATE", normalizedActionSource, "结果已推送，等待用户接收");
-        keyOperationRecordService.refreshBatchProof(next.getBatchId(), "UPDATE");
+        refreshBatchProofAfterCommit(next.getBatchId(), "UPDATE");
         publishChainEvent(ChainSyncEvent.TYPE_ROTATE, Collections.singletonList(next));
         log.info("rotateKey 完成: keyId={}, newVersion={}", next.getKeyId(), next.getVersion());
         return requireExistingKey(next.getKeyId());
@@ -355,6 +357,22 @@ public class LifecycleService {
 
     private void resetPendingChainState(Long keyId) {
         keymanageMapper.resetChainState(keyId, "0");
+    }
+
+    private void refreshBatchProofAfterCommit(final String batchId, final String actionType) {
+        if (batchId == null || batchId.trim().isEmpty()) {
+            return;
+        }
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            keyOperationRecordService.refreshBatchProofWithRetry(batchId, actionType);
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                keyOperationRecordService.refreshBatchProofWithRetry(batchId, actionType);
+            }
+        });
     }
 
     private String normalizeAutoUpdate(String autoUpdate) {

@@ -307,6 +307,7 @@ services:
       - WRK_PATH=/usr/bin/wrk
       - ACCEPTANCE_GENERATE_BASE_URL=http://generate-go:8081
       - ACCEPTANCE_LIFECYCLE_BASE_URL=http://updatedel-go:8082
+      - ACCEPTANCE_USER=test
       - ACCEPTANCE_GENERATE_KEY_POOL_URL=http://generate-java:9081/internal/generate/keys/recent
       - ACCEPTANCE_LIFECYCLE_VERIFY_URL=http://updatedel-java:9082/internal/lifecycle/key-status
       - ACCEPTANCE_LIFECYCLE_PROOF_URL=http://updatedel-java:9082/internal/lifecycle/batch-proof
