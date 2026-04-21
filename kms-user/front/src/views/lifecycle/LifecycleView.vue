@@ -204,19 +204,19 @@
 
         <div v-show="activeTab === 'results'" class="tab-pane relative-pane">
           <article class="panel glass-panel">
-          <el-form :model="resultQuery" inline label-width="88px" class="query-form">
-            <el-form-item label="操作类型">
-              <el-select v-model="resultQuery.actionType" placeholder="全部" clearable>
-                <el-option label="密钥更新" value="UPDATE" />
-                <el-option label="密钥回收" value="REVOKE" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="接收状态">
-              <el-select v-model="resultQuery.receiveStatus" placeholder="全部" clearable>
-                <el-option label="待接收" value="0" />
-                <el-option label="已接收" value="1" />
-              </el-select>
-            </el-form-item>
+            <el-form :model="resultQuery" inline label-width="88px" class="query-form">
+              <el-form-item label="操作类型">
+                <el-select v-model="resultQuery.actionType" placeholder="全部" clearable>
+                  <el-option label="密钥更新" value="UPDATE" />
+                  <el-option label="密钥回收" value="REVOKE" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="接收状态">
+                <el-select v-model="resultQuery.receiveStatus" placeholder="全部" clearable>
+                  <el-option label="未接收" value="0" />
+                  <el-option label="已接收" value="1" />
+                </el-select>
+              </el-form-item>
             <el-form-item>
               <el-button type="primary" @click="searchResults">搜索</el-button>
               <el-button @click="resetResults">重置</el-button>
@@ -240,7 +240,7 @@
             </el-table-column>
             <el-table-column label="接收状态" width="110">
               <template #default="scope">
-                <el-tag :type="scope.row.receiveStatus === '1' ? 'success' : 'warning'">{{ scope.row.receiveStatus === '1' ? '已接收' : '待接收' }}</el-tag>
+                <el-tag :type="receiveStatusType(scope.row)">{{ receiveStatusText(scope.row) }}</el-tag>
               </template>
             </el-table-column>
             <el-table-column label="结果说明" prop="resultMessage" min-width="160" show-overflow-tooltip />
@@ -901,6 +901,20 @@ function resultStatusText(value) {
 
 function resultStatusType(value) {
   return { '0': 'warning', '1': 'success', '2': 'danger' }[String(value)] || 'info'
+}
+
+function receiveStatusText(row) {
+  if (String(row?.resultStatus) === '0') {
+    return '处理中'
+  }
+  return String(row?.receiveStatus) === '1' ? '已接收' : '待接收'
+}
+
+function receiveStatusType(row) {
+  if (String(row?.resultStatus) === '0') {
+    return 'info'
+  }
+  return String(row?.receiveStatus) === '1' ? 'success' : 'warning'
 }
 
 function formatDateTime(value) {

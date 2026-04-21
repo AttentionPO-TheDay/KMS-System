@@ -37,6 +37,7 @@ import java.util.Map;
 public class LifecycleService {
     private static final Logger log = LoggerFactory.getLogger(LifecycleService.class);
     private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private static final String PENDING_RESULT_MESSAGE = "处理中，请稍后刷新";
 
     private final KeymanageMapper keymanageMapper;
     private final EccKeyGenerator eccKeyGenerator;
@@ -150,7 +151,7 @@ public class LifecycleService {
 
         keymanageMapper.updatekeymanage(next);
         resetPendingChainState(next.getKeyId());
-        keyOperationRecordService.createPendingRecord(next, "UPDATE", normalizedActionSource, "结果已推送，等待用户接收");
+        keyOperationRecordService.createPendingRecord(next, "UPDATE", normalizedActionSource, PENDING_RESULT_MESSAGE);
         refreshBatchProofAfterCommit(next.getBatchId(), "UPDATE");
         publishChainEvent(ChainSyncEvent.TYPE_ROTATE, Collections.singletonList(next));
         log.info("rotateKey 完成: keyId={}, newVersion={}", next.getKeyId(), next.getVersion());
@@ -171,7 +172,7 @@ public class LifecycleService {
         keymanageMapper.revoke(keyId, KeyStatus.REVOKED.getCode());
         resetPendingChainState(keyId);
         Keymanage revoked = requireExistingKey(keyId);
-        keyOperationRecordService.createPendingRecord(revoked, "REVOKE", normalizeActionSource(actionSource), "结果已推送，等待用户接收");
+        keyOperationRecordService.createPendingRecord(revoked, "REVOKE", normalizeActionSource(actionSource), PENDING_RESULT_MESSAGE);
         publishChainEvent(ChainSyncEvent.TYPE_REVOKE, Collections.singletonList(revoked));
     }
 
@@ -209,7 +210,7 @@ public class LifecycleService {
                 continue;
             }
             affected += currentAffected;
-            keyOperationRecordService.createPendingRecords(candidates, "REVOKE", normalizeActionSource(actionSource), "结果已推送，等待用户接收");
+            keyOperationRecordService.createPendingRecords(candidates, "REVOKE", normalizeActionSource(actionSource), PENDING_RESULT_MESSAGE);
             publishChainEvent(ChainSyncEvent.TYPE_REVOKE, candidates);
         }
         return affected;
