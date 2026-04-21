@@ -1,33 +1,57 @@
 export const securitySuites = [
   {
-    id: 'generate-attacks',
-    name: '生成系统 3 类攻击',
+    id: 'crypto-algorithm',
+    name: '密码核心算法 3 类攻击',
     accent: 'accent-red',
-    summary: '按验收口径展示生成系统 3 类攻击：重放、篡改、越权，重点验证密钥生成入口与用户态访问边界。',
+    summary: '针对密码生成算法及底层结构的受击面测试，验证系统对弱参数、非法曲线和畸形数据格式的拒绝能力。',
     cases: [
       {
-        caseId: 'generate-replay',
-        title: '重放攻击',
-        mode: '浏览器 + Postman',
-        target: 'POST 生成请求',
-        expected: '重复发送不应造成不可控重复有效业务结果。',
-        steps: ['登录 testuser 并在用户密钥页抓取生成请求', 'Copy as cURL 后延迟 5 秒再重放']
-      },
-      {
-        caseId: 'generate-tamper',
-        title: '篡改攻击',
+        caseId: 'algo-tamper',
+        title: '算法参数篡改',
         mode: 'Postman',
-        target: '公钥内容、公钥长度、公钥前缀',
-        expected: '非法公钥、非法长度、非法前缀应被拒绝。',
-        steps: ['将合法公钥改成非法曲线点', '分别改成 64 长度和 05 前缀重发']
+        target: '伪造不在曲线上的点、错误长度、错误前缀',
+        expected: '非法公钥点、非法长度或前缀（如05）应在协议层直接被拒绝。',
+        steps: ['篡改公钥使其不在椭圆曲线上', '将公钥长度改为 64 字符重发', '将公钥前缀从 04 改为 05 重发']
       },
       {
-        caseId: 'generate-privilege',
-        title: '越权攻击',
-        mode: '双 Token 对照',
-        target: '公共密钥列表、非本人数据访问',
-        expected: '普通用户不能访问管理员口径数据或他人密钥。',
-        steps: ['分别登录普通用户与管理员获取 JWT', '用普通用户 Token 访问高权限接口']
+        caseId: 'algo-weak-param',
+        title: '弱算法降级攻击',
+        mode: 'Postman',
+        target: '请求极短的密钥长度或废弃算法',
+        expected: '后台密码模块应强制拒绝不安全参数，不再生成低强度密钥。',
+        steps: ['发起密钥生成请求，指定极低位数的弱参数', '修改请求体试图降级为不安全的废弃哈希算法']
+      },
+      {
+        caseId: 'algo-malformed',
+        title: '畸形密码载荷攻击',
+        mode: 'Postman攻击',
+        target: '解析器健壮性：破坏格式边界',
+        expected: '算法解析器不应抛出内存溢出或拒绝服务，应安全拦截。',
+        steps: ['在需要十六进制或 Base64 的密码参数中注入乱码', '破坏 ASN.1 或证书核心结构位导致解析偏移']
+      }
+    ]
+  },
+  {
+    id: 'api-security',
+    name: '业务接口 2 类攻击',
+    accent: 'accent-blue',
+    summary: '按通用 API 安全口径测试，包含对密钥操作请求的重放利用和越权数据访问。',
+    cases: [
+      {
+        caseId: 'api-replay',
+        title: '接口重放攻击',
+        mode: 'Postman 导入',
+        target: 'POST /keymanage/keymanage 生效鉴权',
+        expected: '再次发送被拦截或记录重复，不应导致额外成功或异常错误。',
+        steps: ['由于 cURL 复制了有效 Token，延迟后重放', '观察后端对旧请求和高频发送的重放防护']
+      },
+      {
+        caseId: 'api-privilege',
+        title: '业务越权访问',
+        mode: '多用户 Token 互试',
+        target: '所有公共密钥请求接口',
+        expected: '水平/垂直越权失败，严格控制隔离域。',
+        steps: ['用普通用户 Token 访问应被 403 拦截', '记录响应体中的权限不足反馈']
       }
     ]
   },
