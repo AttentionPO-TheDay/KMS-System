@@ -40,9 +40,9 @@
             </div>
             <div class="attack-meta">
               <span class="tag">{{ item.mode }}</span>
-              <span><strong>🎯 TARGET:</strong> {{ item.target }}</span>
+              <span><strong>🎯 目标：</strong> {{ item.target }}</span>
             </div>
-            <p class="expected"><strong>💡 EXPECTED:</strong> {{ item.expected }}</p>
+            <p class="expected"><strong>💡 预期：</strong> {{ item.expected }}</p>
             
             <ul class="steps">
               <li v-for="step in item.steps" :key="step">{{ step }}</li>
@@ -52,14 +52,14 @@
               <button class="btn-ghost small" 
                 :disabled="loadingCaseId === item.caseId || !health?.securityAvailable" 
                 @click="doSecurityRun(item.caseId)">
-                {{ loadingCaseId === item.caseId ? '执行入侵 (HACKING...)' : '触发攻击 (EXPLOIT)' }}
+                {{ loadingCaseId === item.caseId ? '执行中...' : '执行真实攻击' }}
               </button>
             </div>
 
             <!-- Result Box -->
             <div v-if="item.caseId && latestRun(item.caseId)" class="attack-result" :class="verdictClass(item.caseId)">
-              <div class="result-header">🔍 EXPLORATION RESULT</div>
-              <p><strong>CONCLUSION:</strong> {{ latestRun(item.caseId).summary }}</p>
+              <div class="result-header">🔍 执行结论</div>
+              <p><strong>结论:</strong> {{ latestRun(item.caseId).summary }}</p>
               <p v-if="latestRun(item.caseId).error"><strong>ERROR:</strong> {{ latestRun(item.caseId).error }}</p>
               <details v-if="latestRun(item.caseId).requests?.length" class="raw-output">
                 <summary>查看 HTTP 劫持载荷 (PAYLOAD)</summary>
