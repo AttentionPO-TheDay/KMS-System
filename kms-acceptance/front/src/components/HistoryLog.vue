@@ -42,7 +42,7 @@
       </article>
       <div v-if="runs.length === 0" class="empty-state">
         <div class="empty-icon">📡</div>
-        <p>暂无系统探测流水线，请在左侧发起攻击链</p>
+        <p>暂无压测流水，请在左侧发起压测任务</p>
       </div>
     </div>
   </div>

@@ -64,7 +64,7 @@
         </label>
         <div class="form-actions">
           <button class="btn-primary cyber-btn" :disabled="loading || !form.scenarioId" @click="doRun">
-            <span class="cyber-btn-text">{{ loading ? '攻击中 (RUNNING...)' : '部署攻击 (LAUNCH)' }}</span>
+            <span class="cyber-btn-text">{{ loading ? '压测中 (RUNNING...)' : '开始压测 (LAUNCH)' }}</span>
           </button>
           <button class="btn-ghost" @click="loadRuns">同步系统日志</button>
         </div>
