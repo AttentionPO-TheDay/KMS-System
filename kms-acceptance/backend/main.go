@@ -264,6 +264,7 @@ type acceptanceConfig struct {
 	VerifyWaitSeconds      int
 	KeyPoolLookbackMinutes int
 	LifecycleRequiredKeys  int
+	KeyPoolRetrySeconds    int
 }
 
 type server struct {
@@ -350,6 +351,7 @@ func loadAcceptanceConfig() acceptanceConfig {
 		VerifyWaitSeconds:      envOrDefaultInt("ACCEPTANCE_REVOKE_VERIFY_WAIT_SECONDS", 30),
 		KeyPoolLookbackMinutes: envOrDefaultInt("ACCEPTANCE_KEY_POOL_LOOKBACK_MINUTES", 120),
 		LifecycleRequiredKeys:  envOrDefaultInt("ACCEPTANCE_LIFECYCLE_REQUIRED_KEYS", 0),
+		KeyPoolRetrySeconds:    envOrDefaultInt("ACCEPTANCE_KEY_POOL_RETRY_SECONDS", 30),
 	}
 }
 
@@ -439,17 +441,33 @@ func detectWrkPath(wd string) string {
 		"wrk",
 	}
 	for _, candidate := range candidates {
-		if candidate == "" {
-			continue
-		}
-		if path, err := exec.LookPath(candidate); err == nil {
+		if path, ok := resolveExecutable(candidate); ok {
 			return path
-		}
-		if fileExists(candidate) {
-			return candidate
 		}
 	}
 	return ""
+}
+
+func resolveExecutable(candidate string) (string, bool) {
+	candidate = strings.TrimSpace(candidate)
+	if candidate == "" {
+		return "", false
+	}
+	if path, err := exec.LookPath(candidate); err == nil {
+		return path, true
+	}
+	if isExecutableFile(candidate) {
+		return candidate, true
+	}
+	return "", false
+}
+
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	return info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
 }
 
 func detectPowerShellPath() string {
@@ -476,11 +494,11 @@ func detectSecurityScriptPath(wd string) string {
 }
 
 func (s *server) handleHealth(c *fiber.Ctx) error {
-	wrkPath := s.defaultWrkPath
+	wrkPath, wrkAvailable := resolveExecutable(s.defaultWrkPath)
 	return c.JSON(HealthResponse{
 		Status:             "ok",
 		Service:            "kms-acceptance-backend",
-		WrkAvailable:       wrkPath != "",
+		WrkAvailable:       wrkAvailable,
 		WrkPath:            wrkPath,
 		SecurityScriptPath: s.securityScript,
 		SecurityExecutable: s.powerShellPath,
@@ -667,9 +685,11 @@ func (s *server) handleCreateRun(c *fiber.Ctx) error {
 	if wrkPath == "" {
 		wrkPath = s.defaultWrkPath
 	}
-	if wrkPath == "" {
-		return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{"message": "wrk not found, set WRK_PATH or provide wrkPath"})
+	resolvedWrkPath, ok := resolveExecutable(wrkPath)
+	if !ok {
+		return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{"message": "wrk not found or not executable, set WRK_PATH or provide wrkPath"})
 	}
+	wrkPath = resolvedWrkPath
 
 	runID := s.nextID()
 	run := &RunResult{
@@ -753,6 +773,27 @@ func (s *server) fetchGeneratedKeyIDs(limit int, createdAfter time.Time, encrytN
 	if limit <= 0 {
 		return nil, fmt.Errorf("invalid key pool size")
 	}
+
+	deadline := time.Now().Add(time.Duration(s.cfg.KeyPoolRetrySeconds) * time.Second)
+	if s.cfg.KeyPoolRetrySeconds <= 0 {
+		deadline = time.Now()
+	}
+
+	var lastErr error
+	for {
+		keyIDs, err := s.fetchGeneratedKeyIDsOnce(limit, createdAfter, encrytName)
+		if err == nil {
+			return keyIDs, nil
+		}
+		lastErr = err
+		if time.Now().After(deadline) {
+			return nil, lastErr
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func (s *server) fetchGeneratedKeyIDsOnce(limit int, createdAfter time.Time, encrytName string) ([]int64, error) {
 	endpoint, err := url.Parse(s.cfg.GenerateKeyPoolURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid generate key pool url: %w", err)
@@ -951,11 +992,8 @@ func (s *server) collectMetricCheck(scenario Scenario) MetricCheck {
 	if len(scenario.PreparedKeyIDs) == 0 {
 		return MetricCheck{Kind: scenario.MetricKind, Target: scenario.MetricTarget, Message: "no key ids prepared", Source: s.cfg.LifecycleVerifyURL}
 	}
-	if s.cfg.VerifyWaitSeconds > 0 {
-		time.Sleep(time.Duration(s.cfg.VerifyWaitSeconds) * time.Second)
-	}
 
-	verified, err := s.verifyRevokedKeys(scenario.PreparedKeyIDs)
+	verified, err := s.waitRevokedKeys(scenario.PreparedKeyIDs)
 	if err != nil {
 		return MetricCheck{Kind: scenario.MetricKind, Target: scenario.MetricTarget, Source: s.cfg.LifecycleVerifyURL, Message: err.Error()}
 	}
@@ -972,7 +1010,34 @@ func (s *server) collectMetricCheck(scenario Scenario) MetricCheck {
 	}
 }
 
-func (s *server) verifyRevokedKeys(keyIDs []int64) (int, error) {
+func (s *server) waitRevokedKeys(keyIDs []int64) (int, error) {
+	deadline := time.Now().Add(time.Duration(s.cfg.VerifyWaitSeconds) * time.Second)
+	if s.cfg.VerifyWaitSeconds <= 0 {
+		deadline = time.Now()
+	}
+
+	var (
+		latest  int
+		lastErr error
+	)
+	for {
+		verified, err := s.verifyRevokedKeysOnce(keyIDs)
+		if err == nil {
+			latest = verified
+			if verified >= len(keyIDs) || time.Now().After(deadline) {
+				return verified, nil
+			}
+		} else {
+			lastErr = err
+			if time.Now().After(deadline) {
+				return latest, lastErr
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func (s *server) verifyRevokedKeysOnce(keyIDs []int64) (int, error) {
 	if len(keyIDs) == 0 {
 		return 0, nil
 	}

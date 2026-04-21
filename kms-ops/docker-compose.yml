@@ -300,17 +300,25 @@ services:
     container_name: kms_acceptance_backend
     volumes:
       - ./runtime/acceptance-go/kms-acceptance-backend:/app/kms-acceptance-backend:ro
-      - ./wrk:/app/wrk:ro
     working_dir: /app
-    command: ["/app/kms-acceptance-backend"]
+    command: ["sh", "-lc", "if ! command -v wrk >/dev/null 2>&1; then apt-get update && apt-get install -y --no-install-recommends wrk && rm -rf /var/lib/apt/lists/*; fi && exec /app/kms-acceptance-backend"]
     environment:
       - PORT=9090
-      - WRK_PATH=/app/wrk/wrk
+      - WRK_PATH=/usr/bin/wrk
       - ACCEPTANCE_GENERATE_BASE_URL=http://generate-go:8081
       - ACCEPTANCE_LIFECYCLE_BASE_URL=http://updatedel-go:8082
+      - ACCEPTANCE_USER=test
+      - ACCEPTANCE_GENERATE_KEY_POOL_URL=http://generate-java:9081/internal/generate/keys/recent
+      - ACCEPTANCE_LIFECYCLE_VERIFY_URL=http://updatedel-java:9082/internal/lifecycle/key-status
+      - ACCEPTANCE_LIFECYCLE_PROOF_URL=http://updatedel-java:9082/internal/lifecycle/batch-proof
+      - ACCEPTANCE_GENERATE_JAVA_BASE_URL=http://generate-java:9081
+      - ACCEPTANCE_LIFECYCLE_JAVA_BASE_URL=http://updatedel-java:9082
+      - ACCEPTANCE_INTERNAL_TOKEN=${INTERNAL_TOKEN:-kms-generate-internal-secret-2026}
     depends_on:
       - generate-go
+      - generate-java
       - updatedel-go
+      - updatedel-java
     restart: always
     networks:
       - kms_net
