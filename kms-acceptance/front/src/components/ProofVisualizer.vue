@@ -2,11 +2,11 @@
   <div class="proof-wrapper glass-panel">
     <div class="panel-header">
       <div>
-        <h2>全链路混合证明测试靶场</h2>
-        <p class="subtitle">针对生命周期系统进行小批量 <code>BATCH_UPDATE</code> 脉冲，抓取区块链存证并验证默克尔树 (Merkle Root) 与半诚实承诺 (Semi-honest Proof)。</p>
+        <h2>树型更新与半诚实证明可视化测试</h2>
+        <p class="subtitle">小批量触发 <code>BATCH_UPDATE_KEYS</code>，自动读取批次证明记录，展示树型节点、承诺摘要、一致性摘要与批次根验证结果。</p>
       </div>
       <span class="badge" :class="latestProofRun?.passed ? 'ok' : 'warn'">
-        {{ latestProofRun?.passed ? 'ZK VERIFIED' : 'PENDING' }}
+        {{ latestProofRun?.passed ? '最近一次通过' : '等待验证' }}
       </span>
     </div>
 
@@ -28,7 +28,7 @@
         <input v-model="proofForm.lifecycleBaseUrl" placeholder="默认内部通信 URL" class="tech-input"/>
       </label>
       <button class="btn-primary cyber-btn" :disabled="proofLoading" @click="runProofVisualTest">
-        <span class="cyber-btn-text">{{ proofLoading ? '证明中...' : 'INJECT PROOF' }}</span>
+        <span class="cyber-btn-text">{{ proofLoading ? '执行中...' : '执行可视化测试' }}</span>
       </button>
       <button class="btn-ghost" @click="loadProofRuns">↻</button>
       <p v-if="error" class="error-msg">⚠️ {{ error }}</p>
@@ -38,7 +38,7 @@
       <!-- Tree Check -->
       <article class="proof-card inner-glass">
         <div class="proof-card-head">
-          <h3>Merkle Tree Hash Consistency</h3>
+          <h3>树型结构测试</h3>
           <span class="badge" :class="proofStatusClass(latestProofRun.treeCheck)">{{ proofStatusLabel(latestProofRun.treeCheck) }}</span>
         </div>
         <p class="desc">{{ latestProofRun.treeCheck?.message }}</p>
@@ -67,27 +67,27 @@
       <!-- Proof Check -->
       <article class="proof-card inner-glass">
         <div class="proof-card-head">
-          <h3>Zero-Knowledge Commitment</h3>
+          <h3>半诚实证明测试</h3>
           <span class="badge" :class="proofStatusClass(latestProofRun.proofCheck)">{{ proofStatusLabel(latestProofRun.proofCheck) }}</span>
         </div>
         <p class="desc">{{ latestProofRun.proofCheck?.message }}</p>
         
         <div class="proof-flow">
           <div class="flow-item">
-            <span>Commitment Presence</span>
+            <span>更新承诺</span>
             <strong :class="latestProofRun.summary?.allCommitmentsPresent?'text-ok':'text-error'">
-              {{ latestProofRun.summary?.allCommitmentsPresent ? '100% SECURE' : 'LEAK DETECTED' }}
+              {{ latestProofRun.summary?.allCommitmentsPresent ? '完整' : '缺失' }}
             </strong>
           </div>
           <div class="flow-item">
-            <span>Consistency Hash</span>
+            <span>一致性摘要</span>
             <strong :class="latestProofRun.summary?.allConsistencyHashesPresent?'text-ok':'text-error'">
-              {{ latestProofRun.summary?.allConsistencyHashesPresent ? '100% MATCH' : 'MISMATCH' }}
+              {{ latestProofRun.summary?.allConsistencyHashesPresent ? '完整匹配' : '缺失' }}
             </strong>
           </div>
           <div class="flow-item" style="grid-column: span 2">
-            <span>Global Verification Engine</span>
-            <strong class="text-info">{{ latestProofRun.summary?.verifyMessage || 'AWAITING' }}</strong>
+            <span>验证状态与说明</span>
+            <strong class="text-info">{{ latestProofRun.summary?.verifyStatus || '-' }} | {{ latestProofRun.summary?.verifyMessage || '等待验证' }}</strong>
           </div>
         </div>
 

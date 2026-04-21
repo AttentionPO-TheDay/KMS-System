@@ -5,9 +5,9 @@
         <span class="pulsing-dot"></span>
         <p class="eyebrow">ACCEPTANCE ENV</p>
       </div>
-      <h1 class="gradient-text">KMS Test System</h1>
+      <h1 class="gradient-text">测试系统</h1>
       <p class="hero-copy">
-        独立前后端的高级测试终端。用于执行 <code>wrk</code> 极限压测，掌控系统吞吐指标，以及自动化安全演练。
+        独立前后端的测试系统，用于执行 <code>wrk</code> 压测、汇总 TPS 指标，并支撑联调验证与回收率判定。
       </p>
     </div>
     
