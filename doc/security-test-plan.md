@@ -48,45 +48,42 @@ Use `security/security_test.ps1` with explicit environment values.
 
 ## Browser-Side Manual Steps
 
-### 1. 模拟重放攻击请求
-1. 使用浏览器打开系统并登录（用户：testuser）
-2. 打开浏览器开发者工具（F12）→ Network标签
-3. 进入"用户密钥"页面，点击"密钥生成"
-4. 填写密钥生成表单：
-   - 加密算法类型：无证书非对称加密
-   - 加密算法名称：SM2
-   - 密钥名称：测试密钥001
-   - 密钥用途：数据加密
-5. 点击"确定"提交
-6. 在Network中找到 `/keymanage/keymanage` 的POST请求
-7. 右键 → Copy → Copy as cURL
-8. 等待5秒后，在Postman中粘贴刚才复制的cURL命令
-9. 导入到Postman（Import → Raw text → Continue）
-10. 点击"Send"发送请求观察响应结果
+## Browser-Side Manual Steps (Generation Algorithm Tests)
 
-### 2. 模拟中间人篡改请求
-1. 在Postman中准备一个正常的密钥生成请求
+### 1. 算法参数篡改攻击
+模拟中间人篡改生成的公钥结构与参数。
+1. 在Postman中准备一个正常的密钥生成或导入请求
 2. 篡改请求体中的关键参数：
    - 原始公钥：`04abc123...` （130字符）
    - 篡改后：`04xyz789...` （130字符，但点不在曲线上）
 3. 将公钥长度从130字符改为64字符，发送请求
-4. 将公钥前缀从"04"改为"05"，保持长度130字符不变，发送请求
-5. 观察系统是否能在算法层或协议层直接拦截非法公钥
+4. 将公钥前缀从"04"改为"05"（无效的非压缩前缀），保持长度130字符不变，发送请求
+5. 观察系统底层的算法框架是否能直接拦截该异常公钥并拒绝操作
 
-### 3. 模拟越权操作攻击
-1. 分别登录以下用户，获取JWT Token（普通用户与无此权限用户）
-2. 在Postman中保存这两个 Token 环境变量
-3. 使用普通用户Token发送查看所有公共密钥请求或管理员级别请求
-4. 观察系统是否返回 403 或拦截提示
+### 2. 弱算法与参数降级攻击
+模拟向生成算法层传入废弃的弱密码算法或极低的密钥位数。
+1. 使用浏览器打开系统并登录（用户：testuser）
+2. 抓取“密钥生成”表单提交的 `/keymanage/keymanage` POST请求
+3. 导入到Postman并将请求体中的算法相关参数篡改：
+   - 将请求的密钥长度篡改为低于安全阈值（例如将 RSA 2048 改为 512）
+   - 将签名/加密哈希算法从安全的 SM3/SHA256 篡改为已废弃的 MD5
+4. 点击"Send"发送请求
+5. 验证后端底层密码机/算法库是否强制识别并拒绝生成此弱密钥，而非仅仅依赖前端界面的校验通过
+
+### 3. 畸形密码格式载荷攻击
+模拟向底层算法解析器发送破坏格式边界的边界请求。
+1. 在Postman中准备一个包含十六进制、Base64或 ASN.1 格式的正常加载载荷
+2. 破坏结构化数据边界：
+   - 在密钥参数中注入非Hex字符（如 `04abXXzz...`）
+   - 删除载荷的长度标记位或填充破坏格式对齐的数据
+3. 点击"Send"发送构造的脏数据请求
+4. 观察响应结果，验证算法库抛出安全的解析失败（如格式非法），且未因内存溢出导致不可控的服务错误或崩溃
 
 ## Expected Results
 
-1. Scanner UA should be blocked with `403`
-2. Sixth login attempt after five failures should still be blocked during lock window
-3. Replay requests should not create repeated effective business results
-4. Tampered public key and malformed body should be directly rejected by crypto library/parser
-5. Normal user tokens should not access admin-only or foreign-user resources
-6. Clickjacking validation should currently show `SAMEORIGIN`; if the requirement becomes strict anti-framing, backend headers must be tightened later
+1. Algorithm Tampering: Tampered public key, invalid lengths, and unregistered prefixes must be directly rejected by the cryptographic library.
+2. Weak Parameter: Lower-than-standard bit sizes or deprecated algorithms should fail to generate.
+3. Malformed Validation: Bad ASN.1 or non-hex inputs should be cleanly intercepted via Type/Parse errors without affecting system stability.
 
 ## Follow-Up Enhancements
 
