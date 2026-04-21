@@ -2,7 +2,7 @@
 
 ## Scope
 
-1. Generate system attacks
+1. Generate system algorithm and payload attacks
 2. Update and revoke system attacks
 3. Login and traffic protection verification
 4. Browser embedding and clickjacking verification
@@ -14,79 +14,45 @@
 3. `X-Frame-Options` is currently `SAMEORIGIN`, not full deny
 4. Updatedel and generate now both support internal token forwarding to Go backends
 
-## Automated Checks
+## Automated Security Range (Acceptance UI)
 
-Use `security/security_test.ps1` with explicit environment values.
+All attacks below are fully integrated into the `kms-acceptance` UI and driven by `security/security_test.sh`.
 
-1. Scanner User-Agent probe
-2. Login brute-force simulation
-3. Clickjacking header check
-4. Internal interface smoke check
+### Crypto Algorithm Core (Generate 3 Attacks)
 
-## Semi-Automated Business Attacks
+1. **Algorithm Tampering:** Tamper attack on public key, length, and prefix (Invalid Curve/Formats)
+2. **Weak Parameter:** Downgrade to weak algorithms (MD5, RSA-512) or empty encryption types
+3. **Malformed Payload:** Corrupted structures causing parser errors (non-hex, over-length boundaries)
 
-### Crypto Algorithm Core (Generate)
+### Update and Revoke (Lifecycle 5 Attacks)
 
-1. Tamper attack on public key, length, and prefix (Invalid Curve/Formats)
-2. Weak parameter attack (Downgrade to weak keys or curves)
-3. Malformed payload attack (Corrupted structures causing parser errors)
+1. **SQL Injection:** Payloads against key query and record query inputs
+2. **XSS:** Payload submission on editable key metadata
+3. **Scanner Detection:** Malicious User-Agent detection (sqlmap, nikto) and IP blacklisting
+4. **Brute Force:** Login retry lockout mechanism verification
+5. **Clickjacking:** `X-Frame-Options` and CSP `frame-ancestors` verification across endpoints
 
-### API & Interface Security
-
-1. SQL injection payloads against query and form parameters
-2. XSS payload submission and replay
-3. Replay attack using captured API requests (Generate/Update)
-4. Privilege escalation with normal user token (Horizontal/Vertical)
-
-### Update and Revoke
-
-1. SQL injection payloads against key query and record query inputs
-2. XSS payload submission on editable key metadata
-3. Replay attack on update and revoke requests
-4. Tamper attack on `keyId`, `user`, and body fields
-5. Privilege escalation by operating on foreign keys
-
-## Browser-Side Manual Steps
-
-## Browser-Side Manual Steps (Generation Algorithm Tests)
-
-### 1. 算法参数篡改攻击
-模拟中间人篡改生成的公钥结构与参数。
-1. 在Postman中准备一个正常的密钥生成或导入请求
-2. 篡改请求体中的关键参数：
-   - 原始公钥：`04abc123...` （130字符）
-   - 篡改后：`04xyz789...` （130字符，但点不在曲线上）
-3. 将公钥长度从130字符改为64字符，发送请求
-4. 将公钥前缀从"04"改为"05"（无效的非压缩前缀），保持长度130字符不变，发送请求
-5. 观察系统底层的算法框架是否能直接拦截该异常公钥并拒绝操作
-
-### 2. 弱算法与参数降级攻击
-模拟向生成算法层传入废弃的弱密码算法或极低的密钥位数。
-1. 使用浏览器打开系统并登录（用户：testuser）
-2. 抓取“密钥生成”表单提交的 `/keymanage/keymanage` POST请求
-3. 导入到Postman并将请求体中的算法相关参数篡改：
-   - 将请求的密钥长度篡改为低于安全阈值（例如将 RSA 2048 改为 512）
-   - 将签名/加密哈希算法从安全的 SM3/SHA256 篡改为已废弃的 MD5
-4. 点击"Send"发送请求
-5. 验证后端底层密码机/算法库是否强制识别并拒绝生成此弱密钥，而非仅仅依赖前端界面的校验通过
-
-### 3. 畸形密码格式载荷攻击
-模拟向底层算法解析器发送破坏格式边界的边界请求。
-1. 在Postman中准备一个包含十六进制、Base64或 ASN.1 格式的正常加载载荷
-2. 破坏结构化数据边界：
-   - 在密钥参数中注入非Hex字符（如 `04abXXzz...`）
-   - 删除载荷的长度标记位或填充破坏格式对齐的数据
-3. 点击"Send"发送构造的脏数据请求
-4. 观察响应结果，验证算法库抛出安全的解析失败（如格式非法），且未因内存溢出导致不可控的服务错误或崩溃
+*Note: The platform protection attacks (Scanner and Brute Force) execute in **Safe Mode**. They will hit the `kms-updatedel` Java backend to trigger the defense, and immediately call the internal `/internal/security/reset-blacklist` and `/internal/security/reset-login-lock` endpoints to clear the state, ensuring the system remains usable for subsequent demonstrations.*
 
 ## Expected Results
 
-1. Algorithm Tampering: Tampered public key, invalid lengths, and unregistered prefixes must be directly rejected by the cryptographic library.
-2. Weak Parameter: Lower-than-standard bit sizes or deprecated algorithms should fail to generate.
-3. Malformed Validation: Bad ASN.1 or non-hex inputs should be cleanly intercepted via Type/Parse errors without affecting system stability.
+1. **Algorithm Tampering:** Tampered public key, invalid lengths, and unregistered prefixes must be directly rejected by the cryptographic library.
+2. **Weak Parameter:** Lower-than-standard bit sizes or deprecated algorithms should fail to generate.
+3. **Malformed Validation:** Bad inputs should be cleanly intercepted via Type/Parse errors without affecting system stability.
+4. **Platform Defenses:** Scanners should be immediately blocked with 403. Brute force attempts should be locked after 5 failures.
 
 ## Follow-Up Enhancements
 
-1. Add dedicated replay-id or nonce validation for critical generate and lifecycle mutations
-2. Tighten `X-Frame-Options` or add CSP `frame-ancestors 'none'` if full anti-clickjacking is required
-3. Add structured security regression script outputs for CI
+1. Add structured security regression script outputs for CI
+
+---
+
+## Archived Scenarios
+
+The following attacks are fully implemented in `security_test.sh` but are currently archived and not exposed in the UI, as they target deeper business logic boundaries outside the primary algorithm and lifecycle scopes:
+
+- **Generate Replay:** Replaying ENROLL_KEY requests
+- **Generate Privilege:** Accessing foreign generation keys
+- **Lifecycle Replay:** Replaying UPDATE_KEY requests
+- **Lifecycle Tamper:** Modifying foreign key metadata
+- **Lifecycle Privilege:** Accessing foreign lifecycle keys

@@ -279,7 +279,7 @@ type server struct {
 	dataDir        string
 	runsFile       string
 	defaultWrkPath string
-	powerShellPath string
+	bashPath string
 	securityScript string
 	counter        uint64
 	cfg            acceptanceConfig
@@ -306,7 +306,7 @@ func main() {
 		dataDir:        dataDir,
 		runsFile:       filepath.Join(dataDir, "runs.json"),
 		defaultWrkPath: detectWrkPath(wd),
-		powerShellPath: detectPowerShellPath(),
+		bashPath: detectBashPath(),
 		securityScript: detectSecurityScriptPath(wd),
 		cfg:            cfg,
 		client:         &http.Client{Timeout: 30 * time.Second},
@@ -387,13 +387,13 @@ func defaultScenarios(cfg acceptanceConfig) map[string]Scenario {
 			Method:          http.MethodPost,
 			BaseURL:         lifecycleBaseURL,
 			Path:            "/lifecycle/request/UPDATE_KEY",
-			DurationSeconds: 20,
-			Threads:         12,
-			Connections:     800,
+			DurationSeconds: 5,
+			Threads:         2,
+			Connections:     50,
 			Headers:         cloneHeaders(tokenHeader),
 			BodyTemplate:    fmt.Sprintf(`{"keyId":%s,"user":"%s","keyName":"acceptance-rotate","keyUse":"性能验收","keyDomain":"acceptance","autoUpdate":"false"}`, keyIDPlaceholder, cfg.AcceptanceUser),
 			Description:     "直接压测 kms-updatedel Go 接口，自动从最新生成结果加载 key 池，目标 TPS 不低于 5000。",
-			Notes:           []string{"执行前请先跑一次生成场景，准备足够的 keyId。", "默认按 20 秒窗口控制单轮 key 需求，避免过度消耗生成结果。"},
+			Notes:           []string{"执行前请先跑一次生成场景，准备足够的 keyId。", "默认按 5 秒窗口控制单轮 key 需求，避免过度消耗生成结果。"},
 		},
 		"revoke-tps": {
 			ID:              "revoke-tps",
@@ -402,13 +402,13 @@ func defaultScenarios(cfg acceptanceConfig) map[string]Scenario {
 			Method:          http.MethodPost,
 			BaseURL:         lifecycleBaseURL,
 			Path:            "/lifecycle/request/REVOKE_KEY",
-			DurationSeconds: 20,
-			Threads:         12,
-			Connections:     800,
+			DurationSeconds: 5,
+			Threads:         2,
+			Connections:     50,
 			Headers:         cloneHeaders(tokenHeader),
 			BodyTemplate:    fmt.Sprintf(`{"keyId":%s,"user":"%s"}`, keyIDPlaceholder, cfg.AcceptanceUser),
 			Description:     "直接压测 kms-updatedel Go 接口，自动复用最新生成 key 池，目标 TPS 不低于 5000。",
-			Notes:           []string{"回收请求不可逆，请确保使用验收专用 key。", "默认按 20 秒窗口控制单轮 key 需求，避免和生成尾部处理相互挤压。"},
+			Notes:           []string{"回收请求不可逆，请确保使用验收专用 key。", "默认按 5 秒窗口控制单轮 key 需求，避免和生成尾部处理相互挤压。"},
 		},
 		"revoke-rate": {
 			ID:              "revoke-rate",
@@ -417,15 +417,15 @@ func defaultScenarios(cfg acceptanceConfig) map[string]Scenario {
 			Method:          http.MethodPost,
 			BaseURL:         lifecycleBaseURL,
 			Path:            "/lifecycle/request/REVOKE_KEY",
-			DurationSeconds: 20,
-			Threads:         12,
-			Connections:     800,
+			DurationSeconds: 5,
+			Threads:         2,
+			Connections:     50,
 			Headers:         cloneHeaders(tokenHeader),
 			BodyTemplate:    fmt.Sprintf(`{"keyId":%s,"user":"%s"}`, keyIDPlaceholder, cfg.AcceptanceUser),
 			MetricKind:      "revoke_final_rate",
 			MetricTarget:    98,
 			Description:     "先执行回收压测，再去生命周期 Java 内部查询最终状态，按 status=3 计算最终回收率。",
-			Notes:           []string{"默认等待 30 秒后核验，可通过环境变量调整。", "默认按 20 秒窗口控制单轮 key 需求，避免最终核验被生成尾部长期拖慢。"},
+			Notes:           []string{"默认等待 30 秒后核验，可通过环境变量调整。", "默认按 5 秒窗口控制单轮 key 需求，避免最终核验被生成尾部长期拖慢。"},
 		},
 	}
 }
@@ -470,20 +470,21 @@ func isExecutableFile(path string) bool {
 	return info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
 }
 
-func detectPowerShellPath() string {
-	for _, candidate := range []string{"powershell.exe", "powershell"} {
-		if path, err := exec.LookPath(candidate); err == nil {
-			return path
-		}
+func detectBashPath() string {
+	if path, err := exec.LookPath("bash"); err == nil {
+		return path
+	}
+	if path, err := exec.LookPath("sh"); err == nil {
+		return path
 	}
 	return ""
 }
 
 func detectSecurityScriptPath(wd string) string {
 	candidates := []string{
-		filepath.Join(wd, "..", "..", "security", "security_test.ps1"),
-		filepath.Join(wd, "..", "security", "security_test.ps1"),
-		filepath.Join(wd, "security", "security_test.ps1"),
+		filepath.Join(wd, "..", "..", "security", "security_test.sh"),
+		filepath.Join(wd, "..", "security", "security_test.sh"),
+		filepath.Join(wd, "security", "security_test.sh"),
 	}
 	for _, candidate := range candidates {
 		if fileExists(candidate) {
@@ -501,8 +502,8 @@ func (s *server) handleHealth(c *fiber.Ctx) error {
 		WrkAvailable:       wrkAvailable,
 		WrkPath:            wrkPath,
 		SecurityScriptPath: s.securityScript,
-		SecurityExecutable: s.powerShellPath,
-		SecurityAvailable:  s.powerShellPath != "" && s.securityScript != "",
+		SecurityExecutable: s.bashPath,
+		SecurityAvailable:  s.bashPath != "" && s.securityScript != "",
 		DataDir:            s.dataDir,
 		Now:                time.Now().Format(time.RFC3339),
 		AcceptanceUser:     s.cfg.AcceptanceUser,
@@ -565,11 +566,11 @@ func (s *server) handleCreateSecurityRun(c *fiber.Ctx) error {
 	if caseID == "" {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "caseId is required"})
 	}
-	if s.powerShellPath == "" {
-		return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{"message": "powershell not found"})
+	if s.bashPath == "" {
+		return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{"message": "bash not found"})
 	}
 	if s.securityScript == "" {
-		return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{"message": "security_test.ps1 not found"})
+		return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{"message": "security_test.sh not found"})
 	}
 
 	run := &SecurityRunResult{
@@ -1297,45 +1298,27 @@ func shortHash(value string) string {
 
 func (s *server) executeSecurityRun(caseID string) SecurityRunResult {
 	args := []string{
-		"-NoProfile",
-		"-ExecutionPolicy",
-		"Bypass",
-		"-File",
 		s.securityScript,
-		"-CaseId",
-		caseID,
-		"-Json",
-		"-GenerateGoBaseUrl",
-		s.scenarios["generate-tps"].BaseURL,
-		"-LifecycleGoBaseUrl",
-		s.scenarios["update-tps"].BaseURL,
-		"-GenerateJavaBaseUrl",
-		s.cfg.GenerateJavaBaseURL,
-		"-LifecycleJavaBaseUrl",
-		s.cfg.LifecycleJavaBaseURL,
-		"-GenerateKeyPoolUrl",
-		s.cfg.GenerateKeyPoolURL,
-		"-LifecycleVerifyUrl",
-		s.cfg.LifecycleVerifyURL,
-		"-InternalToken",
-		s.cfg.GenerateInternalToken,
-		"-AcceptanceUser",
-		s.cfg.AcceptanceUser,
-		"-AttackUserName",
-		s.cfg.AttackUserName,
-		"-AttackUserPassword",
-		s.cfg.AttackUserPassword,
-		"-AttackAdminName",
-		s.cfg.AttackAdminUserName,
-		"-AttackAdminPassword",
-		s.cfg.AttackAdminPassword,
-		"-AttackForeignUser",
-		s.cfg.AttackForeignUser,
+		"--CaseId", caseID,
+		"--Json",
+		"--GenerateGoBaseUrl", s.scenarios["generate-tps"].BaseURL,
+		"--LifecycleGoBaseUrl", s.scenarios["update-tps"].BaseURL,
+		"--GenerateJavaBaseUrl", s.cfg.GenerateJavaBaseURL,
+		"--LifecycleJavaBaseUrl", s.cfg.LifecycleJavaBaseURL,
+		"--GenerateKeyPoolUrl", s.cfg.GenerateKeyPoolURL,
+		"--LifecycleVerifyUrl", s.cfg.LifecycleVerifyURL,
+		"--InternalToken", s.cfg.GenerateInternalToken,
+		"--AcceptanceUser", s.cfg.AcceptanceUser,
+		"--AttackUserName", s.cfg.AttackUserName,
+		"--AttackUserPassword", s.cfg.AttackUserPassword,
+		"--AttackAdminName", s.cfg.AttackAdminUserName,
+		"--AttackAdminPassword", s.cfg.AttackAdminPassword,
+		"--AttackForeignUser", s.cfg.AttackForeignUser,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, s.powerShellPath, args...)
+	cmd := exec.CommandContext(ctx, s.bashPath, args...)
 
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout

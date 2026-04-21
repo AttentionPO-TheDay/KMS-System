@@ -137,7 +137,7 @@ async function doSecurityRun(caseId) {
 
 .suite-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 24px;
 }
 
@@ -155,7 +155,6 @@ async function doSecurityRun(caseId) {
 
 .accent-red { background: linear-gradient(90deg, rgba(220, 38, 38, 0.4), transparent); border-left: 3px solid #ef4444; }
 .accent-orange { background: linear-gradient(90deg, rgba(234, 88, 12, 0.4), transparent); border-left: 3px solid #f97316; }
-.accent-purple { background: linear-gradient(90deg, rgba(147, 51, 234, 0.4), transparent); border-left: 3px solid #a855f7; }
 
 .attack-list { display: flex; flex-direction: column; gap: 16px; }
 .attack-card {

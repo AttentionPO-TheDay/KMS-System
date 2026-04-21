@@ -29,10 +29,24 @@ public class SmartSecurityFilter implements Filter {
     private static final Logger log = LoggerFactory.getLogger(SmartSecurityFilter.class);
 
     // 访问模式缓存
-    private final ConcurrentHashMap<String, AccessPattern> accessPatterns = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, AccessPattern> accessPatterns = new ConcurrentHashMap<>();
 
     // 黑名单缓存（被识别为恶意的IP）
-    private final ConcurrentHashMap<String, Long> blacklist = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, Long> blacklist = new ConcurrentHashMap<>();
+
+    /**
+     * 清除IP黑名单 (用于内部安全测试模式重置)
+     */
+    public static void clearBlacklist() {
+        blacklist.clear();
+    }
+
+    /**
+     * 清除IP访问统计模式 (用于内部安全测试模式重置)
+     */
+    public static void clearAccessPatterns() {
+        accessPatterns.clear();
+    }
 
     // 黑名单封禁时长（分钟）
     private static final long BLACKLIST_DURATION = 30;

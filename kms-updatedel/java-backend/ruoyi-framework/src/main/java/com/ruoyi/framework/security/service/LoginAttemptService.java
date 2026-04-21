@@ -32,6 +32,15 @@ public class LoginAttemptService {
     private final ConcurrentHashMap<String, Long> lockTimeCache = new ConcurrentHashMap<>();
 
     /**
+     * 清除所有缓存 (用于内部安全测试模式重置)
+     */
+    public void clearAll() {
+        attemptsCache.clear();
+        lockTimeCache.clear();
+        log.info("安全测试模式：已重置所有登录限制");
+    }
+
+    /**
      * 登录成功，清除失败记录
      * 
      * @param key 用户标识（用户名+IP）

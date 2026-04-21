@@ -15,6 +15,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
+
 @RestController
 @RequestMapping("/internal/lifecycle")
 public class InternalLifecycleController {
@@ -113,6 +116,28 @@ public class InternalLifecycleController {
         payload.put("summary", summary);
         payload.put("data", records);
         return payload;
+    }
+
+    @PostMapping("/security/reset-blacklist")
+    public Object resetBlacklist(@RequestHeader(value = "X-Internal-Token", required = false) String token) {
+        requireAuthorized(token);
+        com.ruoyi.framework.security.filter.SmartSecurityFilter.clearBlacklist();
+        com.ruoyi.framework.security.filter.SmartSecurityFilter.clearAccessPatterns();
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("code", 200);
+        map.put("msg", "success");
+        return map;
+    }
+
+    @PostMapping("/security/reset-login-lock")
+    public Object resetLoginLock(@RequestHeader(value = "X-Internal-Token", required = false) String token) {
+        requireAuthorized(token);
+        com.ruoyi.framework.security.service.LoginAttemptService loginAttemptService = com.ruoyi.common.utils.spring.SpringUtils.getBean(com.ruoyi.framework.security.service.LoginAttemptService.class);
+        loginAttemptService.clearAll();
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("code", 200);
+        map.put("msg", "success");
+        return map;
     }
 
     private void requireAuthorized(String token) {
