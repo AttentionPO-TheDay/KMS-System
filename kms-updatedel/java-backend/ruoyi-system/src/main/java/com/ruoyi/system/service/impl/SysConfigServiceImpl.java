@@ -88,6 +88,12 @@ public class SysConfigServiceImpl implements ISysConfigService
     @Override
     public boolean selectCaptchaEnabled()
     {
+        String captchaEnabledOverride = System.getenv("KMS_CAPTCHA_ENABLED");
+        if (StringUtils.isNotEmpty(captchaEnabledOverride))
+        {
+            return Convert.toBool(captchaEnabledOverride);
+        }
+
         String captchaEnabled = selectConfigByKey("sys.account.captchaEnabled");
         if (StringUtils.isEmpty(captchaEnabled))
         {

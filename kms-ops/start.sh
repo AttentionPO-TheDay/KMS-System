@@ -75,6 +75,7 @@ if [ ! -f "runtime/generate-go/kms-generate-service" ] \
     || [ ! -f "runtime/updatedel-java/kms-updatedel.jar" ] \
     || [ ! -f "runtime/distribute-java/kms-distribute.jar" ] \
     || [ ! -f "runtime/acceptance-go/kms-acceptance-backend" ] \
+    || [ ! -f "runtime/acceptance-go/security/security_test.sh" ] \
     || [ ! -f "front/generate/index.html" ] \
     || [ ! -f "front/updatedel/index.html" ] \
     || [ ! -f "front/distribute/index.html" ] \

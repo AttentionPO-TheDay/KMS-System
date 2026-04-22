@@ -110,8 +110,12 @@ func (gen *ECCGenerator) GenPartialKey(identityData string, uAStr string, keyUse
 	ctx.buffer = ctx.buffer[:0]
 	ctx.hasher.Reset()
 
-	ctx.x.SetString(uAStr[2:66], 16)
-	ctx.y.SetString(uAStr[66:130], 16)
+	if _, ok := ctx.x.SetString(uAStr[2:66], 16); !ok {
+		return models.Keymanage{}, errors.New("invalid uA hex")
+	}
+	if _, ok := ctx.y.SetString(uAStr[66:130], 16); !ok {
+		return models.Keymanage{}, errors.New("invalid uA hex")
+	}
 
 	if !gen.curve.IsOnCurve(ctx.x, ctx.y) {
 		return models.Keymanage{}, errors.New("uA is not on curve")

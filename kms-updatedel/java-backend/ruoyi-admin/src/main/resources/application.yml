@@ -105,7 +105,7 @@ swagger:
 xss:
   enabled: true
   excludes: /system/notice
-  urlPatterns: /system/*,/monitor/*,/tool/*
+  urlPatterns: /system/*,/monitor/*,/tool/*,/lifecycle/*
 
 kms:
   go-backend:

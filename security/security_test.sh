@@ -278,9 +278,9 @@ run_algo_tamper() {
     if [ "$accepted" -gt 0 ]; then
         res_verdict="vulnerable"
         res_passed=false
-        res_summary="Tampered public key parameters (curve/length/prefix) were accepted."
+        res_summary="篡改后的公钥参数（曲线、长度或前缀）未被完全拦截。"
     else
-        res_summary="All tampered algorithm parameters were correctly rejected."
+        res_summary="所有被篡改的算法参数都已被成功拦截。"
     fi
 }
 
@@ -326,9 +326,9 @@ run_algo_weak_param() {
     if [ "$accepted" -gt 0 ]; then
         res_verdict="vulnerable"
         res_passed=false
-        res_summary="Weak algorithm names or empty types were accepted by the system."
+        res_summary="弱算法名或空算法类型未被系统完全拦截。"
     else
-        res_summary="Weak algorithms and parameter downgrades were correctly rejected."
+        res_summary="弱算法与参数降级请求都已被成功拦截。"
     fi
 }
 
@@ -379,9 +379,9 @@ run_algo_malformed() {
     if [ "$accepted" -gt 0 ]; then
         res_verdict="vulnerable"
         res_passed=false
-        res_summary="Malformed cryptographic payload was accepted or caused unhandled errors."
+        res_summary="畸形密码学载荷未被完全拦截，或触发了未处理异常。"
     else
-        res_summary="Malformed payloads were safely intercepted and rejected."
+        res_summary="所有畸形载荷都已被安全拦截并拒绝。"
     fi
 }
 
@@ -418,9 +418,9 @@ run_lifecycle_sql() {
     if [ "$code" -ge 500 ] || [ "$code2" -ge 500 ] || [[ "$body" == *"SQL"* ]] || [[ "$body2" == *"SQL"* ]] || [ "$keyRowsCount" -gt 0 ] || [ "$recordRowsCount" -gt 0 ]; then
         res_verdict="vulnerable"
         res_passed=false
-        res_summary="SQL injection probe returned data or triggered server-side SQL errors."
+        res_summary="SQL 注入探测返回了数据，或触发了服务端 SQL 异常。"
     else
-        res_summary="SQL injection probe returned no data and no SQL error."
+        res_summary="SQL 注入探测未返回敏感数据，也未触发 SQL 异常。"
     fi
 }
 
@@ -458,9 +458,9 @@ run_lifecycle_xss() {
     if [ "$code" -lt 400 ] && [[ "$body2" == *"<script>"* ]]; then
         res_verdict="vulnerable"
         res_passed=false
-        res_summary="XSS payload was accepted and returned in lifecycle detail output."
+        res_summary="XSS 载荷被写入并在生命周期详情接口中回显。"
     else
-        res_summary="XSS payload was not visible in lifecycle detail output."
+        res_summary="XSS 载荷未在生命周期详情输出中回显。"
     fi
 }
 
@@ -497,13 +497,13 @@ run_platform_scanner() {
     if [ "$sqlmap_code" != "403" ] || [ "$nikto_code" != "403" ]; then
         res_verdict="vulnerable"
         res_passed=false
-        res_summary="Scanner User-Agents were not blocked with HTTP 403."
+        res_summary="扫描器 User-Agent 未被正确识别并以 403 拦截。"
     elif [ "$normal_code" == "403" ]; then
         res_verdict="vulnerable"
         res_passed=false
-        res_summary="Normal User-Agent was incorrectly blocked after scanner requests."
+        res_summary="普通 User-Agent 在扫描器探测后被误封禁。"
     else
-        res_summary="Scanner User-Agents were correctly detected and blocked with 403. Blacklist cleared."
+        res_summary="扫描器 User-Agent 已被正确识别并以 403 拦截，黑名单也已清理。"
     fi
 }
 
@@ -511,6 +511,7 @@ run_platform_bruteforce() {
     local url="${LifecycleJavaBaseUrl}/login"
     local login_fail_count=0
     local was_locked=false
+    local lock_attempt=0
 
     for i in {1..6}; do
         local payload
@@ -526,6 +527,9 @@ run_platform_bruteforce() {
         fi
         if [[ "$body" == *"锁定"* ]] || [[ "$body" == *"lock"* ]]; then
             was_locked=true
+            if [ "$lock_attempt" -eq 0 ]; then
+                lock_attempt=$i
+            fi
         fi
     done
     
@@ -538,12 +542,12 @@ run_platform_bruteforce() {
     local body_reset="${res_reset#*|||}"
     add_trace "bruteforce reset" "POST" "$reset_url" "$code_reset" "reset" "clear login lock" "$body_reset"
 
-    if [ "$was_locked" = true ] && [ "$login_fail_count" -ge 6 ]; then
-        res_summary="Login brute-force successfully triggered account lock after 5 attempts. Lock cleared."
+    if [ "$was_locked" = true ] && [ "$lock_attempt" -ge 5 ] && [ "$lock_attempt" -le 6 ]; then
+        res_summary="登录暴力破解已在第 5 至第 6 次尝试间触发锁定，锁定状态也已清理。"
     else
         res_verdict="vulnerable"
         res_passed=false
-        res_summary="Login brute-force failed to trigger account lock after 6 attempts."
+        res_summary="登录暴力破解未能在第 5 至第 6 次错误尝试间稳定触发锁定。"
     fi
 }
 
@@ -585,9 +589,9 @@ run_platform_clickjack() {
     if [ "$vulnerable_count" -gt 0 ]; then
         res_verdict="vulnerable"
         res_passed=false
-        res_summary="Some endpoints are missing X-Frame-Options or CSP frame-ancestors protection."
+        res_summary="部分接口缺少 X-Frame-Options 或 CSP frame-ancestors 防护头。"
     else
-        res_summary="All endpoints have clickjacking protection headers (SAMEORIGIN or frame-ancestors)."
+        res_summary="所有目标接口都已具备点击劫持防护头。"
     fi
 }
 
@@ -608,7 +612,7 @@ run_case() {
             res_status="error"
             res_verdict="error"
             res_passed=false
-            res_summary="unknown case id: $case_id"
+            res_summary="未知的安全用例编号：$case_id"
             ;;
     esac
 }
@@ -623,7 +627,7 @@ if [ $local_exit_code -ne 0 ] && [ "$res_status" != "error" ]; then
     res_status="error"
     res_verdict="error"
     res_passed=false
-    res_summary="attack execution failed"
+    res_summary="攻击执行失败"
 fi
 
 if [ "$JsonOutput" -eq 1 ]; then

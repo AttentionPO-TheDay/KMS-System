@@ -239,6 +239,7 @@ services:
       - KMS_LIFECYCLE_CHAIN_DETAIL_LOG_ENABLED=${KMS_LIFECYCLE_CHAIN_DETAIL_LOG_ENABLED:-false}
       - KMS_LIFECYCLE_LOG_LEVEL=${KMS_LIFECYCLE_LOG_LEVEL:-WARN}
       - KMS_LIFECYCLE_CHAIN_LOG_LEVEL=${KMS_LIFECYCLE_CHAIN_LOG_LEVEL:-WARN}
+      - KMS_CAPTCHA_ENABLED=${KMS_CAPTCHA_ENABLED:-false}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
     depends_on:
@@ -300,14 +301,19 @@ services:
     container_name: kms_acceptance_backend
     volumes:
       - ./runtime/acceptance-go/kms-acceptance-backend:/app/kms-acceptance-backend:ro
+      - ./runtime/acceptance-go/security:/app/security:ro
     working_dir: /app
-    command: ["sh", "-lc", "if ! command -v wrk >/dev/null 2>&1; then apt-get update && apt-get install -y --no-install-recommends wrk && rm -rf /var/lib/apt/lists/*; fi && exec /app/kms-acceptance-backend"]
+    command: ["sh", "-lc", "if ! command -v bash >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1 || ! command -v wrk >/dev/null 2>&1; then apt-get update && apt-get install -y --no-install-recommends bash curl jq wrk && rm -rf /var/lib/apt/lists/*; fi && exec /app/kms-acceptance-backend"]
     environment:
       - PORT=9090
       - WRK_PATH=/usr/bin/wrk
       - ACCEPTANCE_GENERATE_BASE_URL=http://generate-go:8081
       - ACCEPTANCE_LIFECYCLE_BASE_URL=http://updatedel-go:8082
-      - ACCEPTANCE_USER=test
+      - ACCEPTANCE_USER=acceptance_user
+      - ACCEPTANCE_ATTACK_USER_NAME=acceptance_user
+      - ACCEPTANCE_ATTACK_USER_PASSWORD=admin123
+      - ACCEPTANCE_ATTACK_ADMIN_NAME=admin
+      - ACCEPTANCE_ATTACK_ADMIN_PASSWORD=admin123
       - ACCEPTANCE_GENERATE_KEY_POOL_URL=http://generate-java:9081/internal/generate/keys/recent
       - ACCEPTANCE_LIFECYCLE_VERIFY_URL=http://updatedel-java:9082/internal/lifecycle/key-status
       - ACCEPTANCE_LIFECYCLE_PROOF_URL=http://updatedel-java:9082/internal/lifecycle/batch-proof

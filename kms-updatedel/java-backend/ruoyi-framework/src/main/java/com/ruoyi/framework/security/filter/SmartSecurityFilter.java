@@ -68,9 +68,10 @@ public class SmartSecurityFilter implements Filter {
         String clientIP = getClientIP(httpRequest);
         String requestURI = httpRequest.getRequestURI();
         String userAgent = httpRequest.getHeader("User-Agent");
+        boolean internalResetRequest = requestURI != null && requestURI.startsWith("/internal/security/");
 
         // 1. 检查是否在黑名单中
-        if (isBlacklisted(clientIP)) {
+        if (!internalResetRequest && isBlacklisted(clientIP)) {
             log.warn("阻止黑名单IP访问: IP={}, URI={}", clientIP, requestURI);
             httpResponse.setStatus(403);
             httpResponse.setContentType("application/json;charset=UTF-8");
@@ -79,7 +80,7 @@ public class SmartSecurityFilter implements Filter {
         }
 
         // 2. 检测扫描工具User-Agent
-        if (isScannerUserAgent(userAgent)) {
+        if (!internalResetRequest && isScannerUserAgent(userAgent)) {
             log.warn("检测到扫描工具: IP={}, UserAgent={}", clientIP, userAgent);
             addToBlacklist(clientIP, "扫描工具");
             httpResponse.setStatus(403);

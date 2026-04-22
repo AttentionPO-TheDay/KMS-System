@@ -26,7 +26,6 @@ import com.ruoyi.common.utils.ip.IpUtils;
 import com.ruoyi.framework.manager.AsyncManager;
 import com.ruoyi.framework.manager.factory.AsyncFactory;
 import com.ruoyi.framework.security.context.AuthenticationContextHolder;
-import com.ruoyi.framework.security.service.LoginAttemptService;
 import com.ruoyi.system.service.ISysConfigService;
 import com.ruoyi.system.service.ISysUserService;
 
@@ -52,9 +51,6 @@ public class SysLoginService {
     @Autowired
     private ISysConfigService configService;
 
-    @Autowired
-    private LoginAttemptService loginAttemptService;
-
     /**
      * 登录验证
      * 
@@ -67,13 +63,6 @@ public class SysLoginService {
     public String login(String username, String password, String code, String uuid) {
         // 验证码校验
         validateCaptcha(username, code, uuid);
-        // 检查账户是否被锁定
-        String clientIp = IpUtils.getIpAddr();
-        String loginKey = username + "_" + clientIp;
-        if (loginAttemptService.isBlocked(loginKey)) {
-            AsyncManager.me().execute(AsyncFactory.recordLogininfor(username, Constants.LOGIN_FAIL, "账号已锁定，请15分钟后再试"));
-            throw new ServiceException("账号已锁定，请15分钟后再试");
-        }
         // 登录前置校验
         loginPreCheck(username, password);
         // 用户验证
@@ -88,9 +77,6 @@ public class SysLoginService {
             if (e instanceof BadCredentialsException) {
                 AsyncManager.me().execute(AsyncFactory.recordLogininfor(username, Constants.LOGIN_FAIL,
                         MessageUtils.message("user.password.not.match")));
-                // 记录登录失败
-                String failKey = username + "_" + IpUtils.getIpAddr();
-                loginAttemptService.loginFailed(failKey);
                 throw new UserPasswordNotMatchException();
             } else {
                 AsyncManager.me()
@@ -104,9 +90,6 @@ public class SysLoginService {
                 MessageUtils.message("user.login.success")));
         LoginUser loginUser = (LoginUser) authentication.getPrincipal();
         recordLoginInfo(loginUser.getUserId());
-        // 登录成功，清除失败记录
-        String successKey = username + "_" + IpUtils.getIpAddr();
-        loginAttemptService.loginSucceeded(successKey);
         // 生成token
         return tokenService.createToken(loginUser);
     }

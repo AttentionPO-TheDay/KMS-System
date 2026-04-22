@@ -3,9 +3,13 @@ package controllers
 import (
 	"key-service-generate/models"
 	"key-service-generate/service"
+	"regexp"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 )
+
+var certlessUARegex = regexp.MustCompile(`^[0-9a-fA-F]+$`)
 
 type RequestController struct {
 	keyService *service.KeyManageService
@@ -71,11 +75,36 @@ func (c *RequestController) EnrollKey(ctx *fiber.Ctx) error {
 		})
 	}
 
-	// 无证书非对称加密必须提供用户部分公钥 uA
-	if (req.EncrytType == "无证书非对称加密") && req.UA == "" {
-		return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code": 500, "msg": "无证书非对称加密必须提供用户部分公钥(UA)",
-		})
+	req.EncrytType = strings.TrimSpace(req.EncrytType)
+	req.EncrytName = strings.TrimSpace(req.EncrytName)
+	req.UA = strings.TrimSpace(req.UA)
+
+	if req.EncrytType == "无证书非对称加密" {
+		if req.UA == "" {
+			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"code": 500, "msg": "无证书非对称加密必须提供用户部分公钥(UA)",
+			})
+		}
+		if len(req.UA) != 130 {
+			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"code": 500, "msg": "用户部分公钥(UA)长度非法",
+			})
+		}
+		if !strings.HasPrefix(strings.ToLower(req.UA), "04") {
+			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"code": 500, "msg": "用户部分公钥(UA)前缀非法",
+			})
+		}
+		if !certlessUARegex.MatchString(req.UA) {
+			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"code": 500, "msg": "用户部分公钥(UA)必须为十六进制字符串",
+			})
+		}
+		if req.EncrytName != "SM2" && req.EncrytName != "SSCL" {
+			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"code": 500, "msg": "无证书算法仅支持 SM2 或 SSCL",
+			})
+		}
 	}
 
 	keyName := req.KeyName

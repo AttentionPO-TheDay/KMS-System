@@ -142,8 +142,12 @@ func (gen *SSCLGenerator) GenPartialKey(identityData string, uAStr string, keyDo
 	ctx.hasher.Reset()
 	ctx.buffer = ctx.buffer[:0]
 
-	ctx.ux.SetString(uAStr[2:66], 16)
-	ctx.uy.SetString(uAStr[66:130], 16)
+	if _, ok := ctx.ux.SetString(uAStr[2:66], 16); !ok {
+		return models.Keymanage{}, errors.New("invalid uA hex")
+	}
+	if _, ok := ctx.uy.SetString(uAStr[66:130], 16); !ok {
+		return models.Keymanage{}, errors.New("invalid uA hex")
+	}
 	if !gen.curve.IsOnCurve(ctx.ux, ctx.uy) {
 		return models.Keymanage{}, errors.New("uA is not on curve")
 	}

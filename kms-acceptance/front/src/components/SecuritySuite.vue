@@ -6,27 +6,18 @@
         <p class="subtitle">针对 3 类常见生成攻击与 5 类高频更新攻击进行真实业务层入侵防御探测。</p>
       </div>
       <span class="badge" :class="health?.securityAvailable ? 'ok' : 'warn'">
-        {{ health?.securityAvailable ? '🛡️ SECURITY ENGINE ONLINE' : 'ENGINE OFFLINE' }}
+        {{ health?.securityAvailable ? '🛡️ 安全引擎已就绪' : '安全引擎未就绪' }}
       </span>
     </div>
 
-    <!-- Security Assets Cards -->
-    <div class="assets-grid">
-      <article v-for="asset in securityAssets" :key="asset.path" class="asset-card">
-        <div class="asset-icon">📂</div>
-        <div class="asset-content">
-          <h4>{{ asset.name }}</h4>
-          <code>{{ asset.path }}</code>
-          <p>{{ asset.desc }}</p>
-        </div>
-      </article>
-    </div>
+    <p v-if="error" class="error-msg">⚠️ {{ error }}</p>
+    <p v-else-if="health && !health.securityAvailable" class="warn-msg">当前仅检测到安全引擎未就绪；你仍可点击执行，由后端返回真实失败原因。</p>
 
     <div class="suite-grid">
       <article v-for="suite in securitySuites" :key="suite.id" class="suite-column">
         <div class="suite-header" :class="suite.accent">
           <h3>{{ suite.name }}</h3>
-          <span class="suite-count">{{ suite.cases.length }} CASES</span>
+          <span class="suite-count">{{ suite.cases.length }} 个用例</span>
         </div>
         <p class="suite-summary">{{ suite.summary }}</p>
         
@@ -49,21 +40,21 @@
             </ul>
 
             <div v-if="item.caseId" class="attack-actions">
-              <button class="btn-ghost small" 
-                :disabled="loadingCaseId === item.caseId || !health?.securityAvailable" 
+              <button class="btn-ghost small"
+                :disabled="loadingCaseId === item.caseId"
                 @click="doSecurityRun(item.caseId)">
                 {{ loadingCaseId === item.caseId ? '执行中...' : '执行真实攻击' }}
               </button>
             </div>
 
             <!-- Result Box -->
-            <div v-if="item.caseId && latestRun(item.caseId)" class="attack-result" :class="verdictClass(item.caseId)">
-              <div class="result-header">🔍 执行结论</div>
-              <p><strong>结论:</strong> {{ latestRun(item.caseId).summary }}</p>
-              <p v-if="latestRun(item.caseId).error"><strong>ERROR:</strong> {{ latestRun(item.caseId).error }}</p>
-              <details v-if="latestRun(item.caseId).requests?.length" class="raw-output">
-                <summary>查看 HTTP 劫持载荷 (PAYLOAD)</summary>
-                <pre>{{ JSON.stringify(latestRun(item.caseId).requests, null, 2) }}</pre>
+            <div v-if="item.caseId && displayedRun(item.caseId)" class="attack-result" :class="verdictClass(item.caseId)">
+              <div class="result-header">🔍 本次执行结论</div>
+              <p><strong>结论：</strong> {{ displayedRun(item.caseId).summary }}</p>
+              <p v-if="displayedRun(item.caseId).error"><strong>异常：</strong> {{ displayedRun(item.caseId).error }}</p>
+              <details v-if="displayedRun(item.caseId).requests?.length" class="raw-output">
+                <summary>查看本次请求详情</summary>
+                <pre>{{ JSON.stringify(displayedRun(item.caseId).requests, null, 2) }}</pre>
               </details>
             </div>
           </div>
@@ -76,36 +67,46 @@
 <script setup>
 import { ref } from 'vue'
 import { health, securityRuns, API, loadSecurityRuns } from '../store'
-import { securitySuites, securityAssets } from '../config/securityCases'
+import { securitySuites } from '../config/securityCases'
 
 const loadingCaseId = ref('')
+const error = ref('')
+const localRuns = ref({})
 
-function latestRun(caseId) {
-  return securityRuns.value.find((item) => item.caseId === caseId) || null
+function displayedRun(caseId) {
+  return localRuns.value[caseId] || null
+}
+
+function hasHistory(caseId) {
+  return securityRuns.value.some((item) => item.caseId === caseId)
 }
 
 function verdictLabel(caseId) {
-  const item = latestRun(caseId)
-  if (!item) return 'AWAITING'
-  if (item.status === 'error') return 'ERROR'
-  return item.passed ? 'BLOCKED' : 'COMPROMISED'
+  const item = displayedRun(caseId)
+  if (loadingCaseId.value === caseId) return '执行中'
+  if (!item) return hasHistory(caseId) ? '待重新执行' : '待执行'
+  if (item.status === 'error') return '执行异常'
+  return item.passed ? '防御成功' : '防御失败'
 }
 
 function verdictClass(caseId) {
-  const item = latestRun(caseId)
+  const item = displayedRun(caseId)
   if (!item) return 'warn'
   if (item.status === 'error') return 'accent-red'
   return item.passed ? 'ok' : 'accent-orange'
 }
 
 async function doSecurityRun(caseId) {
+  error.value = ''
+  localRuns.value = { ...localRuns.value, [caseId]: null }
   loadingCaseId.value = caseId
   try {
-    await API.postSecurityRun({ caseId })
+    const run = await API.postSecurityRun({ caseId })
+    localRuns.value = { ...localRuns.value, [caseId]: run }
     await loadSecurityRuns()
   } catch (err) {
     console.error(err)
-    alert(err.message || '运行失败')
+    error.value = err.message || '运行失败'
   } finally {
     loadingCaseId.value = ''
   }
@@ -115,25 +116,6 @@ async function doSecurityRun(caseId) {
 <style scoped>
 .security-wrapper { grid-column: 1 / -1; }
 .subtitle { color: #8b9eb3; margin-top: 8px; font-size: 14px; }
-
-.assets-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 16px;
-  margin: 24px 0;
-}
-.asset-card {
-  background: rgba(0,0,0,0.3);
-  border-left: 4px solid #4facfe;
-  padding: 16px;
-  border-radius: 8px;
-  display: flex;
-  gap: 16px;
-}
-.asset-icon { font-size: 24px; }
-.asset-content h4 { margin: 0 0 8px 0; color: #fff; font-size: 15px; }
-.asset-content code { background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px; font-size: 11px; color:#00f2fe; }
-.asset-content p { color: #8b9eb3; font-size: 13px; margin: 8px 0 0; }
 
 .suite-grid {
   display: grid;
@@ -194,6 +176,18 @@ async function doSecurityRun(caseId) {
 .raw-output summary { color: #4facfe; cursor: pointer; margin-top: 8px;}
 .raw-output pre {
   background: #000; padding: 12px; color: #a1a1aa; border-radius: 4px; overflow-x: auto; font-family: monospace; font-size: 11px; margin-top: 8px;
+}
+
+.error-msg {
+  color: #ff6b6b;
+  margin: 16px 0;
+  font-size: 13px;
+}
+
+.warn-msg {
+  color: #fbbf24;
+  margin: 16px 0;
+  font-size: 13px;
 }
 
 @media (max-width: 1024px) {

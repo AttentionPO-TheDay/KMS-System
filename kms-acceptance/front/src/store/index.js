@@ -37,13 +37,16 @@ export async function loadProofRuns() {
 }
 
 export async function loadAll() {
-  await Promise.all([
+  const results = await Promise.allSettled([
     loadHealth(),
     loadScenarios(),
     loadRuns(),
     loadSecurityRuns(),
     loadProofRuns()
   ])
+
+  const failed = results.find((item) => item.status === 'rejected')
+  error.value = failed?.reason?.message || ''
 }
 
 export { API }

@@ -181,6 +181,7 @@ updatedel_front_dir="$REPO_ROOT/kms-updatedel/front"
 distribute_front_dir="$REPO_ROOT/kms-distribute/front"
 user_front_dir="$REPO_ROOT/kms-user/front"
 acceptance_front_dir="$REPO_ROOT/kms-acceptance/front"
+acceptance_security_dir="$REPO_ROOT/security"
 
 new_clean_directory "$RUNTIME_ROOT"
 new_clean_directory "$FRONT_ROOT/generate"
@@ -212,6 +213,7 @@ copy_artifact "$distribute_java_dir/ruoyi-admin/target/kms-distribute.jar" "$RUN
 copy_artifact "$generate_go_dir/dist/kms-generate-service" "$RUNTIME_ROOT/generate-go/kms-generate-service"
 copy_artifact "$updatedel_go_dir/dist/kms-updatedel-service" "$RUNTIME_ROOT/updatedel-go/kms-updatedel-service"
 copy_artifact "$acceptance_go_dir/dist/kms-acceptance-backend" "$RUNTIME_ROOT/acceptance-go/kms-acceptance-backend"
+copy_artifact "$acceptance_security_dir/security_test.sh" "$RUNTIME_ROOT/acceptance-go/security/security_test.sh"
 
 copy_artifact "$generate_front_dir/dist/." "$FRONT_ROOT/generate"
 copy_artifact "$updatedel_front_dir/dist/." "$FRONT_ROOT/updatedel"

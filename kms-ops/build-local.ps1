@@ -156,6 +156,7 @@ $updatedelFrontDir = Join-Path $repoRoot "kms-updatedel\front"
 $distributeFrontDir = Join-Path $repoRoot "kms-distribute\front"
 $userFrontDir = Join-Path $repoRoot "kms-user\front"
 $acceptanceFrontDir = Join-Path $repoRoot "kms-acceptance\front"
+$acceptanceSecurityDir = Join-Path $repoRoot "security"
 
 New-CleanDirectory $runtimeRoot
 New-CleanDirectory (Join-Path $frontRoot "generate")
@@ -187,6 +188,7 @@ Copy-Artifact -Source (Join-Path $distributeJavaDir "ruoyi-admin\target\kms-dist
 Copy-Artifact -Source (Join-Path $generateGoDir "dist\kms-generate-service") -Destination (Join-Path $runtimeRoot "generate-go\kms-generate-service")
 Copy-Artifact -Source (Join-Path $updatedelGoDir "dist\kms-updatedel-service") -Destination (Join-Path $runtimeRoot "updatedel-go\kms-updatedel-service")
 Copy-Artifact -Source (Join-Path $acceptanceGoDir "dist\kms-acceptance-backend") -Destination (Join-Path $runtimeRoot "acceptance-go\kms-acceptance-backend")
+Copy-Artifact -Source (Join-Path $acceptanceSecurityDir "security_test.sh") -Destination (Join-Path $runtimeRoot "acceptance-go\security\security_test.sh")
 
 Copy-Item -Path (Join-Path $generateFrontDir "dist\*") -Destination (Join-Path $frontRoot "generate") -Recurse -Force
 Copy-Item -Path (Join-Path $updatedelFrontDir "dist\*") -Destination (Join-Path $frontRoot "updatedel") -Recurse -Force

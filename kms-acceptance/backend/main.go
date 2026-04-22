@@ -1339,8 +1339,17 @@ func (s *server) executeSecurityRun(caseID string) SecurityRunResult {
 		return SecurityRunResult{CaseID: caseID, Status: "error", Verdict: "error", Summary: "安全攻击脚本没有输出"}
 	}
 
+	jsonOutput := output
+	if idx := strings.Index(output, "{"); idx > 0 {
+		candidate := strings.TrimSpace(output[idx:])
+		var probe map[string]interface{}
+		if err := json.Unmarshal([]byte(candidate), &probe); err == nil {
+			jsonOutput = candidate
+		}
+	}
+
 	var result SecurityRunResult
-	if err := json.Unmarshal([]byte(output), &result); err != nil {
+	if err := json.Unmarshal([]byte(jsonOutput), &result); err != nil {
 		return SecurityRunResult{
 			CaseID:    caseID,
 			Status:    "error",

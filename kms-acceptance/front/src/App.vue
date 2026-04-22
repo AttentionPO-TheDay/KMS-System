@@ -28,7 +28,11 @@ import { onMounted } from 'vue'
 import { loadAll } from './store'
 
 onMounted(async () => {
-  await loadAll()
+  try {
+    await loadAll()
+  } catch (err) {
+    console.error(err)
+  }
 })
 </script>
 

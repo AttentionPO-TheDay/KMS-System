@@ -1,5 +1,8 @@
 package com.ruoyi.updatedel.controller;
 
+import com.ruoyi.common.constant.CacheConstants;
+import com.ruoyi.common.core.redis.RedisCache;
+import com.ruoyi.common.utils.StringUtils;
 import com.ruoyi.updatedel.domain.Keymanage;
 import com.ruoyi.updatedel.domain.KeyOperationRecord;
 import com.ruoyi.updatedel.service.KeyOperationRecordService;
@@ -10,27 +13,28 @@ import java.util.List;
 import java.util.Map;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestHeader;
 
 @RestController
 @RequestMapping("/internal/lifecycle")
 public class InternalLifecycleController {
     private final LifecycleService lifecycleService;
     private final KeyOperationRecordService keyOperationRecordService;
+    private final RedisCache redisCache;
 
     @Value("${kms.go-backend.internal-token:kms-generate-internal-secret-2026}")
     private String internalToken;
 
     public InternalLifecycleController(LifecycleService lifecycleService,
-                                       KeyOperationRecordService keyOperationRecordService) {
+                                       KeyOperationRecordService keyOperationRecordService,
+                                       RedisCache redisCache) {
         this.lifecycleService = lifecycleService;
         this.keyOperationRecordService = keyOperationRecordService;
+        this.redisCache = redisCache;
     }
 
     @GetMapping("/key-status")
@@ -130,10 +134,17 @@ public class InternalLifecycleController {
     }
 
     @PostMapping("/security/reset-login-lock")
-    public Object resetLoginLock(@RequestHeader(value = "X-Internal-Token", required = false) String token) {
+    public Object resetLoginLock(@RequestHeader(value = "X-Internal-Token", required = false) String token,
+                                 @RequestParam(value = "username", required = false) String username) {
         requireAuthorized(token);
-        com.ruoyi.framework.security.service.LoginAttemptService loginAttemptService = com.ruoyi.common.utils.spring.SpringUtils.getBean(com.ruoyi.framework.security.service.LoginAttemptService.class);
-        loginAttemptService.clearAll();
+        if (StringUtils.isNotEmpty(username)) {
+            redisCache.deleteObject(CacheConstants.PWD_ERR_CNT_KEY + username);
+        } else {
+            java.util.Collection<String> keys = redisCache.keys(CacheConstants.PWD_ERR_CNT_KEY + "*");
+            if (keys != null && !keys.isEmpty()) {
+                redisCache.deleteObject(keys);
+            }
+        }
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("code", 200);
         map.put("msg", "success");
