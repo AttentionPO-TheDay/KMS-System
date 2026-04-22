@@ -480,19 +480,19 @@ run_platform_scanner() {
     add_trace "scanner nikto" "GET" "$url" "$code" "scanner" "nikto UA" "$body"
     local nikto_code="$code"
     
-    res=$(invoke_http_request "GET" "$url" "null" "" "Mozilla/5.0 Windows NT 10.0")
-    code="${res%%|||*}"
-    body="${res#*|||}"
-    add_trace "scanner normal-ua" "GET" "$url" "$code" "scanner" "normal UA check" "$body"
-    local normal_code="$code"
-    
-    local reset_url="${LifecycleJavaBaseUrl}/internal/security/reset-blacklist"
+    local reset_url="${LifecycleJavaBaseUrl}/internal/lifecycle/security/reset-blacklist"
     local headers
     headers=$(jq -n --arg t "$InternalToken" '{"X-Internal-Token": $t}')
     res=$(invoke_http_request "POST" "$reset_url" "$headers" "")
     code="${res%%|||*}"
     body="${res#*|||}"
     add_trace "scanner reset" "POST" "$reset_url" "$code" "reset" "clear blacklist" "$body"
+
+    res=$(invoke_http_request "GET" "$url" "null" "" "Mozilla/5.0 Windows NT 10.0")
+    code="${res%%|||*}"
+    body="${res#*|||}"
+    add_trace "scanner normal-ua" "GET" "$url" "$code" "scanner" "normal UA check" "$body"
+    local normal_code="$code"
 
     if [ "$sqlmap_code" != "403" ] || [ "$nikto_code" != "403" ]; then
         res_verdict="vulnerable"
@@ -533,7 +533,7 @@ run_platform_bruteforce() {
         fi
     done
     
-    local reset_url="${LifecycleJavaBaseUrl}/internal/security/reset-login-lock"
+    local reset_url="${LifecycleJavaBaseUrl}/internal/lifecycle/security/reset-login-lock"
     local headers
     headers=$(jq -n --arg t "$InternalToken" '{"X-Internal-Token": $t}')
     local res_reset

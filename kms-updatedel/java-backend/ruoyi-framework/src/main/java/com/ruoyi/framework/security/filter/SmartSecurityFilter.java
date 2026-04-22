@@ -68,7 +68,9 @@ public class SmartSecurityFilter implements Filter {
         String clientIP = getClientIP(httpRequest);
         String requestURI = httpRequest.getRequestURI();
         String userAgent = httpRequest.getHeader("User-Agent");
-        boolean internalResetRequest = requestURI != null && requestURI.startsWith("/internal/security/");
+        boolean internalResetRequest = requestURI != null
+                && (requestURI.startsWith("/internal/security/")
+                        || requestURI.startsWith("/internal/lifecycle/security/"));
 
         // 1. 检查是否在黑名单中
         if (!internalResetRequest && isBlacklisted(clientIP)) {

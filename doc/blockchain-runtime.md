@@ -467,3 +467,127 @@ Java 服务内部通过合约包装器完成以下动作：
 5. **前端看到的是数据库中保存的链上结果快照，而不是直接读链**
 
 因此，这套系统中的“区块链”主要不是为了替代数据库，而是为了给密钥的关键状态变化提供可信、可审计、可追踪的链上依据。
+---
+
+## 16. 故障排查：上链失败 `0x1a (RevertInstruction)`
+
+### 16.1 典型症状
+
+Java 服务日志中出现：
+
+```
+WARN  GenerateChainServiceImpl - FISCO private key not configured, using ephemeral account
+ERROR GenerateChainServiceImpl - KeyId: X 上链失败，状态码: 0x1a, 信息: null
+ERROR ChainTaskConsumer - 密钥生成上链失败: keyId=X
+```
+
+### 16.2 根因
+
+`0x1a` 是 FISCO BCOS 的 `RevertInstruction` 状态码，表示合约内部某个 `require()` 检查失败。在 KMS 场景中，最常见的原因是 **合约的 `onlyOwner` 校验不通过**：
+
+```solidity
+modifier onlyOwner() {
+    require(msg.sender == owner, "only owner");
+    _;
+}
+```
+
+`KeyEvidence` 合约的 `uploadKey`、`rotateKey`、`changeKeyStatus` 都带有 `onlyOwner` 修饰器。`owner` 是部署合约时的账户地址。如果 Java 服务使用的账户不是部署合约的那个账户，所有写操作都会被 revert。
+
+当 `FISCO_PRIVATE_KEY` 环境变量为空时，Java 服务会回退到随机生成的临时账户（ephemeral account），这个临时地址与合约 `owner` 不一致，因此上链必然失败。
+
+### 16.3 为什么 `FISCO_PRIVATE_KEY` 会变空
+
+在环境重建 (`rebuild-env.sh`) 或首次启动时，流程如下：
+
+1. `rebuild-env.sh` 清理 `fisco/live/` 运行态目录
+2. 调用 `start.sh`，从 `fisco/template/` 恢复链节点和 console 配置
+3. `start.sh` 同时从模板状态文件 (`fisco/template/state/.env.template.local`) 恢复 `.env`
+4. 如果模板状态文件中 `FISCO_PRIVATE_KEY` 为空，则 `.env` 中的私钥也为空
+5. 而模板中 `FISCO_CONTRACT_ADDRESS` 可能保留了旧地址（实际在新恢复的空链上不存在）
+
+这导致：
+
+- `start.sh` 看到合约地址已存在，**跳过** `deploy-keyevidence.sh`
+- 私钥没有被提取，Java 服务以空私钥启动
+- 上链时使用临时账户，`onlyOwner` 校验失败
+
+### 16.4 修复方案（已实施）
+
+#### 修复 1：`start.sh` 增加私钥空值检测
+
+`start.sh` 中的自动部署判断从"只检查合约地址"改为"同时检查合约地址和私钥"：
+
+```bash
+# 旧逻辑（只看地址）：
+if ! grep -q '^FISCO_CONTRACT_ADDRESS=0x' .env; then
+    bash ./deploy-keyevidence.sh
+fi
+
+# 新逻辑（地址和私钥都检查）：
+needs_deploy=false
+if ! grep -q '^FISCO_CONTRACT_ADDRESS=0x' .env; then
+    needs_deploy=true
+else
+    fisco_pk=$(grep '^FISCO_PRIVATE_KEY=' .env | tail -n 1 | cut -d '=' -f 2-)
+    if [ -z "$fisco_pk" ]; then
+        needs_deploy=true
+    fi
+fi
+if [ "$needs_deploy" = true ]; then
+    bash ./deploy-keyevidence.sh
+fi
+```
+
+这样即使模板中带了旧合约地址但私钥为空，也会自动触发重新部署。
+
+#### 修复 2：`deploy-keyevidence.sh` 自动回写模板
+
+部署完成后，将合约地址和私钥同步写回 `fisco/template/state/.env.template.local`，保证后续从模板恢复时私钥已经内置在模板中。
+
+#### 修复 3：`fisco/template/console/conf/config.toml` 格式修正
+
+Console 的 SDK 配置从不兼容的格式修正为 FISCO BCOS Java SDK 2.9.x 能正确解析的格式：
+
+| 配置项 | 旧值（不兼容） | 新值（正确） |
+|--------|----------------|--------------|
+| `certPath` | `"."` | `"conf"` |
+| `peers` | `["fisco-node:20200"]` | `["127.0.0.1:20200"]` |
+| `useSsl` | `"true"` | 删除（该字段不被 SDK 识别） |
+| `keyStoreDir` | `"../account"` | `"account"` |
+| `type` | `"pem"` | 改为 `accountFileFormat = "pem"` |
+
+Console 容器与 FISCO 节点共享网络（`network_mode: "service:fisco-node"`），所以 peers 应使用 `127.0.0.1` 而非 `fisco-node`。
+
+### 16.5 手动修复步骤
+
+如果遇到这个问题，不需要重建整个环境，只需运行：
+
+```bash
+cd kms-ops
+bash ./deploy-keyevidence.sh
+```
+
+该脚本会自动：
+
+1. 编译并部署合约（拿到新地址）
+2. 从 console 账户中提取部署者私钥
+3. 写入 `.env`、`fisco/live/contract.env`、模板状态文件
+4. 重启 Java 服务（`generate-java`、`updatedel-java`、`kms-distribute`）
+
+### 16.6 验证上链是否修复
+
+重启后生成一条新密钥，观察 `kms_generate_java` 日志：
+
+```bash
+docker logs kms_generate_java --tail 30 2>&1 | grep -E "上链|uploadKey|chain"
+```
+
+正常应看到：
+
+```
+INFO  - uploadKey calling contract: keyId=X, ...
+INFO  - KeyId: X 上链成功，txHash: 0x..., blockHeight: Y
+```
+
+如果仍然看到 `FISCO private key not configured`，检查 `.env` 中 `FISCO_PRIVATE_KEY` 是否有值，并确认 Java 容器已被 `--force-recreate` 重建。

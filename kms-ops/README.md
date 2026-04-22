@@ -12,23 +12,26 @@
 ## 关键入口
 
 1. `docker-compose.yml`：当前完整编排
-2. `build-local.ps1`：本地构建并整理运行产物
-3. `check.ps1`：启动后检查脚本
-4. `nginx/nginx.conf`：统一网关和静态资源路由
+2. `build-local.ps1` / `build-local.sh`：本地构建并整理运行产物
+3. `start.sh`：从模板恢复 live 运行态并启动整套环境
+4. `rebuild-env.sh`：停服、清空运行数据、重新构建并重启
+5. `check.ps1`：启动后检查脚本
+6. `nginx/nginx.conf`：统一网关和静态资源路由
 
 ## 当前编排服务
 
-1. `mysql`：`3306`
+1. `mysql`：宿主机 `3307` -> 容器 `3306`
 2. `redis`：`6379`
 3. `kafka`：`9092`
 4. `fisco-node`
-5. `generate-go`：`8081`
-6. `generate-java`：`9081`
-7. `updatedel-go`：`8082`
-8. `updatedel-java`：`9082`
-9. `kms-distribute`：`8083`
-10. `acceptance-backend`：`9090`
-11. `nginx`：`80`
+5. `fisco-console`
+6. `generate-go`：`8081`
+7. `generate-java`：`9081`
+8. `updatedel-go`：`8082`
+9. `updatedel-java`：`9082`
+10. `kms-distribute`：`8083`
+11. `acceptance-backend`：`9090`
+12. `nginx`：`80`
 
 ## 当前网关路径
 
@@ -130,16 +133,25 @@ bash ./start.sh
 
 1. 检查 `runtime/` 和前端静态产物是否已构建
 2. 初始化 MySQL / Redis / Kafka 运行目录
-3. 优先从 `kms-ops/fisco/template/` 恢复单节点 FISCO live 数据到 `kms-ops/nodes/`
-4. 从模板恢复或同步链证书到 `kms-ops/fisco/console/conf/`
-5. 启动 Docker 编排
-6. 在本地状态和 `.env` 都缺少合约地址时才自动部署 `KeyEvidence`
-7. 若 `.env` 不存在，则自动从 `.env.example` 初始化
+3. 优先从 `kms-ops/fisco/template/` 恢复单节点 live 数据到 `kms-ops/nodes/127.0.0.1`
+4. 从模板恢复 `kms-ops/fisco/console/conf/`，并把 live 状态中的合约地址同步到 `.env`
+5. 在缺少 console 运行包时，从 `kms-ops/nodes/127.0.0.1` 下载并同步 console 运行包到 `kms-ops/fisco/console/`
+6. 启动 Docker 编排（包含 `fisco-console`）
+7. 仅在 `.env` 与 live 状态都缺少合约地址时才自动部署 `KeyEvidence`
+8. 若 `.env` 不存在，则自动从 `.env.example` 初始化
+
+`rebuild-env.sh` 会执行：
+
+1. `docker compose down`
+2. 清空 MySQL / Redis / Kafka 运行数据
+3. 清空 `kms-ops/nodes/` 与 `kms-ops/fisco/live/` live 运行态
+4. 重新执行 `build-local.sh`
+5. 再执行 `start.sh`
 
 当前 FISCO 目录分两类：
 
-1. `kms-ops/fisco/template/`：仓库内受控的单节点 dev 模板
-2. `kms-ops/nodes/`、`kms-ops/fisco/console/conf/`、`kms-ops/fisco/live/`：运行态目录，默认应忽略，不直接提交
+1. `kms-ops/fisco/template/`：仓库内受控的单节点 dev 模板，除配置外还包含可恢复的节点数据、证书和状态快照
+2. `kms-ops/nodes/`、`kms-ops/fisco/console/conf/`、`kms-ops/fisco/live/`：当前 live 运行态目录
 
 之所以以前容易出现大量无关文件，是因为链节点、console 证书、deploy 日志和合约生成物都属于运行态；如果没有正确隔离到 ignored live 目录，`git status` 会一次性出现很多噪音。
 
@@ -160,6 +172,8 @@ bash ./kms-ops/scripts/init-FBchain.sh
 ```bash
 docker compose down
 ```
+
+补充说明：`start.sh` 末尾的控制台输出里 MySQL 仍打印 `3306`，但当前宿主机实际暴露端口以 `docker-compose.yml` 为准，即 `3307`。
 
 ## 检查方式
 

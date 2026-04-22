@@ -10,9 +10,10 @@
 ## Current Baseline
 
 1. Generate and updatedel Java backends already enable `SmartSecurityFilter`
-2. Login retry lock is configured as `maxRetryCount=5` and `lockTime=10`
+2. Login retry lock in updatedel is configured in `kms-updatedel/java-backend/ruoyi-admin/src/main/resources/application.yml` as `maxRetryCount=5` and `lockTime=10`
 3. `X-Frame-Options` is currently `SAMEORIGIN`, not full deny
 4. Updatedel and generate now both support internal token forwarding to Go backends
+5. Acceptance runtime consumes the copied script at `kms-ops/runtime/acceptance-go/security/security_test.sh`, sourced from the repository root `security/security_test.sh`
 
 ## Automated Security Range (Acceptance UI)
 
@@ -32,7 +33,7 @@ All attacks below are fully integrated into the `kms-acceptance` UI and driven b
 4. **Brute Force:** Login retry lockout mechanism verification
 5. **Clickjacking:** `X-Frame-Options` and CSP `frame-ancestors` verification across endpoints
 
-*Note: The platform protection attacks (Scanner and Brute Force) execute in **Safe Mode**. They will hit the `kms-updatedel` Java backend to trigger the defense, and immediately call the internal `/internal/security/reset-blacklist` and `/internal/security/reset-login-lock` endpoints to clear the state, ensuring the system remains usable for subsequent demonstrations.*
+*Note: The platform protection attacks (Scanner and Brute Force) execute in **Safe Mode**. They hit the `kms-updatedel` Java backend to trigger the defense, then immediately call `/internal/lifecycle/security/reset-blacklist` and `/internal/lifecycle/security/reset-login-lock` to clear the state, ensuring the system remains usable for subsequent demonstrations.*
 
 ## Expected Results
 
@@ -40,6 +41,7 @@ All attacks below are fully integrated into the `kms-acceptance` UI and driven b
 2. **Weak Parameter:** Lower-than-standard bit sizes or deprecated algorithms should fail to generate.
 3. **Malformed Validation:** Bad inputs should be cleanly intercepted via Type/Parse errors without affecting system stability.
 4. **Platform Defenses:** Scanners should be immediately blocked with 403. Brute force attempts should be locked after 5 failures.
+5. **SmartSecurityFilter Window:** Scanner-style traffic should enter a 30-minute blacklist, while abnormal access pattern detection is based on a 5-minute statistics window with 404/403 thresholds.
 
 ## Follow-Up Enhancements
 

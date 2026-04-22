@@ -130,6 +130,16 @@ set_env_value "$LIVE_STATE_FILE" "KMS_CHAIN_RESULT_TOPIC" "key_chain_result"
 
 log_info "Updated local chain state with contract address: $CONTRACT_ADDRESS"
 
+# 同步合约状态到模板，确保 rebuild-env / start.sh 恢复时携带私钥
+TEMPLATE_STATE_DIR="$SCRIPT_DIR/fisco/template/state"
+TEMPLATE_STATE_FILE="$TEMPLATE_STATE_DIR/.env.template.local"
+if [ -f "$TEMPLATE_STATE_FILE" ]; then
+    log_info "Syncing contract state back to template..."
+    set_env_value "$TEMPLATE_STATE_FILE" "FISCO_CONTRACT_ADDRESS" "$CONTRACT_ADDRESS"
+    set_env_value "$TEMPLATE_STATE_FILE" "FISCO_PRIVATE_KEY" "$PRIVATE_KEY_HEX"
+    set_env_value "$TEMPLATE_STATE_FILE" "KMS_CHAIN_RESULT_TOPIC" "key_chain_result"
+fi
+
 log_info "Recreating Java services with unified blockchain config"
 run_compose up -d --force-recreate generate-java updatedel-java kms-distribute
 

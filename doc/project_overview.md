@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-当前仓库已经演进为 6 个当前有效模块和 2 个历史参考目录：
+当前仓库的核心业务目录仍然是 6 个当前有效模块和 2 个历史参考目录，同时还保留若干配套目录：
 
 1. `kms-user/`：统一普通用户前台
 2. `kms-generate/`：密钥生成系统
@@ -12,11 +12,15 @@
 6. `kms-ops/`：共享部署与运维编排
 7. `legacy-kms/`：拆分前的 Java 主工程，仅用于历史追溯
 8. `legacy-kms-go/`：拆分前的 Go 接入服务，仅用于历史追溯
+9. `security/`：安全测试脚本源码目录
+10. `tools/`：辅助工具脚本目录
+11. `kms-public-tunnel/`：配套能力目录
+12. `nodes/`：仓库顶层历史链目录，和当前 `kms-ops/nodes/` live 运行态目录不是一回事
 
 ## 推荐目录结构
 
 ```text
-kms-code-copy/
+kms-code/
 ├── doc/
 ├── kms-user/
 ├── kms-generate/
@@ -24,6 +28,10 @@ kms-code-copy/
 ├── kms-distribute/
 ├── kms-acceptance/
 ├── kms-ops/
+├── kms-public-tunnel/
+├── security/
+├── tools/
+├── nodes/
 ├── legacy-kms/
 └── legacy-kms-go/
 ```

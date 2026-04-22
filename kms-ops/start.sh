@@ -228,8 +228,23 @@ if ! grep -q '^FISCO_CONTRACT_ADDRESS=0x' .env; then
     fi
 fi
 
+# 判断是否需要部署合约：
+# 1. 没有合约地址 → 需要部署
+# 2. 有合约地址但 FISCO_PRIVATE_KEY 为空 → 也需要重新部署（否则上链必然失败）
+needs_deploy=false
 if ! grep -q '^FISCO_CONTRACT_ADDRESS=0x' .env; then
-    echo "[INFO] 未检测到已部署合约地址，开始自动部署 KeyEvidence..."
+    needs_deploy=true
+    echo "[INFO] 未检测到已部署合约地址，需要部署 KeyEvidence..."
+else
+    fisco_pk=$(grep '^FISCO_PRIVATE_KEY=' .env | tail -n 1 | cut -d '=' -f 2-)
+    if [ -z "$fisco_pk" ]; then
+        needs_deploy=true
+        echo "[INFO] FISCO_PRIVATE_KEY 为空，需要重新部署 KeyEvidence 以提取部署账户私钥..."
+    fi
+fi
+
+if [ "$needs_deploy" = true ]; then
+    echo "[INFO] 开始自动部署 KeyEvidence..."
     bash ./deploy-keyevidence.sh
 fi
 

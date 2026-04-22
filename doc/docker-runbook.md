@@ -6,17 +6,18 @@
 
 ## 当前包含的服务
 
-1. `mysql`：共享数据库，端口 `3306`
+1. `mysql`：共享数据库，宿主机端口 `3307`，容器内端口 `3306`
 2. `redis`：共享缓存，端口 `6379`
 3. `kafka`：共享消息队列，端口 `9092`
 4. `fisco-node`：区块链节点
-5. `generate-go`：生成接入层，端口 `8081`
-6. `generate-java`：生成业务层，端口 `9081`
-7. `updatedel-go`：生命周期接入层，端口 `8082`
-8. `updatedel-java`：生命周期业务层，端口 `9082`
-9. `kms-distribute`：分发业务层，端口 `8083`
-10. `acceptance-backend`：验收后端，端口 `9090`
-11. `nginx`：网关，端口 `80`
+5. `fisco-console`：FISCO Console 运行容器
+6. `generate-go`：生成接入层，端口 `8081`
+7. `generate-java`：生成业务层，端口 `9081`
+8. `updatedel-go`：生命周期接入层，端口 `8082`
+9. `updatedel-java`：生命周期业务层，端口 `9082`
+10. `kms-distribute`：分发业务层，端口 `8083`
+11. `acceptance-backend`：验收后端，端口 `9090`
+12. `nginx`：网关，端口 `80`
 
 ## 统一配置口径
 
@@ -79,27 +80,38 @@ bash ./kms-ops/start.sh
 1. `kms-ops/mysql/data/`
 2. `kms-ops/redis/data/`
 3. `kms-ops/kafka/kafka_data/`
-4. 从 `kms-ops/fisco/template/` 恢复单节点 FISCO live 数据到 `kms-ops/nodes/`
+4. 从 `kms-ops/fisco/template/` 恢复单节点 FISCO live 数据到 `kms-ops/nodes/127.0.0.1/`
 5. 从模板恢复 `kms-ops/fisco/console/conf/`
-6. 若 `.env` 不存在，则自动从 `kms-ops/.env.example` 初始化
+6. 将 `kms-ops/fisco/live/contract.env` 或模板状态中的合约地址同步到 `.env`
+7. 若缺少 console 运行包，则通过 `kms-ops/nodes/127.0.0.1/download_console.sh` 下载并同步到 `kms-ops/fisco/console/`
+8. 若 `.env` 不存在，则自动从 `kms-ops/.env.example` 初始化
 
-区块链当前采用单节点持久化模式：
+`rebuild-env.sh` 会执行完整重建：
+
+1. `docker compose down`
+2. 清空 MySQL / Redis / Kafka 数据目录
+3. 清空 `kms-ops/nodes/` 与 `kms-ops/fisco/live/` live 目录
+4. 重新执行 `build-local.sh`
+5. 再执行 `start.sh`
+
+区块链当前采用单节点模板恢复模式：
 
 - 模板目录：`kms-ops/fisco/template/`
-- live 目录：`kms-ops/nodes/127.0.0.1/`
+- live 节点目录：`kms-ops/nodes/127.0.0.1/`
+- live 状态目录：`kms-ops/fisco/live/`
 
 普通重置不再默认重新 build chain；只有模板不存在或显式执行手动兜底脚本时，才会从零重建单节点链。
 
 为什么之前一次重置会出现很多文件：
 
-1. 顶层 `nodes/` 曾经作为生成目录出现，但没有始终被正确隔离
-2. `kms-ops/fisco/console/conf/`、`deploylog.txt`、合约 ABI/Java SDK 生成物都属于运行态
-3. 一旦执行链重建或重新部署，这些状态文件会成批出现在工作区
+1. `kms-ops/nodes/` 是当前 live 节点目录，执行链恢复、console 下载或重新部署时会生成运行态文件
+2. `kms-ops/fisco/console/conf/`、`kms-ops/fisco/live/contract.env`、deploy 日志和合约生成物都属于运行态
+3. 仓库顶层 `nodes/` 仍然存在历史残留目录名，阅读文档和脚本时需要和 `kms-ops/nodes/` 区分开
 
 现在的推荐口径是：
 
 - **提交模板**：`kms-ops/fisco/template/`
-- **忽略 live**：`kms-ops/nodes/`、`kms-ops/fisco/console/conf/`、`kms-ops/fisco/live/` 等
+- **live 运行态目录**：`kms-ops/nodes/`、`kms-ops/fisco/console/conf/`、`kms-ops/fisco/live/`
 
 停止：
 

@@ -1,14 +1,13 @@
 [cryptoMaterial]
-certPath = "."
+certPath = "conf"
 disableSsl = "false"
-useSsl = "true"
 
 [network]
-peers=["fisco-node:20200"]
+peers=["127.0.0.1:20200"]
 
 [account]
-keyStoreDir = "../account"
-type = "pem"
+keyStoreDir = "account"
+accountFileFormat = "pem"
 
 [threadPool]
 channelProcessorThreadSize = "16"
