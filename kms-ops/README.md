@@ -130,11 +130,30 @@ bash ./start.sh
 
 1. 检查 `runtime/` 和前端静态产物是否已构建
 2. 初始化 MySQL / Redis / Kafka 运行目录
-3. 生成单节点 FISCO 数据到 `kms-ops/nodes/`
-4. 同步链证书到 `kms-ops/fisco/console/conf/`
+3. 优先从 `kms-ops/fisco/template/` 恢复单节点 FISCO live 数据到 `kms-ops/nodes/`
+4. 从模板恢复或同步链证书到 `kms-ops/fisco/console/conf/`
 5. 启动 Docker 编排
-6. 在 `.env` 尚未写入合约地址时自动部署 `KeyEvidence`
+6. 在本地状态和 `.env` 都缺少合约地址时才自动部署 `KeyEvidence`
 7. 若 `.env` 不存在，则自动从 `.env.example` 初始化
+
+当前 FISCO 目录分两类：
+
+1. `kms-ops/fisco/template/`：仓库内受控的单节点 dev 模板
+2. `kms-ops/nodes/`、`kms-ops/fisco/console/conf/`、`kms-ops/fisco/live/`：运行态目录，默认应忽略，不直接提交
+
+之所以以前容易出现大量无关文件，是因为链节点、console 证书、deploy 日志和合约生成物都属于运行态；如果没有正确隔离到 ignored live 目录，`git status` 会一次性出现很多噪音。
+
+如需刷新当前模板，请执行：
+
+```bash
+bash ./kms-ops/scripts/refresh-fisco-template.sh
+```
+
+如需手动从零重建单节点链并刷新模板，请执行：
+
+```bash
+bash ./kms-ops/scripts/init-FBchain.sh
+```
 
 停止：
 

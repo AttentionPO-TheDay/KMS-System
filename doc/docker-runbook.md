@@ -74,16 +74,32 @@ bash ./kms-ops/build-local.sh
 bash ./kms-ops/start.sh
 ```
 
-`start.sh` 会在新服务器首次启动时自动生成运行态数据，包括：
+`start.sh` 会在首次启动或 live 目录缺失时恢复运行态数据，包括：
 
 1. `kms-ops/mysql/data/`
 2. `kms-ops/redis/data/`
 3. `kms-ops/kafka/kafka_data/`
-4. `kms-ops/nodes/` 下的单节点 FISCO 数据
-5. `kms-ops/fisco/console/account/` 与 `deploylog.txt`
+4. 从 `kms-ops/fisco/template/` 恢复单节点 FISCO live 数据到 `kms-ops/nodes/`
+5. 从模板恢复 `kms-ops/fisco/console/conf/`
 6. 若 `.env` 不存在，则自动从 `kms-ops/.env.example` 初始化
 
-区块链当前采用单节点持久化模式，节点数据统一保存在 `kms-ops/nodes/127.0.0.1/`。
+区块链当前采用单节点持久化模式：
+
+- 模板目录：`kms-ops/fisco/template/`
+- live 目录：`kms-ops/nodes/127.0.0.1/`
+
+普通重置不再默认重新 build chain；只有模板不存在或显式执行手动兜底脚本时，才会从零重建单节点链。
+
+为什么之前一次重置会出现很多文件：
+
+1. 顶层 `nodes/` 曾经作为生成目录出现，但没有始终被正确隔离
+2. `kms-ops/fisco/console/conf/`、`deploylog.txt`、合约 ABI/Java SDK 生成物都属于运行态
+3. 一旦执行链重建或重新部署，这些状态文件会成批出现在工作区
+
+现在的推荐口径是：
+
+- **提交模板**：`kms-ops/fisco/template/`
+- **忽略 live**：`kms-ops/nodes/`、`kms-ops/fisco/console/conf/`、`kms-ops/fisco/live/` 等
 
 停止：
 

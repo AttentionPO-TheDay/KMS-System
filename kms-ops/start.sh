@@ -8,6 +8,14 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
 DOCKER_COMPOSE=()
+FISCO_TEMPLATE_ROOT="$SCRIPT_DIR/fisco/template"
+FISCO_TEMPLATE_NODE_ROOT="$FISCO_TEMPLATE_ROOT/nodes/127.0.0.1"
+FISCO_TEMPLATE_CONSOLE_CONF="$FISCO_TEMPLATE_ROOT/console/conf"
+FISCO_TEMPLATE_STATE_ENV="$FISCO_TEMPLATE_ROOT/state/.env.template.local"
+FISCO_LIVE_NODE_ROOT="$SCRIPT_DIR/nodes/127.0.0.1"
+FISCO_LIVE_CONSOLE_CONF="$SCRIPT_DIR/fisco/console/conf"
+FISCO_LIVE_STATE_DIR="$SCRIPT_DIR/fisco/live"
+FISCO_LIVE_STATE_ENV="$FISCO_LIVE_STATE_DIR/contract.env"
 
 init_docker_compose() {
     if docker compose version >/dev/null 2>&1; then
@@ -41,11 +49,100 @@ run_compose() {
     "${DOCKER_COMPOSE[@]}" "$@"
 }
 
+restore_dir_from_template() {
+    local source_dir="$1"
+    local target_dir="$2"
+    local label="$3"
+
+    if [ ! -d "$source_dir" ]; then
+        echo "[ERROR] 缺少${label}模板目录: $source_dir" >&2
+        return 1
+    fi
+
+    echo "[INFO] 从模板恢复${label}..."
+    rm -rf "$target_dir"
+    mkdir -p "$target_dir"
+    cp -a "$source_dir/." "$target_dir/"
+}
+
+ensure_writable_dir() {
+    local target_dir="$1"
+
+    if [ -d "$target_dir" ] && [ ! -w "$target_dir" ]; then
+        rm -rf "$target_dir"
+    fi
+
+    mkdir -p "$target_dir"
+}
+
+ensure_dotenv_value() {
+    local key="$1"
+    local value="$2"
+
+    if grep -q "^${key}=" .env; then
+        python3 - "$key" "$value" .env <<'PY'
+import sys
+from pathlib import Path
+key, value, path = sys.argv[1:4]
+p = Path(path)
+lines = p.read_text().splitlines()
+out = []
+for line in lines:
+    if line.startswith(f"{key}="):
+        out.append(f"{key}={value}")
+    else:
+        out.append(line)
+p.write_text("\n".join(out) + "\n")
+PY
+    else
+        printf '\n%s=%s\n' "$key" "$value" >> .env
+    fi
+}
+
+sync_contract_env_from_state() {
+    local state_file="$1"
+
+    if [ ! -f "$state_file" ]; then
+        return 0
+    fi
+
+    local contract_address
+    local private_key
+    contract_address=$(grep '^FISCO_CONTRACT_ADDRESS=' "$state_file" | tail -n 1 | cut -d '=' -f 2-)
+    private_key=$(grep '^FISCO_PRIVATE_KEY=' "$state_file" | tail -n 1 | cut -d '=' -f 2-)
+
+    if [ -n "$contract_address" ]; then
+        ensure_dotenv_value "FISCO_CONTRACT_ADDRESS" "$contract_address"
+    fi
+    if [ -n "$private_key" ]; then
+        ensure_dotenv_value "FISCO_PRIVATE_KEY" "$private_key"
+    fi
+}
+
+restore_fisco_live_state() {
+    ensure_writable_dir "$FISCO_LIVE_STATE_DIR"
+
+    if [ ! -f "$FISCO_LIVE_NODE_ROOT/node0/start.sh" ]; then
+        restore_dir_from_template "$FISCO_TEMPLATE_NODE_ROOT" "$FISCO_LIVE_NODE_ROOT" "单节点链"
+        sed -i 's/listen_ip=127.0.0.1/listen_ip=0.0.0.0/g' "$FISCO_LIVE_NODE_ROOT"/node*/config.ini 2>/dev/null || true
+    fi
+
+    if [ ! -f "$FISCO_LIVE_CONSOLE_CONF/ca.crt" ] || [ ! -f "$FISCO_LIVE_CONSOLE_CONF/sdk.crt" ] || [ ! -f "$FISCO_LIVE_CONSOLE_CONF/sdk.key" ]; then
+        restore_dir_from_template "$FISCO_TEMPLATE_CONSOLE_CONF" "$FISCO_LIVE_CONSOLE_CONF" "FISCO console 配置"
+    fi
+
+    if [ -f "$FISCO_LIVE_STATE_ENV" ]; then
+        sync_contract_env_from_state "$FISCO_LIVE_STATE_ENV"
+    elif [ -f "$FISCO_TEMPLATE_STATE_ENV" ]; then
+        cp "$FISCO_TEMPLATE_STATE_ENV" "$FISCO_LIVE_STATE_ENV"
+        sync_contract_env_from_state "$FISCO_LIVE_STATE_ENV"
+    fi
+}
+
 echo "=========================================="
 echo "  KMS-OPS 双系统启动脚本"
 echo "=========================================="
 
-# 检查 compose 文件是否存在
 if [ ! -f "docker-compose.yml" ]; then
     echo "[ERROR] docker-compose.yml not found!"
     exit 1
@@ -61,10 +158,10 @@ if [ ! -f ".env" ]; then
     fi
 fi
 
-# 创建必要的目录
 echo "[INFO] 创建必要的数据目录..."
 mkdir -p mysql/data mysql/init redis/data kafka/kafka_data
 mkdir -p fisco/console/account fisco/console/accounts fisco/console/log
+mkdir -p fisco/live
 mkdir -p nginx/logs
 mkdir -p front/generate front/updatedel front/distribute front/user front/acceptance
 mkdir -p runtime/generate-go runtime/generate-java runtime/updatedel-go runtime/updatedel-java runtime/distribute-java runtime/acceptance-go
@@ -85,12 +182,7 @@ if [ ! -f "runtime/generate-go/kms-generate-service" ] \
     exit 1
 fi
 
-if [ ! -f "nodes/127.0.0.1/node0/start.sh" ]; then
-    echo "[INFO] 未检测到单节点 FISCO 数据，开始生成节点文件..."
-    rm -rf nodes
-    bash ./fisco/build_chain.sh -l "127.0.0.1:1" -p 30300,20200,8545
-    sed -i 's/listen_ip=127.0.0.1/listen_ip=0.0.0.0/g' nodes/127.0.0.1/node*/config.ini
-fi
+restore_fisco_live_state
 
 if [ ! -d "fisco/console/apps" ] || [ ! -d "fisco/console/lib" ]; then
     echo "[INFO] 未检测到 FISCO Console 运行包，开始下载并初始化..."
@@ -115,8 +207,6 @@ if ! chmod -R 0777 kafka/kafka_data 2>/dev/null; then
     echo "[WARN] 无法修改 kafka/kafka_data 权限，继续使用现有权限..."
 fi
 
-# 启动所有容器
-# build-local.sh 会重建 runtime/front 目录，绑定挂载需要重建容器才能看到新 inode。
 echo "[INFO] 启动所有容器..."
 run_compose up -d --force-recreate \
     fisco-node \
@@ -129,16 +219,20 @@ run_compose up -d --force-recreate \
     acceptance-backend \
     nginx
 
-# 等待中间件就绪
 echo "[INFO] 等待中间件启动..."
 sleep 5
+
+if ! grep -q '^FISCO_CONTRACT_ADDRESS=0x' .env; then
+    if [ -f "$FISCO_LIVE_STATE_ENV" ]; then
+        sync_contract_env_from_state "$FISCO_LIVE_STATE_ENV"
+    fi
+fi
 
 if ! grep -q '^FISCO_CONTRACT_ADDRESS=0x' .env; then
     echo "[INFO] 未检测到已部署合约地址，开始自动部署 KeyEvidence..."
     bash ./deploy-keyevidence.sh
 fi
 
-# 检查容器状态
 echo ""
 echo "[INFO] 容器状态:"
 run_compose ps

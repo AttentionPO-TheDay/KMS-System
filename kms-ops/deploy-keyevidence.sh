@@ -40,6 +40,8 @@ run_compose() {
 }
 
 ENV_FILE="$SCRIPT_DIR/.env"
+LIVE_STATE_DIR="$SCRIPT_DIR/fisco/live"
+LIVE_STATE_FILE="$LIVE_STATE_DIR/contract.env"
 CONSOLE_SERVICE="fisco-console"
 CONSOLE_WORKDIR="/app"
 
@@ -59,12 +61,13 @@ require_file() {
 }
 
 set_env_value() {
-    local key="$1"
-    local value="$2"
-    if grep -q "^${key}=" "$ENV_FILE"; then
-        sed -i "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
+    local file="$1"
+    local key="$2"
+    local value="$3"
+    if grep -q "^${key}=" "$file"; then
+        sed -i "s|^${key}=.*|${key}=${value}|" "$file"
     else
-        printf '\n%s=%s\n' "$key" "$value" >> "$ENV_FILE"
+        printf '\n%s=%s\n' "$key" "$value" >> "$file"
     fi
 }
 
@@ -90,6 +93,7 @@ wait_console_ready() {
 
 require_file "$ENV_FILE"
 require_file "$SCRIPT_DIR/docker-compose.yml"
+mkdir -p "$LIVE_STATE_DIR"
 
 log_info "Ensuring FISCO node and console are running"
 run_compose up -d fisco-node "$CONSOLE_SERVICE"
@@ -117,11 +121,14 @@ if [ -z "$PRIVATE_KEY_HEX" ]; then
     exit 1
 fi
 
-set_env_value "FISCO_CONTRACT_ADDRESS" "$CONTRACT_ADDRESS"
-set_env_value "FISCO_PRIVATE_KEY" "$PRIVATE_KEY_HEX"
-set_env_value "KMS_CHAIN_RESULT_TOPIC" "key_chain_result"
+set_env_value "$ENV_FILE" "FISCO_CONTRACT_ADDRESS" "$CONTRACT_ADDRESS"
+set_env_value "$ENV_FILE" "FISCO_PRIVATE_KEY" "$PRIVATE_KEY_HEX"
+set_env_value "$ENV_FILE" "KMS_CHAIN_RESULT_TOPIC" "key_chain_result"
+set_env_value "$LIVE_STATE_FILE" "FISCO_CONTRACT_ADDRESS" "$CONTRACT_ADDRESS"
+set_env_value "$LIVE_STATE_FILE" "FISCO_PRIVATE_KEY" "$PRIVATE_KEY_HEX"
+set_env_value "$LIVE_STATE_FILE" "KMS_CHAIN_RESULT_TOPIC" "key_chain_result"
 
-log_info "Updated .env with contract address: $CONTRACT_ADDRESS"
+log_info "Updated local chain state with contract address: $CONTRACT_ADDRESS"
 
 log_info "Recreating Java services with unified blockchain config"
 run_compose up -d --force-recreate generate-java updatedel-java kms-distribute

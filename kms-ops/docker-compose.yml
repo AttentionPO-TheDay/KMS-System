@@ -154,6 +154,7 @@ services:
       - GO_BACKEND_URL=http://generate-go:8081
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
       - FISCO_HOST=fisco-node
+      - FISCO_CONTRACT_ADDRESS=${FISCO_CONTRACT_ADDRESS:-}
       - FISCO_PRIVATE_KEY=${FISCO_PRIVATE_KEY:-}
       - KMS_CHAIN_TOPIC=${KMS_CHAIN_TOPIC:-key_chain_task}
       - KMS_CHAIN_RESULT_TOPIC=${KMS_CHAIN_RESULT_TOPIC:-key_chain_result}
@@ -221,6 +222,7 @@ services:
       - DB_PASSWORD=root123456
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
       - FISCO_HOST=fisco-node
+      - FISCO_CONTRACT_ADDRESS=${FISCO_CONTRACT_ADDRESS:-}
       - FISCO_PRIVATE_KEY=${FISCO_PRIVATE_KEY:-}
       - KMS_CHAIN_TOPIC=${KMS_CHAIN_TOPIC:-key_chain_task}
       - KMS_CHAIN_RESULT_TOPIC=${KMS_CHAIN_RESULT_TOPIC:-key_chain_result}

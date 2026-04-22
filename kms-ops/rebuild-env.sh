@@ -7,6 +7,8 @@ COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yml"
 MYSQL_DATA_DIR="$SCRIPT_DIR/mysql/data"
 REDIS_DATA_DIR="$SCRIPT_DIR/redis/data"
 KAFKA_DATA_DIR="$SCRIPT_DIR/kafka/kafka_data"
+FISCO_LIVE_NODE_DIR="$SCRIPT_DIR/nodes"
+FISCO_LIVE_STATE_DIR="$SCRIPT_DIR/fisco/live"
 DOCKER_CMD=()
 DOCKER_COMPOSE=()
 
@@ -62,7 +64,11 @@ run_compose() {
 clear_dir_with_helper() {
   local target="$1"
   mkdir -p "$target"
-  run_docker run --rm -v "$target:/target" alpine sh -lc 'rm -rf /target/* /target/.[!.]* /target/..?* 2>/dev/null || true'
+  run_docker run --rm \
+    -e HOST_UID="$(id -u)" \
+    -e HOST_GID="$(id -g)" \
+    -v "$target:/target" \
+    alpine sh -lc 'rm -rf /target/* /target/.[!.]* /target/..?* 2>/dev/null || true && chown "$HOST_UID:$HOST_GID" /target'
 }
 
 echo "=========================================="
@@ -77,10 +83,14 @@ clear_dir_with_helper "$MYSQL_DATA_DIR"
 clear_dir_with_helper "$REDIS_DATA_DIR"
 clear_dir_with_helper "$KAFKA_DATA_DIR"
 
+echo "[INFO] 清理 FISCO live 运行态，后续将从模板恢复..."
+clear_dir_with_helper "$FISCO_LIVE_NODE_DIR"
+clear_dir_with_helper "$FISCO_LIVE_STATE_DIR"
+
 echo "[INFO] 重新构建本地产物..."
 bash "$SCRIPT_DIR/build-local.sh"
 
-echo "[INFO] 重新启动环境..."
+echo "[INFO] 从模板恢复并重新启动环境..."
 bash "$SCRIPT_DIR/start.sh"
 
 echo "[INFO] 环境重建完成。"

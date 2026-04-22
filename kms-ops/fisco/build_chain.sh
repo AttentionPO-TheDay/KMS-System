@@ -62,7 +62,7 @@ help() {
     cat << EOF
 Usage:
     -l <IP list>                        [Required] "ip1:nodeNum1,ip2:nodeNum2" e.g:"192.168.0.1:2,192.168.0.2:3"
-    -f <IP list file>                   [Optional] split by line, every line should be "ip:nodeNum agencyName groupList p2p_port,channel_port,jsonrpc_port". eg "127.0.0.1:4 agency1 1,2 30300,20200,8545"
+    -f <IP list file>                   [Optional] split by line, every line should be "ip:nodeNum agencyName groupList p2p_port,channel_port,jsonrpc_port". eg "127.0.0.1:1 agency1 1,2 30300,20200,8545"
     -v <FISCO-BCOS binary version>      Default is the latest v${default_version}
     -e <FISCO-BCOS binary path>         Default download fisco-bcos from GitHub. If set -e, use the binary at the specified location
     -o <Output Dir>                     Default ./nodes/
@@ -89,7 +89,7 @@ Usage:
     -E <Enable free_storage_evm>        Default off. If set -E, enable free_storage_evm
     -h Help
 e.g
-    bash $0 -l "127.0.0.1:4"
+    bash $0 -l "127.0.0.1:1"
 EOF
 
 exit 0

@@ -48,18 +48,24 @@ yarn-error.log
 *.tmp
 
 # Miscellaneous
+/nodes/
 /kms-ops/mysql/data/
 /kms-ops/kafka/kafka_data/
 /kms-ops/fisco/nodes/
 /kms-ops/nodes/
+/kms-ops/fisco/live/
 /kms-ops/fisco/console/account/
 /kms-ops/fisco/console/accounts/
 /kms-ops/fisco/console/log/
 /kms-ops/fisco/console/deploylog.txt
 /kms-ops/fisco/console/contracts/.compiled/
+/kms-ops/fisco/console/contracts/sdk/abi/
+/kms-ops/fisco/console/contracts/sdk/java/
+/kms-ops/fisco/contracts/compiled/
 /kms-ops/fisco/console/conf/*.crt
 /kms-ops/fisco/console/conf/*.key
 /kms-ops/fisco/console/conf/*.pem
+/kms-ops/fisco/console/conf/config.toml
 /kms-ops/fisco/webase-front/log/
 /kms-ops/.env
 /kms-ops/nginx/logs/
@@ -70,6 +76,10 @@ yarn-error.log
 /kms-ops/front/user/
 /kms-ops/front/acceptance/
 /kms-ops/redis/data/
+
+# Tracked FISCO template
+!/kms-ops/fisco/template/
+!/kms-ops/fisco/template/**
 
 # Temp files
 tmp.go

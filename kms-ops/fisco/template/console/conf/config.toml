@@ -1,0 +1,16 @@
+[cryptoMaterial]
+certPath = "."
+disableSsl = "false"
+useSsl = "true"
+
+[network]
+peers=["fisco-node:20200"]
+
+[account]
+keyStoreDir = "../account"
+type = "pem"
+
+[threadPool]
+channelProcessorThreadSize = "16"
+receiptProcessorThreadSize = "16"
+maxBlockingQueueSize = "102400"
