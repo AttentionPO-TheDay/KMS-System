@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>KMS 架构图复刻</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 40px;
+            background: #f5f5f7;
+            font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        }
+        .diagram-container {
+            position: relative;
+            width: 1200px;
+            height: 460px;
+            margin: 0 auto;
+            background: #ffffff;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .box {
+            position: absolute;
+            box-sizing: border-box;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            font-size: 12px;
+            color: #333;
+        }
+        .border-box {
+            border: 1px solid #ff7800;
+            border-radius: 2px;
+            background: #fff;
+        }
+        .solid-orange {
+            background: #ff7800;
+            color: #fff;
+            border-radius: 2px;
+        }
+        .dashed-box {
+            border: 1px dashed #ff9d52;
+            background: #fff8f3;
+        }
+        .vpc-box {
+            border: 1px solid #ff9d52;
+            background: #fffcf9;
+        }
+        .title-text {
+            position: absolute;
+            font-size: 14px;
+            font-weight: bold;
+            color: #ff7800;
+        }
+        .small-text {
+            font-size: 11px;
+            color: #444;
+            line-height: 1.6;
+        }
+    </style>
+</head>
+<body>
+
+<div class="diagram-container">
+    <!-- SVG 连线层 -->
+    <svg width="1200" height="460" style="position: absolute; top: 0; left: 0; pointer-events: none; z-index: 10;">
+        <defs>
+            <!-- 定义正向箭头 -->
+            <marker id="arrowhead" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#333" />
+            </marker>
+            <!-- 定义反向箭头 (用于双向线) -->
+            <marker id="arrowhead-start" viewBox="0 0 10 10" refX="0" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M 10 0 L 0 5 L 10 10 z" fill="#333" />
+            </marker>
+        </defs>
+
+        <!-- 顶部客户端到网关连线 -->
+        <line x1="100" y1="70" x2="100" y2="110" stroke="#333" marker-start="url(#arrowhead-start)" marker-end="url(#arrowhead)"/>
+        <line x1="175" y1="70" x2="175" y2="110" stroke="#333" marker-start="url(#arrowhead-start)" marker-end="url(#arrowhead)"/>
+        <line x1="250" y1="70" x2="250" y2="110" stroke="#333" marker-start="url(#arrowhead-start)" marker-end="url(#arrowhead)"/>
+        <line x1="380" y1="70" x2="380" y2="110" stroke="#333" marker-start="url(#arrowhead-start)" marker-end="url(#arrowhead)"/>
+        
+        <!-- KMS 网关向下分发到共享版 -->
+        <polyline points="250,145 250,165 365,165 365,220" fill="none" stroke="#333" marker-end="url(#arrowhead)"/>
+        <polyline points="250,165 215,165 215,220" fill="none" stroke="#333" marker-end="url(#arrowhead)"/>
+
+        <!-- KMS 网关向右到 VPC (专属版) -->
+        <polyline points="460,128 500,128 500,208" fill="none" stroke="#333"/>
+        <line x1="500" y1="128" x2="530" y2="128" stroke="#333" marker-end="url(#arrowhead)"/>
+        <line x1="500" y1="168" x2="530" y2="168" stroke="#333" marker-end="url(#arrowhead)"/>
+        <line x1="500" y1="208" x2="530" y2="208" stroke="#333" marker-end="url(#arrowhead)"/>
+
+        <!-- 共享版内部连线 -->
+        <line x1="130" y1="235" x2="160" y2="235" stroke="#333" marker-start="url(#arrowhead-start)" marker-end="url(#arrowhead)"/>
+        <line x1="215" y1="250" x2="215" y2="270" stroke="#333" marker-start="url(#arrowhead-start)" marker-end="url(#arrowhead)"/>
+        <line x1="365" y1="250" x2="365" y2="270" stroke="#333" marker-start="url(#arrowhead-start)" marker-end="url(#arrowhead)"/>
+
+        <!-- VPC内部: 专属版到云密码机连线 -->
+        <line x1="690" y1="168" x2="760" y2="168" stroke="#333" marker-start="url(#arrowhead-start)" marker-end="url(#arrowhead)"/>
+
+        <!-- 底部应用层/集成到 VPC 连线 -->
+        <line x1="560" y1="181" x2="560" y2="300" stroke="#333" marker-start="url(#arrowhead-start)" marker-end="url(#arrowhead)"/>
+        <line x1="640" y1="221" x2="640" y2="300" stroke="#333" marker-start="url(#arrowhead-start)" marker-end="url(#arrowhead)"/>
+        <line x1="780" y1="255" x2="780" y2="300" stroke="#333" marker-start="url(#arrowhead-start)" marker-end="url(#arrowhead)"/>
+        <line x1="910" y1="300" x2="910" y2="255" stroke="#333" marker-end="url(#arrowhead)"/>
+
+        <!-- 到达右侧安全管理员的连线 -->
+        <polyline points="910,157 960,157 960,260 990,260" fill="none" stroke="#333" marker-end="url(#arrowhead)"/>
+        <line x1="1050" y1="280" x2="1050" y2="310" stroke="#333" marker-end="url(#arrowhead)"/>
+    </svg>
+
+    <!-- ====== 顶部区域 ====== -->
+    <div class="box border-box" style="left: 70px; top: 40px; width: 60px; height: 30px;">控制台</div>
+    <div class="box border-box" style="left: 145px; top: 40px; width: 60px; height: 30px;">CLI</div>
+    <div class="box border-box" style="left: 220px; top: 40px; width: 60px; height: 30px;">SDK</div>
+    
+    <!-- 其他阿里云云服务 (层叠效果) -->
+    <div class="box solid-orange" style="left: 320px; top: 20px; width: 140px; height: 40px; border-radius: 4px;"></div>
+    <div class="box solid-orange" style="left: 315px; top: 25px; width: 140px; height: 40px; border-radius: 4px;"></div>
+    <div class="box solid-orange" style="left: 310px; top: 30px; width: 140px; height: 40px; z-index: 2; border-radius: 4px;">其他阿里云云服务</div>
+    
+    <!-- 连线旁边的文字 -->
+    <div style="position: absolute; left: 395px; top: 85px; font-size: 10px; color: #ff7800; z-index: 5; background: #fff; padding: 2px;">落盘加密</div>
+
+    <!-- ====== KMS 网关服务 ====== -->
+    <div class="box solid-orange" style="left: 40px; top: 110px; width: 420px; height: 35px; flex-direction: row; justify-content: center;">
+        <svg width="24" height="24" viewBox="0 0 24 24" style="position:absolute; left: 15px;">
+            <circle cx="12" cy="12" r="10" fill="none" stroke="#fff" stroke-width="1.5"/>
+            <circle cx="12" cy="9" r="3" fill="none" stroke="#fff" stroke-width="1.5"/>
+            <path d="M 12 12 L 12 18 M 12 15 L 15 15 M 12 17 L 15 17" stroke="#fff" stroke-width="1.5"/>
+        </svg>
+        <span style="font-size: 14px; font-weight:bold;">KMS 网关服务</span>
+    </div>
+
+    <!-- ====== KMS 共享版 ====== -->
+    <div class="box dashed-box" style="left: 40px; top: 180px; width: 420px; height: 150px;"></div>
+    <div class="title-text" style="left: 40px; top: 195px; width: 420px; text-align: center;">KMS 共享版</div>
+    
+    <!-- 加密存储的 CMK 圆柱体 -->
+    <div class="box" style="left: 60px; top: 220px; width: 70px; height: 80px;">
+        <svg width="70" height="60" viewBox="0 0 70 60">
+            <path d="M 15 15 L 15 45 A 20 10 0 0 0 55 45 L 55 15" fill="#fff" stroke="#ff7800" stroke-width="1.5"/>
+            <ellipse cx="35" cy="15" rx="20" ry="10" fill="#fff" stroke="#ff7800" stroke-width="1.5"/>
+            <path d="M 15 25 A 20 10 0 0 0 55 25" fill="none" stroke="#ff7800" stroke-width="1"/>
+        </svg>
+        <div style="position:absolute; top: 28px; width: 100%; text-align: center; font-size: 10px; line-height: 1.2;">加密存储的<br>CMK</div>
+    </div>
+    
+    <div class="box border-box" style="left: 160px; top: 220px; width: 110px; height: 30px;">密钥管理系统</div>
+    <div class="box border-box" style="left: 310px; top: 220px; width: 110px; height: 30px;">加解密服务</div>
+    <div class="box border-box" style="left: 160px; top: 270px; width: 260px; height: 30px;">密码机 (HSM) 资源池</div>
+
+    <!-- ====== 专有网络 (VPC) ====== -->
+    <div class="box vpc-box" style="left: 490px; top: 30px; width: 480px; height: 240px; align-items: flex-start; justify-content: flex-start;"></div>
+    <div class="title-text" style="left: 505px; top: 40px; display: flex; align-items: center; gap: 5px;">
+        <svg width="24" height="16" viewBox="0 0 24 16">
+            <path d="M 6 14 A 4 4 0 0 1 6 6 A 6 6 0 0 1 18 6 A 4 4 0 0 1 18 14 Z" fill="#ff7800"/>
+        </svg>
+        专有网络 (VPC)
+    </div>
+
+    <!-- 专属版实例 -->
+    <div class="box dashed-box" style="left: 510px; top: 80px; width: 180px; height: 175px;"></div>
+    <div class="title-text" style="left: 510px; top: 90px; width: 180px; text-align: center; font-size: 12px;">KMS 专属版标准版实例</div>
+    
+    <div class="box border-box" style="left: 530px; top: 115px; width: 140px; height: 26px;">密钥管理系统</div>
+    <div class="box border-box" style="left: 530px; top: 155px; width: 140px; height: 26px;">应用加密服务</div>
+    <div class="box border-box" style="left: 530px; top: 195px; width: 140px; height: 26px; color: #666;">
+        <svg width="10" height="10" viewBox="0 0 10 10" style="position:absolute; left: 5px;"><polygon points="0,5 10,0 10,10" fill="#888"/></svg>
+        凭据管家 (可选组件)
+    </div>
+
+    <!-- 访问密码机凭证字样 -->
+    <div class="box" style="left: 695px; top: 145px; width: 60px; height: 46px; background: #fffcf9; z-index: 5; font-size: 10px; line-height: 1.1;">
+        访问<br>密码<br>机的<br>授权<br>凭证
+    </div>
+
+    <!-- 云密码机 -->
+    <div class="box dashed-box" style="left: 760px; top: 80px; width: 190px; height: 175px;"></div>
+    <div class="title-text" style="left: 760px; top: 90px; width: 190px; text-align: center; font-size: 12px;">阿里云加密服务 (云密码机)</div>
+    
+    <!-- HSM堆叠 -->
+    <div class="box border-box" style="left: 800px; top: 130px; width: 120px; height: 35px;"></div>
+    <div class="box border-box" style="left: 795px; top: 135px; width: 120px; height: 35px;"></div>
+    <div class="box border-box" style="left: 790px; top: 140px; width: 120px; height: 35px; z-index: 2;">密码机实例 (HSM)</div>
+
+    <!-- ====== 底部集成层 ====== -->
+    <!-- 应用层数据加解密 -->
+    <div class="box" style="left: 510px; top: 300px; width: 180px; height: 120px; flex-direction: column;">
+        <div style="color: #ff7800; font-weight: bold; margin-bottom: 15px;">应用层数据加解密</div>
+        <div style="display: flex; gap: 10px;">
+            <svg width="30" height="30" viewBox="0 0 30 30">
+                <rect x="2" y="2" width="10" height="10" fill="none" stroke="#f39c12" stroke-width="2"/>
+                <rect x="16" y="2" width="10" height="10" fill="none" stroke="#f39c12" stroke-width="2"/>
+                <rect x="2" y="16" width="10" height="10" fill="none" stroke="#f39c12" stroke-width="2"/>
+                <rect x="16" y="16" width="10" height="10" fill="none" stroke="#f39c12" stroke-width="2"/>
+            </svg>
+            <svg width="30" height="30" viewBox="0 0 30 30">
+                <polygon points="15,2 28,9 28,21 15,28 2,21 2,9" fill="none" stroke="#f39c12" stroke-width="2"/>
+                <polyline points="15,15 15,2 15,15 4,21 15,15 26,21" fill="none" stroke="#f39c12" stroke-width="2"/>
+            </svg>
+            <svg width="30" height="30" viewBox="0 0 30 30">
+                <rect x="2" y="5" width="26" height="20" fill="none" stroke="#f39c12" stroke-width="2"/>
+                <polyline points="2,15 10,15 15,8 20,22 25,15 28,15" fill="none" stroke="#f39c12" stroke-width="2"/>
+            </svg>
+        </div>
+    </div>
+
+    <!-- TLS/SSL -->
+    <div class="box" style="left: 730px; top: 300px; width: 100px; height: 120px; flex-direction: column;">
+        <div style="color: #ff7800; font-weight: bold; margin-bottom: 15px;">TLS/SSL 卸载</div>
+        <svg width="34" height="34" viewBox="0 0 40 40">
+            <polygon points="20,2 38,12 38,28 20,38 2,28 2,12" fill="#f39c12"/>
+            <text x="20" y="25" fill="#fff" font-size="22" font-family="Arial" font-weight="bold" text-anchor="middle">N</text>
+        </svg>
+        <div style="margin-top: 10px;">nginx</div>
+    </div>
+
+    <!-- P11, JCE -->
+    <div class="box" style="left: 860px; top: 300px; width: 100px; height: 120px; flex-direction: column;">
+        <div style="color: #ff7800; font-weight: bold; margin-bottom: 15px;">P11, JCE...</div>
+        <svg width="34" height="34" viewBox="0 0 40 40">
+            <rect x="5" y="5" width="30" height="8" rx="2" fill="#f39c12"/>
+            <rect x="5" y="16" width="30" height="8" rx="2" fill="#f39c12"/>
+            <rect x="5" y="27" width="30" height="8" rx="2" fill="#f39c12"/>
+            <circle cx="10" cy="9" r="2" fill="#fff"/>
+            <circle cx="10" cy="20" r="2" fill="#fff"/>
+            <circle cx="10" cy="31" r="2" fill="#fff"/>
+        </svg>
+        <div style="margin-top: 10px; font-size: 10px;">第三方集成: Hashicorp Vault, Oracle TDE ...</div>
+    </div>
+
+    <!-- ====== 右侧安全管理员区域 ====== -->
+    <div class="box small-text" style="left: 990px; top: 180px; width: 200px; height: 100px; align-items: flex-start; text-align: left; flex-direction: column;">
+        <div>1. 安全管理员初始化 HSM 的集群。</div>
+        <div>2. 安全管理员创建调用 HSM 的授权凭证。</div>
+        <div>3. 安全管理员将凭证交付给 KMS 专属版实例。</div>
+    </div>
+
+    <div class="box" style="left: 990px; top: 310px; width: 120px; height: 80px; flex-direction: column;">
+        <svg width="50" height="50" viewBox="0 0 60 60">
+            <!-- 用户主体 -->
+            <circle cx="25" cy="20" r="12" fill="#ff7800"/>
+            <path d="M 5 50 C 5 30 45 30 45 50" fill="#ff7800"/>
+            <!-- 盾牌 -->
+            <path d="M 35 25 L 55 25 L 55 40 L 45 55 L 35 40 Z" fill="#ff7800" stroke="#fff" stroke-width="2"/>
+            <!-- 盾牌上的对号 -->
+            <path d="M 40 38 L 44 42 L 50 32" fill="none" stroke="#fff" stroke-width="2"/>
+        </svg>
+        <div style="margin-top: 5px;">安全管理员 (Crypto Officer)</div>
+    </div>
+
+</div>
+
+</body>
+</html>

@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>KMS 测试拓扑图 - 原图复刻版</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 40px;
+            background: #ffffff;
+            font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+            display: flex;
+            justify-content: center;
+        }
+        
+        .canvas {
+            position: relative;
+            width: 1000px;
+            height: 720px;
+            background: #ffffff;
+        }
+
+        /* 虚线方框使用 fieldset 完美复刻带标题的边框 */
+        .zone {
+            position: absolute;
+            border: 1px dashed #333;
+            border-radius: 20px;
+            box-sizing: border-box;
+            background: transparent;
+            margin: 0;
+            padding: 0;
+        }
+        
+        .zone-title {
+            font-size: 16px;
+            font-weight: bold;
+            color: #000;
+            padding: 0 15px;
+            margin: 0 auto; /* 居中 */
+        }
+
+        /* 节点 */
+        .node {
+            position: absolute;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            transform: translate(-50%, -50%);
+        }
+
+        .node-text {
+            font-size: 12px;
+            color: #000;
+            margin-top: 8px;
+            text-align: center;
+            white-space: nowrap;
+        }
+
+        /* 树状连线 */
+        .tree-line {
+            stroke: #999;
+            stroke-width: 1.5;
+            fill: none;
+        }
+
+    </style>
+</head>
+<body>
+
+<div class="canvas">
+
+    <!-- 全局 SVG 箭头层 -->
+    <svg style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:10;">
+        <defs>
+            <marker id="arrow-head" viewBox="0 0 20 20" refX="15" refY="10" markerWidth="8" markerHeight="8" orient="auto">
+                <polygon points="0,0 20,10 0,20" fill="#1890ff" />
+            </marker>
+        </defs>
+        
+        <!-- 向上箭头: 设备端 -> 探针服务端 -->
+        <line x1="250" y1="360" x2="250" y2="280" stroke="#1890ff" stroke-width="6" marker-end="url(#arrow-head)" />
+        
+        <!-- 向右箭头: 探针服务端 -> 中心控制端 -->
+        <line x1="450" y1="160" x2="540" y2="160" stroke="#1890ff" stroke-width="6" marker-end="url(#arrow-head)" />
+        
+        <!-- 向下箭头: 中心控制端 -> 数据服务端 -->
+        <line x1="750" y1="270" x2="750" y2="350" stroke="#1890ff" stroke-width="6" marker-end="url(#arrow-head)" />
+    </svg>
+
+    <!-- Zone 1: 设备端 -->
+    <fieldset class="zone" style="left: 50px; top: 360px; width: 400px; height: 320px;">
+        <legend class="zone-title" align="center">设备端</legend>
+        
+        <svg width="400" height="320" style="position: absolute; top:0; left:0;">
+            <!-- 第一层到第二层 -->
+            <path d="M 200 70 L 200 100 L 100 100 L 100 135 M 200 100 L 300 100 L 300 135" class="tree-line" />
+            <!-- 第二层左到第三层 -->
+            <path d="M 100 165 L 100 190 L 40 190 L 40 220 M 100 190 L 160 190 L 160 220 M 100 190 L 100 220" class="tree-line" />
+            <!-- 第二层右到第三层 -->
+            <path d="M 300 165 L 300 190 L 240 190 L 240 220 M 300 190 L 360 190 L 360 220 M 300 190 L 300 220" class="tree-line" />
+        </svg>
+
+        <!-- Top Router -->
+        <div class="node" style="left: 200px; top: 55px;">
+            <svg viewBox="0 0 120 100" width="45" height="35">
+                <path d="M 45 25 A 15 15 0 0 1 75 25" fill="none" stroke="#66aaff" stroke-width="3"/>
+                <path d="M 40 18 A 20 20 0 0 1 80 18" fill="none" stroke="#66aaff" stroke-width="3"/>
+                <line x1="30" y1="50" x2="30" y2="25" stroke="#66aaff" stroke-width="4" stroke-linecap="round"/>
+                <line x1="90" y1="50" x2="90" y2="25" stroke="#66aaff" stroke-width="4" stroke-linecap="round"/>
+                <path d="M 15 50 L 105 50 Q 115 50 115 65 L 5 65 Q 5 50 15 50 Z" fill="#66aaff"/>
+                <rect x="45" y="55" width="30" height="4" fill="#fff"/>
+            </svg>
+            <div class="node-text">网关</div>
+        </div>
+
+        <!-- Middle Routers -->
+        <div class="node" style="left: 100px; top: 150px;">
+            <svg viewBox="0 0 120 100" width="45" height="35">
+                <path d="M 45 25 A 15 15 0 0 1 75 25" fill="none" stroke="#66aaff" stroke-width="3"/>
+                <path d="M 40 18 A 20 20 0 0 1 80 18" fill="none" stroke="#66aaff" stroke-width="3"/>
+                <line x1="30" y1="50" x2="30" y2="25" stroke="#66aaff" stroke-width="4" stroke-linecap="round"/>
+                <line x1="90" y1="50" x2="90" y2="25" stroke="#66aaff" stroke-width="4" stroke-linecap="round"/>
+                <path d="M 15 50 L 105 50 Q 115 50 115 65 L 5 65 Q 5 50 15 50 Z" fill="#66aaff"/>
+                <rect x="45" y="55" width="30" height="4" fill="#fff"/>
+            </svg>
+        </div>
+        <div class="node" style="left: 300px; top: 150px;">
+            <svg viewBox="0 0 120 100" width="45" height="35">
+                <path d="M 45 25 A 15 15 0 0 1 75 25" fill="none" stroke="#66aaff" stroke-width="3"/>
+                <path d="M 40 18 A 20 20 0 0 1 80 18" fill="none" stroke="#66aaff" stroke-width="3"/>
+                <line x1="30" y1="50" x2="30" y2="25" stroke="#66aaff" stroke-width="4" stroke-linecap="round"/>
+                <line x1="90" y1="50" x2="90" y2="25" stroke="#66aaff" stroke-width="4" stroke-linecap="round"/>
+                <path d="M 15 50 L 105 50 Q 115 50 115 65 L 5 65 Q 5 50 15 50 Z" fill="#66aaff"/>
+                <rect x="45" y="55" width="30" height="4" fill="#fff"/>
+            </svg>
+        </div>
+
+        <!-- 3 PCs (Left) -->
+        <div class="node" style="left: 40px; top: 250px;">
+            <svg viewBox="0 0 120 100" width="45" height="35">
+                <rect x="0" y="10" width="60" height="40" fill="#fff" stroke="#222" stroke-width="3" rx="2"/>
+                <rect x="5" y="15" width="50" height="30" fill="#3399ff"/>
+                <rect x="25" y="50" width="10" height="15" fill="#222"/>
+                <rect x="15" y="65" width="30" height="5" fill="#222" rx="2"/>
+                <rect x="65" y="15" width="25" height="55" fill="#222" rx="2"/>
+                <rect x="70" y="25" width="15" height="5" fill="#fff"/>
+                <circle cx="77" cy="55" r="3" fill="#fff"/>
+            </svg>
+            <div class="node-text">设备</div>
+        </div>
+        <div class="node" style="left: 100px; top: 250px;">
+            <svg viewBox="0 0 120 100" width="45" height="35">
+                <rect x="0" y="10" width="60" height="40" fill="#fff" stroke="#222" stroke-width="3" rx="2"/>
+                <rect x="5" y="15" width="50" height="30" fill="#3399ff"/>
+                <rect x="25" y="50" width="10" height="15" fill="#222"/>
+                <rect x="15" y="65" width="30" height="5" fill="#222" rx="2"/>
+                <rect x="65" y="15" width="25" height="55" fill="#222" rx="2"/>
+                <rect x="70" y="25" width="15" height="5" fill="#fff"/>
+                <circle cx="77" cy="55" r="3" fill="#fff"/>
+            </svg>
+            <div class="node-text">设备</div>
+        </div>
+        <div class="node" style="left: 160px; top: 250px;">
+            <svg viewBox="0 0 120 100" width="45" height="35">
+                <rect x="0" y="10" width="60" height="40" fill="#fff" stroke="#222" stroke-width="3" rx="2"/>
+                <rect x="5" y="15" width="50" height="30" fill="#3399ff"/>
+                <rect x="25" y="50" width="10" height="15" fill="#222"/>
+                <rect x="15" y="65" width="30" height="5" fill="#222" rx="2"/>
+                <rect x="65" y="15" width="25" height="55" fill="#222" rx="2"/>
+                <rect x="70" y="25" width="15" height="5" fill="#fff"/>
+                <circle cx="77" cy="55" r="3" fill="#fff"/>
+            </svg>
+            <div class="node-text">设备</div>
+        </div>
+
+        <!-- 3 Servers (Right) -->
+        <div class="node" style="left: 240px; top: 250px;">
+            <svg viewBox="0 0 100 120" width="30" height="40">
+                <rect x="10" y="10" width="50" height="90" fill="#222" rx="3"/>
+                <rect x="20" y="20" width="30" height="8" fill="#fff"/>
+                <rect x="20" y="35" width="30" height="8" fill="#fff"/>
+                <circle cx="35" cy="80" r="5" fill="#fff"/>
+            </svg>
+            <div class="node-text">设备</div>
+        </div>
+        <div class="node" style="left: 300px; top: 250px;">
+            <svg viewBox="0 0 100 120" width="30" height="40">
+                <rect x="10" y="10" width="50" height="90" fill="#222" rx="3"/>
+                <rect x="20" y="20" width="30" height="8" fill="#fff"/>
+                <rect x="20" y="35" width="30" height="8" fill="#fff"/>
+                <circle cx="35" cy="80" r="5" fill="#fff"/>
+            </svg>
+            <div class="node-text">设备</div>
+        </div>
+        <div class="node" style="left: 360px; top: 250px;">
+            <svg viewBox="0 0 100 120" width="30" height="40">
+                <rect x="10" y="10" width="50" height="90" fill="#222" rx="3"/>
+                <rect x="20" y="20" width="30" height="8" fill="#fff"/>
+                <rect x="20" y="35" width="30" height="8" fill="#fff"/>
+                <circle cx="35" cy="80" r="5" fill="#fff"/>
+            </svg>
+            <div class="node-text">设备</div>
+        </div>
+    </fieldset>
+
+    <!-- Zone 2: 验收压测端 -->
+    <fieldset class="zone" style="left: 50px; top: 50px; width: 400px; height: 220px;">
+        <legend class="zone-title" align="center">验收压测端</legend>
+        
+        <div class="node" style="left: 130px; top: 110px;">
+            <svg viewBox="0 0 100 120" width="60" height="75">
+                <polygon points="10,25 35,10 85,10 60,25" fill="#3399ff"/>
+                <polygon points="60,25 85,10 85,85 60,100" fill="#0055cc"/>
+                <polygon points="10,25 60,25 60,100 10,100" fill="#1890ff"/>
+                <rect x="20" y="32" width="28" height="14" fill="#88ccff"/>
+                <rect x="20" y="52" width="28" height="14" fill="#88ccff"/>
+                <rect x="20" y="72" width="28" height="14" fill="#88ccff"/>
+            </svg>
+            <div class="node-text">验收测试平台(Go)</div>
+        </div>
+        <div class="node" style="left: 270px; top: 110px;">
+            <svg viewBox="0 0 100 120" width="60" height="75">
+                <polygon points="10,25 35,10 85,10 60,25" fill="#3399ff"/>
+                <polygon points="60,25 85,10 85,85 60,100" fill="#0055cc"/>
+                <polygon points="10,25 60,25 60,100 10,100" fill="#1890ff"/>
+                <rect x="20" y="32" width="28" height="14" fill="#88ccff"/>
+                <rect x="20" y="52" width="28" height="14" fill="#88ccff"/>
+                <rect x="20" y="72" width="28" height="14" fill="#88ccff"/>
+            </svg>
+            <div class="node-text">wrk压测引擎</div>
+        </div>
+    </fieldset>
+
+    <!-- Zone 3: 中心控制端 -->
+    <fieldset class="zone" style="left: 550px; top: 50px; width: 400px; height: 220px;">
+        <legend class="zone-title" align="center">中心控制端</legend>
+        
+        <div class="node" style="left: 90px; top: 110px;">
+            <svg viewBox="0 0 100 120" width="60" height="75">
+                <polygon points="10,25 35,10 85,10 60,25" fill="#3399ff"/>
+                <polygon points="60,25 85,10 85,85 60,100" fill="#0055cc"/>
+                <polygon points="10,25 60,25 60,100 10,100" fill="#1890ff"/>
+                <rect x="20" y="32" width="28" height="14" fill="#88ccff"/>
+                <rect x="20" y="52" width="28" height="14" fill="#88ccff"/>
+                <rect x="20" y="72" width="28" height="14" fill="#88ccff"/>
+            </svg>
+            <div class="node-text">密钥生成系统</div>
+        </div>
+        <div class="node" style="left: 200px; top: 110px;">
+            <svg viewBox="0 0 100 120" width="60" height="75">
+                <polygon points="10,25 35,10 85,10 60,25" fill="#3399ff"/>
+                <polygon points="60,25 85,10 85,85 60,100" fill="#0055cc"/>
+                <polygon points="10,25 60,25 60,100 10,100" fill="#1890ff"/>
+                <rect x="20" y="32" width="28" height="14" fill="#88ccff"/>
+                <rect x="20" y="52" width="28" height="14" fill="#88ccff"/>
+                <rect x="20" y="72" width="28" height="14" fill="#88ccff"/>
+            </svg>
+            <div class="node-text">密钥更新与回收系统</div>
+        </div>
+        <div class="node" style="left: 310px; top: 110px;">
+            <svg viewBox="0 0 100 120" width="60" height="75">
+                <polygon points="10,25 35,10 85,10 60,25" fill="#3399ff"/>
+                <polygon points="60,25 85,10 85,85 60,100" fill="#0055cc"/>
+                <polygon points="10,25 60,25 60,100 10,100" fill="#1890ff"/>
+                <rect x="20" y="32" width="28" height="14" fill="#88ccff"/>
+                <rect x="20" y="52" width="28" height="14" fill="#88ccff"/>
+                <rect x="20" y="72" width="28" height="14" fill="#88ccff"/>
+            </svg>
+            <div class="node-text">密钥分发系统</div>
+        </div>
+    </fieldset>
+
+    <!-- Zone 4: 数据服务端 -->
+    <fieldset class="zone" style="left: 550px; top: 360px; width: 400px; height: 320px;">
+        <legend class="zone-title" align="center">数据服务端</legend>
+        
+        <div class="node" style="left: 70px; top: 160px;">
+            <svg viewBox="0 0 100 120" width="60" height="75">
+                <rect x="10" y="25" width="70" height="70" fill="#2eb065" rx="2"/>
+                <rect x="10" y="10" width="70" height="15" fill="#1d8f4d" rx="2"/>
+                <rect x="15" y="35" width="40" height="6" fill="#fff"/>
+                <rect x="15" y="50" width="40" height="6" fill="#fff"/>
+                <rect x="15" y="65" width="40" height="6" fill="#fff"/>
+                <circle cx="65" cy="75" r="16" fill="#fff" stroke="#2eb065" stroke-width="3"/>
+                <polyline points="55,78 62,70 68,76 75,65" fill="none" stroke="#2eb065" stroke-width="3"/>
+            </svg>
+            <div class="node-text">Redis集群</div>
+        </div>
+        <div class="node" style="left: 156px; top: 160px;">
+            <svg viewBox="0 0 100 120" width="60" height="75">
+                <rect x="10" y="25" width="70" height="70" fill="#2eb065" rx="2"/>
+                <rect x="10" y="10" width="70" height="15" fill="#1d8f4d" rx="2"/>
+                <rect x="15" y="35" width="40" height="6" fill="#fff"/>
+                <rect x="15" y="50" width="40" height="6" fill="#fff"/>
+                <rect x="15" y="65" width="40" height="6" fill="#fff"/>
+                <circle cx="65" cy="75" r="16" fill="#fff" stroke="#2eb065" stroke-width="3"/>
+                <polyline points="55,78 62,70 68,76 75,65" fill="none" stroke="#2eb065" stroke-width="3"/>
+            </svg>
+            <div class="node-text">MySQL服务</div>
+        </div>
+        <div class="node" style="left: 243px; top: 160px;">
+            <svg viewBox="0 0 100 120" width="60" height="75">
+                <rect x="10" y="25" width="70" height="70" fill="#2eb065" rx="2"/>
+                <rect x="10" y="10" width="70" height="15" fill="#1d8f4d" rx="2"/>
+                <rect x="15" y="35" width="40" height="6" fill="#fff"/>
+                <rect x="15" y="50" width="40" height="6" fill="#fff"/>
+                <rect x="15" y="65" width="40" height="6" fill="#fff"/>
+                <circle cx="65" cy="75" r="16" fill="#fff" stroke="#2eb065" stroke-width="3"/>
+                <polyline points="55,78 62,70 68,76 75,65" fill="none" stroke="#2eb065" stroke-width="3"/>
+            </svg>
+            <div class="node-text">Kafka队列</div>
+        </div>
+        <div class="node" style="left: 330px; top: 160px;">
+            <svg viewBox="0 0 100 120" width="60" height="75">
+                <rect x="10" y="25" width="70" height="70" fill="#2eb065" rx="2"/>
+                <rect x="10" y="10" width="70" height="15" fill="#1d8f4d" rx="2"/>
+                <rect x="15" y="35" width="40" height="6" fill="#fff"/>
+                <rect x="15" y="50" width="40" height="6" fill="#fff"/>
+                <rect x="15" y="65" width="40" height="6" fill="#fff"/>
+                <circle cx="65" cy="75" r="16" fill="#fff" stroke="#2eb065" stroke-width="3"/>
+                <polyline points="55,78 62,70 68,76 75,65" fill="none" stroke="#2eb065" stroke-width="3"/>
+            </svg>
+            <div class="node-text">FISCO BCOS</div>
+        </div>
+    </fieldset>
+
+</div>
+
+</body>
+</html>
