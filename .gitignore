@@ -76,6 +76,7 @@ yarn-error.log
 /kms-ops/front/user/
 /kms-ops/front/acceptance/
 /kms-ops/redis/data/
+/kms-distribute/extracted/
 
 # Tracked FISCO template
 !/kms-ops/fisco/template/
