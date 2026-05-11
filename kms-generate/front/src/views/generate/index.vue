@@ -54,8 +54,13 @@
           </el-select>
         </el-form-item>
         <el-form-item label="加密算法名称" prop="encrytName">
-          <el-select v-model="form.encrytName" placeholder="请选择加密算法名称" style="width: 100%">
+          <el-select v-model="form.encrytName" placeholder="请选择加密算法名称" @change="handleEncrytNameChange" style="width: 100%">
             <el-option v-for="option in encrytNameOptions" :key="option.value" :label="option.label" :value="option.value" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="isPQAlgorithm" label="业务节点" prop="demoNodeId">
+          <el-select v-model="form.demoNodeId" placeholder="请选择共享业务节点" filterable style="width: 100%" @visible-change="handleDemoNodeVisible">
+            <el-option v-for="node in demoNodeOptions" :key="node.node_id" :label="formatDemoNodeLabel(node)" :value="node.node_id" />
           </el-select>
         </el-form-item>
         <el-form-item label="密钥所属域" prop="keyDomain">
@@ -64,7 +69,8 @@
       </el-form>
       <template #footer>
         <div class="dialog-footer">
-          <el-button type="primary" @click="open = false">我知道了</el-button>
+          <el-button type="primary" @click="submitForm">确 定</el-button>
+          <el-button @click="cancel">取 消</el-button>
         </div>
       </template>
     </el-dialog>
@@ -128,9 +134,11 @@
 </template>
 
 <script setup name="KeyGenerate">
-import { listKeymanage } from "@/api/generate/keymanage"
+import { listKeymanage, addKeymanage, listDemoNodes } from "@/api/generate/keymanage"
+import useUserStore from '@/store/modules/user'
 
 const { proxy } = getCurrentInstance()
+const userStore = useUserStore()
 
 const keymanageList = ref([])
 const open = ref(false)
@@ -143,6 +151,9 @@ const total = ref(0)
 const title = ref("")
 const detailOpen = ref(false)
 const detailInfo = ref({})
+const demoNodeOptions = ref([])
+const demoNodeLoading = ref(false)
+const pqAlgorithms = ['PQ_FALCON', 'PQ_KYBER', 'PQ_CERTIFICATELESS']
 
 const data = reactive({
   form: {},
@@ -164,12 +175,14 @@ const data = reactive({
   },
   rules: {
     encrytType: [{ required: true, message: "加密算法类型不能为空", trigger: "change" }],
-    encrytName: [{ required: true, message: "加密算法名称不能为空", trigger: "blur" }],
+    encrytName: [{ required: true, message: "加密算法名称不能为空", trigger: "change" }],
+    demoNodeId: [{ required: true, message: "请选择共享业务节点", trigger: "change" }],
     keyDomain: [{ required: true, message: "密钥所属域不能为空", trigger: "blur" }]
   }
 })
 
 const { queryParams, encrytNameOptions, form, rules } = toRefs(data)
+const isPQAlgorithm = computed(() => pqAlgorithms.includes(form.value.encrytName))
 
 function getList() {
   loading.value = true
@@ -184,9 +197,21 @@ function cancel() { open.value = false; reset() }
 
 function reset() {
   form.value = {
+    keyId: null,
+    userId: userStore.id || null,
+    userName: userStore.name || null,
     encrytType: '无证书非对称加密',
     encrytName: 'SM2',
-    keyDomain: 'A'
+    keyName: null,
+    keyUse: null,
+    keyValue: null,
+    creTime: null,
+    updTime: null,
+    autoUpdate: 'false',
+    status: 'Valid',
+    uA: 'null',
+    keyDomain: 'A',
+    demoNodeId: null
   }
   proxy.resetForm("keymanageRef")
   handleEncrytTypeChange('无证书非对称加密')
@@ -216,6 +241,32 @@ function handleViewDetails(row) {
   detailOpen.value = true
 }
 
+function submitForm() {
+  proxy.$refs["keymanageRef"].validate(valid => {
+    if (!valid) return
+    if (isPQAlgorithm.value && !form.value.demoNodeId) {
+      proxy.$modal.msgError("请选择共享业务节点")
+      return
+    }
+    const payload = {
+      ...form.value,
+      algorithm: form.value.encrytName,
+      demo_node_id: form.value.demoNodeId,
+      operator_metadata: {
+        user_id: userStore.id || form.value.userId,
+        user_name: userStore.name || form.value.userName
+      }
+    }
+    addKeymanage(payload).then(() => {
+      proxy.$modal.msgSuccess("生成请求已发出")
+      open.value = false
+      getList()
+    }).catch(error => {
+      if (error?.message) proxy.$modal.msgError(error.message)
+    })
+  })
+}
+
 function copyDetailInfo() {
   const info = detailInfo.value
   let textToCopy = `密钥详情导出\n----------------\n`
@@ -232,11 +283,44 @@ function copyDetailInfo() {
 
 function handleEncrytTypeChange(value) {
   if (value === '无证书非对称加密') {
-    encrytNameOptions.value = [{ label: 'SM2', value: 'SM2' }, { label: 'SSCL', value: 'SSCL' }]
+    encrytNameOptions.value = [
+      { label: 'SM2', value: 'SM2' },
+      { label: 'SSCL', value: 'SSCL' },
+      { label: 'Falcon抗量子签名', value: 'PQ_FALCON' },
+      { label: 'Kyber抗量子密钥封装', value: 'PQ_KYBER' },
+      { label: '无证书抗量子密钥', value: 'PQ_CERTIFICATELESS' }
+    ]
   } else {
     encrytNameOptions.value = []
   }
   form.value.encrytName = ''
+  form.value.demoNodeId = null
+}
+
+function handleEncrytNameChange() {
+  form.value.demoNodeId = null
+  if (isPQAlgorithm.value) loadDemoNodes()
+}
+
+function handleDemoNodeVisible(visible) {
+  if (visible) loadDemoNodes()
+}
+
+function loadDemoNodes() {
+  if (demoNodeLoading.value || demoNodeOptions.value.length) return
+  demoNodeLoading.value = true
+  listDemoNodes().then(response => {
+    demoNodeOptions.value = response.rows
+  }).catch(error => {
+    if (error?.message) proxy.$modal.msgError(error.message)
+  }).finally(() => {
+    demoNodeLoading.value = false
+  })
+}
+
+function formatDemoNodeLabel(node) {
+  const name = node.name || node.node_name || '业务节点'
+  return `${name} (${node.node_id})`
 }
 
 reset()

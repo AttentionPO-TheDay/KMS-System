@@ -61,6 +61,7 @@ func (c *RequestController) EnrollKey(ctx *fiber.Ctx) error {
 		KeyName    string `json:"key_name"`
 		KeyUse     string `json:"key_use"`
 		AutoUpdate string `json:"auto_update"`
+		DemoNodeID string `json:"demo_node_id"`
 	}
 
 	if err := ctx.BodyParser(&req); err != nil {
@@ -78,8 +79,9 @@ func (c *RequestController) EnrollKey(ctx *fiber.Ctx) error {
 	req.EncrytType = strings.TrimSpace(req.EncrytType)
 	req.EncrytName = strings.TrimSpace(req.EncrytName)
 	req.UA = strings.TrimSpace(req.UA)
+	req.DemoNodeID = strings.TrimSpace(req.DemoNodeID)
 
-	if req.EncrytType == "无证书非对称加密" {
+	if req.EncrytType == "无证书非对称加密" && (req.EncrytName == "SM2" || req.EncrytName == "SSCL") {
 		if req.UA == "" {
 			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"code": 500, "msg": "无证书非对称加密必须提供用户部分公钥(UA)",
@@ -100,11 +102,16 @@ func (c *RequestController) EnrollKey(ctx *fiber.Ctx) error {
 				"code": 500, "msg": "用户部分公钥(UA)必须为十六进制字符串",
 			})
 		}
-		if req.EncrytName != "SM2" && req.EncrytName != "SSCL" {
+	} else if service.IsPQAlgorithm(req.EncrytName) {
+		if req.DemoNodeID == "" {
 			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"code": 500, "msg": "无证书算法仅支持 SM2 或 SSCL",
+				"code": 500, "msg": "抗量子密钥生成必须提供 demo_node_id",
 			})
 		}
+	} else {
+		return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"code": 500, "msg": "加密算法仅支持 SM2、SSCL 或抗量子算法",
+		})
 	}
 
 	keyName := req.KeyName
@@ -130,6 +137,7 @@ func (c *RequestController) EnrollKey(ctx *fiber.Ctx) error {
 		KeyName:    keyName,
 		KeyUse:     keyUse,
 		AutoUpdate: autoUpdate,
+		DemoNodeID: req.DemoNodeID,
 	}
 
 	// 由内部 Token 保证身份，不再需要明文密码鉴权

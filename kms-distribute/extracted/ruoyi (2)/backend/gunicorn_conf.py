@@ -1,0 +1,21 @@
+import multiprocessing
+workers = multiprocessing.cpu_count() * 2 + 1
+threads = 3
+bind = '0.0.0.0:8000'
+daemon = 'false'
+worker_class = 'uvicorn.workers.UvicornWorker'
+worker_connections = 10000
+max_requests = 10000
+max_requests_jitter = 200
+pidfile = './gunicorn.pid'
+loglevel = 'info'
+access_log_format = ''
+backlog = 512
+proc_name = 'gunicorn_process'
+timeout = 120
+graceful_timeout = 300
+keepalive = 3
+limit_request_line = 5120
+limit_request_fields = 101
+limit_request_field_size = 0
+accesslog = '-'

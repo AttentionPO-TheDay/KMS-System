@@ -51,6 +51,23 @@ export function addKeymanage(data) {
   })
 }
 
+export function listDemoNodes(params) {
+  return request({
+    baseURL: '',
+    url: '/pqkds-api/nodes/',
+    method: 'get',
+    params
+  }).then(res => {
+    const data = res.data || res
+    const rows = data.results || data.rows || (Array.isArray(data) ? data : [])
+    return {
+      ...res,
+      rows,
+      total: data.count || data.total || rows.length
+    }
+  })
+}
+
 export function addHistoryRecord(data) {
   return request({
     url: '/generate/key/history/manual',

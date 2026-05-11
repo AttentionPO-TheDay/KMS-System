@@ -125,6 +125,7 @@ services:
       - KAFKA_ADDR=kafka:9092
       - KAFKA_TOPIC=key_generate_log
       - JAVA_BACKEND_BASE=http://generate-java:9081
+      - DEMO_BACKEND_BASE=http://dvadmin3-django:8000/api/pqkds
       - SERVER_PORT=8081
       - GOGC=500
     depends_on:
@@ -262,6 +263,24 @@ services:
   # ========================================
   # 4. kms-distribute 系统 (密钥分发)
   # ========================================
+  dvadmin3-django:
+    build:
+      context: ../kms-distribute/extracted/ruoyi (2)
+      dockerfile: ./docker_env/django/Dockerfile
+    container_name: dvadmin3-django
+    working_dir: /backend
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=Asia/Shanghai
+    volumes:
+      - ../kms-distribute/extracted/ruoyi (2)/backend:/backend
+      - ../kms-distribute/extracted/ruoyi (2)/logs/log:/var/log
+    ports:
+      - "8000:8000"
+    restart: always
+    networks:
+      - kms_net
+
   kms-distribute:
     image: eclipse-temurin:8-jre
     container_name: kms_distribute_java
@@ -354,6 +373,7 @@ services:
       - updatedel-go
       - updatedel-java
       - kms-distribute
+      - dvadmin3-django
       - acceptance-backend
     restart: always
     networks:

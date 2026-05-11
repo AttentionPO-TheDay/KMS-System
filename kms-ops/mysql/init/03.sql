@@ -28,6 +28,9 @@ CREATE TABLE `keymanage` (
     -- 预留字段 (需要时解除注释并同步Java实体类)
     `ua` VARCHAR(1024) DEFAULT NULL COMMENT '用户部分公钥',
     `key_domain` VARCHAR(255) DEFAULT NULL COMMENT '密钥域',
+    `demo_node_id` VARCHAR(255) DEFAULT NULL COMMENT 'PQKDS示例业务节点ID',
+    `demo_record_id` VARCHAR(255) DEFAULT NULL COMMENT 'PQKDS示例生成记录ID',
+    `demo_result_status` VARCHAR(64) DEFAULT NULL COMMENT 'PQKDS示例生成结果状态',
 
     PRIMARY KEY (`key_id`),
     FOREIGN KEY (`user_id`) REFERENCES `sys_user`(`user_id`) ON DELETE CASCADE ON UPDATE CASCADE

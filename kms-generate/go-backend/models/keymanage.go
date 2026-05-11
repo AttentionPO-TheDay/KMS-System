@@ -13,29 +13,32 @@ type UserIdentity struct {
 }
 
 type Keymanage struct {
-	KeyID        int64         `json:"key_id,omitempty"`
-	UserID       int64         `json:"user_id,omitempty"`
-	UserName     string        `json:"user_name"`
-	UserIdentity *UserIdentity `json:"user_identity"`
-	UA           string        `json:"ua"`
-	EncrytType   string        `json:"encryt_type"`
-	EncrytName   string        `json:"encryt_name"`
-	KeyName      string        `json:"key_name"`
-	KeyUse       string        `json:"key_use"`
-	KeyValue     string        `json:"key_value"`
-	CreTime      string        `json:"cre_time"`
-	UpdTime      string        `json:"upd_time"`
-	AutoUpdate   string        `json:"auto_update"`
-	Status       string        `json:"status"`
-	KeyDomain    string        `json:"key_domain,omitempty"`
+	KeyID            int64         `json:"key_id,omitempty"`
+	UserID           int64         `json:"user_id,omitempty"`
+	UserName         string        `json:"user_name"`
+	UserIdentity     *UserIdentity `json:"user_identity"`
+	UA               string        `json:"ua"`
+	EncrytType       string        `json:"encryt_type"`
+	EncrytName       string        `json:"encryt_name"`
+	KeyName          string        `json:"key_name"`
+	KeyUse           string        `json:"key_use"`
+	KeyValue         string        `json:"key_value"`
+	CreTime          string        `json:"cre_time"`
+	UpdTime          string        `json:"upd_time"`
+	AutoUpdate       string        `json:"auto_update"`
+	Status           string        `json:"status"`
+	KeyDomain        string        `json:"key_domain,omitempty"`
+	DemoNodeID       string        `json:"demo_node_id,omitempty"`
+	DemoRecordID     string        `json:"demo_record_id,omitempty"`
+	DemoResultStatus string        `json:"demo_result_status,omitempty"`
 }
 
 // KeyEnrollPayload Kafka 消息协议结构
 type KeyEnrollPayload struct {
-	RawUser      string `json:"raw_user"`
-	RawPassword  string `json:"raw_password"`
+	RawUser      string    `json:"raw_user"`
+	RawPassword  string    `json:"raw_password"`
 	GeneratedKey Keymanage `json:"generated_key"`
-	ActionType   string `json:"action_type"`
+	ActionType   string    `json:"action_type"`
 }
 
 // EnrollRequest 注册请求

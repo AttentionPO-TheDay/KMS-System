@@ -14,6 +14,7 @@ var (
 var (
 	ServerPort      = getEnv("SERVER_PORT", "8081")
 	JavaBackendBase = getEnv("JAVA_BACKEND_BASE", "http://localhost:9081")
+	DemoBackendBase = getEnv("DEMO_BACKEND_BASE", "http://localhost:8000/api/pqkds")
 )
 
 // 内部鉴权配置

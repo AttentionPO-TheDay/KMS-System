@@ -58,6 +58,7 @@ public class GoBackendClient {
         body.put("key_name", keymanage.getKeyName() != null ? keymanage.getKeyName() : "example");
         body.put("key_use", keymanage.getKeyUse() != null ? keymanage.getKeyUse() : "加解密");
         body.put("auto_update", keymanage.getAutoUpdate() != null ? keymanage.getAutoUpdate() : "false");
+        body.put("demo_node_id", keymanage.getDemoNodeId() != null ? keymanage.getDemoNodeId() : "");
 
         return callGoApi("/generate/request/ENROLL_KEY", body);
     }
@@ -72,6 +73,7 @@ public class GoBackendClient {
         body.put("key_name", keymanage.getKeyName() != null ? keymanage.getKeyName() : "example");
         body.put("key_use", keymanage.getKeyUse() != null ? keymanage.getKeyUse() : "加解密");
         body.put("auto_update", keymanage.getAutoUpdate() != null ? keymanage.getAutoUpdate() : "false");
+        body.put("demo_node_id", keymanage.getDemoNodeId() != null ? keymanage.getDemoNodeId() : "");
 
         return callGoApi("/generate/request/REENROLL_KEY", body);
     }

@@ -85,6 +85,15 @@ public class Keymanage implements Serializable {
     @JSONField(name = "chain_status")
     private String chainStatus;
 
+    @JSONField(name = "demo_node_id")
+    private String demoNodeId;
+
+    @JSONField(name = "demo_record_id")
+    private String demoRecordId;
+
+    @JSONField(name = "demo_result_status")
+    private String demoResultStatus;
+
     public Long getKeyId() { return keyId; }
     public void setKeyId(Long keyId) { this.keyId = keyId; }
 
@@ -141,6 +150,15 @@ public class Keymanage implements Serializable {
 
     public String getChainStatus() { return chainStatus; }
     public void setChainStatus(String chainStatus) { this.chainStatus = chainStatus; }
+
+    public String getDemoNodeId() { return demoNodeId; }
+    public void setDemoNodeId(String demoNodeId) { this.demoNodeId = demoNodeId; }
+
+    public String getDemoRecordId() { return demoRecordId; }
+    public void setDemoRecordId(String demoRecordId) { this.demoRecordId = demoRecordId; }
+
+    public String getDemoResultStatus() { return demoResultStatus; }
+    public void setDemoResultStatus(String demoResultStatus) { this.demoResultStatus = demoResultStatus; }
 
     @Override
     public String toString() {

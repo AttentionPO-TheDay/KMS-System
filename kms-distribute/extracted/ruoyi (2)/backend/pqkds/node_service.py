@@ -1,0 +1,1555 @@
+import logging
+import json
+import base64
+import numpy as np
+import zlib
+from typing import Dict, Any
+from functools import wraps
+from django.utils import timezone
+from django.db import transaction, connection
+from .models import Node, SessionKey, FalconKeyPair
+from .optimized_keygen_service import OptimizedKeygenService
+from .blockchain_service import BlockchainService
+from .node_blockchain_upload_service import NodeBlockchainUploadService
+
+logger = logging.getLogger(__name__)
+
+
+def _to_list(obj):
+    """将 numpy 数组转为 list，用于 JSON 序列化"""
+    if hasattr(obj, 'tolist'):
+        return obj.tolist()
+    return obj
+
+
+def decode_falcon_partial_key(partial_key_b64: str) -> dict:
+    """解码Falcon部分私钥，兼容压缩(zlib)和未压缩(纯JSON)两种格式"""
+    raw = base64.b64decode(partial_key_b64)
+    try:
+        # 先尝试zlib解压（新格式）
+        decompressed = zlib.decompress(raw)
+        return json.loads(decompressed.decode('utf-8'))
+    except zlib.error:
+        # 回退到纯JSON（旧格式）
+        return json.loads(raw.decode('utf-8'))
+
+
+def ensure_db_connection(func):
+    """装饰器：确保数据库连接有效，自动重连"""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            error_msg = str(e)
+            if 'Server has gone away' in error_msg or '2006' in error_msg or 'Lost connection' in error_msg:
+                logger.warning(f"数据库连接断开，尝试重新连接: {error_msg}")
+                try:
+                    _force_reconnect_db()
+                    return func(*args, **kwargs)
+                except Exception as retry_error:
+                    logger.error(f"重新连接后仍然失败: {retry_error}")
+                    raise
+            else:
+                raise
+    return wrapper
+
+
+def _force_reconnect_db():
+    """
+    强制重建数据库连接并设置大数据包支持。
+
+    MySQL 的 max_allowed_packet 只能 SET GLOBAL，且只对新连接生效。
+    所以流程是：连接 → SET GLOBAL → 断开 → 重连（新连接继承 GLOBAL 值）。
+    """
+    # 第一步：建立临时连接，设置 GLOBAL max_allowed_packet
+    connection.close()
+    connection.connect()
+    try:
+        with connection.cursor() as cursor:
+            try:
+                cursor.execute("SET GLOBAL max_allowed_packet=268435456")  # 256MB
+                logger.info("[DB] SET GLOBAL max_allowed_packet=256MB 成功")
+            except Exception as e:
+                logger.warning(f"[DB] SET GLOBAL max_allowed_packet 失败(可能无SUPER权限): {e}")
+    except Exception:
+        pass
+
+    # 第二步：断开再重连，让新的 max_allowed_packet 生效
+    connection.close()
+    connection.connect()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SET SESSION net_read_timeout=600")
+            cursor.execute("SET SESSION net_write_timeout=600")
+            cursor.execute("SET SESSION wait_timeout=28800")
+            # 验证 max_allowed_packet
+            cursor.execute("SELECT @@max_allowed_packet")
+            row = cursor.fetchone()
+            logger.info(f"[DB] 数据库连接已重建, max_allowed_packet={row[0] if row else 'unknown'}")
+    except Exception as e:
+        logger.warning(f"[DB] 设置会话参数失败(不影响功能): {e}")
+
+
+def _safe_update_node(node_id: str, **fields):
+    """
+    安全地更新节点大字段。
+    逐字段写入，避免单条 UPDATE 超过 max_allowed_packet。
+    如果遇到连接断开，自动重连后重试。
+    """
+    from .models import Node
+    for field_name, field_value in fields.items():
+        for attempt in range(2):
+            try:
+                Node.objects.filter(node_id=node_id).update(**{field_name: field_value})
+                break
+            except Exception as e:
+                error_msg = str(e)
+                if attempt == 0 and ('Server has gone away' in error_msg or '2006' in error_msg):
+                    logger.warning(f"[DB] 写入字段 {field_name} 失败，重连后重试: {error_msg}")
+                    _force_reconnect_db()
+                else:
+                    raise
+
+def compress_key_data(key_data: str) -> str:
+    """压缩密钥数据"""
+    try:
+        data_bytes = key_data.encode('utf-8')
+        compressed = zlib.compress(data_bytes, level=9)
+        compressed_b64 = base64.b64encode(compressed).decode('utf-8')
+        return f"COMPRESSED:{compressed_b64}"
+    except Exception as e:
+        logger.warning(f"密钥压缩失败: {e}，使用原始数据")
+        return key_data
+
+def decompress_key_data(key_data: str) -> str:
+    """解压缩密钥数据"""
+    try:
+        if not key_data or not key_data.startswith("COMPRESSED:"):
+            return key_data
+        compressed_b64 = key_data[11:]
+        compressed = base64.b64decode(compressed_b64)
+        decompressed = zlib.decompress(compressed)
+        return decompressed.decode('utf-8')
+    except Exception as e:
+        logger.warning(f"密钥解压缩失败: {e}，使用原始数据")
+        return key_data
+
+
+class NodeService:
+    def __init__(self, node_id: str):
+        self.node_id = node_id
+        try:
+            self.node = Node.objects.get(node_id=node_id)
+        except Node.DoesNotExist:
+            self.node = None
+            logger.warning(f"节点 {node_id} 不存在")
+
+        self.keygen_service = OptimizedKeygenService()
+        self.blockchain_service = BlockchainService()
+        self.upload_service = NodeBlockchainUploadService()
+
+    @staticmethod
+    def recover_kyber_kem_session_key(encrypted_session_key_data: str,
+                                       receiver_kyber_partial_key_data: str) -> bytes:
+        """
+        使用图中 Dec 算法从无证书格密码密文中恢复AES会话密钥。
+
+        Dec: M = ⌊(c₂ − s̄ᵗ · c₁) / (q/2)⌋
+
+        Args:
+            encrypted_session_key_data: 二进制序列化的格密码密文 (base64)
+            receiver_kyber_partial_key_data: 接收方的 kyber_partial_key_data (JSON)
+
+        Returns:
+            32字节的AES会话密钥
+        """
+        from .kyber_fast_engine import (
+            kyber_fast_decrypt, _deserialize_kyber_ct, _KyberCLKeyCache
+        )
+
+        # 反序列化密文
+        C1, C2, q, key_length = _deserialize_kyber_ct(encrypted_session_key_data)
+
+        # 获取无证书私钥 s̄
+        cl_sk = _KyberCLKeyCache.get_cl_private_key(receiver_kyber_partial_key_data)
+        sk = cl_sk['sk']
+
+        # 使用图中 Dec 算法解密
+        aes_session_key = kyber_fast_decrypt(C1, C2, sk, q, key_length)
+        logger.info(
+            f"[KyberCL恢复] 格密码解密完成, session_key={len(aes_session_key)}B"
+        )
+
+        return aes_session_key
+    def register_node(self, name: str, ip_address: str, port: int, **kwargs) -> Dict[str, Any]:
+        try:
+            import time
+            logger.info(f"开始注册节点 {self.node_id}")
+
+            if self.node is None:
+                self.node = Node.objects.create(
+                    node_id=self.node_id,
+                    name=name,
+                    ip_address=ip_address,
+                    port=port,
+                    status='registered'
+                )
+                logger.info(f"节点 {self.node_id} 创建成功")
+            else:
+                self.node.name = name
+                self.node.ip_address = ip_address
+                self.node.port = port
+                self.node.status = 'registered'
+                self.node.save()
+                logger.info(f"节点 {self.node_id} 更新成功")
+
+            for field, value in kwargs.items():
+                if hasattr(self.node, field) and value is not None:
+                    setattr(self.node, field, value)
+
+            self.node.save()
+
+            # 记录Kyber密钥生成开始时间
+            kyber_start_time = time.time()
+            kyber_kp = self.keygen_service.generate_kyber_keypair(self.node_id)
+            kyber_end_time = time.time()
+            kyber_duration = kyber_end_time - kyber_start_time
+
+            if kyber_kp['success']:
+                # 融合模块返回的是标准Kyber DLL格式的bytes密钥对
+                kyber_pk = kyber_kp['kyber_public_key']
+                kyber_sk = kyber_kp['kyber_private_key']
+                self.node.kyber_public_key = base64.b64encode(kyber_pk).decode('utf-8')
+                self.node.kyber_private_key = base64.b64encode(kyber_sk).decode('utf-8')
+
+                # 保存无证书层密钥 (cl_public_key=u, cl_private_key=s̄, A) 用于图中 Enc/Dec
+                _cl_pk = kyber_kp.get('cl_public_key')
+                _cl_sk = kyber_kp.get('cl_private_key')
+                _sys_A = kyber_kp.get('system_A')
+                self.node.kyber_partial_key_data = json.dumps({
+                    'partial_key_t': kyber_kp.get('partial_key_t'),
+                    'secret_value_s_id': kyber_kp.get('secret_value_s_id'),
+                    'hash_c': kyber_kp.get('hash_c'),
+                    'u_prime_id': kyber_kp.get('u_prime_id'),
+                    'cl_public_key': _cl_pk.tolist() if hasattr(_cl_pk, 'tolist') else _cl_pk,
+                    'cl_private_key': _cl_sk.tolist() if hasattr(_cl_sk, 'tolist') else _cl_sk,
+                    'A': _sys_A.tolist() if hasattr(_sys_A, 'tolist') else _sys_A,
+                    'algorithm': kyber_kp.get('algorithm', 'CertificatelessKyber512_DLL'),
+                    'parameters': {'n': 512, 'm': 1024, 'q': 12289},
+                })
+                self.node.kyber_keygen_time = timezone.now()
+                self.node.kyber_keygen_duration = kyber_duration
+                logger.info(f"节点 {self.node_id} Kyber公钥生成成功，耗时: {kyber_duration:.4f}秒")
+            else:
+                logger.error(f"节点 {self.node_id} Kyber密钥生成失败: {kyber_kp.get('error')}")
+                return {
+                    'success': False,
+                    'message': f"Kyber密钥生成失败: {kyber_kp.get('error')}"
+                }
+
+            self.node.status = 'kyber_uploaded'
+            self.node.save()
+
+            try:
+                upload_result = self.upload_service.upload_node_registration(self.node)
+                if upload_result['success']:
+                    logger.info(f"节点 {self.node_id} Kyber公钥已上链")
+                else:
+                    logger.warning(f"节点 {self.node_id} 上链失败: {upload_result.get('message')}")
+            except Exception as e:
+                logger.warning(f"节点 {self.node_id} 上链异常: {e}")
+
+            return {
+                'success': True,
+                'message': f'节点 {self.node_id} Kyber密钥对生成成功，请点击生成Falcon密钥按钮继续',
+                'node_id': self.node_id,
+                'status': 'kyber_uploaded',
+                'kyber_keygen_time': self.node.kyber_keygen_time.isoformat() if self.node.kyber_keygen_time else None,
+                'kyber_keygen_duration': round(self.node.kyber_keygen_duration, 4) if self.node.kyber_keygen_duration else None
+            }
+
+        except Exception as e:
+            logger.error(f"节点 {self.node_id} 注册异常: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'success': False,
+                'message': f'节点注册失败: {str(e)}'
+            }
+
+    @ensure_db_connection
+    def generate_falcon_keypair(self) -> Dict[str, Any]:
+        try:
+            import time
+            logger.info(f"开始为节点 {self.node_id} 生成Falcon密钥对")
+
+            if self.node is None:
+                return {
+                    'success': False,
+                    'message': f'节点 {self.node_id} 不存在'
+                }
+
+            if not self.node.kyber_public_key:
+                return {
+                    'success': False,
+                    'message': f'节点 {self.node_id} 还未生成Kyber密钥对，请先完成Kyber密钥生成'
+                }
+
+            # 获取节点的 Falcon 安全级别
+            security_level = int(getattr(self.node, 'falcon_security_level', '512') or '512')
+            logger.info(f"节点 {self.node_id} Falcon安全级别: {security_level}")
+
+            # Falcon 密钥生成包含大矩阵乘法，Falcon-1024 尤其耗时。
+            # 在长时间 CPU 计算前主动关闭数据库连接，防止 MySQL 空闲超时断开。
+            connection.close()
+            logger.info(f"[DB] Falcon密钥生成前关闭数据库连接")
+
+            falcon_start_time = time.time()
+            falcon_kp = self.keygen_service.generate_falcon_keypair(
+                self.node_id, security_level=security_level
+            )
+            falcon_end_time = time.time()
+            falcon_duration = falcon_end_time - falcon_start_time
+
+            # CPU 计算完成，强制重建数据库连接
+            _force_reconnect_db()
+            logger.info(f"[DB] Falcon密钥生成完成({falcon_duration:.2f}s)，数据库连接已重新建立")
+
+            if falcon_kp['success']:
+                # 将公钥数据序列化为包含参数信息的 JSON
+                falcon_pk_data = {
+                    'U_id': falcon_kp['public_key'],
+                    'H_id': falcon_kp.get('H_id'),
+                    'A': falcon_kp.get('A'),
+                    'B': falcon_kp.get('B'),
+                    'algorithm': falcon_kp.get('algorithm', f'CertificatelessFalcon-{security_level}'),
+                    'security_level': security_level,
+                    'node_id': self.node_id,
+                    'parameters': falcon_kp.get('parameters', {
+                        'n': 512 if security_level == 512 else 1024,
+                        'm': 1024 if security_level == 512 else 2048,
+                        'q': 12289
+                    })
+                }
+                falcon_public_key_b64 = compress_key_data(base64.b64encode(
+                    json.dumps(falcon_pk_data).encode('utf-8')
+                ).decode('utf-8'))
+
+                # 将私钥数据序列化为包含参数信息的 JSON
+                falcon_sk_data = {
+                    'D_id': falcon_kp['private_key']['D_id'],
+                    'S_id': falcon_kp['private_key']['S_id'],
+                    'algorithm': f'CertificatelessFalcon-{security_level}',
+                    'security_level': security_level,
+                    'node_id': self.node_id,
+                    'parameters': falcon_kp.get('parameters', {
+                        'n': 512 if security_level == 512 else 1024,
+                        'm': 1024 if security_level == 512 else 2048,
+                        'q': 12289
+                    })
+                }
+                falcon_private_key_b64 = compress_key_data(base64.b64encode(
+                    json.dumps(falcon_sk_data).encode('utf-8')
+                ).decode('utf-8'))
+
+                lattice_params_json = json.dumps({
+                    'D_id': falcon_kp.get('D_id'),
+                    'S_id': falcon_kp.get('S_id'),
+                    'H_id': falcon_kp.get('H_id'),
+                    'security_level': security_level,
+                    'parameters': falcon_kp.get('parameters', {})
+                })
+                keygen_time = timezone.now()
+
+                logger.info(
+                    f"节点 {self.node_id} 无证书Falcon-{security_level}密钥对生成成功，"
+                    f"耗时: {falcon_duration:.4f}秒"
+                )
+            else:
+                logger.error(f"节点 {self.node_id} Falcon密钥生成失败: {falcon_kp.get('error')}")
+                return {
+                    'success': False,
+                    'message': f"Falcon密钥生成失败: {falcon_kp.get('error')}"
+                }
+
+            # 逐字段写入，避免单条 UPDATE 超过 max_allowed_packet
+            _safe_update_node(self.node_id,
+                falcon_public_key=falcon_public_key_b64)
+            _safe_update_node(self.node_id,
+                falcon_private_key=falcon_private_key_b64)
+            _safe_update_node(self.node_id,
+                falcon_lattice_params=lattice_params_json)
+            _safe_update_node(self.node_id,
+                falcon_keygen_time=keygen_time,
+                falcon_keygen_duration=falcon_duration,
+                status='falcon_generated')
+
+            try:
+                self.node = Node.objects.get(node_id=self.node_id)
+                upload_result = self.upload_service.upload_node_registration(self.node)
+                if upload_result['success']:
+                    _safe_update_node(self.node_id, status='active')
+                    self.node.status = 'active'
+                    logger.info(f"节点 {self.node_id} Falcon公钥已上链")
+                else:
+                    logger.warning(f"节点 {self.node_id} Falcon上链失败: {upload_result.get('message')}")
+            except Exception as e:
+                logger.warning(f"节点 {self.node_id} Falcon上链异常: {e}")
+
+            return {
+                'success': True,
+                'message': f'节点 {self.node_id} 无证书Falcon-{security_level}密钥对生成成功，耗时: {falcon_duration:.4f}秒',
+                'node_id': self.node_id,
+                'status': 'active',
+                'security_level': security_level,
+                'kyber_keygen_time': self.node.kyber_keygen_time.isoformat() if self.node.kyber_keygen_time else None,
+                'kyber_keygen_duration': round(self.node.kyber_keygen_duration, 4) if self.node.kyber_keygen_duration else None,
+                'falcon_keygen_time': self.node.falcon_keygen_time.isoformat() if self.node.falcon_keygen_time else None,
+                'falcon_keygen_duration': round(self.node.falcon_keygen_duration, 4) if self.node.falcon_keygen_duration else None
+            }
+
+        except Exception as e:
+            logger.error(f"节点 {self.node_id} Falcon密钥生成异常: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'success': False,
+                'message': f'Falcon密钥生成失败: {str(e)}'
+            }
+
+    def initiate_session_key_exchange(self, target_id: str, expires_at=None) -> Dict[str, Any]:
+        """
+        发起 aes_falcon 会话密钥交换。
+        使用无证书 Falcon 格密码方案加密 AES 会话密钥。
+
+        流程：
+        1. 生成随机 AES 会话密钥 (32字节)
+        2. 获取目标节点的 Falcon 公钥
+        3. 使用 CertificatelessFalconEncryption.encrypt 加密 AES 密钥
+        4. 存储: encrypted_session_key = Falcon 格密码密文
+        5. key_exchange_data 中存储加密元数据（不含明文密钥）
+        """
+        try:
+            initiator_id = self.node_id
+            logger.info(f"节点 {initiator_id} 向 {target_id} 发起Falcon格密码会话密钥交换")
+
+            try:
+                initiator_node = Node.objects.get(node_id=initiator_id)
+            except Node.DoesNotExist:
+                logger.error(f"发起节点 {initiator_id} 不存在")
+                return {'success': False, 'message': f'发起节点 {initiator_id} 不存在'}
+
+            try:
+                target_node = Node.objects.get(node_id=target_id)
+            except Node.DoesNotExist:
+                logger.error(f"目标节点 {target_id} 不存在")
+                return {'success': False, 'message': f'目标节点 {target_id} 不存在'}
+
+            # 检查目标节点是否有 Falcon 公钥
+            if not target_node.falcon_public_key:
+                logger.error(f"目标节点 {target_id} 没有Falcon公钥")
+                return {'success': False, 'message': f'目标节点 {target_id} 没有Falcon公钥，请先生成Falcon密钥'}
+
+            if expires_at is None:
+                expires_at = timezone.now() + timezone.timedelta(hours=24)
+            elif isinstance(expires_at, str):
+                try:
+                    iso_str = expires_at.strip()
+                    if iso_str.endswith('Z'):
+                        iso_str = iso_str[:-1]
+                    expires_at = timezone.datetime.fromisoformat(iso_str)
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"无法解析过期时间 {expires_at}: {e}，使用默认24小时")
+                    expires_at = timezone.now() + timezone.timedelta(hours=24)
+
+            import hashlib
+            import time
+            import base64
+            import json as _json
+            import os
+
+            timestamp = str(int(time.time() * 1000))
+            session_hash_input = f"{initiator_id}_{target_id}_{timestamp}"
+            session_hash = hashlib.sha256(session_hash_input.encode()).hexdigest()[:32]
+            session_id = f"sess_{session_hash}"
+
+            # Step 1: 生成随机 AES 会话密钥
+            aes_key = os.urandom(32)
+            logger.info(f"生成 AES 会话密钥: {len(aes_key)} bytes")
+
+            # Step 2: 获取目标节点安全级别并初始化 Falcon 加密
+            target_security_level = int(getattr(target_node, 'falcon_security_level', '512') or '512')
+            from .falcon_aes_session_encryption import FalconAESSessionKeyEncryption
+            falcon_enc = FalconAESSessionKeyEncryption(security_level=target_security_level)
+
+            # Step 3: 使用 Falcon 格密码加密 AES 密钥
+            enc_result = falcon_enc.encrypt_aes_key_with_falcon(
+                recipient_id=target_id,
+                aes_key=aes_key,
+                recipient_public_key_b64=target_node.falcon_public_key
+            )
+
+            if not enc_result['success']:
+                logger.error(f"Falcon格密码加密AES密钥失败: {enc_result.get('message')}")
+                return {'success': False, 'message': f"Falcon加密失败: {enc_result.get('message')}"}
+
+            logger.info(f"AES密钥已使用Falcon-{target_security_level}格密码加密")
+
+            # Step 4: 构造密钥交换数据（不含明文密钥）
+            key_exchange_data = {
+                'algorithm': f'CertificatelessFalcon-{target_security_level}',
+                'security_level': target_security_level,
+                'initiator': initiator_id,
+                'target': target_id,
+                'timestamp': timestamp,
+                'session_key_length': len(aes_key),
+                'encrypted_by': 'falcon_lattice_encryption'
+            }
+
+            # encrypted_session_key 存储 Falcon 格密码密文
+            encrypted_session_key = enc_result['ciphertext']
+
+            session_key = SessionKey.objects.create(
+                session_id=session_id,
+                node1=initiator_node,
+                node2=target_node,
+                status='initiated',
+                expires_at=expires_at,
+                key_exchange_data=_json.dumps(key_exchange_data, ensure_ascii=False),
+                encrypted_session_key=encrypted_session_key,
+                session_type='aes_falcon'
+            )
+
+            logger.info(f"会话密钥 {session_key.id} 创建成功，session_id: {session_id}，加密方式: Falcon-{target_security_level}")
+
+            return {
+                'success': True,
+                'message': f'会话密钥交换已发起 (Falcon-{target_security_level}格密码加密)',
+                'session_id': session_id,
+                'security_level': target_security_level,
+                'expires_at': expires_at.isoformat()
+            }
+
+        except Exception as e:
+            logger.error(f"会话密钥交换异常: {e}")
+            import traceback
+            traceback.print_exc()
+            return {'success': False, 'message': f'会话密钥交换失败: {str(e)}'}
+
+    def initiate_kyber_key_agreement(self, target_id: str, expires_at=None) -> Dict[str, Any]:
+        """
+        发起Kyber无证书格密码密钥协商。
+
+        使用图中的 Enc 算法:
+          c₁ = Aᵗ · r + e₁          (mod q)
+          c₂ = uᵗ · r + e₂ + ⌊q/2⌋·M  (mod q)
+
+        流程：
+        1. 生成随机AES会话密钥 (32字节)
+        2. 从目标节点的 kyber_partial_key_data 中获取无证书公钥 u 和系统参数 A
+        3. 使用无证书格密码 Enc 加密 AES 密钥（逐比特向量化）
+        4. 存储密文到 encrypted_session_key
+        """
+        try:
+            logger.info(f"节点 {self.node_id} 向 {target_id} 发起Kyber无证书格密码密钥协商")
+
+            try:
+                initiator_node = Node.objects.get(node_id=self.node_id)
+            except Node.DoesNotExist:
+                return {'success': False, 'message': f'发起节点 {self.node_id} 不存在'}
+
+            try:
+                target_node = Node.objects.get(node_id=target_id)
+            except Node.DoesNotExist:
+                return {'success': False, 'message': f'目标节点 {target_id} 不存在'}
+
+            if not target_node.kyber_partial_key_data:
+                return {'success': False, 'message': f'目标节点 {target_id} 没有无证书Kyber密钥数据'}
+
+            if expires_at is None:
+                expires_at = timezone.now() + timezone.timedelta(hours=24)
+            elif isinstance(expires_at, str):
+                try:
+                    iso_str = expires_at.strip()
+                    if iso_str.endswith('Z'):
+                        iso_str = iso_str[:-1]
+                    expires_at = timezone.datetime.fromisoformat(iso_str)
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"无法解析过期时间 {expires_at}: {e}，使用默认24小时")
+                    expires_at = timezone.now() + timezone.timedelta(hours=24)
+
+            import hashlib
+            import time
+            import json as _json
+            import os
+            from .kyber_fast_engine import (
+                kyber_fast_encrypt, _serialize_kyber_ct, _KyberCLKeyCache
+            )
+
+            timestamp = str(int(time.time() * 1000))
+            session_hash_input = f"{self.node_id}_{target_id}_{timestamp}"
+            session_hash = hashlib.sha256(session_hash_input.encode()).hexdigest()[:32]
+            session_id = f"sess_{session_hash}"
+
+            # 第1步: 生成随机AES会话密钥
+            aes_session_key = os.urandom(32)
+            logger.info(f"[KyberCL] 生成AES会话密钥: {len(aes_session_key)} bytes")
+
+            # 第2步: 从无证书密钥数据中获取 A 和 u (公钥)
+            cl_pk = _KyberCLKeyCache.get_cl_public_key(target_node.kyber_partial_key_data)
+            A = cl_pk['A']
+            u = cl_pk['u']
+            n, m, q = cl_pk['n'], cl_pk['m'], cl_pk['q']
+            logger.info(f"[KyberCL] 无证书公钥: n={n}, m={m}, q={q}")
+
+            # 第3步: 使用图中 Enc 算法加密 AES 密钥
+            ct = kyber_fast_encrypt(A, u, aes_session_key, n, m, q, 1.17)
+            encrypted_session_key_str = _serialize_kyber_ct(ct)
+            logger.info(f"[KyberCL] 格密码加密完成，密文大小: {len(encrypted_session_key_str)} 字符")
+
+            # 第4步: key_exchange_data
+            key_exchange_data = {
+                'initiator': self.node_id,
+                'target': target_id,
+                'timestamp': timestamp,
+                'protocol': 'kyber_cl_lattice_enc',
+            }
+
+            session_key = SessionKey.objects.create(
+                session_id=session_id,
+                node1=initiator_node,
+                node2=target_node,
+                status='initiated',
+                expires_at=expires_at,
+                key_exchange_data=_json.dumps(key_exchange_data, ensure_ascii=False),
+                encrypted_session_key=encrypted_session_key_str,
+                session_type='kyber_kem'
+            )
+
+            logger.info(
+                f"[KyberCL] 会话 {session_key.id} 创建成功, "
+                f"session_id: {session_id}"
+            )
+
+            return {
+                'success': True,
+                'message': 'Kyber无证书格密码密钥协商已发起',
+                'session_id': session_id,
+                'expires_at': expires_at.isoformat(),
+                'kem_algorithm': 'CertificatelessKyber_Lattice_Enc',
+            }
+
+        except Exception as e:
+            logger.error(f"Kyber KEM密钥协商异常: {e}")
+            import traceback
+            traceback.print_exc()
+            return {'success': False, 'message': f'Kyber KEM密钥协商失败: {str(e)}'}
+
+    @ensure_db_connection
+    def generate_falcon_keys_v2(self) -> Dict[str, Any]:
+        try:
+            import time
+            from .kgc_service import KGCService
+            logger.info(f"节点 {self.node_id} 生成无证书Falcon密钥对 (V2方案 - 基于KGC部分私钥)")
+
+            if self.node is None:
+                return {'success': False, 'message': f'节点 {self.node_id} 不存在'}
+
+            # 获取节点的 Falcon 安全级别
+            security_level = int(getattr(self.node, 'falcon_security_level', '512') or '512')
+            logger.info(f"节点 {self.node_id} Falcon安全级别: Falcon-{security_level}")
+
+            # 第一步：调用KGC生成Falcon部分私钥
+            logger.info(f"第一步：调用KGC为节点 {self.node_id} 生成Falcon部分私钥")
+            kgc_service = KGCService()
+            kgc_result = kgc_service.generate_and_save_falcon_partial_key(self.node_id)
+
+            if not kgc_result['success']:
+                logger.error(f"KGC生成Falcon部分私钥失败: {kgc_result.get('message')}")
+                return {
+                    'success': False,
+                    'message': f"KGC生成Falcon部分私钥失败: {kgc_result.get('message')}"
+                }
+
+            logger.info(f"KGC已为节点 {self.node_id} 生成Falcon部分私钥")
+
+            # 刷新节点对象以获取最新的部分私钥数据
+            self.node.refresh_from_db()
+
+            # 第二步：节点使用部分私钥生成完整的Falcon公私钥对
+            logger.info(f"第二步：节点 {self.node_id} 使用部分私钥生成完整Falcon-{security_level}密钥对")
+            falcon_start_time = time.time()
+
+            # 从数据库获取部分私钥数据
+            if not self.node.falcon_partial_key_data:
+                logger.error(f"节点 {self.node_id} 的Falcon部分私钥数据为空")
+                return {
+                    'success': False,
+                    'message': f"节点 {self.node_id} 的Falcon部分私钥数据为空"
+                }
+
+            try:
+                falcon_partial_data = json.loads(self.node.falcon_partial_key_data)
+                logger.info(f"成功解析Falcon部分私钥数据")
+            except Exception as e:
+                logger.error(f"解析Falcon部分私钥数据失败: {e}")
+                return {
+                    'success': False,
+                    'message': f"解析Falcon部分私钥数据失败: {str(e)}"
+                }
+
+            # 从KGC部分私钥中提取D_id和H_id
+            # falcon_partial_data 结构:
+            #   { partial_key: base64(json{D_id, H_id, node_id, algorithm, parameters}), ... }
+            partial_key_b64 = falcon_partial_data.get('partial_key')
+            if not partial_key_b64:
+                logger.error(f"节点 {self.node_id} 的Falcon部分私钥中缺少partial_key字段")
+                return {
+                    'success': False,
+                    'message': f"Falcon部分私钥数据格式错误: 缺少partial_key字段"
+                }
+
+            try:
+                partial_key_inner = decode_falcon_partial_key(partial_key_b64)
+                D_id_list = partial_key_inner['D_id']
+                H_id_list = partial_key_inner['H_id']
+                A_list = partial_key_inner.get('A')
+                B_list = partial_key_inner.get('B')
+                logger.info(
+                    f"成功提取KGC部分私钥: D_id维度={len(D_id_list)}x{len(D_id_list[0]) if D_id_list else 0}, "
+                    f"H_id维度={len(H_id_list)}x{len(H_id_list[0]) if H_id_list else 0}, "
+                    f"A={'有' if A_list else '无'}, B={'有' if B_list else '无'}"
+                )
+            except Exception as e:
+                logger.error(f"解析Falcon部分私钥内部数据失败: {e}")
+                return {
+                    'success': False,
+                    'message': f"Falcon部分私钥内部数据解析失败: {str(e)}"
+                }
+
+            # 使用KGC的部分私钥(D_id, H_id, A, B)完成密钥生成
+            # 内部执行: SetSecretValue → S_id, SetSK(D_id, S_id), SetPK(S_id) → U_id
+            # 注意: Falcon-1024 的矩阵乘法 (1024×2048)×(2048×2048) 耗时较长，
+            # 在此期间 MySQL 连接空闲可能超时断开。
+            # 因此在长时间 CPU 计算前主动关闭连接，计算完成后再重新建立。
+            connection.close()
+            logger.info(f"[DB] 长时间CPU计算前主动关闭数据库连接")
+
+            falcon_kp = self.keygen_service.complete_falcon_keygen_with_partial_key(
+                node_id=self.node_id,
+                D_id_list=D_id_list,
+                H_id_list=H_id_list,
+                A_list=A_list,
+                B_list=B_list,
+                security_level=security_level
+            )
+            falcon_end_time = time.time()
+            falcon_duration = falcon_end_time - falcon_start_time
+
+            # CPU 计算完成，强制重建数据库连接
+            _force_reconnect_db()
+            logger.info(f"[DB] CPU计算完成，数据库连接已重新建立")
+
+            if falcon_kp['success']:
+                logger.info(f"节点 {self.node_id} 使用部分私钥成功生成完整Falcon-{security_level}密钥对，耗时: {falcon_duration:.4f}秒")
+
+                # 获取参数信息
+                kp_params = falcon_kp.get('parameters', {
+                    'n': 512 if security_level == 512 else 1024,
+                    'm': 1024 if security_level == 512 else 2048,
+                    'q': 12289
+                })
+
+                # 序列化 Falcon 公钥（包含系统参数A、B和H_id，加密时需要）
+                falcon_pk_data = {
+                    'U_id': falcon_kp['public_key'],
+                    'H_id': falcon_kp.get('H_id'),
+                    'A': falcon_kp.get('A'),
+                    'B': falcon_kp.get('B'),
+                    'algorithm': f'CertificatelessFalcon-{security_level}',
+                    'security_level': security_level,
+                    'node_id': self.node_id,
+                    'parameters': kp_params
+                }
+                falcon_public_key_b64 = compress_key_data(base64.b64encode(
+                    json.dumps(falcon_pk_data).encode('utf-8')
+                ).decode('utf-8'))
+
+                # 序列化 Falcon 私钥
+                falcon_private_key_data = {
+                    'D_id': falcon_kp['private_key']['D_id'],
+                    'S_id': falcon_kp['private_key']['S_id'],
+                    'algorithm': f'CertificatelessFalcon-{security_level}',
+                    'security_level': security_level,
+                    'node_id': self.node_id,
+                    'parameters': kp_params
+                }
+                falcon_private_key_b64 = compress_key_data(base64.b64encode(
+                    json.dumps(falcon_private_key_data).encode('utf-8')
+                ).decode('utf-8'))
+
+                # 序列化 Falcon 格密码参数
+                lattice_params_json = json.dumps({
+                    'D_id': falcon_kp.get('D_id'),
+                    'S_id': falcon_kp.get('S_id'),
+                    'H_id': falcon_kp.get('H_id'),
+                    'algorithm': f'CertificatelessFalcon-{security_level}',
+                    'security_level': security_level,
+                    'node_id': self.node_id,
+                    'parameters': kp_params
+                })
+
+                keygen_time = timezone.now()
+                has_kyber = bool(self.node.kyber_public_key)
+
+                # 逐字段写入，避免单条 UPDATE 超过 max_allowed_packet
+                logger.info(f"[DB] 开始逐字段写入Falcon-{security_level}密钥数据...")
+                _safe_update_node(self.node_id,
+                    falcon_public_key=falcon_public_key_b64)
+                logger.info(f"[DB] falcon_public_key 写入完成 ({len(falcon_public_key_b64)} chars)")
+                _safe_update_node(self.node_id,
+                    falcon_private_key=falcon_private_key_b64)
+                logger.info(f"[DB] falcon_private_key 写入完成 ({len(falcon_private_key_b64)} chars)")
+                _safe_update_node(self.node_id,
+                    falcon_lattice_params=lattice_params_json)
+                logger.info(f"[DB] falcon_lattice_params 写入完成 ({len(lattice_params_json)} chars)")
+                _safe_update_node(self.node_id,
+                    falcon_keygen_time=keygen_time,
+                    falcon_keygen_duration=falcon_duration,
+                    status='falcon_generated',
+                    partial_key_received=has_kyber)
+                logger.info(f"节点 {self.node_id} 无证书Falcon-{security_level}密钥对生成成功，耗时: {falcon_duration:.4f}秒")
+
+                # 刷新 ORM 对象
+                self.node.refresh_from_db()
+
+                # 上传到区块链
+                try:
+                    # 重新获取节点对象
+                    self.node = Node.objects.get(node_id=self.node_id)
+                    upload_result = self.upload_service.upload_node_registration(self.node)
+                    if upload_result['success']:
+                        Node.objects.filter(node_id=self.node_id).update(status='active')
+                        self.node.status = 'active'
+                        logger.info(f"节点 {self.node_id} Falcon公钥已上链")
+                    else:
+                        logger.warning(f"节点 {self.node_id} Falcon上链失败: {upload_result.get('message')}")
+                except Exception as e:
+                    logger.warning(f"节点 {self.node_id} Falcon上链异常: {e}")
+
+                return {
+                    'success': True,
+                    'message': f'无证书Falcon-{security_level}密钥对生成成功，耗时: {falcon_duration:.4f}秒',
+                    'public_key': falcon_kp['public_key'],
+                    'private_key': falcon_private_key_data,
+                    'security_level': security_level,
+                    'falcon_keygen_duration': round(falcon_duration, 4),
+                    'falcon_keygen_time': self.node.falcon_keygen_time.isoformat() if self.node.falcon_keygen_time else None,
+                    'kyber_keygen_duration': round(self.node.kyber_keygen_duration, 4) if self.node.kyber_keygen_duration else None,
+                    'kyber_keygen_time': self.node.kyber_keygen_time.isoformat() if self.node.kyber_keygen_time else None,
+                    'node_id': self.node_id,
+                    'status': self.node.status,
+                    'partial_key_received': self.node.partial_key_received
+                }
+            else:
+                logger.error(f"节点 {self.node_id} Falcon密钥生成失败: {falcon_kp.get('error')}")
+                return {
+                    'success': False,
+                    'message': f"Falcon密钥生成失败: {falcon_kp.get('error')}"
+                }
+
+        except Exception as e:
+            logger.error(f"节点 {self.node_id} Falcon密钥生成异常: {e}")
+            import traceback
+            traceback.print_exc()
+            return {'success': False, 'message': f'Falcon密钥生成失败: {str(e)}'}
+
+    def get_node_key_version_info(self) -> Dict[str, Any]:
+        try:
+            logger.info(f"查询节点 {self.node_id} 的密钥版本信息")
+
+            if self.node is None:
+                return {'success': False, 'message': f'节点 {self.node_id} 不存在'}
+
+            from .models import NodeKeyVersion
+
+            try:
+                key_version = NodeKeyVersion.objects.get(node=self.node)
+            except NodeKeyVersion.DoesNotExist:
+                key_version = NodeKeyVersion.objects.create(
+                    node=self.node,
+                    kyber_version=1,
+                    falcon_version=1,
+                    kyber_public_key_hash='',
+                    falcon_public_key_hash=''
+                )
+
+            return {
+                'success': True,
+                'message': '密钥版本信息查询成功',
+                'node_id': self.node_id,
+                'kyber_version': key_version.kyber_version,
+                'falcon_version': key_version.falcon_version,
+                'kyber_public_key_hash': key_version.kyber_public_key_hash,
+                'falcon_public_key_hash': key_version.falcon_public_key_hash
+            }
+
+        except Exception as e:
+            logger.error(f"查询节点 {self.node_id} 密钥版本信息异常: {e}")
+            import traceback
+            traceback.print_exc()
+            return {'success': False, 'message': f'查询失败: {str(e)}'}
+
+    def encrypt_message(self, message: str, recipient_public_key: str) -> str:
+        try:
+            logger.info(f"节点 {self.node_id} 加密消息")
+
+            import json as _json
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+            import os
+
+            if isinstance(recipient_public_key, str):
+                try:
+                    recipient_public_key = _json.loads(recipient_public_key)
+                except (ValueError, TypeError):
+                    pass
+
+            key = os.urandom(32)
+            nonce = os.urandom(12)
+
+            cipher = AESGCM(key)
+            plaintext = message.encode('utf-8')
+            ciphertext = cipher.encrypt(nonce, plaintext, None)
+
+            encrypted_data = {
+                'ciphertext': base64.b64encode(ciphertext).decode('utf-8'),
+                'nonce': base64.b64encode(nonce).decode('utf-8'),
+                'key': base64.b64encode(key).decode('utf-8')
+            }
+
+            return json.dumps(encrypted_data)
+
+        except Exception as e:
+            logger.error(f"节点 {self.node_id} 消息加密异常: {e}")
+            import traceback
+            traceback.print_exc()
+            return json.dumps({'error': str(e)})
+
+    @property
+    def real_aes(self):
+        class AESEncryptor:
+            @staticmethod
+            def encrypt(plaintext: bytes, key: bytes) -> tuple:
+                from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+                import os
+
+                # 验证密钥长度
+                if not key or len(key) < 32:
+                    raise ValueError(f"AES密钥长度不足，期望至少32字节，实际: {len(key) if key else 0}字节")
+
+                nonce = os.urandom(12)
+                cipher = AESGCM(key[:32])
+                # AESGCM.encrypt返回的是密文+tag的组合
+                ciphertext = cipher.encrypt(nonce, plaintext, None)
+
+                return ciphertext, nonce
+
+            @staticmethod
+            def decrypt(ciphertext: bytes, key: bytes, nonce: bytes) -> bytes:
+                from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+                # 验证密钥长度
+                if not key or len(key) < 32:
+                    raise ValueError(f"AES密钥长度不足，期望至少32字节，实际: {len(key) if key else 0}字节")
+
+                cipher = AESGCM(key[:32])
+                plaintext = cipher.decrypt(nonce, ciphertext, None)
+
+                return plaintext
+
+        return AESEncryptor()
+
+    def update_kyber_keys(self, security_level: int = 512) -> Dict[str, Any]:
+        """
+        更新Kyber密钥 - 使用高效的密钥生成方法，并调用KGC生成部分私钥
+        """
+        try:
+            import time
+            from .kgc_service import KGCService
+            logger.info(f"节点 {self.node_id} 更新Kyber密钥，安全级别: {security_level}")
+
+            if self.node is None:
+                return {'success': False, 'message': f'节点 {self.node_id} 不存在'}
+
+            # 第一步：调用KGC生成Kyber部分私钥
+            logger.info(f"第一步：调用KGC为节点 {self.node_id} 生成Kyber部分私钥")
+            kgc_service = KGCService()
+            kgc_result = kgc_service.generate_and_save_kyber_partial_key(self.node_id)
+
+            if not kgc_result['success']:
+                logger.error(f"KGC生成Kyber部分私钥失败: {kgc_result.get('message')}")
+                return {
+                    'success': False,
+                    'message': f"KGC生成Kyber部分私钥失败: {kgc_result.get('message')}"
+                }
+
+            logger.info(f"KGC已为节点 {self.node_id} 生成Kyber部分私钥")
+
+            # 刷新节点对象以获取最新的部分私钥数据
+            self.node.refresh_from_db()
+
+            # 第二步：节点使用KGC部分私钥生成完整的Kyber公私钥对
+            logger.info(f"第二步：节点 {self.node_id} 使用KGC部分私钥生成完整Kyber密钥对")
+            kyber_start_time = time.time()
+
+            # 从数据库获取KGC存入的部分私钥数据
+            if not self.node.kyber_partial_key_data:
+                logger.error(f"节点 {self.node_id} 的Kyber部分私钥数据为空")
+                return {
+                    'success': False,
+                    'message': f"节点 {self.node_id} 的Kyber部分私钥数据为空"
+                }
+
+            try:
+                kyber_partial_data = json.loads(self.node.kyber_partial_key_data)
+                logger.info(f"成功解析Kyber部分私钥数据")
+            except Exception as e:
+                logger.error(f"解析Kyber部分私钥数据失败: {e}")
+                return {
+                    'success': False,
+                    'message': f"解析Kyber部分私钥数据失败: {str(e)}"
+                }
+
+            # 提取KGC的部分私钥: t_id, c_id, u_prime_id
+            partial_key_t = kyber_partial_data.get('partial_key_t')
+            hash_c = kyber_partial_data.get('hash_c')
+            u_prime_id = kyber_partial_data.get('u_prime_id')
+
+            if partial_key_t is None or hash_c is None or u_prime_id is None:
+                logger.error(f"节点 {self.node_id} 的Kyber部分私钥数据不完整")
+                return {
+                    'success': False,
+                    'message': f"Kyber部分私钥数据不完整: 缺少t_id/c_id/u_prime_id"
+                }
+
+            logger.info(
+                f"提取KGC部分私钥: t_id维度={len(partial_key_t)}, "
+                f"c_id维度={len(hash_c)}, u_prime_id维度={len(u_prime_id)}"
+            )
+
+            # 使用KGC的部分私钥完成密钥生成
+            # 内部执行: SetSecretValue → s_id, SetSK(t, s_id), SetPK(u_prime_id, c, s_id), DLL桥接
+            kyber_kp = self.keygen_service.complete_kyber_keygen_with_partial_key(
+                node_id=self.node_id,
+                partial_key_t=partial_key_t,
+                hash_c=hash_c,
+                u_prime_id=u_prime_id
+            )
+            kyber_end_time = time.time()
+            kyber_duration = kyber_end_time - kyber_start_time
+
+            if kyber_kp['success']:
+                logger.info(f"节点 {self.node_id} 使用部分私钥成功生成完整Kyber密钥对，耗时: {kyber_duration:.4f}秒")
+
+                # 融合模块返回的是标准Kyber DLL格式的bytes密钥对
+                kyber_pk = kyber_kp['kyber_public_key']
+                kyber_sk = kyber_kp['kyber_private_key']
+                self.node.kyber_public_key = base64.b64encode(kyber_pk).decode('utf-8')
+                self.node.kyber_private_key = base64.b64encode(kyber_sk).decode('utf-8')
+
+                # 保存Kyber部分私钥信息，标记来源为KGC
+                self.node.kyber_partial_key_data = json.dumps({
+                    'partial_key_t': kyber_kp.get('partial_key_t'),
+                    'secret_value_s_id': kyber_kp.get('secret_value_s_id'),
+                    'hash_c': kyber_kp.get('hash_c'),
+                    'u_prime_id': kyber_kp.get('u_prime_id'),
+                    'cl_public_key': _to_list(kyber_kp.get('cl_public_key')),
+                    'cl_private_key': _to_list(kyber_kp.get('cl_private_key')),
+                    'A': _to_list(kyber_kp.get('system_A')),
+                    'algorithm': kyber_kp.get('algorithm', 'CertificatelessKyber512_DLL'),
+                    'parameters': {'n': 512, 'm': 1024, 'q': 12289},
+                    'partial_key_source': 'KGC'
+                })
+
+                self.node.kyber_keygen_time = timezone.now()
+                self.node.kyber_keygen_duration = kyber_duration
+                self.node.kyber_security_level = str(security_level)
+                logger.info(f"节点 {self.node_id} Kyber密钥更新成功，耗时: {kyber_duration:.4f}秒")
+
+                # 如果Falcon密钥也已生成，则标记为已接收部分私钥
+                if self.node.falcon_public_key:
+                    self.node.partial_key_received = True
+                    logger.info(f"节点 {self.node_id} Kyber和Falcon密钥都已生成，标记为已接收部分私钥")
+
+                # 分字段保存到数据库，避免单个数据包过大
+                from django.db import connection
+                from pqkds.models import Node
+                try:
+                    connection.close()
+                    # 使用 update 方法分字段更新
+                    Node.objects.filter(id=self.node.id).update(
+                        partial_key_received=self.node.partial_key_received,
+                        kyber_keygen_time=self.node.kyber_keygen_time,
+                        kyber_keygen_duration=self.node.kyber_keygen_duration,
+                        kyber_security_level=self.node.kyber_security_level,
+                        status=self.node.status
+                    )
+                    # 分别保存密钥数据
+                    if self.node.kyber_public_key:
+                        Node.objects.filter(id=self.node.id).update(kyber_public_key=self.node.kyber_public_key)
+                    if self.node.kyber_private_key:
+                        Node.objects.filter(id=self.node.id).update(kyber_private_key=self.node.kyber_private_key)
+                    if self.node.kyber_partial_key_data:
+                        Node.objects.filter(id=self.node.id).update(kyber_partial_key_data=self.node.kyber_partial_key_data)
+                except Exception as save_error:
+                    logger.error(f"第一次保存失败: {save_error}，尝试重新连接数据库")
+                    try:
+                        connection.close()
+                        self.node.save()
+                    except Exception as retry_error:
+                        logger.error(f"重新连接后保存仍然失败: {retry_error}")
+                        raise
+
+                # 上传到区块链
+                try:
+                    upload_result = self.upload_service.upload_node_registration(self.node)
+                    if upload_result['success']:
+                        logger.info(f"节点 {self.node_id} 更新的Kyber公钥已上链")
+                    else:
+                        logger.warning(f"节点 {self.node_id} 上链失败: {upload_result.get('message')}")
+                except Exception as e:
+                    logger.warning(f"节点 {self.node_id} 上链异常: {e}")
+
+                return {
+                    'success': True,
+                    'message': f'Kyber密钥更新成功（基于KGC部分私钥），耗时: {kyber_duration:.4f}秒',
+                    'node_id': self.node_id,
+                    'kyber_keygen_duration': round(kyber_duration, 4),
+                    'kyber_keygen_time': self.node.kyber_keygen_time.isoformat() if self.node.kyber_keygen_time else None,
+                    'partial_key_received': self.node.partial_key_received,
+                    'partial_key_source': 'KGC'
+                }
+            else:
+                logger.error(f"节点 {self.node_id} Kyber密钥生成失败: {kyber_kp.get('error')}")
+                return {
+                    'success': False,
+                    'message': f"Kyber密钥生成失败: {kyber_kp.get('error')}"
+                }
+        except Exception as e:
+            logger.error(f"更新Kyber密钥异常: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'success': False,
+                'message': f'更新Kyber密钥失败: {str(e)}'
+            }
+
+    def update_falcon_keys(self, security_level: int = 512, falcon_version: str = 'v2') -> Dict[str, Any]:
+        """
+        更新Falcon密钥 - 使用高效的密钥生成方法，并调用KGC生成部分私钥
+        """
+        try:
+            import time
+            from .kgc_service import KGCService
+            logger.info(f"节点 {self.node_id} 更新Falcon密钥，安全级别: {security_level}，版本: {falcon_version}")
+
+            if self.node is None:
+                return {'success': False, 'message': f'节点 {self.node_id} 不存在'}
+
+            # 第一步：调用KGC生成Falcon部分私钥
+            logger.info(f"第一步：调用KGC为节点 {self.node_id} 生成Falcon部分私钥")
+            kgc_service = KGCService()
+            kgc_result = kgc_service.generate_and_save_falcon_partial_key(self.node_id)
+
+            if not kgc_result['success']:
+                logger.error(f"KGC生成Falcon部分私钥失败: {kgc_result.get('message')}")
+                return {
+                    'success': False,
+                    'message': f"KGC生成Falcon部分私钥失败: {kgc_result.get('message')}"
+                }
+
+            logger.info(f"KGC已为节点 {self.node_id} 生成Falcon部分私钥")
+
+            # 刷新节点对象以获取最新的部分私钥数据
+            self.node.refresh_from_db()
+
+            # 第二步：节点使用部分私钥生成完整的Falcon公私钥对
+            logger.info(f"第二步：节点 {self.node_id} 使用部分私钥生成完整Falcon密钥对")
+            falcon_start_time = time.time()
+            falcon_kp = self.keygen_service.generate_falcon_keypair(self.node_id)
+            falcon_end_time = time.time()
+            falcon_duration = falcon_end_time - falcon_start_time
+
+            if falcon_kp['success']:
+                logger.info(f"节点 {self.node_id} 使用部分私钥成功生成完整Falcon密钥对，耗时: {falcon_duration:.4f}秒")
+
+                # 保存Falcon公钥（使用压缩格式）
+                falcon_pk_bytes = np.array(falcon_kp['public_key'], dtype=np.uint8).tobytes()
+                falcon_public_key_b64 = base64.b64encode(falcon_pk_bytes).decode('utf-8')
+                self.node.falcon_public_key = compress_key_data(falcon_public_key_b64)
+
+                # 保存Falcon私钥（完整的私钥结构，使用压缩格式）
+                falcon_private_key_data = {
+                    'D_id': falcon_kp['private_key']['D_id'],
+                    'S_id': falcon_kp['private_key']['S_id']
+                }
+                falcon_private_key_json = json.dumps(falcon_private_key_data)
+                falcon_private_key_b64 = base64.b64encode(falcon_private_key_json.encode('utf-8')).decode('utf-8')
+                self.node.falcon_private_key = compress_key_data(falcon_private_key_b64)
+
+                # 获取部分私钥数据用于记录来源
+                try:
+                    falcon_partial_data = json.loads(self.node.falcon_partial_key_data)
+                except:
+                    falcon_partial_data = {}
+
+                # 保存Falcon格密码参数（完整的参数，包含部分私钥信息）
+                self.node.falcon_lattice_params = json.dumps({
+                    'D_id': falcon_kp.get('D_id'),
+                    'S_id': falcon_kp.get('S_id'),
+                    'H_id': falcon_kp.get('H_id'),
+                    'algorithm': 'CertificatelessFalcon',
+                    'node_id': self.node_id,
+                    'partial_key_source': 'KGC',
+                    'partial_key_timestamp': falcon_partial_data.get('timestamp')
+                })
+
+                self.node.falcon_keygen_time = timezone.now()
+                self.node.falcon_keygen_duration = falcon_duration
+                self.node.falcon_security_level = str(security_level)
+                logger.info(f"节点 {self.node_id} Falcon密钥更新成功，耗时: {falcon_duration:.4f}秒")
+
+                # 如果Kyber密钥也已生成，则标记为已接收部分私钥
+                if self.node.kyber_public_key:
+                    self.node.partial_key_received = True
+                    logger.info(f"节点 {self.node_id} Kyber和Falcon密钥都已生成，标记为已接收部分私钥")
+
+                # 分字段保存到数据库，避免单个数据包过大
+                from django.db import connection
+                from pqkds.models import Node
+                try:
+                    connection.close()
+                    # 使用 update 方法分字段更新
+                    Node.objects.filter(id=self.node.id).update(
+                        partial_key_received=self.node.partial_key_received,
+                        falcon_keygen_time=self.node.falcon_keygen_time,
+                        falcon_keygen_duration=self.node.falcon_keygen_duration,
+                        falcon_security_level=self.node.falcon_security_level,
+                        status=self.node.status
+                    )
+                    # 分别保存密钥数据
+                    if self.node.falcon_public_key:
+                        Node.objects.filter(id=self.node.id).update(falcon_public_key=self.node.falcon_public_key)
+                    if self.node.falcon_private_key:
+                        Node.objects.filter(id=self.node.id).update(falcon_private_key=self.node.falcon_private_key)
+                    if self.node.falcon_partial_key_data:
+                        Node.objects.filter(id=self.node.id).update(falcon_partial_key_data=self.node.falcon_partial_key_data)
+                    if self.node.falcon_lattice_params:
+                        Node.objects.filter(id=self.node.id).update(falcon_lattice_params=self.node.falcon_lattice_params)
+                except Exception as save_error:
+                    logger.error(f"第一次保存失败: {save_error}，尝试重新连接数据库")
+                    try:
+                        connection.close()
+                        self.node.save()
+                    except Exception as retry_error:
+                        logger.error(f"重新连接后保存仍然失败: {retry_error}")
+                        raise
+
+                # 上传到区块链
+                try:
+                    upload_result = self.upload_service.upload_node_registration(self.node)
+                    if upload_result['success']:
+                        logger.info(f"节点 {self.node_id} 更新的Falcon公钥已上链")
+                    else:
+                        logger.warning(f"节点 {self.node_id} 上链失败: {upload_result.get('message')}")
+                except Exception as e:
+                    logger.warning(f"节点 {self.node_id} 上链异常: {e}")
+
+                return {
+                    'success': True,
+                    'message': f'Falcon密钥更新成功（基于KGC部分私钥），耗时: {falcon_duration:.4f}秒',
+                    'node_id': self.node_id,
+                    'falcon_keygen_duration': round(falcon_duration, 4),
+                    'falcon_keygen_time': self.node.falcon_keygen_time.isoformat() if self.node.falcon_keygen_time else None,
+                    'partial_key_received': self.node.partial_key_received,
+                    'partial_key_source': 'KGC'
+                }
+            else:
+                logger.error(f"节点 {self.node_id} Falcon密钥生成失败: {falcon_kp.get('error')}")
+                return {
+                    'success': False,
+                    'message': f"Falcon密钥生成失败: {falcon_kp.get('error')}"
+                }
+        except Exception as e:
+            logger.error(f"更新Falcon密钥异常: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'success': False,
+                'message': f'更新Falcon密钥失败: {str(e)}'
+            }
+
+    def update_both_keys(self, kyber_security_level: int = 512, falcon_security_level: int = 512, falcon_version: str = 'v2') -> Dict[str, Any]:
+        """
+        同时更新Kyber和Falcon密钥 - 使用高效的密钥生成方法，并调用KGC生成部分私钥
+        """
+        try:
+            import time
+            from .kgc_service import KGCService
+            logger.info(f"节点 {self.node_id} 同时更新Kyber和Falcon密钥")
+            logger.info(f"  Kyber安全级别: {kyber_security_level}")
+            logger.info(f"  Falcon安全级别: {falcon_security_level}")
+
+            if self.node is None:
+                return {'success': False, 'message': f'节点 {self.node_id} 不存在'}
+
+            # 第一步：调用KGC生成Kyber部分私钥
+            logger.info(f"第一步：调用KGC为节点 {self.node_id} 生成Kyber部分私钥")
+            kgc_service = KGCService()
+            kyber_kgc_result = kgc_service.generate_and_save_kyber_partial_key(self.node_id)
+
+            if not kyber_kgc_result['success']:
+                logger.error(f"KGC生成Kyber部分私钥失败: {kyber_kgc_result.get('message')}")
+                return {
+                    'success': False,
+                    'message': f"KGC生成Kyber部分私钥失败: {kyber_kgc_result.get('message')}"
+                }
+
+            logger.info(f"KGC已为节点 {self.node_id} 生成Kyber部分私钥")
+
+            # 第二步：调用KGC生成Falcon部分私钥
+            logger.info(f"第二步：调用KGC为节点 {self.node_id} 生成Falcon部分私钥")
+            falcon_kgc_result = kgc_service.generate_and_save_falcon_partial_key(self.node_id)
+
+            if not falcon_kgc_result['success']:
+                logger.error(f"KGC生成Falcon部分私钥失败: {falcon_kgc_result.get('message')}")
+                return {
+                    'success': False,
+                    'message': f"KGC生成Falcon部分私钥失败: {falcon_kgc_result.get('message')}"
+                }
+
+            logger.info(f"KGC已为节点 {self.node_id} 生成Falcon部分私钥")
+
+            # 刷新节点对象以获取最新的部分私钥数据
+            self.node.refresh_from_db()
+
+            # 第三步：节点使用KGC部分私钥生成完整的Kyber密钥对
+            logger.info(f"第三步：节点 {self.node_id} 使用KGC部分私钥生成完整Kyber密钥对")
+            kyber_start_time = time.time()
+
+            # 从数据库获取KGC存入的Kyber部分私钥
+            if not self.node.kyber_partial_key_data:
+                return {'success': False, 'message': f"节点 {self.node_id} 的Kyber部分私钥数据为空"}
+            kyber_partial = json.loads(self.node.kyber_partial_key_data)
+            kp_t = kyber_partial.get('partial_key_t')
+            kp_c = kyber_partial.get('hash_c')
+            kp_u = kyber_partial.get('u_prime_id')
+            if kp_t is None or kp_c is None or kp_u is None:
+                return {'success': False, 'message': "Kyber部分私钥数据不完整"}
+
+            kyber_kp = self.keygen_service.complete_kyber_keygen_with_partial_key(
+                node_id=self.node_id,
+                partial_key_t=kp_t,
+                hash_c=kp_c,
+                u_prime_id=kp_u
+            )
+            kyber_end_time = time.time()
+            kyber_duration = kyber_end_time - kyber_start_time
+
+            if not kyber_kp['success']:
+                logger.error(f"节点 {self.node_id} Kyber密钥生成失败: {kyber_kp.get('error')}")
+                return {
+                    'success': False,
+                    'message': f"Kyber密钥生成失败: {kyber_kp.get('error')}"
+                }
+
+            logger.info(f"节点 {self.node_id} 使用部分私钥成功生成完整Kyber密钥对，耗时: {kyber_duration:.4f}秒")
+
+            # 融合模块返回的是标准Kyber DLL格式的bytes密钥对
+            kyber_pk = kyber_kp['kyber_public_key']
+            kyber_sk = kyber_kp['kyber_private_key']
+            self.node.kyber_public_key = base64.b64encode(kyber_pk).decode('utf-8')
+            self.node.kyber_private_key = base64.b64encode(kyber_sk).decode('utf-8')
+            self.node.kyber_partial_key_data = json.dumps({
+                'partial_key_t': kyber_kp.get('partial_key_t'),
+                'secret_value_s_id': kyber_kp.get('secret_value_s_id'),
+                'hash_c': kyber_kp.get('hash_c'),
+                'u_prime_id': kyber_kp.get('u_prime_id'),
+                'cl_public_key': _to_list(kyber_kp.get('cl_public_key')),
+                'cl_private_key': _to_list(kyber_kp.get('cl_private_key')),
+                'A': _to_list(kyber_kp.get('system_A')),
+                'algorithm': kyber_kp.get('algorithm', 'CertificatelessKyber512_DLL'),
+                'parameters': {'n': 512, 'm': 1024, 'q': 12289},
+                'partial_key_source': 'KGC'
+            })
+            self.node.kyber_keygen_time = timezone.now()
+            self.node.kyber_keygen_duration = kyber_duration
+            self.node.kyber_security_level = str(kyber_security_level)
+            logger.info(f"节点 {self.node_id} Kyber密钥更新成功，耗时: {kyber_duration:.4f}秒")
+
+            # 第四步：节点使用KGC部分私钥生成完整的Falcon密钥对
+            logger.info(f"第四步：节点 {self.node_id} 使用KGC部分私钥生成完整Falcon密钥对")
+            falcon_start_time = time.time()
+
+            # 从数据库获取KGC存入的Falcon部分私钥
+            if not self.node.falcon_partial_key_data:
+                return {'success': False, 'message': f"节点 {self.node_id} 的Falcon部分私钥数据为空"}
+            falcon_partial = json.loads(self.node.falcon_partial_key_data)
+            f_partial_key_b64 = falcon_partial.get('partial_key')
+            if not f_partial_key_b64:
+                return {'success': False, 'message': "Falcon部分私钥数据不完整"}
+            f_partial_inner = decode_falcon_partial_key(f_partial_key_b64)
+            f_D_id = f_partial_inner['D_id']
+            f_H_id = f_partial_inner['H_id']
+            f_A = f_partial_inner.get('A')
+            f_B = f_partial_inner.get('B')
+
+            falcon_kp = self.keygen_service.complete_falcon_keygen_with_partial_key(
+                node_id=self.node_id,
+                D_id_list=f_D_id,
+                H_id_list=f_H_id,
+                A_list=f_A,
+                B_list=f_B,
+                security_level=falcon_security_level
+            )
+            falcon_end_time = time.time()
+            falcon_duration = falcon_end_time - falcon_start_time
+
+            if not falcon_kp['success']:
+                logger.error(f"节点 {self.node_id} Falcon密钥生成失败: {falcon_kp.get('error')}")
+                return {
+                    'success': False,
+                    'message': f"Falcon密钥生成失败: {falcon_kp.get('error')}"
+                }
+
+            logger.info(f"节点 {self.node_id} 使用KGC部分私钥成功生成完整Falcon密钥对，耗时: {falcon_duration:.4f}秒")
+
+            # 获取参数信息
+            kp_params = falcon_kp.get('parameters', {
+                'n': 512 if falcon_security_level == 512 else 1024,
+                'm': 1024 if falcon_security_level == 512 else 2048,
+                'q': 12289
+            })
+
+            # 保存Falcon公钥（包含系统参数A、B和H_id，加密时需要）
+            falcon_pk_data = {
+                'U_id': falcon_kp['public_key'],
+                'H_id': falcon_kp.get('H_id'),
+                'A': falcon_kp.get('A'),
+                'B': falcon_kp.get('B'),
+                'algorithm': f'CertificatelessFalcon-{falcon_security_level}',
+                'security_level': falcon_security_level,
+                'node_id': self.node_id,
+                'parameters': kp_params
+            }
+            falcon_public_key_b64 = base64.b64encode(
+                json.dumps(falcon_pk_data).encode('utf-8')
+            ).decode('utf-8')
+            self.node.falcon_public_key = compress_key_data(falcon_public_key_b64)
+
+            # 保存Falcon私钥（包含参数信息的 JSON 格式）
+            falcon_private_key_data = {
+                'D_id': falcon_kp['private_key']['D_id'],
+                'S_id': falcon_kp['private_key']['S_id'],
+                'algorithm': f'CertificatelessFalcon-{falcon_security_level}',
+                'security_level': falcon_security_level,
+                'node_id': self.node_id,
+                'parameters': kp_params
+            }
+            falcon_private_key_b64 = base64.b64encode(
+                json.dumps(falcon_private_key_data).encode('utf-8')
+            ).decode('utf-8')
+            self.node.falcon_private_key = compress_key_data(falcon_private_key_b64)
+
+            # 保存Falcon格密码参数
+            self.node.falcon_lattice_params = json.dumps({
+                'D_id': falcon_kp.get('D_id'),
+                'S_id': falcon_kp.get('S_id'),
+                'H_id': falcon_kp.get('H_id'),
+                'algorithm': f'CertificatelessFalcon-{falcon_security_level}',
+                'security_level': falcon_security_level,
+                'node_id': self.node_id,
+                'parameters': kp_params,
+                'partial_key_source': 'KGC',
+                'partial_key_timestamp': falcon_partial.get('timestamp')
+            })
+
+            self.node.falcon_keygen_time = timezone.now()
+            self.node.falcon_keygen_duration = falcon_duration
+            self.node.falcon_security_level = str(falcon_security_level)
+            logger.info(f"节点 {self.node_id} Falcon密钥更新成功，耗时: {falcon_duration:.4f}秒")
+
+            # 标记为已接收部分私钥
+            self.node.partial_key_received = True
+            logger.info(f"节点 {self.node_id} Kyber和Falcon密钥都已生成，标记为已接收部分私钥")
+
+            # 分字段保存到数据库，避免单个数据包过大
+            from django.db import connection
+            from pqkds.models import Node
+            try:
+                connection.close()
+                # 使用 update 方法分字段更新，避免一次性保存大数据
+                Node.objects.filter(id=self.node.id).update(
+                    partial_key_received=True,
+                    kyber_keygen_time=self.node.kyber_keygen_time,
+                    kyber_keygen_duration=self.node.kyber_keygen_duration,
+                    falcon_keygen_time=self.node.falcon_keygen_time,
+                    falcon_keygen_duration=self.node.falcon_keygen_duration,
+                    status=self.node.status
+                )
+                # 分别保存密钥数据
+                if self.node.kyber_public_key:
+                    Node.objects.filter(id=self.node.id).update(kyber_public_key=self.node.kyber_public_key)
+                if self.node.kyber_private_key:
+                    Node.objects.filter(id=self.node.id).update(kyber_private_key=self.node.kyber_private_key)
+                if self.node.kyber_partial_key_data:
+                    Node.objects.filter(id=self.node.id).update(kyber_partial_key_data=self.node.kyber_partial_key_data)
+                if self.node.falcon_public_key:
+                    Node.objects.filter(id=self.node.id).update(falcon_public_key=self.node.falcon_public_key)
+                if self.node.falcon_private_key:
+                    Node.objects.filter(id=self.node.id).update(falcon_private_key=self.node.falcon_private_key)
+                if self.node.falcon_partial_key_data:
+                    Node.objects.filter(id=self.node.id).update(falcon_partial_key_data=self.node.falcon_partial_key_data)
+                if self.node.falcon_lattice_params:
+                    Node.objects.filter(id=self.node.id).update(falcon_lattice_params=self.node.falcon_lattice_params)
+            except Exception as save_error:
+                logger.error(f"第一次保存失败: {save_error}，尝试重新连接数据库")
+                try:
+                    connection.close()
+                    # 重试：使用 save 方法
+                    self.node.save()
+                except Exception as retry_error:
+                    logger.error(f"重新连接后保存仍然失败: {retry_error}")
+                    raise
+
+            # 上传到区块链
+            try:
+                upload_result = self.upload_service.upload_node_registration(self.node)
+                if upload_result['success']:
+                    logger.info(f"节点 {self.node_id} 更新的Kyber和Falcon公钥已上链")
+                else:
+                    logger.warning(f"节点 {self.node_id} 上链失败: {upload_result.get('message')}")
+            except Exception as e:
+                logger.warning(f"节点 {self.node_id} 上链异常: {e}")
+
+            return {
+                'success': True,
+                'message': f'Kyber和Falcon密钥同时更新成功（基于KGC部分私钥），Kyber耗时: {kyber_duration:.4f}秒，Falcon耗时: {falcon_duration:.4f}秒',
+                'node_id': self.node_id,
+                'kyber_keygen_duration': round(kyber_duration, 4),
+                'kyber_keygen_time': self.node.kyber_keygen_time.isoformat() if self.node.kyber_keygen_time else None,
+                'falcon_keygen_duration': round(falcon_duration, 4),
+                'falcon_keygen_time': self.node.falcon_keygen_time.isoformat() if self.node.falcon_keygen_time else None,
+                'partial_key_received': self.node.partial_key_received,
+                'partial_key_source': 'KGC'
+            }
+        except Exception as e:
+            logger.error(f"同时更新密钥异常: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'success': False,
+                'message': f'同时更新密钥失败: {str(e)}'
+            }
+
