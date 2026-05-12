@@ -1,6 +1,6 @@
-import multiprocessing
-workers = multiprocessing.cpu_count() * 2 + 1
-threads = 3
+import os
+workers = int(os.getenv('GUNICORN_WORKERS', '2'))
+threads = int(os.getenv('GUNICORN_THREADS', '1'))
 bind = '0.0.0.0:8000'
 daemon = 'false'
 worker_class = 'uvicorn.workers.UvicornWorker'

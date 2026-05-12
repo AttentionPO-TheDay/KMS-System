@@ -26,8 +26,8 @@
       </article>
       <article class="summary-card">
         <span class="summary-label">生成能力</span>
-        <strong>证书无关密钥</strong>
-        <small>支持 SM2 / SSCL</small>
+        <strong>证书无关 / 抗量子密钥</strong>
+        <small>支持 SM2 / SSCL / 抗量子签名密钥 / 抗量子封装密钥</small>
       </article>
       <article class="summary-card">
         <span class="summary-label">公共密钥权限</span>
@@ -41,7 +41,7 @@
         <div class="panel-head">
           <div>
             <h3>密钥生成</h3>
-            <p class="muted">提交前会先在当前浏览器生成一份用户侧密钥材料，并把公钥份额 `uA` 发送到后端。</p>
+            <p class="muted">SM2/SSCL 仍按无证书流程在用户侧生成本地份额；CL-Kyber/CL-Falcon 当前为 demo_generated 模式，由 Demo 后端为演示路径生成并返回材料或引用。strict_certificateless 模式需要用户/节点本地秘密材料，当前薄 API 未实现。</p>
           </div>
           <RouterLink class="inline-link" to="/permissions/index">查看权限申请</RouterLink>
         </div>
@@ -76,7 +76,9 @@
                 <el-input v-model="generateForm.keyName" maxlength="64" show-word-limit />
               </el-form-item>
               <el-form-item label="密钥用途" prop="keyUse">
-                <el-input v-model="generateForm.keyUse" maxlength="128" show-word-limit />
+                <el-select v-model="generateForm.keyUse" placeholder="请选择密钥用途">
+                  <el-option v-for="option in keyUseOptions" :key="option.value" :label="option.label" :value="option.value" />
+                </el-select>
               </el-form-item>
               <el-form-item label="所属域" prop="keyDomain">
                 <el-input v-model="generateForm.keyDomain" maxlength="64" placeholder="SSCL 默认 A" />
@@ -97,11 +99,15 @@
         <aside class="material-card">
           <div class="material-head">
             <h3>本地材料</h3>
-            <el-tag type="success">浏览器侧</el-tag>
+            <el-tag :type="pqAlgorithms.includes(generateForm.encrytName) ? 'info' : 'success'">{{ pqAlgorithms.includes(generateForm.encrytName) ? 'PQ demo_generated' : '浏览器侧' }}</el-tag>
           </div>
-          <p class="muted">本地部分私钥只保留在当前页面中，不会提交到后端。提交时仅发送 `uA`。</p>
+          <p class="muted">SM2/SSCL 的本地部分私钥只保留在当前页面中，不会提交到后端。CL-Kyber/CL-Falcon 当前使用 demo_generated，不发送 uA；strict_certificateless 才需要用户/节点本地秘密材料。</p>
 
-          <div v-if="!localMaterial.publicKey" style="display: flex; justify-content: center; padding: 40px 0;">
+          <div v-if="pqAlgorithms.includes(generateForm.encrytName)" class="pq-mode-note">
+            <strong>当前 PQ 模式：demo_generated</strong>
+            <span>Demo 后端为演示链路生成并返回材料或引用；这不代表 CL-Kyber/CL-Falcon 不需要本地秘密材料。strict_certificateless 模式需由用户/节点持有本地秘密材料。</span>
+          </div>
+          <div v-else-if="!localMaterial.publicKey" style="display: flex; justify-content: center; padding: 40px 0;">
             <el-button type="primary" plain @click="regenerateLocalMaterial">点击生成本地公私钥</el-button>
           </div>
           <template v-else>
@@ -281,8 +287,10 @@
         <p><strong>算法名称：</strong>{{ localResult.encrytName || '-' }}</p>
         <p><strong>密钥名称：</strong>{{ localResult.keyName || '-' }}</p>
         <p><strong>所属域：</strong>{{ localResult.keyDomain || '-' }}</p>
-        <p class="detail-span"><strong>用户公钥份额 uA：</strong>{{ localResult.uA || '-' }}</p>
-        <p class="detail-span"><strong>用户私钥份额：</strong>{{ localResult.clientPrivateKey || '-' }}</p>
+        <p v-if="pqAlgorithms.includes(localResult.encrytName)" class="detail-span"><strong>PQ 模式：</strong>{{ localResult.pqMode || localResult.pq_mode || 'demo_generated' }}</p>
+        <p v-if="pqAlgorithms.includes(localResult.encrytName)" class="detail-span"><strong>PQ 材料说明：</strong>demo_generated 表示 Demo 后端为当前演示路径生成并返回材料或引用；strict_certificateless 模式才要求用户/节点本地秘密材料。</p>
+        <p v-if="!pqAlgorithms.includes(localResult.encrytName)" class="detail-span"><strong>用户公钥份额 uA：</strong>{{ localResult.uA || '-' }}</p>
+        <p v-if="!pqAlgorithms.includes(localResult.encrytName)" class="detail-span"><strong>用户私钥份额：</strong>{{ localResult.clientPrivateKey || '-' }}</p>
         <p class="detail-span"><strong>服务端返回值：</strong>{{ localResult.keyValue || '-' }}</p>
         <p v-if="localResult.partialKey" class="detail-span"><strong>部分私钥：</strong>{{ localResult.partialKey }}</p>
         <p v-if="localResult.finalPublicKey" class="detail-span"><strong>最终公钥：</strong>{{ localResult.finalPublicKey }}</p>
@@ -310,6 +318,8 @@
         <p><strong>区块高度：</strong>{{ selectedKey.blockHeight ?? '-' }}</p>
         <p><strong>创建时间：</strong>{{ selectedKey.creTime || '-' }}</p>
         <p><strong>更新时间：</strong>{{ selectedKey.updTime || '-' }}</p>
+        <p v-if="pqAlgorithms.includes(selectedKey.encrytName)" class="detail-span"><strong>PQ 模式：</strong>{{ selectedPqMode }}</p>
+        <p v-if="pqAlgorithms.includes(selectedKey.encrytName)" class="detail-span"><strong>PQ 材料说明：</strong>demo_generated 表示 Demo 后端为当前演示路径生成并返回材料或引用；strict_certificateless 模式才要求用户/节点本地秘密材料。</p>
         <p class="detail-span"><strong>密钥值：</strong>{{ selectedKey.keyValue || '-' }}</p>
       </div>
     </el-dialog>
@@ -355,6 +365,13 @@ const publicListLoading = ref(false)
 const activeTab = ref('generate')
 const approvedPublicRequestId = ref(null)
 const encrytNameOptions = ref([])
+const pqAlgorithms = ['PQ_FALCON', 'PQ_KYBER', 'PQ_CERTIFICATELESS', 'PQ_CL_KYBER', 'PQ_CL_FALCON', 'CL-Kyber', 'CL-Falcon']
+const keyUseOptions = [
+  { label: '签名 / 验签', value: '签名 / 验签' },
+  { label: '密钥封装 / 解封装', value: '密钥封装 / 解封装' },
+  { label: '加密 / 解密', value: '加密 / 解密' },
+  { label: '密钥协商', value: '密钥协商' }
+]
 
 const profile = reactive({
   userId: '',
@@ -405,6 +422,7 @@ const hasTemporaryPublicKeysAccess = computed(() => Boolean(approvedPublicReques
 const canViewPublicKeys = computed(() => hasPermanentPublicKeysAccess.value || hasTemporaryPublicKeysAccess.value)
 const showPublicKeysRollback = computed(() => hasTemporaryPublicKeysAccess.value)
 const maskedPrivateKey = computed(() => maskText(localMaterial.privateKey, 20))
+const selectedPqMode = computed(() => parsePqMode(selectedKey.value?.keyValue) || selectedKey.value?.pqMode || selectedKey.value?.pq_mode || 'demo_generated')
 
 watch(
   () => ({
@@ -434,7 +452,6 @@ watch(
 
 onMounted(async () => {
   handleEncrytTypeChange(generateForm.encrytType)
-  // [NEW] Default do not auto generate local materials
   await ensureProfile()
   fillDefaultFilters()
   await loadKeys()
@@ -481,7 +498,9 @@ function handleEncrytTypeChange(value) {
   if (value === '无证书非对称加密') {
     encrytNameOptions.value = [
       { label: 'SM2', value: 'SM2' },
-      { label: 'SSCL', value: 'SSCL' }
+      { label: 'SSCL', value: 'SSCL' },
+      { label: 'CL-Falcon', value: 'CL-Falcon' },
+      { label: 'CL-Kyber', value: 'CL-Kyber' }
     ]
   } else {
     encrytNameOptions.value = []
@@ -517,7 +536,7 @@ async function submitGenerate() {
     errorMessage.value = '当前登录用户信息不完整，请刷新后重试。'
     return
   }
-  if (!localMaterial.publicKey || !localMaterial.privateKey) {
+  if (!pqAlgorithms.includes(generateForm.encrytName) && (!localMaterial.publicKey || !localMaterial.privateKey)) {
     regenerateLocalMaterial()
   }
 
@@ -532,8 +551,13 @@ async function submitGenerate() {
       keyUse: normalizeText(generateForm.keyUse),
       keyDomain: normalizeText(generateForm.keyDomain) || 'A',
       autoUpdate: generateForm.autoUpdateEnabled ? 'true' : 'false',
-      uA: localMaterial.publicKey,
-      ua: localMaterial.publicKey
+      pqMode: pqAlgorithms.includes(generateForm.encrytName) ? 'demo_generated' : undefined,
+      uA: pqAlgorithms.includes(generateForm.encrytName) ? '' : localMaterial.publicKey,
+      ua: pqAlgorithms.includes(generateForm.encrytName) ? '' : localMaterial.publicKey,
+      operatorMetadata: {
+        user_id: Number(profile.userId),
+        user_name: profile.userName
+      }
     })
 
     const snapshot = response?.data || response
@@ -552,8 +576,9 @@ async function handleSubmittedSnapshot(snapshot) {
   const result = {
     ...snapshot,
     keyDomain: snapshot?.keyDomain || generateForm.keyDomain,
-    uA: localMaterial.publicKey,
-    clientPrivateKey: localMaterial.privateKey
+    pqMode: pqAlgorithms.includes(generateForm.encrytName) ? (parsePqMode(snapshot?.keyValue) || snapshot?.pqMode || snapshot?.pq_mode || 'demo_generated') : undefined,
+    uA: pqAlgorithms.includes(generateForm.encrytName) ? '' : localMaterial.publicKey,
+    clientPrivateKey: pqAlgorithms.includes(generateForm.encrytName) ? '' : localMaterial.privateKey
   }
 
   if (result?.keyValue && result?.encrytType === '无证书非对称加密') {
@@ -756,6 +781,7 @@ function buildResultSummary() {
     `algorithm_name: ${result.encrytName || ''}`,
     `key_name: ${result.keyName || ''}`,
     `key_domain: ${result.keyDomain || ''}`,
+    `pq_mode: ${result.pqMode || result.pq_mode || ''}`,
     `uA: ${result.uA || ''}`,
     `client_private_key: ${result.clientPrivateKey || ''}`,
     `partial_key: ${result.partialKey || ''}`,
@@ -844,6 +870,11 @@ function safeJsonParse(value) {
   } catch {
     return null
   }
+}
+
+function parsePqMode(keyValue) {
+  const parsed = safeJsonParse(keyValue)
+  return parsed?.pq_mode || parsed?.pqMode || parsed?.display?.pq_mode || ''
 }
 
 function leftPad(value, length) {
@@ -1019,6 +1050,16 @@ function downloadText(text, filename) {
 .detail-span,
 .json-block {
   word-break: break-all;
+}
+
+.pq-mode-note {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid rgba(0, 153, 255, 0.2);
+  border-radius: 12px;
+  background: rgba(0, 153, 255, 0.05);
+  color: #bae6fd;
 }
 
 .material-item code {

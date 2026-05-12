@@ -54,18 +54,21 @@
           </el-select>
         </el-form-item>
         <el-form-item label="加密算法名称" prop="encrytName">
-          <el-select v-model="form.encrytName" placeholder="请选择加密算法名称" @change="handleEncrytNameChange" style="width: 100%">
+          <el-select v-model="form.encrytName" placeholder="请选择加密算法名称" style="width: 100%">
             <el-option v-for="option in encrytNameOptions" :key="option.value" :label="option.label" :value="option.value" />
-          </el-select>
-        </el-form-item>
-        <el-form-item v-if="isPQAlgorithm" label="业务节点" prop="demoNodeId">
-          <el-select v-model="form.demoNodeId" placeholder="请选择共享业务节点" filterable style="width: 100%" @visible-change="handleDemoNodeVisible">
-            <el-option v-for="node in demoNodeOptions" :key="node.node_id" :label="formatDemoNodeLabel(node)" :value="node.node_id" />
           </el-select>
         </el-form-item>
         <el-form-item label="密钥所属域" prop="keyDomain">
           <el-input v-model="form.keyDomain" placeholder="请输入密钥所属域" />
         </el-form-item>
+        <el-alert
+          v-if="isPQAlgorithm"
+          title="当前 PQ 模式：demo_generated"
+          description="Demo 后端为演示路径生成并返回 CL-Kyber/CL-Falcon 材料或引用；这不代表严格无证书模式无需本地秘密材料。strict_certificateless 需要用户/节点本地秘密材料，当前薄 API 未实现。"
+          type="info"
+          :closable="false"
+          show-icon
+        />
       </el-form>
       <template #footer>
         <div class="dialog-footer">
@@ -116,6 +119,14 @@
             </div>
           </template>
           <template v-else>
+            <div v-if="pqAlgorithms.includes(detailInfo.encrytName)" class="key-item">
+              <span class="key-label">PQ 模式:</span>
+              <div class="key-value-block">{{ selectedPqMode }}</div>
+            </div>
+            <div v-if="pqAlgorithms.includes(detailInfo.encrytName)" class="key-item">
+              <span class="key-label">PQ 材料说明:</span>
+              <div class="key-value-block">demo_generated 表示 Demo 后端为当前演示路径生成并返回材料或引用；strict_certificateless 模式才要求用户/节点本地秘密材料。</div>
+            </div>
             <div class="key-item">
               <span class="key-label">密钥原始值 (Key Value):</span>
               <div class="key-value-block">{{ detailInfo.keyValue }}</div>
@@ -134,7 +145,7 @@
 </template>
 
 <script setup name="KeyGenerate">
-import { listKeymanage, addKeymanage, listDemoNodes } from "@/api/generate/keymanage"
+import { listKeymanage, addKeymanage } from "@/api/generate/keymanage"
 import useUserStore from '@/store/modules/user'
 
 const { proxy } = getCurrentInstance()
@@ -151,9 +162,7 @@ const total = ref(0)
 const title = ref("")
 const detailOpen = ref(false)
 const detailInfo = ref({})
-const demoNodeOptions = ref([])
-const demoNodeLoading = ref(false)
-const pqAlgorithms = ['PQ_FALCON', 'PQ_KYBER', 'PQ_CERTIFICATELESS']
+const pqAlgorithms = ['PQ_FALCON', 'PQ_KYBER', 'PQ_CERTIFICATELESS', 'PQ_CL_KYBER', 'PQ_CL_FALCON', 'CL-Kyber', 'CL-Falcon']
 
 const data = reactive({
   form: {},
@@ -176,13 +185,13 @@ const data = reactive({
   rules: {
     encrytType: [{ required: true, message: "加密算法类型不能为空", trigger: "change" }],
     encrytName: [{ required: true, message: "加密算法名称不能为空", trigger: "change" }],
-    demoNodeId: [{ required: true, message: "请选择共享业务节点", trigger: "change" }],
     keyDomain: [{ required: true, message: "密钥所属域不能为空", trigger: "blur" }]
   }
 })
 
 const { queryParams, encrytNameOptions, form, rules } = toRefs(data)
 const isPQAlgorithm = computed(() => pqAlgorithms.includes(form.value.encrytName))
+const selectedPqMode = computed(() => parsePqMode(detailInfo.value?.keyValue) || detailInfo.value?.pqMode || detailInfo.value?.pq_mode || 'demo_generated')
 
 function getList() {
   loading.value = true
@@ -210,8 +219,7 @@ function reset() {
     autoUpdate: 'false',
     status: 'Valid',
     uA: 'null',
-    keyDomain: 'A',
-    demoNodeId: null
+    keyDomain: 'A'
   }
   proxy.resetForm("keymanageRef")
   handleEncrytTypeChange('无证书非对称加密')
@@ -244,14 +252,10 @@ function handleViewDetails(row) {
 function submitForm() {
   proxy.$refs["keymanageRef"].validate(valid => {
     if (!valid) return
-    if (isPQAlgorithm.value && !form.value.demoNodeId) {
-      proxy.$modal.msgError("请选择共享业务节点")
-      return
-    }
     const payload = {
       ...form.value,
       algorithm: form.value.encrytName,
-      demo_node_id: form.value.demoNodeId,
+      pq_mode: isPQAlgorithm.value ? 'demo_generated' : undefined,
       operator_metadata: {
         user_id: userStore.id || form.value.userId,
         user_name: userStore.name || form.value.userName
@@ -276,9 +280,18 @@ function copyDetailInfo() {
   } else if (info.encrytName === 'SSCL') {
     textToCopy += `Share: ${info.parsedKey?.SSCLKey}\nDomain: ${info.parsedKey?.SSCLDomain || info.parsedKey?.SSCLDomian}`
   } else {
-    textToCopy += `Key Value: ${info.keyValue}`
+    textToCopy += `PQ Mode: ${pqAlgorithms.includes(info.encrytName) ? selectedPqMode.value : ''}\nKey Value: ${info.keyValue}`
   }
   navigator.clipboard.writeText(textToCopy).then(() => { proxy.$modal.msgSuccess("信息已复制到剪贴板") }).catch(() => { proxy.$modal.msgError("复制失败，请手动复制") })
+}
+
+function parsePqMode(keyValue) {
+  try {
+    const parsed = JSON.parse(keyValue || '{}')
+    return parsed?.pq_mode || parsed?.pqMode || parsed?.display?.pq_mode || ''
+  } catch (e) {
+    return ''
+  }
 }
 
 function handleEncrytTypeChange(value) {
@@ -288,39 +301,16 @@ function handleEncrytTypeChange(value) {
       { label: 'SSCL', value: 'SSCL' },
       { label: 'Falcon抗量子签名', value: 'PQ_FALCON' },
       { label: 'Kyber抗量子密钥封装', value: 'PQ_KYBER' },
+      { label: 'CL-Falcon无证书抗量子签名', value: 'CL-Falcon' },
+      { label: 'CL-Kyber无证书抗量子封装', value: 'CL-Kyber' },
+      { label: 'PQ CL-Falcon无证书抗量子签名', value: 'PQ_CL_FALCON' },
+      { label: 'PQ CL-Kyber无证书抗量子封装', value: 'PQ_CL_KYBER' },
       { label: '无证书抗量子密钥', value: 'PQ_CERTIFICATELESS' }
     ]
   } else {
     encrytNameOptions.value = []
   }
   form.value.encrytName = ''
-  form.value.demoNodeId = null
-}
-
-function handleEncrytNameChange() {
-  form.value.demoNodeId = null
-  if (isPQAlgorithm.value) loadDemoNodes()
-}
-
-function handleDemoNodeVisible(visible) {
-  if (visible) loadDemoNodes()
-}
-
-function loadDemoNodes() {
-  if (demoNodeLoading.value || demoNodeOptions.value.length) return
-  demoNodeLoading.value = true
-  listDemoNodes().then(response => {
-    demoNodeOptions.value = response.rows
-  }).catch(error => {
-    if (error?.message) proxy.$modal.msgError(error.message)
-  }).finally(() => {
-    demoNodeLoading.value = false
-  })
-}
-
-function formatDemoNodeLabel(node) {
-  const name = node.name || node.node_name || '业务节点'
-  return `${name} (${node.node_id})`
 }
 
 reset()

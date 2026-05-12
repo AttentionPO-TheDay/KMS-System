@@ -119,15 +119,6 @@ public class GenerateKeyServiceImpl implements GenerateKeyService {
         if (isBlank(keymanage.getKeyUse())) {
             keymanage.setKeyUse(oldKey.getKeyUse());
         }
-        if (isBlank(keymanage.getDemoNodeId())) {
-            keymanage.setDemoNodeId(oldKey.getDemoNodeId());
-        }
-        if (isBlank(keymanage.getDemoRecordId())) {
-            keymanage.setDemoRecordId(oldKey.getDemoRecordId());
-        }
-        if (isBlank(keymanage.getDemoResultStatus())) {
-            keymanage.setDemoResultStatus(oldKey.getDemoResultStatus());
-        }
         keymanage.setStatus(KeyStatus.ACTIVE.getCode());
         keymanage.setChainStatus("0");
         if (isBlank(keymanage.getKeyValue())) {

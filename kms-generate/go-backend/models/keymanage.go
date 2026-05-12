@@ -31,6 +31,7 @@ type Keymanage struct {
 	DemoNodeID       string        `json:"demo_node_id,omitempty"`
 	DemoRecordID     string        `json:"demo_record_id,omitempty"`
 	DemoResultStatus string        `json:"demo_result_status,omitempty"`
+	PQMode           string        `json:"pq_mode,omitempty"`
 }
 
 // KeyEnrollPayload Kafka 消息协议结构

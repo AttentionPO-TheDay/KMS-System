@@ -1,6 +1,11 @@
 import hashlib
 import json
 import logging
+import os
+import secrets
+import time
+
+import requests
 from rest_framework import status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import AllowAny
@@ -34,7 +39,22 @@ from .key_negotiation_service import KeyNegotiationService
 from .public_key_retrieval_service import PublicKeyRetrievalService
 from .node_discovery_service import NodeDiscoveryService
 from .operation_log import set_request_msg
+from .optimized_keygen_service import OptimizedKeygenService
 logger = logging.getLogger(__name__)
+
+SM2_P = int('FFFFFFFEFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000FFFFFFFFFFFFFFFF', 16)
+SM2_A = int('FFFFFFFEFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000FFFFFFFFFFFFFFFC', 16)
+SM2_B = int('28E9FA9E9D9F5E344D5A9E4BCF6509A7F39789F515AB8F92DDBCBD414D940E93', 16)
+SM2_GX = int('32C4AE2C1F1981195F9904466A39C9948FE30BBFF2660BE1715A4589334C74C7', 16)
+SM2_GY = int('BC3736A2F4F6779C59BDCEE36B692153D0A9877CC62A474002DF32E52139F0A0', 16)
+SM2_N = int('FFFFFFFEFFFFFFFFFFFFFFFFFFFFFFFF7203DF6B21C6052B53BBF40939D54123', 16)
+DEMO_GENERATE_USER = os.getenv('PQKDS_DEMO_GENERATE_USER', 'pqkds-demo-service')
+DEMO_GENERATE_PASSWORD = os.getenv('PQKDS_DEMO_GENERATE_PASSWORD', 'admin123')
+GENERATE_BACKEND_BASE = os.getenv('GENERATE_BACKEND_BASE', 'http://generate-go:8081')
+GENERATE_JAVA_BASE = os.getenv('GENERATE_JAVA_BASE', 'http://generate-java:9081')
+LIFECYCLE_BACKEND_BASE = os.getenv('LIFECYCLE_BACKEND_BASE', 'http://updatedel-go:8082')
+GENERATE_INTERNAL_TOKEN = os.getenv('INTERNAL_TOKEN', os.getenv('GENERATE_INTERNAL_TOKEN', 'kms-generate-internal-secret-2026'))
+LIFECYCLE_INTERNAL_TOKEN = os.getenv('INTERNAL_TOKEN', os.getenv('LIFECYCLE_INTERNAL_TOKEN', 'kms-generate-internal-secret-2026'))
 
 
 def _kms_response(code, message, data=None):
@@ -71,6 +91,397 @@ def _kms_generate_for_algorithm(node_id, algorithm):
     if 'PARTIAL' in normalized or 'CERTIFICATELESS' in normalized or normalized in {'PQ_BOTH', 'PQ_CL'}:
         return KGCService().generate_all_partial_keys_for_node(node_id)
     return NodeService(node_id).generate_falcon_keys_v2()
+
+
+def _record_safe_value(value):
+    if isinstance(value, bytes):
+        import base64
+        return base64.b64encode(value).decode('ascii')
+    if hasattr(value, 'tolist'):
+        return value.tolist()
+    if isinstance(value, dict):
+        return {key: _record_safe_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_record_safe_value(item) for item in value]
+    return value
+
+
+def _kms_record_material(result, algorithm):
+    safe_result = _record_safe_value(result)
+    normalized = (algorithm or '').upper()
+    material = {
+        'type': 'generated_key_record',
+        'algorithm': algorithm,
+    }
+    if 'KYBER' in normalized:
+        material.update({
+            'public_key': safe_result.get('kyber_public_key') or safe_result.get('cl_public_key'),
+            'private_key': safe_result.get('kyber_private_key') or safe_result.get('cl_private_key'),
+            'variant': safe_result.get('variant'),
+            'public_key_bytes': safe_result.get('pk_bytes'),
+            'private_key_bytes': safe_result.get('sk_bytes'),
+        })
+    elif 'FALCON' in normalized:
+        material.update({
+            'public_key': safe_result.get('falcon_pk') or safe_result.get('public_key'),
+            'private_key': safe_result.get('falcon_sk') or safe_result.get('private_key'),
+        })
+    else:
+        material.update({
+            'type': 'external_generate_record',
+            'external_key_id': safe_result.get('external_key_id'),
+            'external_key_name': safe_result.get('external_key_name'),
+            'external_user': safe_result.get('external_user'),
+            'ua': safe_result.get('ua'),
+            'local_private_share': safe_result.get('local_private_share'),
+            'key_value': safe_result.get('key_value'),
+        })
+    return material
+
+
+def _hex32(value):
+    return f'{value % SM2_N:064x}'
+
+
+def _sm2_inverse(value, modulus):
+    return pow(value, -1, modulus)
+
+
+def _sm2_point_add(point_a, point_b):
+    if point_a is None:
+        return point_b
+    if point_b is None:
+        return point_a
+    x1, y1 = point_a
+    x2, y2 = point_b
+    if x1 == x2 and (y1 + y2) % SM2_P == 0:
+        return None
+    if point_a == point_b:
+        numerator = (3 * x1 * x1 + SM2_A) % SM2_P
+        denominator = _sm2_inverse((2 * y1) % SM2_P, SM2_P)
+    else:
+        numerator = (y2 - y1) % SM2_P
+        denominator = _sm2_inverse((x2 - x1) % SM2_P, SM2_P)
+    slope = numerator * denominator % SM2_P
+    x3 = (slope * slope - x1 - x2) % SM2_P
+    y3 = (slope * (x1 - x3) - y1) % SM2_P
+    return x3, y3
+
+
+def _sm2_scalar_mult(scalar, point=(SM2_GX, SM2_GY)):
+    scalar %= SM2_N
+    result = None
+    addend = point
+    while scalar:
+        if scalar & 1:
+            result = _sm2_point_add(result, addend)
+        addend = _sm2_point_add(addend, addend)
+        scalar >>= 1
+    return result
+
+
+def _sm2_point_hex(point):
+    return '04' + f'{point[0]:064x}' + f'{point[1]:064x}'
+
+
+def _sm2_generate_local_material():
+    private_key = secrets.randbelow(SM2_N - 2) + 1
+    public_key = _sm2_point_hex(_sm2_scalar_mult(private_key))
+    return private_key, public_key
+
+
+def _call_generate_partial_key(algorithm, ua, key_domain, key_use):
+    url = GENERATE_BACKEND_BASE.rstrip('/') + '/generate/request/PARTIAL_KEY'
+    response = requests.post(
+        url,
+        json={
+            'user': DEMO_GENERATE_USER,
+            'encryt_name': algorithm,
+            'ua': ua,
+            'key_domain': key_domain or 'A',
+            'key_use': key_use or '',
+        },
+        headers={'X-Internal-Token': GENERATE_INTERNAL_TOKEN},
+        timeout=10,
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(f'generate partial key failed [{response.status_code}]: {response.text}')
+    payload = response.json()
+    if payload.get('code') not in (0, 200):
+        raise RuntimeError(payload.get('msg') or payload.get('message') or 'generate partial key failed')
+    data = payload.get('data')
+    return json.loads(data) if isinstance(data, str) else (data or {})
+
+
+def _parse_scalar(value):
+    if isinstance(value, int):
+        return value
+    text = str(value).strip()
+    if text.lower().startswith('0x'):
+        return int(text, 16)
+    if any(char in 'abcdefABCDEF' for char in text):
+        return int(text, 16)
+    return int(text, 10)
+
+
+def _sm2_point_from_hex(value):
+    if not value or len(value) != 130 or not value.startswith('04'):
+        raise RuntimeError('invalid SM2 point format')
+    return int(value[2:66], 16), int(value[66:130], 16)
+
+
+def _sscl_secret(x_index, y_index, x_hex, y_hex):
+    x_points = [_parse_scalar(value) for value in x_index]
+    y_points = [_parse_scalar(value) for value in y_index]
+    x_points.append(int(x_hex, 16))
+    y_points.append(int(y_hex, 16))
+    secret = 0
+    for i, x_i in enumerate(x_points):
+        numerator = 1
+        denominator = 1
+        for j, x_j in enumerate(x_points):
+            if i != j:
+                numerator = numerator * (-x_j) % SM2_N
+                denominator = denominator * (x_i - x_j) % SM2_N
+        secret = (secret + y_points[i] * numerator * _sm2_inverse(denominator, SM2_N)) % SM2_N
+    return secret % SM2_N
+
+
+def _demo_external_key_name(record_id, algorithm):
+    safe_algorithm = ''.join(ch.lower() if ch.isalnum() else '-' for ch in str(algorithm or 'key')).strip('-')
+    safe_record_id = ''.join(ch if ch.isalnum() or ch in '-_' else '-' for ch in str(record_id))[:80]
+    return f'pqkds-demo-{safe_algorithm}-{safe_record_id}'
+
+
+def _ensure_demo_generate_user():
+    try:
+        requests.post(
+            GENERATE_BACKEND_BASE.rstrip('/') + '/generate/request/Register',
+            json={'user': DEMO_GENERATE_USER, 'password': DEMO_GENERATE_PASSWORD},
+            timeout=5,
+        )
+    except requests.RequestException as exc:
+        logger.warning(f'Demo生成用户注册检查失败: {exc}')
+
+
+def _call_generate_enroll_key(algorithm, ua, key_domain, key_name, key_use, auto_update):
+    _ensure_demo_generate_user()
+    url = GENERATE_BACKEND_BASE.rstrip('/') + '/generate/request/ENROLL_KEY'
+    response = requests.post(
+        url,
+        json={
+            'user': DEMO_GENERATE_USER,
+            'encryt_type': '无证书非对称加密',
+            'encryt_name': algorithm,
+            'ua': ua,
+            'key_domain': key_domain or 'A',
+            'key_name': key_name,
+            'key_use': key_use or '加解密',
+            'auto_update': auto_update or '0',
+        },
+        headers={'X-Internal-Token': GENERATE_INTERNAL_TOKEN},
+        timeout=15,
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(f'generate enroll failed [{response.status_code}]: {response.text}')
+    payload = response.json()
+    if payload.get('code') not in (0, 200):
+        raise RuntimeError(payload.get('msg') or payload.get('message') or 'generate enroll failed')
+    data = payload.get('data')
+    return json.loads(data) if isinstance(data, str) and data.strip().startswith('{') else data
+
+
+def _call_generate_recent_keys(user, algorithm, key_name, ua, limit=20):
+    response = requests.get(
+        GENERATE_JAVA_BASE.rstrip('/') + '/internal/generate/keys/recent',
+        params={
+            'userName': user,
+            'encrytName': algorithm,
+            'keyName': key_name,
+            'ua': ua,
+            'limit': limit,
+        },
+        headers={'X-Internal-Token': GENERATE_INTERNAL_TOKEN},
+        timeout=10,
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(f'generate recent keys failed [{response.status_code}]: {response.text}')
+    payload = response.json()
+    return payload.get('data') or []
+
+
+def _poll_external_generated_key(algorithm, key_name, ua):
+    for _ in range(12):
+        items = _call_generate_recent_keys(DEMO_GENERATE_USER, algorithm, key_name, ua)
+        for item in items:
+            if item.get('keyName') == key_name and item.get('userName') == DEMO_GENERATE_USER and item.get('encrytName') == algorithm:
+                if not ua or item.get('ua') == ua:
+                    return item
+        time.sleep(0.5)
+    raise RuntimeError(f'generate-system record not found after enrollment: keyName={key_name}')
+
+
+def _generate_demo_certless_record(record_id, algorithm, key_domain, key_use, auto_update='0'):
+    local_private, ua = _sm2_generate_local_material()
+    key_name = _demo_external_key_name(record_id, algorithm)
+    key_value = _call_generate_enroll_key(algorithm, ua, key_domain, key_name, key_use, auto_update)
+    external_record = _poll_external_generated_key(algorithm, key_name, ua)
+    return {
+        'success': True,
+        'message': f'{algorithm} key enrolled through isolated generate-system API',
+        'algorithm': algorithm,
+        'record_id': record_id,
+        'external_key_id': external_record.get('keyId'),
+        'external_user': DEMO_GENERATE_USER,
+        'external_key_name': key_name,
+        'ua': ua,
+        'local_private_share': _hex32(local_private),
+        'key_value': key_value,
+        'external_record': external_record,
+    }
+
+
+def _generate_demo_sm2_record(record_id, algorithm, key_domain, key_use, auto_update='0'):
+    return _generate_demo_certless_record(record_id, 'SM2', key_domain, key_use, auto_update)
+
+
+def _generate_demo_sscl_record(record_id, algorithm, key_domain, key_use, auto_update='0'):
+    return _generate_demo_certless_record(record_id, 'SSCL', key_domain, key_use, auto_update)
+
+
+def _call_lifecycle_api(action, payload):
+    endpoint = '/lifecycle/request/UPDATE_KEY' if action == 'update' else '/lifecycle/request/REVOKE_KEY'
+    response = requests.post(
+        LIFECYCLE_BACKEND_BASE.rstrip('/') + endpoint,
+        json=payload,
+        headers={'X-Internal-Token': LIFECYCLE_INTERNAL_TOKEN},
+        timeout=10,
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(f'lifecycle {action} failed [{response.status_code}]: {response.text}')
+    data = response.json()
+    if data.get('code') not in (0, 200):
+        raise RuntimeError(data.get('msg') or data.get('message') or f'lifecycle {action} failed')
+    return data
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def kms_lifecycle_record(request):
+    action = (request.data.get('action') or '').lower()
+    if action not in {'update', 'rotate', 'revoke', 'recycle'}:
+        return _kms_response(400, 'invalid action, must be update/rotate/revoke/recycle', None)
+    key_id = request.data.get('external_key_id') or request.data.get('key_id') or request.data.get('keyId')
+    user = request.data.get('user') or request.data.get('user_name') or DEMO_GENERATE_USER
+    if not key_id:
+        return _kms_response(400, 'missing external_key_id/key_id; lifecycle requires real generate-system keyId', None)
+    try:
+        set_request_msg(request, f'Demo调用外部生命周期能力({action})')
+        if action in {'update', 'rotate'}:
+            payload = {
+                'keyId': key_id,
+                'user': user,
+                'ua': request.data.get('ua') or request.data.get('uA'),
+                'encrytType': request.data.get('encryt_type') or request.data.get('encrytType') or '无证书非对称加密',
+                'encrytName': request.data.get('encryt_name') or request.data.get('encrytName'),
+                'keyName': request.data.get('key_name') or request.data.get('keyName'),
+                'keyUse': request.data.get('key_use') or request.data.get('keyUse'),
+                'autoUpdate': request.data.get('auto_update') or request.data.get('autoUpdate') or '0',
+                'keyDomain': request.data.get('key_domain') or request.data.get('keyDomain'),
+            }
+            data = _call_lifecycle_api('update', payload)
+        else:
+            data = _call_lifecycle_api('revoke', {'keyId': key_id, 'user': user})
+        return _kms_response(200, 'accepted', data)
+    except Exception as exc:
+        logger.error(f'Demo调用外部生命周期能力异常: {exc}')
+        return _kms_response(400, f'lifecycle request failed: {str(exc)}', None)
+
+
+def _call_generate_comparam():
+    url = GENERATE_BACKEND_BASE.rstrip('/') + '/generate/request/comparam'
+    response = requests.post(
+        url,
+        json={'encryt_type': '无证书非对称加密', 'encryt_name': 'SSCL'},
+        headers={'X-Internal-Token': GENERATE_INTERNAL_TOKEN},
+        timeout=10,
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(f'generate comparam failed [{response.status_code}]: {response.text}')
+    payload = response.json()
+    if payload.get('code') not in (0, 200):
+        raise RuntimeError(payload.get('msg') or payload.get('message') or 'generate comparam failed')
+    return payload.get('data') or {}
+
+
+def _kms_generate_record_for_algorithm(record_id, algorithm, key_domain=None, key_use=None, auto_update='0'):
+    normalized = (algorithm or '').upper()
+    if normalized == 'SM2':
+        return _generate_demo_sm2_record(record_id, algorithm, key_domain, key_use, auto_update)
+    if normalized == 'SSCL':
+        return _generate_demo_sscl_record(record_id, algorithm, key_domain, key_use, auto_update)
+    service = OptimizedKeygenService()
+    if 'KYBER' in normalized and 'FALCON' not in normalized:
+        return service.generate_kyber_keypair(record_id)
+    if 'FALCON' in normalized:
+        return service.generate_falcon_keypair(record_id)
+    return {
+        'success': False,
+        'error': f'unsupported algorithm: {algorithm}'
+    }
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def kms_generate_record(request):
+    algorithm = request.data.get('algorithm') or request.data.get('encryt_name') or 'CL-Falcon'
+    pq_mode = request.data.get('pq_mode') or request.data.get('pqMode') or 'demo_generated'
+    if pq_mode == 'strict_certificateless':
+        return _kms_response(400, 'strict certificateless PQ requires user/node local secret material and is not implemented by this demo-generated record API', None)
+    if pq_mode != 'demo_generated':
+        return _kms_response(400, 'pq_mode must be demo_generated or strict_certificateless', None)
+    correlation_id = request.data.get('correlation_id') or request.data.get('key_id') or ''
+    record_id = correlation_id or hashlib.sha256(json.dumps({
+        'algorithm': algorithm,
+        'user_id': request.data.get('user_id'),
+        'user_name': request.data.get('user_name'),
+        'ts': timezone.now().isoformat(),
+    }, sort_keys=True).encode('utf-8')).hexdigest()[:32]
+    try:
+        set_request_msg(request, f'KMS生成独立密钥记录({algorithm})')
+        result = _kms_generate_record_for_algorithm(
+            record_id,
+            algorithm,
+            request.data.get('key_domain'),
+            request.data.get('key_use'),
+            request.data.get('auto_update') or request.data.get('autoUpdate') or '0',
+        )
+        success = bool(result.get('success'))
+        if not success:
+            return _kms_response(400, result.get('error') or result.get('message') or 'generation failed', None)
+        external_key_id = result.get('external_key_id')
+        return _kms_response(200, 'ok', {
+            'demo_record_id': record_id,
+            'external_key_id': external_key_id,
+            'key_id': external_key_id,
+            'external_user': result.get('external_user'),
+            'status': 'generated',
+            'pq_mode': pq_mode,
+            'key_material_or_reference': _kms_record_material(result, algorithm),
+            'display': {
+                'algorithm': algorithm,
+                'pq_mode': pq_mode,
+                'scheme': request.data.get('scheme'),
+                'key_use': request.data.get('key_use'),
+                'correlation_id': record_id,
+                'lifecycle_key_id': external_key_id,
+                'result_message': result.get('message') or 'generated without mutating demo node state',
+                'record_kind': 'external_kms_record',
+            }
+        })
+    except Exception as e:
+        logger.error(f'KMS生成独立密钥记录异常: {e}')
+        return _kms_response(400, f'generation failed: {str(e)}', None)
 
 
 @api_view(['POST'])

@@ -46,10 +46,11 @@ type demoGenerateRequest struct {
 	CorrelationID    string                 `json:"correlation_id"`
 	UserID           int64                  `json:"user_id,omitempty"`
 	UserName         string                 `json:"user_name"`
-	DemoNodeID       string                 `json:"demo_node_id"`
 	Algorithm        string                 `json:"algorithm"`
 	Scheme           string                 `json:"scheme,omitempty"`
 	KeyUse           string                 `json:"key_use,omitempty"`
+	KeyDomain        string                 `json:"key_domain,omitempty"`
+	PQMode           string                 `json:"pq_mode,omitempty"`
 	OperatorMetadata map[string]interface{} `json:"operator_metadata,omitempty"`
 }
 
@@ -59,8 +60,8 @@ type demoGenerateResponse struct {
 	Msg     string `json:"msg"`
 	Data    struct {
 		DemoRecordID           string      `json:"demo_record_id"`
-		DemoNodeID             string      `json:"demo_node_id"`
 		Status                 string      `json:"status"`
+		PQMode                 string      `json:"pq_mode"`
 		KeyMaterialOrReference interface{} `json:"key_material_or_reference"`
 	} `json:"data"`
 }
@@ -130,8 +131,17 @@ func (s *KeyManageService) EnrollKey(km *models.Keymanage, rawPassword string) (
 			return "", err
 		}
 		km.KeyValue = resKm.KeyValue
-	case IsPQAlgorithm(km.EncrytName):
-		if err := s.generatePQKey(km); err != nil {
+	case km.EncrytType == "无证书非对称加密" && IsPQAlgorithm(km.EncrytName):
+		if strings.TrimSpace(km.PQMode) == "" {
+			km.PQMode = "demo_generated"
+		}
+		if km.PQMode == "strict_certificateless" {
+			return "", errors.New("strict certificateless PQ generation requires user/node local secret material and is not implemented in this thin demo API")
+		}
+		if km.PQMode != "demo_generated" {
+			return "", errors.New("pq_mode must be demo_generated or strict_certificateless")
+		}
+		if err := s.generateDemoRecordKey(km); err != nil {
 			return "", err
 		}
 	default:
@@ -145,20 +155,36 @@ func (s *KeyManageService) EnrollKey(km *models.Keymanage, rawPassword string) (
 	return km.KeyValue, nil
 }
 
-func (s *KeyManageService) generatePQKey(km *models.Keymanage) error {
-	if strings.TrimSpace(km.DemoNodeID) == "" {
-		return errors.New("missing demo_node_id for PQ key generation")
+func (s *KeyManageService) GeneratePartialKey(encrytName, userName, ua, keyDomain, keyUse string) (string, error) {
+	switch encrytName {
+	case "SM2":
+		resKm, err := s.eccGen.GenPartialKey(userName, ua, keyUse)
+		if err != nil {
+			return "", err
+		}
+		return resKm.KeyValue, nil
+	case "SSCL":
+		resKm, err := s.ssclGen.GenPartialKey(userName, ua, keyDomain, keyUse)
+		if err != nil {
+			return "", err
+		}
+		return resKm.KeyValue, nil
+	default:
+		return "", errors.New("partial key algorithm must be SM2 or SSCL")
 	}
+}
 
+func (s *KeyManageService) generateDemoRecordKey(km *models.Keymanage) error {
 	correlationID := fmt.Sprintf("kms-%s-%d", strings.ReplaceAll(km.UserName, " ", "_"), time.Now().UnixNano())
 	payload := demoGenerateRequest{
 		CorrelationID: correlationID,
 		UserID:        km.UserID,
 		UserName:      km.UserName,
-		DemoNodeID:    km.DemoNodeID,
 		Algorithm:     km.EncrytName,
 		Scheme:        km.EncrytType,
 		KeyUse:        km.KeyUse,
+		KeyDomain:     km.KeyDomain,
+		PQMode:        km.PQMode,
 		OperatorMetadata: map[string]interface{}{
 			"key_name":    km.KeyName,
 			"auto_update": km.AutoUpdate,
@@ -169,7 +195,7 @@ func (s *KeyManageService) generatePQKey(km *models.Keymanage) error {
 		return err
 	}
 
-	url := strings.TrimRight(config.DemoBackendBase, "/") + "/kms/generate-key/"
+	url := strings.TrimRight(config.DemoBackendBase, "/") + "/kms/generate-record/"
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -198,10 +224,10 @@ func (s *KeyManageService) generatePQKey(km *models.Keymanage) error {
 	}
 
 	km.DemoRecordID = demoResp.Data.DemoRecordID
-	if demoResp.Data.DemoNodeID != "" {
-		km.DemoNodeID = demoResp.Data.DemoNodeID
-	}
 	km.DemoResultStatus = demoResp.Data.Status
+	if demoResp.Data.PQMode == "" {
+		demoResp.Data.PQMode = km.PQMode
+	}
 	keyValue, err := json.Marshal(demoResp.Data)
 	if err != nil {
 		return err

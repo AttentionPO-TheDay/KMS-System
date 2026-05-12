@@ -11,9 +11,33 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 FALCON_512_DLL = BASE_DIR / "falcon" / "falcon512.dll"
 FALCON_1024_DLL_MAIN = BASE_DIR / "falcon" / "falcon1024.dll"
 FALCON_1024_DLL_SUB = BASE_DIR / "falcon" / "falcon1024" / "falcon1024int" / "falcon1024.dll"
-KYBER_512_DLL = BASE_DIR / "kyber" / "libpqcrystals_kyber512_ref.dll"
-KYBER_768_DLL = BASE_DIR / "kyber" / "libpqcrystals_kyber768_ref.dll"
-KYBER_1024_DLL = BASE_DIR / "kyber" / "libpqcrystals_kyber1024_ref.dll"
+KYBER_LIB_DIR = BASE_DIR / "kyber"
+KYBER_REF_LIB_DIR = KYBER_LIB_DIR / "ref" / "lib"
+
+
+_kyber_dependency_handles = []
+
+
+def _kyber_library_candidates(variant: int):
+    name = f"libpqcrystals_kyber{variant}_ref"
+    return [
+        KYBER_REF_LIB_DIR / f"{name}.so",
+        KYBER_LIB_DIR / f"{name}.so",
+        KYBER_LIB_DIR / f"{name}.dll",
+    ]
+
+
+def _preload_kyber_dependencies(errors):
+    if _kyber_dependency_handles:
+        return
+    fips_path = KYBER_REF_LIB_DIR / "libpqcrystals_fips202_ref.so"
+    if not fips_path.exists():
+        return
+    try:
+        mode = getattr(ctypes, "RTLD_GLOBAL", 0)
+        _kyber_dependency_handles.append(ctypes.CDLL(str(fips_path), mode=mode))
+    except OSError as exc:
+        errors.append(f"{fips_path}: {exc}")
 FALCON_KDS_DIR = BASE_DIR.parent / "falcon-kds-有陷门"
 class FalconCrypto:
     def __init__(self, variant=512):
@@ -119,28 +143,23 @@ class KyberCrypto:
     def __init__(self, variant=512):
         self.variant = variant
         if variant == 512:
-            self.dll_path = KYBER_512_DLL
             self.public_key_bytes = 800
             self.secret_key_bytes = 1632
             self.ciphertext_bytes = 768
             self.shared_secret_bytes = 32
         elif variant == 768:
-            self.dll_path = KYBER_768_DLL
             self.public_key_bytes = 1184
             self.secret_key_bytes = 2400
             self.ciphertext_bytes = 1088
             self.shared_secret_bytes = 32
         elif variant == 1024:
-            self.dll_path = KYBER_1024_DLL
             self.public_key_bytes = 1568
             self.secret_key_bytes = 3168
             self.ciphertext_bytes = 1568
             self.shared_secret_bytes = 32
         else:
             raise ValueError("Kyber variant must be 512, 768, or 1024")
-        if not os.path.exists(self.dll_path):
-            raise FileNotFoundError(f"Kyber DLL not found: {self.dll_path}")
-        self.dll = ctypes.CDLL(str(self.dll_path))
+        self.dll = self._load_kyber_library()
         prefix = f"pqcrystals_kyber{variant}_ref"
         keypair_func = getattr(self.dll, f"{prefix}_keypair")
         keypair_func.argtypes = [
@@ -165,6 +184,17 @@ class KyberCrypto:
         ]
         dec_func.restype = ctypes.c_int
         self.dec_func = dec_func
+    def _load_kyber_library(self):
+        errors = []
+        _preload_kyber_dependencies(errors)
+        for lib_path in _kyber_library_candidates(self.variant):
+            if not lib_path.exists():
+                continue
+            try:
+                return ctypes.CDLL(str(lib_path))
+            except OSError as exc:
+                errors.append(f"{lib_path}: {exc}")
+        raise FileNotFoundError(f"Kyber dynamic library not found or not loadable: {'; '.join(errors) or self.variant}")
     def generate_keypair(self) -> Tuple[bytes, bytes]:
         pk = (ctypes.c_ubyte * self.public_key_bytes)()
         sk = (ctypes.c_ubyte * self.secret_key_bytes)()

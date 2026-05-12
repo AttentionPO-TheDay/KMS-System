@@ -14,9 +14,9 @@ import (
 // IdempotencyService provides Redis-based idempotent deduplication for lifecycle requests.
 type IdempotencyService struct {
 	client *redis.Client
-	ttl     time.Duration
-	mu      sync.RWMutex
-	ctx     context.Context
+	ttl    time.Duration
+	mu     sync.RWMutex
+	ctx    context.Context
 }
 
 var (
@@ -38,16 +38,15 @@ func GetIdempotencyService() *IdempotencyService {
 		defer cancel()
 
 		if err := client.Ping(ctx).Err(); err != nil {
-			// Redis unavailable — log and continue without idempotency
-			fmt.Printf("[WARN] Redis unavailable for idempotency: %v. Proceeding without dedup.\n", err)
+			fmt.Printf("[ERROR] Redis unavailable for idempotency: %v. Requests requiring dedup will be rejected.\n", err)
 		} else {
 			fmt.Println("[INFO] Redis idempotency service connected")
 		}
 
 		idempService = &IdempotencyService{
 			client: client,
-			ttl:     time.Duration(cfg.IdempotencyTTL) * time.Second,
-			ctx:     context.Background(),
+			ttl:    time.Duration(cfg.IdempotencyTTL) * time.Second,
+			ctx:    context.Background(),
 		}
 	})
 	return idempService
@@ -56,13 +55,19 @@ func GetIdempotencyService() *IdempotencyService {
 // CheckAndSet attempts to set a lock key for the given (action, keyId, user) tuple.
 // Returns true if this is a new request (lock acquired), false if it's a duplicate.
 func (s *IdempotencyService) CheckAndSet(action string, keyId int64, user string) (bool, error) {
-	lockKey := s.buildKey(action, keyId, user)
+	return s.CheckAndSetWithKey(s.buildKey(action, keyId, user))
+}
+
+func (s *IdempotencyService) CheckAndSetWithKey(idempotencyKey string) (bool, error) {
+	lockKey := idempotencyKey
+	if len(lockKey) < len("idemp:lifecycle:") || lockKey[:len("idemp:lifecycle:")] != "idemp:lifecycle:" {
+		lockKey = "idemp:lifecycle:" + idempotencyKey
+	}
 
 	// Use SetNX for atomic check-and-set
 	ok, err := s.client.SetNX(s.ctx, lockKey, "1", s.ttl).Result()
 	if err != nil {
-		// If Redis fails, allow the request through (fail-open for availability)
-		return true, fmt.Errorf("redis error: %w", err)
+		return false, fmt.Errorf("redis error: %w", err)
 	}
 	return ok, nil
 }

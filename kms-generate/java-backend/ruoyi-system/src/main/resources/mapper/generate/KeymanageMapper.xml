@@ -23,15 +23,12 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         <result property="version" column="version"/>
         <result property="uA" column="ua"/>
         <result property="keyDomain" column="key_domain"/>
-        <result property="demoNodeId" column="demo_node_id"/>
-        <result property="demoRecordId" column="demo_record_id"/>
-        <result property="demoResultStatus" column="demo_result_status"/>
     </resultMap>
 
     <sql id="selectkeymanageVo">
         select key_id, user_id, user_name, encryt_type, encryt_name, key_name, key_use,
                key_value, cre_time, upd_time, auto_update, status, chain_hash, block_height,
-               chain_status, version, ua, key_domain, demo_node_id, demo_record_id, demo_result_status
+               chain_status, version, ua, key_domain
         from keymanage
     </sql>
 
@@ -75,9 +72,6 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="version != null">version,</if>
             <if test="uA != null and uA != ''">ua,</if>
             <if test="keyDomain != null and keyDomain != ''">key_domain,</if>
-            <if test="demoNodeId != null and demoNodeId != ''">demo_node_id,</if>
-            <if test="demoRecordId != null and demoRecordId != ''">demo_record_id,</if>
-            <if test="demoResultStatus != null and demoResultStatus != ''">demo_result_status,</if>
         </trim>
         <trim prefix="values (" suffix=")" suffixOverrides=",">
             <if test="userId != null">#{userId},</if>
@@ -97,9 +91,6 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="version != null">#{version},</if>
             <if test="uA != null and uA != ''">#{uA},</if>
             <if test="keyDomain != null and keyDomain != ''">#{keyDomain},</if>
-            <if test="demoNodeId != null and demoNodeId != ''">#{demoNodeId},</if>
-            <if test="demoRecordId != null and demoRecordId != ''">#{demoRecordId},</if>
-            <if test="demoResultStatus != null and demoResultStatus != ''">#{demoResultStatus},</if>
         </trim>
     </insert>
 
@@ -107,8 +98,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         INSERT INTO keymanage (
             user_id, user_name, encryt_type, encryt_name, key_name, key_use,
             key_value, cre_time, upd_time, auto_update, status,
-            chain_hash, block_height, chain_status, version, ua, key_domain,
-            demo_node_id, demo_record_id, demo_result_status
+            chain_hash, block_height, chain_status, version, ua, key_domain
         ) VALUES
         <foreach collection="list" item="item" index="index" separator=",">
             (
@@ -137,10 +127,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
                     <otherwise>1</otherwise>
                 </choose>,
                 #{item.uA},
-                #{item.keyDomain},
-                #{item.demoNodeId},
-                #{item.demoRecordId},
-                #{item.demoResultStatus}
+                #{item.keyDomain}
             )
         </foreach>
     </insert>
@@ -164,9 +151,6 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="version != null">version = #{version},</if>
             <if test="uA != null and uA != ''">ua = #{uA},</if>
             <if test="keyDomain != null and keyDomain != ''">key_domain = #{keyDomain},</if>
-            <if test="demoNodeId != null and demoNodeId != ''">demo_node_id = #{demoNodeId},</if>
-            <if test="demoRecordId != null and demoRecordId != ''">demo_record_id = #{demoRecordId},</if>
-            <if test="demoResultStatus != null and demoResultStatus != ''">demo_result_status = #{demoResultStatus},</if>
         </trim>
         where key_id = #{keyId}
     </update>

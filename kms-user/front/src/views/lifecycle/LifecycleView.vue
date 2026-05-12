@@ -44,7 +44,7 @@
             <span class="selection-count">已选择 {{ selectedIds.length }} 项</span>
             <div class="fab-actions">
               <el-button type="success" :disabled="selectedIds.length !== 1" @click="openUpdateDialog()">操作更新</el-button>
-              <el-button type="danger" @click="handleRevoke()">一键回收</el-button>
+              <el-button type="danger" @click="handleRevoke()">KMS引用回收</el-button>
             </div>
           </div>
         </transition>
@@ -98,7 +98,7 @@
                   更新
                 </el-button>
                 <el-button link type="danger" :disabled="isRevoked(scope.row.status)" @click="handleRevoke(scope.row)">
-                  回收
+                  KMS引用回收
                 </el-button>
                 <el-button link type="warning" @click="openAnalysisDialog(scope.row)">安全分析</el-button>
                 <el-button link @click="showDetail(scope.row.keyId)">详情</el-button>
@@ -208,7 +208,7 @@
               <el-form-item label="操作类型">
                 <el-select v-model="resultQuery.actionType" placeholder="全部" clearable>
                   <el-option label="密钥更新" value="UPDATE" />
-                  <el-option label="密钥回收" value="REVOKE" />
+                  <el-option label="KMS引用回收" value="REVOKE" />
                 </el-select>
               </el-form-item>
               <el-form-item label="接收状态">
@@ -779,13 +779,13 @@ function handleRevoke(row) {
     return
   }
 
-  proxy.$modal.confirm(`是否确认回收密钥编号为 "${ids.join(', ')}" 的记录？`).then(async () => {
+  proxy.$modal.confirm(`确认仅回收 KMS 侧引用/访问记录 ${ids.join(', ')}？该操作不等同于 Demo 侧能力销毁或节点级密钥删除。`).then(async () => {
     errorMessage.value = ''
     try {
       for (const keyId of ids) {
         await revokeLifecycleKey(keyId)
       }
-      proxy.$modal.msgSuccess('密钥回收成功')
+      proxy.$modal.msgSuccess('KMS引用回收成功')
       await loadMyKeys()
       await loadAutoUpdateKeys()
       await loadResultList()
@@ -888,7 +888,7 @@ function chainStatusType(status) {
 }
 
 function actionTypeText(value) {
-  return { UPDATE: '密钥更新', REVOKE: '密钥回收' }[value] || '-'
+  return { UPDATE: '密钥更新', REVOKE: 'KMS引用回收' }[value] || '-'
 }
 
 function actionSourceText(value) {

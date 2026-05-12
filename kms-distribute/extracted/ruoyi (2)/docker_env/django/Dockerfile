@@ -23,9 +23,9 @@ RUN apt-get update \
 
 COPY requirements.txt /tmp/requirements.txt
 RUN python3 -m venv /opt/venv \
-    && /opt/venv/bin/pip install wheel \
+    && /opt/venv/bin/pip install setuptools wheel \
     && /opt/venv/bin/pip install -r /tmp/requirements.txt \
-    && /opt/venv/bin/pip install gunicorn uvicorn
+    && /opt/venv/bin/pip install django-restql gunicorn uvicorn
 
 ENV PATH="/opt/venv/bin:$PATH"
 

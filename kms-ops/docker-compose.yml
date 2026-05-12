@@ -126,11 +126,14 @@ services:
       - KAFKA_TOPIC=key_generate_log
       - JAVA_BACKEND_BASE=http://generate-java:9081
       - DEMO_BACKEND_BASE=http://dvadmin3-django:8000/api/pqkds
+      - INTERNAL_TOKEN=${INTERNAL_TOKEN:-kms-generate-internal-secret-2026}
       - SERVER_PORT=8081
       - GOGC=500
     depends_on:
       kafka:
         condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: always
     networks:
       - kms_net
@@ -193,6 +196,11 @@ services:
       - KAFKA_UPDATE_TOPIC=key_update_log
       - KAFKA_REVOKE_TOPIC=key_revoke_log
       - REDIS_ADDR=redis:6379
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_NAME=kms
+      - DB_USERNAME=root
+      - DB_PASSWORD=root123456
       - SERVER_PORT=8082
       - GOGC=500
     depends_on:
@@ -269,14 +277,28 @@ services:
       dockerfile: ./docker_env/django/Dockerfile
     container_name: dvadmin3-django
     working_dir: /backend
+    command: ["sh", "-lc", "/opt/venv/bin/python manage.py migrate --noinput && exec /opt/venv/bin/gunicorn application.asgi:application -c gunicorn_conf.py"]
     environment:
       - PYTHONUNBUFFERED=1
       - TZ=Asia/Shanghai
+      - DATABASE_HOST=mysql
+      - DATABASE_PORT=3306
+      - DATABASE_NAME=falcon_kds
+      - DATABASE_USER=root
+      - DATABASE_PASSWORD=root123456
+      - PQKDS_KMS_ADAPTER_SERVICE_TOKEN=${PQKDS_KMS_ADAPTER_SERVICE_TOKEN}
+      - PQKDS_KMS_ADAPTER_SERVICE_ID=${PQKDS_KMS_ADAPTER_SERVICE_ID}
+      - GENERATE_BACKEND_BASE=http://generate-go:8081
+      - GENERATE_JAVA_BASE=http://generate-java:9081
+      - LIFECYCLE_BACKEND_BASE=http://updatedel-go:8082
+      - INTERNAL_TOKEN=${INTERNAL_TOKEN:-kms-generate-internal-secret-2026}
+      - PQKDS_DEMO_GENERATE_USER=${PQKDS_DEMO_GENERATE_USER:-pqkds-demo-service}
+      - PQKDS_DEMO_GENERATE_PASSWORD=${PQKDS_DEMO_GENERATE_PASSWORD:-admin123}
     volumes:
       - ../kms-distribute/extracted/ruoyi (2)/backend:/backend
       - ../kms-distribute/extracted/ruoyi (2)/logs/log:/var/log
     ports:
-      - "8000:8000"
+      - "8001:8000"
     restart: always
     networks:
       - kms_net
@@ -375,6 +397,8 @@ services:
       - kms-distribute
       - dvadmin3-django
       - acceptance-backend
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: always
     networks:
       - kms_net

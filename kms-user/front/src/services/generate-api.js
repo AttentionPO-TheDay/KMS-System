@@ -1,6 +1,30 @@
 import { apiBases } from '@/config/api-bases'
 import { requestJson } from '@/services/http'
 
+const generateFieldMap = {
+  operatorMetadata: 'operator_metadata',
+  pqMode: 'pq_mode'
+}
+
+function hasOwn(payload, key) {
+  return Object.prototype.hasOwnProperty.call(payload, key)
+}
+
+function serializeGenerateKey(payload = {}) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return payload
+  }
+
+  const serialized = { ...payload }
+  Object.entries(generateFieldMap).forEach(([camelKey, snakeKey]) => {
+    if (hasOwn(payload, camelKey)) {
+      serialized[snakeKey] = payload[camelKey]
+      delete serialized[camelKey]
+    }
+  })
+  return serialized
+}
+
 export function batchGetGenerateChainStatus(keyIds = []) {
   const normalizedKeyIds = [...new Set(keyIds.map((item) => Number(item)).filter((item) => Number.isFinite(item) && item > 0))]
   if (!normalizedKeyIds.length) {
@@ -42,7 +66,7 @@ export function getGenerateKey(keyId) {
 export function createGenerateKey(payload) {
   return requestJson(apiBases.generateApi, '/generate/keymanage', {
     method: 'POST',
-    body: JSON.stringify(payload)
+    body: JSON.stringify(serializeGenerateKey(payload))
   })
 }
 

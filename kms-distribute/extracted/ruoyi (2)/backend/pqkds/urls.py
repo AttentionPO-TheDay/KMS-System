@@ -7,9 +7,10 @@ from .views import (
     KeyPoolViewSet,
     generate_falcon_keypair_with_scheme, save_falcon_keys,
     get_and_verify_falcon_public_key, verify_falcon_public_key_integrity,
-    batch_verify_falcon_public_keys, kms_generate_key
+    batch_verify_falcon_public_keys, kms_generate_key, kms_generate_record, kms_lifecycle_record
 )
 from . import chat_urls
+from . import kms_adapter
 app_name = 'pqkds'
 router = DefaultRouter()
 router.register(r'system-parameters', SystemParametersViewSet, basename='systemparameters')
@@ -25,7 +26,13 @@ router.register(r'stats', SystemStatsViewSet, basename='stats')
 router.register(r'key-pool', KeyPoolViewSet, basename='keypool')
 urlpatterns = [
     path('', include(router.urls)),
+    path('kms/generate-record/', kms_generate_record, name='kms-generate-record'),
+    path('kms/lifecycle-record/', kms_lifecycle_record, name='kms-lifecycle-record'),
     path('kms/generate-key/', kms_generate_key, name='kms-generate-key'),
+    path('kms/adapter/generate-key/', kms_adapter.generate_key, name='kms-adapter-generate-key'),
+    path('kms/adapter/lifecycle/', kms_adapter.update_lifecycle, name='kms-adapter-lifecycle'),
+    path('kms/adapter/revoke/', kms_adapter.revoke, name='kms-adapter-revoke'),
+    path('kms/adapter/distribute/', kms_adapter.distribute_key_pool, name='kms-adapter-distribute'),
     path('node/generate-falcon-keypair/', generate_falcon_keypair_with_scheme, name='generate-falcon-keypair-with-scheme'),
     path('node/save-falcon-keys/', save_falcon_keys, name='save-falcon-keys'),
     path('falcon/verify/<str:node_id>/', get_and_verify_falcon_public_key, name='get-and-verify-falcon-public-key'),

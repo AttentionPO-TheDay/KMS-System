@@ -40,7 +40,9 @@ public class InternalGenerateController {
                                           @RequestParam String userName,
                                           @RequestParam(defaultValue = "200") int limit,
                                           @RequestParam(required = false) String createdAfter,
-                                          @RequestParam(required = false) String encrytName) {
+                                          @RequestParam(required = false) String encrytName,
+                                          @RequestParam(required = false) String keyName,
+                                          @RequestParam(required = false) String ua) {
         requireAuthorized(token);
 
         Keymanage query = new Keymanage();
@@ -48,7 +50,12 @@ public class InternalGenerateController {
         if (encrytName != null && !encrytName.trim().isEmpty()) {
             query.setEncrytName(encrytName.trim());
         }
+        if (keyName != null && !keyName.trim().isEmpty()) {
+            query.setKeyName(keyName.trim());
+        }
 
+        String expectedKeyName = trimToNull(keyName);
+        String expectedUa = trimToNull(ua);
         LocalDateTime createdAfterTime = parseTime(createdAfter);
         List<Keymanage> all = generateKeyService.selectKeyList(query);
         List<Map<String, Object>> items = new ArrayList<>();
@@ -59,10 +66,20 @@ public class InternalGenerateController {
                     continue;
                 }
             }
+            if (expectedKeyName != null && !expectedKeyName.equals(key.getKeyName())) {
+                continue;
+            }
+            if (expectedUa != null && !expectedUa.equals(key.getuA())) {
+                continue;
+            }
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("keyId", key.getKeyId());
             item.put("userName", key.getUserName());
             item.put("encrytName", key.getEncrytName());
+            item.put("keyName", key.getKeyName());
+            item.put("keyUse", key.getKeyUse());
+            item.put("keyDomain", key.getKeyDomain());
+            item.put("ua", key.getuA());
             item.put("status", key.getStatus());
             item.put("createdAt", key.getCreTime());
             items.add(item);
@@ -80,6 +97,13 @@ public class InternalGenerateController {
         if (token == null || !internalToken.equals(token)) {
             throw new IllegalArgumentException("invalid internal token");
         }
+    }
+
+    private String trimToNull(String value) {
+        if (value == null || value.trim().isEmpty()) {
+            return null;
+        }
+        return value.trim();
     }
 
     private LocalDateTime parseTime(String value) {

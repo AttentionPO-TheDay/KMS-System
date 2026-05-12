@@ -58,7 +58,9 @@ public class GoBackendClient {
         body.put("key_name", keymanage.getKeyName() != null ? keymanage.getKeyName() : "example");
         body.put("key_use", keymanage.getKeyUse() != null ? keymanage.getKeyUse() : "加解密");
         body.put("auto_update", keymanage.getAutoUpdate() != null ? keymanage.getAutoUpdate() : "false");
-        body.put("demo_node_id", keymanage.getDemoNodeId() != null ? keymanage.getDemoNodeId() : "");
+        if (isPqAlgorithm(keymanage.getEncrytName())) {
+            body.put("pq_mode", "demo_generated");
+        }
 
         return callGoApi("/generate/request/ENROLL_KEY", body);
     }
@@ -73,7 +75,9 @@ public class GoBackendClient {
         body.put("key_name", keymanage.getKeyName() != null ? keymanage.getKeyName() : "example");
         body.put("key_use", keymanage.getKeyUse() != null ? keymanage.getKeyUse() : "加解密");
         body.put("auto_update", keymanage.getAutoUpdate() != null ? keymanage.getAutoUpdate() : "false");
-        body.put("demo_node_id", keymanage.getDemoNodeId() != null ? keymanage.getDemoNodeId() : "");
+        if (isPqAlgorithm(keymanage.getEncrytName())) {
+            body.put("pq_mode", "demo_generated");
+        }
 
         return callGoApi("/generate/request/REENROLL_KEY", body);
     }
@@ -90,6 +94,14 @@ public class GoBackendClient {
         body.put("encryt_type", encrytType);
         body.put("encryt_name", encrytName);
         return callGoApi("/generate/request/comparam", body);
+    }
+
+    private boolean isPqAlgorithm(String algorithm) {
+        if (algorithm == null) {
+            return false;
+        }
+        String normalized = algorithm.toUpperCase();
+        return normalized.contains("KYBER") || normalized.contains("FALCON") || normalized.contains("ML-KEM") || normalized.startsWith("PQ_");
     }
 
     /**

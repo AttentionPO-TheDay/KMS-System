@@ -40,6 +40,7 @@ func main() {
 	{
 		api.Post("/ENROLL_KEY", reqCtrl.EnrollKey)
 		api.Post("/REENROLL_KEY", reqCtrl.ReenrollKey)
+		api.Post("/PARTIAL_KEY", reqCtrl.PartialKey)
 		api.Post("/comparam", reqCtrl.ComParam)
 	}
 

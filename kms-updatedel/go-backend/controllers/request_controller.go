@@ -74,25 +74,25 @@ func (c *RequestController) UpdateKey(ctx *fiber.Ctx) error {
 			"参数解析失败: "+err.Error(), traceId)
 	}
 
-	// Parameter validation
 	if req.KeyId == 0 || req.User == "" {
 		return c.failResponse(ctx, fiber.StatusBadRequest, models.StatusInvalidParam,
 			"必填参数缺失(keyId/user)", traceId)
 	}
 
-	// Idempotency check via Redis
-	ok, err := c.idempService.CheckAndSet("UPDATE_KEY", req.KeyId, req.User)
+	idempotencyKey := ctx.Get("Idempotency-Key")
+	if idempotencyKey == "" {
+		idempotencyKey = fmt.Sprintf("UPDATE_KEY:%d:%s", req.KeyId, req.User)
+	}
+	ok, err := c.idempService.CheckAndSetWithKey(idempotencyKey)
 	if err != nil {
-		// Redis error — log but allow request to proceed
-		fmt.Printf("[WARN][%s] Idempotency check error: %v\n", traceId, err)
-	} else if !ok {
-		// Duplicate detected
+		return c.failResponse(ctx, fiber.StatusServiceUnavailable, models.StatusError,
+			"幂等校验不可用: "+err.Error(), traceId)
+	}
+	if !ok {
 		service.IncrementDuplicate()
-		return c.failResponse(ctx, fiber.StatusAccepted, models.StatusDuplicate,
-			"更新请求已接收，请勿重复提交", traceId)
+		return duplicateRequestResponse(ctx, traceId, "更新请求已接收，请勿重复提交")
 	}
 
-	// Build payload and enqueue
 	keyInfo := &models.Keymanage{
 		KeyID:      req.KeyId,
 		UserName:   req.User,
@@ -142,13 +142,13 @@ func (c *RequestController) BatchUpdateKeys(ctx *fiber.Ctx) error {
 	var req batchUpdateKeysRequest
 	if err := ctx.BodyParser(&req); err != nil {
 		return c.failResponse(ctx, fiber.StatusBadRequest, models.StatusInvalidParam,
-			"鍙傛暟瑙ｆ瀽澶辫触: "+err.Error(), traceId)
+			"参数解析失败: "+err.Error(), traceId)
 	}
 
 	keyIds := distinctKeyIDs(req.KeyIds)
 	if len(keyIds) == 0 || req.User == "" {
 		return c.failResponse(ctx, fiber.StatusBadRequest, models.StatusInvalidParam,
-			"蹇呭～鍙傛暟缂哄け(keyIds/user)", traceId)
+			"必填参数缺失(keyIds/user)", traceId)
 	}
 
 	batchID := uuid.New().String()
@@ -161,10 +161,17 @@ func (c *RequestController) BatchUpdateKeys(ctx *fiber.Ctx) error {
 	accepted := 0
 	duplicates := 0
 	for index, keyID := range keyIds {
-		ok, err := c.idempService.CheckAndSet("UPDATE_KEY", keyID, req.User)
+		idempotencyKey := fmt.Sprintf("BATCH_UPDATE_KEYS:%d:%s", keyID, req.User)
+		if headerKey := ctx.Get("Idempotency-Key"); headerKey != "" {
+			idempotencyKey = fmt.Sprintf("%s:%d", headerKey, keyID)
+		}
+
+		ok, err := c.idempService.CheckAndSetWithKey(idempotencyKey)
 		if err != nil {
-			fmt.Printf("[WARN][%s] Idempotency check error: %v\n", traceId, err)
-		} else if !ok {
+			return c.failResponse(ctx, fiber.StatusServiceUnavailable, models.StatusError,
+				"幂等校验不可用: "+err.Error(), traceId)
+		}
+		if !ok {
 			service.IncrementDuplicate()
 			duplicates++
 			continue
@@ -204,7 +211,7 @@ func (c *RequestController) BatchUpdateKeys(ctx *fiber.Ctx) error {
 
 		if err := c.lifecycleService.EnqueueUpdate(payload); err != nil {
 			return c.failResponse(ctx, fiber.StatusServiceUnavailable, models.StatusQueueFull,
-				"鏇存柊璇锋眰鎶曢€掑け璐? "+err.Error(), traceId)
+				"更新请求投递失败: "+err.Error(), traceId)
 		}
 		accepted++
 	}
@@ -216,7 +223,7 @@ func (c *RequestController) BatchUpdateKeys(ctx *fiber.Ctx) error {
 	return ctx.JSON(fiber.Map{
 		"code":        200,
 		"status":      models.StatusAccepted,
-		"msg":         "鎵归噺鏇存柊璇锋眰宸叉帴鏀讹紝姝ｅ湪鎸夋爲鍨嬬粨鏋勫悗鍙板鐞?",
+		"msg":         "批量更新请求已接收，正在按树型结构后台处理",
 		"trace_id":    traceId,
 		"batch_id":    batchID,
 		"accepted":    accepted,
@@ -239,22 +246,25 @@ func (c *RequestController) RevokeKey(ctx *fiber.Ctx) error {
 			"参数解析失败: "+err.Error(), traceId)
 	}
 
-	// Parameter validation
 	if req.KeyId == 0 || req.User == "" {
 		return c.failResponse(ctx, fiber.StatusBadRequest, models.StatusInvalidParam,
 			"必填参数缺失(keyId/user)", traceId)
 	}
 
-	// Idempotency check via Redis
-	ok, err := c.idempService.CheckAndSet("REVOKE_KEY", req.KeyId, req.User)
+	idempotencyKey := ctx.Get("Idempotency-Key")
+	if idempotencyKey == "" {
+		idempotencyKey = fmt.Sprintf("REVOKE_KEY:%d:%s", req.KeyId, req.User)
+	}
+	ok, err := c.idempService.CheckAndSetWithKey(idempotencyKey)
 	if err != nil {
-		fmt.Printf("[WARN][%s] Idempotency check error: %v\n", traceId, err)
-	} else if !ok {
-		return c.failResponse(ctx, fiber.StatusAccepted, models.StatusDuplicate,
-			"回收请求已接收，请勿重复提交", traceId)
+		return c.failResponse(ctx, fiber.StatusServiceUnavailable, models.StatusError,
+			"幂等校验不可用: "+err.Error(), traceId)
+	}
+	if !ok {
+		service.IncrementDuplicate()
+		return duplicateRequestResponse(ctx, traceId, "回收请求已接收，请勿重复提交")
 	}
 
-	// Build payload and enqueue
 	keyInfo := &models.Keymanage{
 		KeyID:    req.KeyId,
 		UserName: req.User,
@@ -293,6 +303,15 @@ func (c *RequestController) failResponse(ctx *fiber.Ctx, httpStatus int, status,
 	return ctx.Status(httpStatus).JSON(fiber.Map{
 		"code":     httpStatus,
 		"status":   status,
+		"msg":      message,
+		"trace_id": traceId,
+	})
+}
+
+func duplicateRequestResponse(ctx *fiber.Ctx, traceId string, message string) error {
+	return ctx.Status(fiber.StatusAccepted).JSON(fiber.Map{
+		"code":     fiber.StatusAccepted,
+		"status":   models.StatusDuplicate,
 		"msg":      message,
 		"trace_id": traceId,
 	})

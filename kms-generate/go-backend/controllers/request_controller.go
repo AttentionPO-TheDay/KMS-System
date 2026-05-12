@@ -61,7 +61,7 @@ func (c *RequestController) EnrollKey(ctx *fiber.Ctx) error {
 		KeyName    string `json:"key_name"`
 		KeyUse     string `json:"key_use"`
 		AutoUpdate string `json:"auto_update"`
-		DemoNodeID string `json:"demo_node_id"`
+		PQMode     string `json:"pq_mode"`
 	}
 
 	if err := ctx.BodyParser(&req); err != nil {
@@ -79,39 +79,24 @@ func (c *RequestController) EnrollKey(ctx *fiber.Ctx) error {
 	req.EncrytType = strings.TrimSpace(req.EncrytType)
 	req.EncrytName = strings.TrimSpace(req.EncrytName)
 	req.UA = strings.TrimSpace(req.UA)
-	req.DemoNodeID = strings.TrimSpace(req.DemoNodeID)
+	req.PQMode = strings.TrimSpace(req.PQMode)
 
-	if req.EncrytType == "无证书非对称加密" && (req.EncrytName == "SM2" || req.EncrytName == "SSCL") {
-		if req.UA == "" {
-			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"code": 500, "msg": "无证书非对称加密必须提供用户部分公钥(UA)",
-			})
-		}
-		if len(req.UA) != 130 {
-			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"code": 500, "msg": "用户部分公钥(UA)长度非法",
-			})
-		}
-		if !strings.HasPrefix(strings.ToLower(req.UA), "04") {
-			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"code": 500, "msg": "用户部分公钥(UA)前缀非法",
-			})
-		}
-		if !certlessUARegex.MatchString(req.UA) {
-			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"code": 500, "msg": "用户部分公钥(UA)必须为十六进制字符串",
-			})
-		}
-	} else if service.IsPQAlgorithm(req.EncrytName) {
-		if req.DemoNodeID == "" {
-			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"code": 500, "msg": "抗量子密钥生成必须提供 demo_node_id",
-			})
-		}
-	} else {
+	if !(req.EncrytType == "无证书非对称加密" && (req.EncrytName == "SM2" || req.EncrytName == "SSCL" || service.IsPQAlgorithm(req.EncrytName))) {
 		return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"code": 500, "msg": "加密算法仅支持 SM2、SSCL 或抗量子算法",
 		})
+	}
+	if req.EncrytName == "SM2" || req.EncrytName == "SSCL" {
+		if req.UA == "" {
+			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"code": 500, "msg": "必填参数缺失(UA)",
+			})
+		}
+		if len(req.UA) != 130 || !strings.HasPrefix(strings.ToLower(req.UA), "04") || !certlessUARegex.MatchString(req.UA) {
+			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"code": 500, "msg": "用户部分公钥(UA)格式非法",
+			})
+		}
 	}
 
 	keyName := req.KeyName
@@ -137,7 +122,7 @@ func (c *RequestController) EnrollKey(ctx *fiber.Ctx) error {
 		KeyName:    keyName,
 		KeyUse:     keyUse,
 		AutoUpdate: autoUpdate,
-		DemoNodeID: req.DemoNodeID,
+		PQMode:     req.PQMode,
 	}
 
 	// 由内部 Token 保证身份，不再需要明文密码鉴权
@@ -158,6 +143,54 @@ func (c *RequestController) EnrollKey(ctx *fiber.Ctx) error {
 
 func (c *RequestController) ReenrollKey(ctx *fiber.Ctx) error {
 	return c.EnrollKey(ctx)
+}
+
+func (c *RequestController) PartialKey(ctx *fiber.Ctx) error {
+	var req struct {
+		User       string `json:"user"`
+		EncrytName string `json:"encryt_name"`
+		UA         string `json:"ua"`
+		KeyDomain  string `json:"key_domain"`
+		KeyUse     string `json:"key_use"`
+	}
+
+	if err := ctx.BodyParser(&req); err != nil {
+		return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"code": 500, "msg": "参数解析失败: " + err.Error(),
+		})
+	}
+
+	req.User = strings.TrimSpace(req.User)
+	req.EncrytName = strings.TrimSpace(req.EncrytName)
+	req.UA = strings.TrimSpace(req.UA)
+	if req.User == "" || req.UA == "" {
+		return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"code": 500, "msg": "必填参数缺失(User/UA)",
+		})
+	}
+	if req.EncrytName != "SM2" && req.EncrytName != "SSCL" {
+		return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"code": 500, "msg": "部分私钥接口仅支持 SM2 或 SSCL",
+		})
+	}
+	if len(req.UA) != 130 || !strings.HasPrefix(strings.ToLower(req.UA), "04") || !certlessUARegex.MatchString(req.UA) {
+		return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"code": 500, "msg": "用户部分公钥(UA)格式非法",
+		})
+	}
+
+	keyValue, err := c.keyService.GeneratePartialKey(req.EncrytName, req.User, req.UA, req.KeyDomain, req.KeyUse)
+	if err != nil {
+		return ctx.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+			"code": 500, "msg": "部分私钥生成失败: " + err.Error(),
+		})
+	}
+
+	return ctx.Status(fiber.StatusOK).JSON(fiber.Map{
+		"code": 200,
+		"msg":  "操作成功",
+		"data": keyValue,
+	})
 }
 
 func (c *RequestController) ComParam(ctx *fiber.Ctx) error {

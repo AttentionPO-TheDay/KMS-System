@@ -31,10 +31,35 @@ logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Kyber DLL路径
-KYBER_512_DLL = BASE_DIR / "kyber" / "libpqcrystals_kyber512_ref.dll"
-KYBER_768_DLL = BASE_DIR / "kyber" / "libpqcrystals_kyber768_ref.dll"
-KYBER_1024_DLL = BASE_DIR / "kyber" / "libpqcrystals_kyber1024_ref.dll"
+KYBER_LIB_DIR = BASE_DIR / "kyber"
+KYBER_REF_LIB_DIR = KYBER_LIB_DIR / "ref" / "lib"
+
+
+_kyber_dependency_handles = []
+
+
+def _kyber_library_candidates(variant: int):
+    name = f"libpqcrystals_kyber{variant}_ref"
+    return [
+        KYBER_REF_LIB_DIR / f"{name}.so",
+        KYBER_LIB_DIR / f"{name}.so",
+        KYBER_LIB_DIR / f"{name}.dll",
+    ]
+
+
+def _preload_kyber_dependencies(errors):
+    if _kyber_dependency_handles:
+        return
+    fips_path = KYBER_REF_LIB_DIR / "libpqcrystals_fips202_ref.so"
+    if not fips_path.exists():
+        return
+    try:
+        mode = getattr(ctypes, "RTLD_GLOBAL", 0)
+        _kyber_dependency_handles.append(ctypes.CDLL(str(fips_path), mode=mode))
+        logger.info(f"[DLL] 成功预加载 {fips_path}")
+    except OSError as exc:
+        errors.append(f"{fips_path}: {exc}")
+
 
 # Kyber参数表: variant -> (pk_bytes, sk_bytes, ct_bytes, ss_bytes, coins_bytes)
 KYBER_PARAMS = {
@@ -104,18 +129,19 @@ class CertificatelessKyberDLLFusion:
         )
 
     def _load_dll(self) -> ctypes.CDLL:
-        """加载对应变体的Kyber DLL"""
-        dll_paths = {
-            512: KYBER_512_DLL,
-            768: KYBER_768_DLL,
-            1024: KYBER_1024_DLL,
-        }
-        dll_path = dll_paths[self.variant]
-        if not os.path.exists(dll_path):
-            raise FileNotFoundError(f"Kyber DLL未找到: {dll_path}")
-        dll = ctypes.CDLL(str(dll_path))
-        logger.info(f"[DLL] 成功加载 {dll_path}")
-        return dll
+        """加载对应变体的Kyber动态库"""
+        errors = []
+        _preload_kyber_dependencies(errors)
+        for lib_path in _kyber_library_candidates(self.variant):
+            if not lib_path.exists():
+                continue
+            try:
+                dll = ctypes.CDLL(str(lib_path))
+                logger.info(f"[DLL] 成功加载 {lib_path}")
+                return dll
+            except OSError as exc:
+                errors.append(f"{lib_path}: {exc}")
+        raise FileNotFoundError(f"Kyber动态库未找到或不可加载: {'; '.join(errors) or self.variant}")
 
     def _bind_dll_functions(self):
         """绑定DLL中的函数接口"""
