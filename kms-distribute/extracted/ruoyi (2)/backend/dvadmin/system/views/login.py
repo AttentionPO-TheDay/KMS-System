@@ -70,9 +70,14 @@ class LoginSerializer(TokenObtainPairSerializer):
                 else:
                     self.image_code and self.image_code.delete()
                     raise CustomValidationError("图片验证码错误")
-        user = Users.objects.get(username=attrs['username'])
+        user = Users.objects.filter(username=attrs.get('username')).first()
+        if user is None:
+            raise CustomValidationError("账号/密码错误")
         if not user.is_active:
             raise CustomValidationError("账号被锁定")
+        password = attrs.get("password")
+        if password and (len(password) != 32 or any(char not in "0123456789abcdefABCDEF" for char in password)):
+            attrs["password"] = hashlib.md5(password.encode(encoding="UTF-8")).hexdigest()
         data = super().validate(attrs)
         data["name"] = self.user.name
         data["userId"] = self.user.id

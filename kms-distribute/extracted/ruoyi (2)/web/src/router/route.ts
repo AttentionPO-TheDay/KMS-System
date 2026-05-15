@@ -1,5 +1,4 @@
 import { RouteRecordRaw } from 'vue-router';
-import { pqkdsRoutes } from '/@/router/pqkds';
 
 /**
  * 路由meta对象参数说明
@@ -47,7 +46,6 @@ export const dynamicRoutes: Array<RouteRecordRaw> = [
 			icon: 'iconfont icon-gerenzhongxin',
 		},
 	},
-	...pqkdsRoutes
 ];
 
 /**

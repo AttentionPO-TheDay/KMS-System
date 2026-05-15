@@ -59,7 +59,15 @@ onMounted(() => {
 		});
 		// 获取缓存中的布局配置
 		if (Local.get('themeConfig')) {
-			storesThemeConfig.setThemeConfig({ themeConfig: Local.get('themeConfig') });
+			const themeConfigCache = {
+				...Local.get('themeConfig'),
+				globalTitle: '抗量子分发系统',
+				globalViceTitle: '抗量子分发系统',
+				globalViceTitleMsg: '',
+				isFooter: false,
+			};
+			storesThemeConfig.setThemeConfig({ themeConfig: themeConfigCache });
+			Local.set('themeConfig', themeConfigCache);
 			document.documentElement.style.cssText = Local.get('themeConfigStyle');
 		}
 		// 获取缓存中的全屏配置

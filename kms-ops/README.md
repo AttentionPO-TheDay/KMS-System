@@ -5,7 +5,7 @@
 ## 当前职责
 
 1. 统一编排 MySQL、Redis、Kafka、FISCO BCOS
-2. 启动 generate、updatedel、distribute、acceptance 相关服务
+2. 启动 generate、updatedel、extracted demo、acceptance 相关服务
 3. 承载 Nginx 网关和静态前端发布目录
 4. 提供本地构建、检查和压测辅助脚本
 
@@ -29,9 +29,10 @@
 7. `generate-java`：`9081`
 8. `updatedel-go`：`8082`
 9. `updatedel-java`：`9082`
-10. `kms-distribute`：`8083`
-11. `acceptance-backend`：`9090`
-12. `nginx`：`80`
+10. `kms-distribute`：旧分发后台服务，`8083`
+11. `dvadmin3-django`：新分发 demo 后端，`8001` -> `8000`
+12. `acceptance-backend`：`9090`
+13. `nginx`：`80`
 
 ## 当前网关路径
 
@@ -43,8 +44,10 @@
 4. `/lifecycle-ingress/` -> `/updatedel-ingress/`
 5. `/updatedel-api/` -> updatedel Java
 6. `/lifecycle-api/` -> updatedel Java
-7. `/distribute-api/` -> distribute Java
+7. `/pqkds-api/` -> extracted demo Django
 8. `/acceptance-api/` -> acceptance backend `/api/`
+
+旧分发 Java 后端仅作为后台服务运行，不通过 nginx 恢复 `/distribute-api/`。
 
 ### 前端
 
@@ -62,7 +65,7 @@
 1. `kms-generate/front`：`/generate-api` -> `http://localhost:9081`
 2. `kms-updatedel/front`：`/generate-api` -> `http://localhost:9081`
 3. `kms-updatedel/front`：`/lifecycle-api` -> `http://localhost:9082`
-4. `kms-user/front`：`/generate-api` -> `9081`，`/lifecycle-api` -> `9082`，`/distribute-api` -> `8083`
+4. `kms-user/front`：`/generate-api` -> `9081`，`/lifecycle-api` -> `9082`
 
 Docker 网关发布环境仍由 `kms-ops/nginx/nginx.conf` 统一处理，不依赖这些本地开发代理。
 
@@ -96,13 +99,13 @@ Docker 网关发布环境仍由 `kms-ops/nginx/nginx.conf` 统一处理，不依
 
 1. 构建 `kms-generate/java-backend`
 2. 构建 `kms-updatedel/java-backend`
-3. 构建 `kms-distribute/java-backend`
-4. 构建 `kms-generate/go-backend`
-5. 构建 `kms-updatedel/go-backend`
-6. 构建 `kms-acceptance/backend`
-7. 构建 `kms-generate/front`
-8. 构建 `kms-updatedel/front`
-9. 构建 `kms-distribute/front`
+3. 构建 `kms-generate/go-backend`
+4. 构建 `kms-updatedel/go-backend`
+5. 构建 `kms-acceptance/backend`
+6. 构建 `kms-generate/front`
+7. 构建 `kms-updatedel/front`
+8. 构建 `kms-distribute/java-backend` 后台服务
+9. 构建 `kms-distribute/extracted/ruoyi (2)/web` 新分发 demo 前端
 10. 构建 `kms-user/front`
 11. 构建 `kms-acceptance/front`
 12. 整理产物到 `kms-ops/runtime` 和 `kms-ops/front`
@@ -113,7 +116,7 @@ Docker 网关发布环境仍由 `kms-ops/nginx/nginx.conf` 统一处理，不依
 npm run build:prod
 ```
 
-说明：前端项目默认没有 `build` 脚本，统一使用 `build:prod`。
+说明：RuoYi 前端项目默认使用 `build:prod`，extracted demo 前端使用 `build`；旧 `kms-distribute/front` 不再构建和发布。
 
 ## 启动方式
 

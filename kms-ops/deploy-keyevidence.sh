@@ -141,7 +141,7 @@ if [ -f "$TEMPLATE_STATE_FILE" ]; then
 fi
 
 log_info "Recreating Java services with unified blockchain config"
-run_compose up -d --force-recreate generate-java updatedel-java kms-distribute
+run_compose up -d --force-recreate generate-java updatedel-java
 
 log_info "KeyEvidence deployed successfully"
 log_info "FISCO_CONTRACT_ADDRESS=$CONTRACT_ADDRESS"

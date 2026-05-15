@@ -61,6 +61,25 @@ function Invoke-MavenBuild {
     }
 }
 
+function Invoke-MavenBuildWithArgs {
+    param(
+        [string]$ProjectDir,
+        [string[]]$MavenArgs
+    )
+
+    Write-Host "Building Maven project: $ProjectDir"
+    Push-Location $ProjectDir
+    try {
+        mvn @MavenArgs
+        if ($LASTEXITCODE -ne 0) {
+            throw "Maven build failed: $ProjectDir"
+        }
+    }
+    finally {
+        Pop-Location
+    }
+}
+
 function Invoke-FrontendBuild {
     param(
         [string]$ProjectDir,
@@ -153,7 +172,7 @@ $updatedelGoDir = Join-Path $repoRoot "kms-updatedel\go-backend"
 $acceptanceGoDir = Join-Path $repoRoot "kms-acceptance\backend"
 $generateFrontDir = Join-Path $repoRoot "kms-generate\front"
 $updatedelFrontDir = Join-Path $repoRoot "kms-updatedel\front"
-$distributeFrontDir = Join-Path $repoRoot "kms-distribute\front"
+$distributeFrontDir = Join-Path $repoRoot "kms-distribute\extracted\ruoyi (2)\web"
 $userFrontDir = Join-Path $repoRoot "kms-user\front"
 $acceptanceFrontDir = Join-Path $repoRoot "kms-acceptance\front"
 $acceptanceSecurityDir = Join-Path $repoRoot "security"
@@ -167,7 +186,7 @@ New-CleanDirectory (Join-Path $frontRoot "acceptance")
 
 Invoke-MavenBuild $generateJavaDir
 Invoke-MavenBuild $updatedelJavaDir
-Invoke-MavenBuild $distributeJavaDir
+Invoke-MavenBuildWithArgs -ProjectDir $distributeJavaDir -MavenArgs @("-B", "-DskipTests", "-pl", "ruoyi-admin", "-am", "clean", "package")
 
 Invoke-GoLinuxBuild -ProjectDir $generateGoDir -OutputName "kms-generate-service"
 Invoke-GoLinuxBuild -ProjectDir $updatedelGoDir -OutputName "kms-updatedel-service"
@@ -175,7 +194,7 @@ Invoke-GoProjectBuild -ProjectDir $acceptanceGoDir -OutputName "kms-acceptance-b
 
 Invoke-FrontendBuild -ProjectDir $generateFrontDir -BuildScript "build:prod"
 Invoke-FrontendBuild -ProjectDir $updatedelFrontDir -BuildScript "build:prod"
-Invoke-FrontendBuild -ProjectDir $distributeFrontDir -BuildScript "build:prod"
+Invoke-FrontendBuild -ProjectDir $distributeFrontDir -BuildScript "build"
 Invoke-FrontendBuild -ProjectDir $userFrontDir -BuildScript "build"
 Invoke-FrontendBuild -ProjectDir $acceptanceFrontDir -BuildScript "build"
 

@@ -2690,7 +2690,7 @@ class BlockchainConfigViewSet(CustomModelViewSet):
                 serializer = self.get_serializer(active_config)
                 return SuccessResponse(data=serializer.data, msg="获取活跃区块链配置成功")
             else:
-                return ErrorResponse(msg="没有找到活跃的区块链配置")
+                return SuccessResponse(data=None, msg="没有找到活跃的区块链配置")
         except Exception as e:
             return ErrorResponse(msg=f"获取区块链配置失败: {str(e)}")
     @action(detail=False, methods=['post'])

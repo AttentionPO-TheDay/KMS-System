@@ -83,6 +83,7 @@ yarn-error.log
 
 # Temp files
 tmp.go
+/kms-distribute/extracted/ruoyi-111-compare-*/
 
 # AI Tools
 .claude

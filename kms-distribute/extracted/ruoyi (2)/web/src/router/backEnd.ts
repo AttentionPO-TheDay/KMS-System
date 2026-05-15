@@ -6,7 +6,6 @@ import { useRequestOldRoutes } from '/@/stores/requestOldRoutes';
 import { Session } from '/@/utils/storage';
 import { NextLoading } from '/@/utils/loading';
 import { dynamicRoutes, notFoundAndNoPower } from '/@/router/route';
-import { pqkdsRoutes } from '/@/router/pqkds';
 import { formatTwoStageRoutes, formatFlatteningRoutes, router } from '/@/router/index';
 import { useRoutesList } from '/@/stores/routesList';
 import { useTagsViewRoutes } from '/@/stores/tagsViewRoutes';
@@ -57,7 +56,14 @@ export async function initBackEndControlRoutes() {
 	const res = await getBackEndControlRoutes();
 
 	// 处理路由（component），替换 dynamicRoutes（/@/router/route）第一个顶级 children 的路由
-	dynamicRoutes[0].children = [...(await backEndComponent(handleMenu(res.data))), ...pqkdsRoutes];
+	const backendRoutes = await backEndComponent(handleMenu(res.data));
+	const seenRoutePaths = new Set<string>();
+	dynamicRoutes[0].children = backendRoutes.filter((route: any) => {
+		const routeKey = route.path || route.web_path || route.name;
+		if (!routeKey || seenRoutePaths.has(routeKey)) return false;
+		seenRoutePaths.add(routeKey);
+		return true;
+	});
 	// 添加动态路由
 	await setAddRoute();
 	// 设置路由到 vuex routesList 中（已处理成多级嵌套路由）及缓存多级嵌套数组处理后的一维数组

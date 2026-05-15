@@ -62,9 +62,14 @@ copy_artifact() {
 
 invoke_maven_build() {
   local project_dir="$1"
+  local unwritable_target=""
+
+  if find "$project_dir" -type d -name target ! -writable -print -quit | grep -q .; then
+    unwritable_target=1
+  fi
 
   echo "Building Maven project: $project_dir"
-  if command -v mvn >/dev/null 2>&1; then
+  if command -v mvn >/dev/null 2>&1 && [ -z "$unwritable_target" ]; then
     (cd "$project_dir" && mvn -DskipTests package)
   else
     require_cmd docker
@@ -78,10 +83,15 @@ invoke_maven_build() {
 
 invoke_maven_build_with_args() {
   local project_dir="$1"
+  local unwritable_target=""
   shift
 
+  if find "$project_dir" -type d -name target ! -writable -print -quit | grep -q .; then
+    unwritable_target=1
+  fi
+
   echo "Building Maven project: $project_dir"
-  if command -v mvn >/dev/null 2>&1; then
+  if command -v mvn >/dev/null 2>&1 && [ -z "$unwritable_target" ]; then
     (cd "$project_dir" && mvn "$@")
   else
     require_cmd docker
@@ -178,7 +188,7 @@ updatedel_go_dir="$REPO_ROOT/kms-updatedel/go-backend"
 acceptance_go_dir="$REPO_ROOT/kms-acceptance/backend"
 generate_front_dir="$REPO_ROOT/kms-generate/front"
 updatedel_front_dir="$REPO_ROOT/kms-updatedel/front"
-distribute_front_dir="$REPO_ROOT/kms-distribute/front"
+distribute_front_dir="$REPO_ROOT/kms-distribute/extracted/ruoyi (2)/web"
 user_front_dir="$REPO_ROOT/kms-user/front"
 acceptance_front_dir="$REPO_ROOT/kms-acceptance/front"
 acceptance_security_dir="$REPO_ROOT/security"
@@ -192,7 +202,7 @@ new_clean_directory "$FRONT_ROOT/acceptance"
 
 invoke_maven_build "$generate_java_dir"
 invoke_maven_build_with_args "$updatedel_java_dir" -pl ruoyi-admin -am -DskipTests package
-invoke_maven_build_with_args "$distribute_java_dir" -DskipTests -pl ruoyi-admin -am package
+invoke_maven_build_with_args "$distribute_java_dir" -B -DskipTests -pl ruoyi-admin -am clean package
 
 invoke_go_linux_build "$generate_go_dir" "kms-generate-service"
 invoke_go_linux_build "$updatedel_go_dir" "kms-updatedel-service"
@@ -200,7 +210,7 @@ invoke_go_project_build "$acceptance_go_dir" "kms-acceptance-backend"
 
 invoke_frontend_build "$generate_front_dir" "build:prod"
 invoke_frontend_build "$updatedel_front_dir" "build:prod"
-invoke_frontend_build "$distribute_front_dir" "build:prod"
+invoke_frontend_build "$distribute_front_dir" "build"
 invoke_frontend_build "$user_front_dir" "build"
 invoke_frontend_build "$acceptance_front_dir" "build"
 

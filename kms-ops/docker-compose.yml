@@ -269,7 +269,40 @@ services:
       - kms_net
 
   # ========================================
-  # 4. kms-distribute 系统 (密钥分发)
+  # 4. 旧 kms-distribute 后台服务 (原链路保留)
+  # ========================================
+  kms-distribute:
+    image: eclipse-temurin:8-jre
+    container_name: kms_distribute_java
+    volumes:
+      - ./runtime/distribute-java/kms-distribute.jar:/app/kms-distribute.jar:ro
+    working_dir: /app
+    command: ["java", "-jar", "/app/kms-distribute.jar"]
+    ports:
+      - "8083:8083"
+    environment:
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_NAME=kms
+      - DB_USERNAME=root
+      - DB_PASSWORD=root123456
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - KMS_CHAIN_RESULT_TOPIC=${KMS_CHAIN_RESULT_TOPIC:-key_chain_result}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: always
+    networks:
+      - kms_net
+
+  # ========================================
+  # 5. extracted demo 系统 (新分发展示)
   # ========================================
   dvadmin3-django:
     build:
@@ -299,39 +332,6 @@ services:
       - ../kms-distribute/extracted/ruoyi (2)/logs/log:/var/log
     ports:
       - "8001:8000"
-    restart: always
-    networks:
-      - kms_net
-
-  kms-distribute:
-    image: eclipse-temurin:8-jre
-    container_name: kms_distribute_java
-    volumes:
-      - ./runtime/distribute-java/kms-distribute.jar:/app/kms-distribute.jar:ro
-    working_dir: /app
-    command: ["java", "-jar", "/app/kms-distribute.jar"]
-    ports:
-      - "8083:8083"
-    environment:
-      - DB_HOST=mysql
-      - DB_PORT=3306
-      - DB_NAME=kms
-      - DB_USERNAME=root
-      - DB_PASSWORD=root123456
-      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-      - KMS_CHAIN_RESULT_TOPIC=${KMS_CHAIN_RESULT_TOPIC:-key_chain_result}
-      - FISCO_HOST=fisco-node
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-    depends_on:
-      mysql:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
-      fisco-node:
-        condition: service_started
-      redis:
-        condition: service_healthy
     restart: always
     networks:
       - kms_net
@@ -394,7 +394,6 @@ services:
       - generate-java
       - updatedel-go
       - updatedel-java
-      - kms-distribute
       - dvadmin3-django
       - acceptance-backend
     extra_hosts:

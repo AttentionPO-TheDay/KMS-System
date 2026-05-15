@@ -116,22 +116,6 @@ export const pqkdsRoutes: RouteRecordRaw[] = [
           roles: ['admin'],
           auth: ['pqkds:keypool:view']
         }
-      },
-      {
-        path: '/pqkds/records',
-        name: 'pqkdsRecords',
-        component: () => import('/@/views/pqkds/records/index.vue'),
-        meta: {
-          title: '旧版分发记录',
-          icon: 'iconfont icon-log',
-          isLink: '',
-          isHide: false,
-          isKeepAlive: true,
-          isAffix: false,
-          isIframe: false,
-          roles: ['admin'],
-          auth: ['pqkds:records:view']
-        }
       }
     ]
   }
