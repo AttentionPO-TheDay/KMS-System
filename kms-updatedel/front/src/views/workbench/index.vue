@@ -173,7 +173,7 @@ import useUserStore from '@/store/modules/user'
 import { batchGetGenerateChainStatus, listGenerateKeys } from '@/services/generate-api'
 import { listLifecycleKeys } from '@/services/lifecycle-api'
 import { listDistributionBatches } from '@/services/user-distribution-api'
-import { listPermissionRequests, permissionFeatures } from '@/services/permission-api'
+import { permissionFeatures } from '@/services/permission-api'
 import { isAdminLevel, roleLevelText } from '@/utils/role'
 
 echarts.use([LineChart, PieChart, BarChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer])
@@ -638,22 +638,26 @@ async function loadDistribute() {
   }
 }
 
+/**
+ * 阶段 8：权限申请已整体下线，这里**不再调用**已删除的审批接口。
+ *
+ * 原实现会去拉 `listPermissionRequests('AUTO_UPDATE')`，失败时把
+ * `sourceState.permission` 置成 STAT_ERROR —— 接口删掉之后，工作台
+ * 每次打开都会挂一条错误提示，看起来像故障，实际是"这个功能没有了"。
+ *
+ * 新的判定口径：密钥自动更新不再需要申请。
+ * 准入由**资源属主**决定（LifecycleKeyController 的 canAccess：
+ * 属主或管理员），不再是"管理员或持有临时授权"。
+ * 所以这里直接按属主为真的口径展示，不再有"待审批"这类状态。
+ */
 async function loadPermission() {
-  try {
-    const autoUpdateData = await listPermissionRequests('AUTO_UPDATE', Number(userStore.id))
-    permissionRows.value = autoUpdateData?.rows || []
-    featureAccess.AUTO_UPDATE = hasApprovedTemporaryRequest(autoUpdateData?.rows)
-    sourceState.permission = STAT_READY
-  } catch {
-    permissionRows.value = []
-    featureAccess.AUTO_UPDATE = false
-    sourceState.permission = STAT_ERROR
-  }
+  permissionRows.value = []
+  featureAccess.AUTO_UPDATE = true
+  sourceState.permission = STAT_READY
 }
 
-function hasApprovedTemporaryRequest(rows = []) {
-  return rows.some((item) => String(item?.status) === '1' && Number(item?.isTemp) === 1)
-}
+// 阶段 8：hasApprovedTemporaryRequest 已随审批流一并移除
+// （不再有"已批准的临时申请"这个概念可供判断）。
 
 async function loadAll() {
   loading.value = true

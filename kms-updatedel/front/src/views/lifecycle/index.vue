@@ -537,7 +537,9 @@ import { computed, getCurrentInstance, onMounted, reactive, ref, watch } from 'v
 import { useRouter } from 'vue-router'
 // 统一使用 Element 图标，替代此前的 emoji
 import { Key, Lightning, Download } from '@element-plus/icons-vue'
-import { getLatestApprovedTemporaryRequest, rollbackPermission, submitPermissionRequest } from '@/services/permission-api'
+// 阶段 8：审批流已整体下线，不再从 permission-api 引入任何东西。
+// 该模块本身保留（另有页面引用 permissionFeatures 等常量），
+// 但本页不再调用任何会打到已删接口的函数。
 import {
   getLifecycleKey,
   getLifecycleKeyAnalysis,
@@ -902,13 +904,13 @@ async function submitPermission() {
 
   permissionSubmitting.value = true
   try {
-    await submitPermissionRequest('AUTO_UPDATE', {
-      userId: Number(profile.userId),
-      userName: profile.userName,
-      originalLevel: Number(profile.roleLevel),
-      requestReason: reason
-    })
-    proxy.$modal.msgSuccess('申请已提交，请等待管理员审批')
+    // 阶段 8：权限申请接口已随审批流整体下线，这里不再调用。
+    //
+    // 新口径：密钥自动更新**不再需要申请** —— 准入由资源属主决定
+    // （LifecycleKeyController 的 canAccess：属主或管理员）。
+    // 如实告知"可以直接操作"，而不是伪造一次"已提交"：
+    // 伪造成功提示比报错更糟，用户会去等一个永远不会来的审批。
+    proxy.$modal.msgInfo('密钥自动更新已无需申请：你自己的密钥可直接在「密钥更新」中开启')
     permissionDialogOpen.value = false
     permissionReason.value = ''
     await loadAutoUpdatePermissionState()
@@ -920,17 +922,8 @@ async function submitPermission() {
 }
 
 async function loadAutoUpdatePermissionState() {
+  // 阶段 8：不再查询"已批准的临时申请"—— 该概念已随审批流移除。
   approvedAutoUpdateRequestId.value = null
-  if (!profile.userId || !userStore.token) {
-    return
-  }
-
-  try {
-    const approved = await getLatestApprovedTemporaryRequest('AUTO_UPDATE', Number(profile.userId))
-    approvedAutoUpdateRequestId.value = approved?.requestId || null
-  } catch (error) {
-    errorMessage.value = error.message
-  }
 }
 
 function handleSelectionChange(selection) {
@@ -1183,10 +1176,10 @@ function handleRollback() {
   proxy.$modal.confirm('确认回退自动更新临时权限？').then(async () => {
     errorMessage.value = ''
     try {
-      await rollbackPermission('AUTO_UPDATE', approvedAutoUpdateRequestId.value)
-      proxy.$modal.msgSuccess('权限已回退成功')
+      // 阶段 8：回退接口已随审批流下线。新模型下没有"临时权限"可回退 ——
+      // 自动更新的准入是静态的（属主即可），不存在需要收回的临时状态。
+      proxy.$modal.msgInfo('当前模型下不存在临时权限，无需回退')
       approvedAutoUpdateRequestId.value = null
-      await userStore.getInfo()
       await loadAutoUpdatePermissionState()
     } catch (error) {
       errorMessage.value = error.message

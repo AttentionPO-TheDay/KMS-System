@@ -11,7 +11,6 @@ import com.ruoyi.updatedel.domain.Keymanage;
 import com.ruoyi.updatedel.service.KeyHealthService;
 import com.ruoyi.updatedel.service.KeyValueSanitizer;
 import com.ruoyi.updatedel.service.LifecycleService;
-import com.ruoyi.updatedel.service.PermissionRequestService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -32,14 +31,11 @@ public class LifecycleKeyController extends BaseController {
     private static final Logger log = LoggerFactory.getLogger(LifecycleKeyController.class);
 
     private final LifecycleService lifecycleService;
-    private final PermissionRequestService permissionRequestService;
     private final KeyHealthService keyHealthService;
 
     public LifecycleKeyController(LifecycleService lifecycleService,
-                                  PermissionRequestService permissionRequestService,
                                   KeyHealthService keyHealthService) {
         this.lifecycleService = lifecycleService;
-        this.permissionRequestService = permissionRequestService;
         this.keyHealthService = keyHealthService;
     }
 
@@ -192,17 +188,20 @@ public class LifecycleKeyController extends BaseController {
             return AjaxResult.error("无权修改该密钥");
         }
 
-        // 只有当 autoUpdate 的**值真的发生变化**时才要求自动更新权限。
+        // 阶段 8：此处原本还有一道 canManageAutoUpdate() 检查 —— 当 autoUpdate 的
+        // 值真的变化时，要求调用方是管理员或持有临时审批授权。
         //
-        // 原实现是"只要请求带了这个字段就要权限"，而两个前端的"更新密钥"弹窗
-        // 都会把开关当前值一并提交（恒非空），于是只想改密钥名称的用户会被拦下，
-        // 报错还是"当前用户没有自动更新操作权限" —— 与他在做的事对不上
-        // （2026-09-24 用户截图）。
+        // 现在去掉那一道，理由有两条，缺一不可：
+        //   1. **临时审批流已整体删除**。它并不真正授予权限
+        //      （PermissionRequestService 自己注明「刻意不调用 updateRoleLevel」），
+        //      保留只会形成第二套权限语义 —— 节点权限现由
+        //      principal_type + 资源属主直接决定。
+        //   2. **属主校验才是真闸门**：上面第 192 行的 canAccess 已经保证
+        //      只有属主或管理员能走到这里。原检查在属主身上再加一道，
+        //      实际效果是"自己的密钥却不能改自己的自动更新设置"。
         //
-        // 防绕过的本意保留：想借"顺手改个元数据"把自动更新打开，仍然会被拦。
-        if (lifecycleService.changesAutoUpdate(current, request.getAutoUpdate()) && !canManageAutoUpdate()) {
-            return AjaxResult.error("当前用户没有自动更新操作权限");
-        }
+        // ⚠️ 这与上面那段注释里写的"防绕过的本意保留"并不冲突：
+        //    防的是**非属主**借改元数据之名打开自动更新 —— 那个由 canAccess 挡住。
 
         // 分流依据：是否提供了新的用户部分公钥 ua。
         // 未提供 → 仅更新元数据（不重新生成密钥材料、version 不变）。
@@ -247,9 +246,10 @@ public class LifecycleKeyController extends BaseController {
         if (KeyStatus.REVOKED.getCode().equals(current.getStatus())) {
             return AjaxResult.error("该密钥已被回收，无法修改自动更新状态");
         }
-        if (!canManageAutoUpdate()) {
-            return AjaxResult.error("当前用户没有自动更新操作权限");
-        }
+        // 阶段 8：原此处还有一道 canManageAutoUpdate()（需管理员或临时审批授权）。
+        // 临时审批流已整体删除 —— 它并不真正授予权限（PermissionRequestService
+        // 明确注释「刻意不调用 updateRoleLevel」），保留只会形成第二套权限语义。
+        // 准入由上面的 canAccess（属主或管理员）负责，那是真实且可核验的边界。
         lifecycleService.updateAutoUpdate(request.getKeyId(), request.getAutoUpdate());
         return AjaxResult.success("自动更新状态修改成功", lifecycleService.findById(request.getKeyId()).orElse(null));
     }
@@ -285,14 +285,6 @@ public class LifecycleKeyController extends BaseController {
         Long ownerId = keymanage.getUserId();
         Long currentId = getUserId();
         return SecurityUtils.isAdmin(currentId) || ownerId != null && ownerId.equals(currentId);
-    }
-
-    private boolean canManageAutoUpdate() {
-        boolean hasPermanentAccess = getLoginUser() != null
-            && getLoginUser().getUser() != null
-            && getLoginUser().getUser().getRoleLevel() != null
-            && getLoginUser().getUser().getRoleLevel() <= 0;
-        return hasPermanentAccess || permissionRequestService.hasActiveTemporaryPermission(getUserId());
     }
 
     private String normalizeStatusQuery(String status) {
