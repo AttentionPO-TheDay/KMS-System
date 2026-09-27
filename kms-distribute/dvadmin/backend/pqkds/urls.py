@@ -23,6 +23,8 @@ from .user_distribution_views import (
 from .node_self_views import node_self, node_self_init
 # 阶段 6：长期密钥回收后连带失效预分配池项（内部通道，X-Internal-Token 鉴权）
 from .internal_pool_views import revoke_pool_by_key
+# 阶段 7 §8.7：安全监控总览
+from .security_monitor_views import security_summary
 app_name = 'pqkds'
 router = DefaultRouter()
 router.register(r'system-parameters', SystemParametersViewSet, basename='systemparameters')
@@ -55,6 +57,9 @@ urlpatterns = [
     # 阶段 6：内部通道（X-Internal-Token 鉴权，不对外暴露）。
     # 同样排在 router 之前，理由同上。
     path('internal/pool/revoke-by-key/', revoke_pool_by_key, name='revoke-pool-by-key'),
+
+    # 阶段 7 §8.7：安全监控总览（管理员视角聚合统计，需登录态）
+    path('security-monitor/summary/', security_summary, name='security-summary'),
     path('user-symmetric-keys/', user_symmetric_keys, name='user-symmetric-keys'),
     path('user-symmetric-keys/<int:pk>/', user_symmetric_key_detail, name='user-symmetric-key-detail'),
     path('distribution-batches/', distribution_batches, name='distribution-batches'),
