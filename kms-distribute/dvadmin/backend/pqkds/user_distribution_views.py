@@ -39,6 +39,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from . import kms_service_client as kms
+from .envelope_signature import sign_envelope
 from .models import DistributionBatch, Node, PreDistributedKey, SessionKey, UserKeyEnvelope, UserNodeAuthorization
 from .sm4_crypto import PAYLOAD_ALGORITHM_SM4, PayloadCipher
 from .wrappers import (
@@ -507,6 +508,14 @@ def distribute_to_user(request, identity):
     expires_at = timezone.now() + timedelta(hours=ENVELOPE_TTL_HOURS)
     wrapping_algorithm = (key_info.get('encrytName') or '').upper()
 
+    # 阶段 5（§6.3）：发送方节点 —— 它是对信封**签名**的一方。
+    # 按阶段 2 的 Node↔sys_user 一一映射取；管理员发起时取不到，
+    # 此时不签名（而非签一个空值），并由下方日志如实记录。
+    sender_node = Node.objects.filter(sys_user_id=user_id).first()
+    if sender_node is None:
+        logger.info('分发批次 %s：发起用户 %s 未映射到节点，信封将不含签名',
+                    batch_id, user_id)
+
     envelopes: List[UserKeyEnvelope] = []
     node_records: List[PreDistributedKey] = []
     node_results: List[Dict[str, Any]] = []
@@ -526,6 +535,40 @@ def distribute_to_user(request, identity):
                 user_envelope = build_user_envelope(
                     payload_key, wrapping_algorithm, recipient_public_key
                 )
+
+                # 阶段 5（文档 §6.3/§6.4）：发送方用自己的 **标准 Falcon 私钥**签名。
+                #
+                # 封装保证机密性（只有收件人能解开），签名保证**来源与完整性**
+                # （这封信确实来自声明的发送方、且未被中途篡改）。
+                # 只做封装不做签名，接收方无法区分真信与伪造信 —— 两者它都能解开。
+                #
+                # 用**标准** Falcon 而非节点原有的 CL-Falcon 格材料：
+                # 后者与标准 DLL 不兼容（实测是 D_id/S_id 矩阵），签不了名。
+                # 这也正是文档 §0.5 要求 Falcon 回归标准签名算法的原因。
+                #
+                # 被签的字段集合由 envelope_signature.SIGNED_FIELDS 唯一决定，
+                # 验签侧用同一个函数重建，两边不会漂移。
+                envelope_for_sign = {
+                    'batch_id': batch_id,
+                    'wrapping_algorithm': wrapping_algorithm,
+                    'payload_algorithm': PAYLOAD_ALGORITHM_SM4,
+                    'recipient_user_id': user_id,
+                    'encrypted_key_data': envelope_to_json(user_envelope),
+                    'source_key_id': source_key_id,
+                    'expires_at': expires_at.isoformat(),
+                }
+                if sender_node is not None and sender_node.falcon_sign_private_key:
+                    _sig = sign_envelope(envelope_for_sign, sender_node.falcon_sign_private_key)
+                    if _sig:
+                        user_envelope['signature'] = _sig
+                        user_envelope['sender_node_id'] = sender_node.node_id
+                        user_envelope['signature_algorithm'] = 'Falcon-512'
+                    else:
+                        # 签不出来就**不写**签名字段 —— 写个空串会让验签侧
+                        # 以为"有签名但没通过"，与"根本没签"是两回事。
+                        logger.warning('批次 %s：发送方 %s 签名失败，该信封将不含签名',
+                                       batch_id, sender_node.node_id)
+
                 envelopes.append(
                     UserKeyEnvelope(
                         batch_id=batch_id,

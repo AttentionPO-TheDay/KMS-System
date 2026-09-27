@@ -167,6 +167,25 @@ class Node(CoreModel):
         null=True, blank=True, verbose_name="首次初始化完成时间",
         help_text="四套基础密钥全部就绪的时间"
     )
+
+    # --- 阶段 5（文档 §6.2/§6.3）：标准 Falcon 签名密钥 ---
+    # ⚠️ 与上面的 falcon_public_key / falcon_private_key **不是一回事**：
+    # 那两列装的是 CL-Falcon 的格矩阵（D_id / S_id），与标准 Falcon DLL 不兼容，
+    # 无法用于 crypto_sign。文档 §0.5 要求 Falcon 回归"标准密钥生成 + 签名验签"
+    # 的定位，故另加这一对专用于**对分发信封签名**。
+    #
+    # 两者并存不混用：格材料仍是分发中节点腿的封装目标（历史用途），
+    # 标准密钥只做签名。混用会导致"拿签名密钥去解密"这类概念错误。
+    falcon_sign_public_key = models.TextField(
+        blank=True, default='',
+        verbose_name="标准Falcon签名公钥",
+        help_text="NIST Falcon-512 公钥（base64），专用于验签分发信封",
+    )
+    falcon_sign_private_key = models.TextField(
+        blank=True, default='',
+        verbose_name="标准Falcon签名私钥",
+        help_text="NIST Falcon-512 私钥（base64），专用于对分发信封签名",
+    )
     blockchain_synced = models.BooleanField(default=False, verbose_name="是否同步到区块链", help_text="节点信息是否已同步到区块链")
     blockchain_sync_time = models.DateTimeField(null=True, blank=True, verbose_name="同步时间", help_text="节点同步到区块链的时间")
     class Meta:

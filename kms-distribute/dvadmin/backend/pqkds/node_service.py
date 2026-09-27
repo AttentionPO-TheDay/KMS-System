@@ -471,6 +471,21 @@ class NodeService:
         except Exception as exc:  # noqa: BLE001
             failures.append(f"Falcon: {exc}")
 
+        # 3b) 标准 Falcon 签名密钥（阶段 5 §6.2/§6.3）
+        #
+        # 与上面那步**不是一回事**：generate_falcon_keys_v2 产出的是 CL-Falcon
+        # 格材料（D_id/S_id 矩阵），与标准 Falcon DLL 不兼容，无法用于 crypto_sign。
+        # 文档 §0.5 要求 Falcon 回归"标准密钥生成 + 签名验签"的定位，
+        # 故另生成一对标准密钥专用于对分发信封签名（§6.3）。
+        try:
+            sign_kp = self.generate_falcon_signing_keypair()
+            if sign_kp.get('success'):
+                steps.append('Falcon签名密钥')
+            else:
+                failures.append(f"Falcon签名密钥: {sign_kp.get('message')}")
+        except Exception as exc:  # noqa: BLE001
+            failures.append(f"Falcon签名密钥: {exc}")
+
         self.node.refresh_from_db()
 
         if failures:
@@ -527,6 +542,53 @@ class NodeService:
             'completed': steps,
             'message': '四套基础密钥初始化完成',
         }
+
+    def generate_falcon_signing_keypair(self) -> Dict[str, Any]:
+        """生成**标准** Falcon-512 签名密钥对（阶段 5 §6.2/§6.3）。
+
+        与 `generate_falcon_keys_v2` 的区别要说清楚，否则会被当成重复实现：
+          * `generate_falcon_keys_v2` → CL-Falcon 格材料（D_id/S_id 矩阵），
+            是分发中节点腿的**封装目标**，与标准 DLL 不兼容；
+          * 本方法 → NIST Falcon-512 **签名密钥**（pk 897B / sk 1281B），
+            专用于对分发信封**签名/验签**（§6.3）。
+
+        为什么必须分开：文档 §0.5 明确 Falcon 不再是"无证书算法"，
+        而是标准签名算法。把签名与封装混在一个密钥上，
+        会导致"拿签名密钥去解密"这类概念错误。
+
+        幂等：已存在时不重新生成 —— 重新生成会让此前用旧私钥签发的信封
+        全部验签失败，而调用方无从知道"是密钥换了"还是"信被篡改了"。
+        """
+        from .crypto_utils import FalconCrypto
+        import base64
+
+        if self.node is None:
+            return {'success': False, 'message': f'节点 {self.node_id} 不存在'}
+
+        if self.node.falcon_sign_public_key and self.node.falcon_sign_private_key:
+            return {'success': True, 'already_exists': True,
+                    'message': '标准 Falcon 签名密钥已存在，未重新生成'}
+
+        try:
+            crypto = FalconCrypto(512)
+            pk, sk = crypto.generate_keypair()
+            if len(pk) != crypto.public_key_bytes or len(sk) != crypto.secret_key_bytes:
+                return {'success': False,
+                        'message': f'生成的密钥长度异常：pk={len(pk)} sk={len(sk)}'}
+
+            # 用 update_fields 定向写入，不用 self.node.save() ——
+            # 后者是整行覆盖，会把同一次初始化里前面几步写好的密钥字段
+            # 用内存里的旧值冲掉（阶段 2 踩过一次同类问题）。
+            Node.objects.filter(node_id=self.node_id).update(
+                falcon_sign_public_key=base64.b64encode(pk).decode('ascii'),
+                falcon_sign_private_key=base64.b64encode(sk).decode('ascii'),
+            )
+            self.node.refresh_from_db()
+            logger.info('节点 %s 标准 Falcon-512 签名密钥已生成', self.node_id)
+            return {'success': True, 'message': '标准 Falcon 签名密钥生成成功'}
+        except Exception as exc:  # noqa: BLE001
+            logger.error('节点 %s 标准 Falcon 签名密钥生成失败: %s', self.node_id, exc)
+            return {'success': False, 'message': f'生成失败: {exc}'}
 
     @ensure_db_connection
     def generate_falcon_keypair(self) -> Dict[str, Any]:
