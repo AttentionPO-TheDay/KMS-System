@@ -39,7 +39,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from . import kms_service_client as kms
-from .envelope_signature import sign_envelope
+from .envelope_signature import ciphertext_digest, sign_envelope, verify_envelope
 from .models import DistributionBatch, Node, PreDistributedKey, SessionKey, UserKeyEnvelope, UserNodeAuthorization
 from .sm4_crypto import PAYLOAD_ALGORITHM_SM4, PayloadCipher
 from .wrappers import (
@@ -311,10 +311,100 @@ def user_symmetric_key_detail(request, pk, identity):
         return _error('对称密钥不存在', 404)
 
     detail = _envelope_summary(envelope)
+
+    # 阶段 5（文档 §6.4）：**先验签，再交出密文**。
+    #
+    # 这里是"恢复 SM4 会话密钥"的前一步 —— 密文从这里发到客户端，
+    # 客户端用自己的 d_A 解开。若在此不验签，接收方拿到的可能是伪造成
+    # 某发送方的信封，而它照样能解开（封装只保证"只有我能解"，
+    # 不保证"是谁发给我的"）。
+    #
+    # 所以验签不通过**就不给密文**：客户端拿不到密文，自然解不出 K，
+    # 会话也就建立不了。这比"发出去再提示签名无效"可靠 ——
+    # 提示可以被忽略，而没拿到的东西无法被忽略。
+    #
+    # ⚠️ 历史信封（本阶段之前签发的）没有 signature 字段。对它们**不拦**，
+    #    但也不谎称已验证：如实标注 signatureState，让调用方自己判断。
+    #    把"没有签名"当成"签名有效"是安全上最危险的一种默认。
+    raw = envelope.encrypted_key_data or ''
+    payload = _parse_b64_envelope(raw)
+    sig_state, sig_msg = _verify_envelope_signature(payload)
+    detail['signatureState'] = sig_state
+    detail['signatureMessage'] = sig_msg
+
+    if sig_state == 'invalid':
+        # 明确拒发密文。用 200 + 业务码而不是 HTTP 4xx：
+        # 前端已有统一错误处理，混用状态码会让它把安全事件显示成"网络异常"。
+        return _error(f'信封验签失败，拒绝交出密文：{sig_msg}', 403)
+
     # `encrypted_key_data` 是**密文**，只有用户自己的 d_A 能解开，可以原样给出。
     # 服务端本来就没有明文对称密钥，所以这里不可能"多给"。
     detail['encryptedKeyData'] = envelope.encrypted_key_data
     return _ok(detail)
+
+
+def _parse_b64_envelope(raw: str) -> Optional[Dict[str, Any]]:
+    """把库里存的信封文本解析成字典；不是 JSON 就返回 None。"""
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else None
+    except (ValueError, TypeError):
+        return None
+
+
+def _verify_envelope_signature(payload: Optional[Dict[str, Any]]) -> tuple:
+    """验签信封，返回 `(state, message)`。
+
+    state 取值：
+      - `'valid'`       签名有效，来自声明的发送方且内容未被篡改
+      - `'invalid'`     **有签名但验不过** —— 必须拒绝（可能被伪造或篡改）
+      - `'missing'`     本阶段之前签发的历史信封，没有签名字段
+      - `'unverifiable'` 有签名，但发送方或它的公钥取不到（无法判定）
+
+    区分这四种而不是简单地 True/False：`missing` 与 `invalid` 的处置
+    完全不同 —— 前者是历史遗留、不能因此让用户取不出旧件；
+    后者是安全事件，必须拦。把它们混为一谈，要么拦死历史数据，
+    要么放过真正的攻击。
+    """
+    if not payload:
+        return 'missing', '信封内容无法解析'
+    sig = payload.get('signature')
+    if not sig:
+        return 'missing', '该信封为历史数据（本阶段之前签发，无签名字段）'
+
+    sender_node_id = payload.get('sender_node_id')
+    if not sender_node_id:
+        return 'unverifiable', '信封有签名但未标注发送方，无法定位公钥'
+
+    sender = Node.objects.filter(node_id=sender_node_id).first()
+    if sender is None or not sender.falcon_sign_public_key:
+        return 'unverifiable', f'发送方 {sender_node_id} 的标准 Falcon 公钥不可用'
+
+    # 用与签名时**同一个函数**重建被签字节串（envelope_signature.canonical_payload），
+    # 两边字段集不会漂移 —— 手工重建是"签名与验签字段不一致"这类 bug 的常见来源。
+    #
+    # 密文部分用信封里存下的 `ciphertext_digest`，**不能现算**：
+    # 现算依赖"内层密文序列化方式不变"，而序列化实现一旦调整
+    # （哪怕只是字段顺序），历史信封会全部验不过 —— 那种失败看起来
+    # 像"信被篡改了"，实际是我们的序列化改了，会引发错误的告警。
+    signed_view = {
+        'batch_id': payload.get('batch_id'),
+        'wrapping_algorithm': payload.get('wrapping_algorithm'),
+        'payload_algorithm': payload.get('payload_algorithm'),
+        'recipient_user_id': payload.get('recipient_user_id'),
+        'ciphertext_digest': payload.get('ciphertext_digest'),
+        'source_key_id': payload.get('source_key_id'),
+        'expires_at': payload.get('expires_at'),
+    }
+    try:
+        ok = verify_envelope(signed_view, sig, sender.falcon_sign_public_key)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning('验封信封异常（按不可验证处理）: %s', exc)
+        return 'unverifiable', f'验签过程异常：{exc}'
+
+    return ('valid', '签名有效') if ok else ('invalid', '签名无效：信封可能被伪造或篡改')
 
 
 # ---------------------------------------------------------------------------
@@ -548,12 +638,17 @@ def distribute_to_user(request, identity):
                 #
                 # 被签的字段集合由 envelope_signature.SIGNED_FIELDS 唯一决定，
                 # 验签侧用同一个函数重建，两边不会漂移。
+                #
+                # 密文部分签的是**摘要**而非原文：签名会往信封里加 signature 字段，
+                # 若签原文，验签时拿存储值反推必然重建不出同一份字节串
+                # （自己签的信自己验不过）。摘要只取决于内层密文，与签名本身无关。
+                inner_json = envelope_to_json(user_envelope)
                 envelope_for_sign = {
                     'batch_id': batch_id,
                     'wrapping_algorithm': wrapping_algorithm,
                     'payload_algorithm': PAYLOAD_ALGORITHM_SM4,
                     'recipient_user_id': user_id,
-                    'encrypted_key_data': envelope_to_json(user_envelope),
+                    'ciphertext_digest': ciphertext_digest(inner_json),
                     'source_key_id': source_key_id,
                     'expires_at': expires_at.isoformat(),
                 }
@@ -563,6 +658,11 @@ def distribute_to_user(request, identity):
                         user_envelope['signature'] = _sig
                         user_envelope['sender_node_id'] = sender_node.node_id
                         user_envelope['signature_algorithm'] = 'Falcon-512'
+                        # 把摘要也存进信封：验签侧要用它重建被签字节串，
+                        # 而它必须与签名时用的值**逐字节相同**。
+                        # 从内层密文现算也行，但那样"摘要算法变了"会让
+                        # 历史信封全部验不过 —— 存下来更稳。
+                        user_envelope['ciphertext_digest'] = envelope_for_sign['ciphertext_digest']
                     else:
                         # 签不出来就**不写**签名字段 —— 写个空串会让验签侧
                         # 以为"有签名但没通过"，与"根本没签"是两回事。

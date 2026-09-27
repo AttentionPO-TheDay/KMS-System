@@ -35,15 +35,31 @@ logger = logging.getLogger(__name__)
 
 #: 参与签名的字段。**顺序无关**（序列化时 sort_keys），
 #: 但**集合必须固定** —— 漏签一个字段就等于允许它被篡改。
+#:
+#: ⚠️ 用的是 `ciphertext_digest`（内层信封的 SHA256）而不是密文原文。
+#:    原因是一个踩过的坑：签名发生在"往信封里写 signature 字段之前"，
+#:    而库里存的是"写完之后"的 JSON —— 验签时若拿存储值反推，
+#:    重建出的字节串与签名时的那份**必然不同**，表现为"自己签的信自己验不过"。
+#:    存摘要就绕开了这个自指问题：摘要只取决于内层密文，与签名自身无关。
 SIGNED_FIELDS = (
     'batch_id',
     'wrapping_algorithm',
     'payload_algorithm',
     'recipient_user_id',
-    'encrypted_key_data',
+    'ciphertext_digest',
     'source_key_id',
     'expires_at',
 )
+
+
+def ciphertext_digest(inner_envelope_json: str) -> str:
+    """内层信封（含密文）的 SHA256。
+
+    这是被签内容里唯一"与密文相关"的部分 —— 改一个字节密文，
+    摘要就变，验签即失败。等价于对密文整体签名，但不受
+    "签名会改动信封本身"这个自指问题影响。
+    """
+    return hashlib.sha256((inner_envelope_json or '').encode('utf-8')).hexdigest()
 
 
 def canonical_payload(envelope: Dict[str, Any]) -> bytes:
