@@ -36,10 +36,9 @@ out/
 *.so
 
 # Go Backend specifics
-legacy-kms-go/key-service-v1
+# （原先这里还有 3 条 `legacy-kms-go/**` 规则，随 2026-09-26 清理删除该目录后
+#   已成为死规则，一并移除。）
 key-service-v1
-legacy-kms-go/**/*.exe
-legacy-kms-go/**/*.test
 
 # Node.js / Frontend specifics
 node_modules/
