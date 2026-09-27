@@ -92,10 +92,19 @@
             * Kyber KEM     → /key-pool/distribute/：用**发送方**公钥封装，单向池
             * Falcon 格密码 → /key-pool/generate/  ：用**接收方**公钥封装，节点间池
         -->
+        <!-- 阶段 5（文档 §6.2）：**移除 Falcon 选项**。
+             理由是职责错配 —— SM4 的机密性必须由加密/封装算法提供，
+             而 Falcon 是**签名**算法，签名不保密。原先这里能选它，
+             意味着允许用签名算法"封装"会话密钥，概念上用错了。
+
+             正确分工：SM2 / SSCL / Kyber 保护 SM4；Falcon 用于签名验签。
+
+             保留 Kyber 一条：它是当前唯一被支持的抗量子封装算法。
+             历史 falcon_lattice 池项仍可读（列表按记录自身的 algorithm 渲染），
+             只是不再能新建。 -->
         <el-form-item label="封装算法">
           <el-select v-model="distForm.algorithm" style="width: 100%">
-            <el-option label="Kyber KEM（发送方封装 · 单向池）" value="kyber_kem" />
-            <el-option label="Falcon 格密码（接收方封装 · 节点间池）" value="falcon_lattice" />
+            <el-option label="Kyber KEM（抗量子封装）" value="kyber_kem" />
           </el-select>
         </el-form-item>
         <el-form-item label="发送方节点">
@@ -103,9 +112,7 @@
             <el-option v-for="n in nodes" :key="n.node_id" :label="`${n.name}（${n.node_id}）`" :value="n.node_id" />
           </el-select>
           <div class="form-hint">
-            {{ distForm.algorithm === 'falcon_lattice'
-              ? 'Falcon 池封给『接收方』的公钥，因此本次要求接收方已登记 Falcon 公钥（没有就去「节点管理 → 密钥」为该节点生成一次）。'
-              : '用该节点的 Kyber 公钥封装，只有它能解开。' }}
+            用该节点的 Kyber 公钥封装，只有它能解开。
           </div>
         </el-form-item>
         <el-form-item label="接收方节点">
@@ -147,7 +154,6 @@ import {
   cleanupKeyPool,
   deleteKeyPoolItem,
   distributeKeyPool,
-  generateNodePool,
   getKeyPoolStats,
   listKeyPool
 } from '@/api/pqkds/distribution'
@@ -260,25 +266,18 @@ async function submitDistribute() {
   }
   distributing.value = true
   try {
-    // 两条路语义不同，按算法分流（见 api/pqkds/distribution.js 的说明）：
-    //   kyber_kem     → 单向池，封给**发送方**的 Kyber 公钥
-    //   falcon_lattice→ 节点间池，封给**接收方**的 Falcon 公钥
-    const isFalcon = distForm.algorithm === 'falcon_lattice'
-    const res = isFalcon
-      ? await generateNodePool({
-          node1_id: distForm.sender_node_id,
-          node2_id: distForm.receiver_node_id,
-          algorithm: 'falcon_lattice',
-          count: distForm.count,
-          expiry_hours: distForm.expiry_hours
-        })
-      : await distributeKeyPool({ ...distForm })
+    // 阶段 5（文档 §6.2）后只剩 Kyber 一条路：单向池，封给**发送方**的 Kyber 公钥。
+    //
+    // 原此处按算法分流到 generateNodePool（Falcon 节点间池）。UI 移除 Falcon 选项后
+    // 该分支恒不走，属死代码，已删除 —— 留着会让人以为系统仍支持 Falcon 封装。
+    // 历史 falcon_lattice 池项仍可读（列表与筛选项按记录自身的 algorithm 渲染）。
+    const res = await distributeKeyPool({ ...distForm })
     // 服务端实际返回 {success, pool_id, sender_node_id, receiver_node_id, generated, expires_at}。
     // 先按真实字段名读，再留几个兜底 —— 之前只猜了 count/keys/total，
     // 结果把一整串 JSON 当提示显示给用户了（能跑但难看，也算一种"没验证到位"）。
     const count = res?.generated ?? res?.count ?? res?.keys?.length ?? res?.total ?? null
     distResult.value = count
-      ? `已生成并分发 ${count} 条（${isFalcon ? 'Falcon 格密码' : 'Kyber KEM'}，批次 ${res?.pool_id || '-'}）`
+      ? `已生成并分发 ${count} 条（Kyber KEM，批次 ${res?.pool_id || '-'}）`
       : `服务端已受理：${JSON.stringify(res)?.slice(0, 160)}`
     ElMessage.success('生成并分发完成')
     await loadAll()
