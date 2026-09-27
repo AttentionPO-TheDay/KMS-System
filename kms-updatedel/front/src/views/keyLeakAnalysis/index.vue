@@ -43,6 +43,22 @@
           <el-descriptions-item label="所属用户">{{ pick(base, 'userName', 'user_name') || '-' }}</el-descriptions-item>
         </el-descriptions>
 
+        <h3 class="la-title">受影响节点（本密钥分发到达过哪些节点）</h3>
+        <el-table :data="nodes" size="small" border empty-text="没有节点收到过用该密钥保护的分发">
+          <el-table-column label="节点ID" prop="node_id" min-width="150" />
+          <el-table-column label="名称" prop="name" min-width="120" />
+          <el-table-column label="权限等级" prop="permission_level" width="100" />
+          <el-table-column label="所属域" prop="domain_id" width="130" />
+        </el-table>
+
+        <h3 class="la-title">依赖它的预分配池项（仍可取用的）</h3>
+        <el-table :data="poolItems" size="small" border
+                  empty-text="没有仍需取用的池项（已消费的是历史事实，不计入）">
+          <el-table-column label="池批次" prop="pool_id" min-width="200" />
+          <el-table-column label="条数" prop="item_count" width="90" />
+          <el-table-column label="状态" prop="status" width="110" />
+        </el-table>
+
         <h3 class="la-title">分发足迹（这把密钥保护过的分发）</h3>
         <el-table :data="footprints" size="small" border empty-text="没有分发记录">
           <el-table-column v-for="col in footprintCols" :key="col"
@@ -56,7 +72,7 @@
         </el-table>
 
         <el-alert
-          v-if="!loading && !footprints.length && !trails.length"
+          v-if="!loading && !footprints.length && !trails.length && !nodes.length && !poolItems.length"
           class="la-empty"
           type="success"
           :closable="false"
@@ -81,6 +97,8 @@ const loading = ref(false)
 const base = ref(null)
 const footprints = ref([])
 const trails = ref([])
+const nodes = ref([])
+const poolItems = ref([])
 
 // 列名从数据自身推导：后端返回的是 Map 列表，字段名由查询决定，
 // 前端写死列会在后端调整字段时静默变成空表。
@@ -111,6 +129,8 @@ async function load() {
   base.value = null
   footprints.value = []
   trails.value = []
+  nodes.value = []
+  poolItems.value = []
   footprintCols.value = []
   trailCols.value = []
   try {
@@ -123,6 +143,8 @@ async function load() {
     base.value = d.baseInfo || null
     footprints.value = (d.distributeFootprints || []).map(norm)
     trails.value = (d.operationTrails || []).map(norm)
+    nodes.value = (d.affectedNodes || []).map(norm)
+    poolItems.value = (d.affectedPoolItems || []).map(norm)
     footprintCols.value = footprints.value.length ? Object.keys(footprints.value[0]) : []
     trailCols.value = trails.value.length ? Object.keys(trails.value[0]) : []
   } catch (error) {

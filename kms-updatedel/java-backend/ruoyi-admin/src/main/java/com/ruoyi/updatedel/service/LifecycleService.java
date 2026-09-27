@@ -180,6 +180,46 @@ public class LifecycleService {
         List<Map<String, Object>> opRecords = jdbcTemplate.queryForList(opSql, keyId);
         result.setOperationTrails(opRecords);
 
+        // 阶段 7（文档 §8.3）：泄漏影响面还要回答"哪些预分配池项依赖它、
+        // 哪些节点受影响"—— 原先只给了分发足迹与操作轨迹，不足以做处置决策。
+        //
+        // 关联路径：密钥属于某个用户 → 该用户即某个节点（阶段 2 的一一映射）
+        //           → 该节点的预分配池项即"依赖它的资源"。
+        // 这与 §7.6「长期密钥回收后连带失效相关池项」用的是**同一条链**，
+        // 因此这里的结论可以直接指导处置：失效哪些池项、通知哪些节点。
+        //
+        // 仍只统计 READY/RESERVED —— 已消费的是历史事实，改了会让审计对不上。
+        String poolSql =
+            "SELECT p.pool_id, COUNT(*) AS item_count, p.status " +
+            "FROM falcon_kds.dvadmin_pqkds_pre_distributed_keys p " +
+            "JOIN falcon_kds.dvadmin_pqkds_nodes n " +
+            "  ON (n.id = p.node1_id OR n.id = p.node2_id) " +
+            "WHERE n.sys_user_id = ? AND p.status IN ('READY','unused','RESERVED') " +
+            "GROUP BY p.pool_id, p.status ORDER BY p.pool_id";
+        try {
+            result.setAffectedPoolItems(jdbcTemplate.queryForList(poolSql, key.getUserId()));
+        } catch (RuntimeException ex) {
+            // 池项统计失败不该让整个分析失败 —— 分发足迹与操作轨迹仍有价值
+            log.warn("泄漏关联分析：池项查询失败 keyId={} err={}", keyId, ex.getMessage());
+            result.setAffectedPoolItems(java.util.Collections.emptyList());
+        }
+
+        // 受影响节点：把分发批次里的 node_ids（JSON 数组）展开成节点。
+        // 用 JSON_TABLE 在库侧展开，避免把整串拉到 Java 里再解析 ——
+        // 批次多时那个字符串可能很长。
+        String nodeSql =
+            "SELECT DISTINCT n.node_id, n.name, n.permission_level, n.domain_id " +
+            "FROM falcon_kds.dvadmin_pqkds_distribution_batches b " +
+            "JOIN JSON_TABLE(b.node_ids, '$[*]' COLUMNS (nid INT PATH '$')) AS t " +
+            "JOIN falcon_kds.dvadmin_pqkds_nodes n ON n.id = t.nid " +
+            "WHERE b.source_key_id = ?";
+        try {
+            result.setAffectedNodes(jdbcTemplate.queryForList(nodeSql, keyId));
+        } catch (RuntimeException ex) {
+            log.warn("泄漏关联分析：受影响节点查询失败 keyId={} err={}", keyId, ex.getMessage());
+            result.setAffectedNodes(java.util.Collections.emptyList());
+        }
+
         return result;
     }
 
