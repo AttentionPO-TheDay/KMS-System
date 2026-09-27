@@ -109,9 +109,9 @@ kms-gateway-nginx:local kms-dvadmin3-django:local"
            nodes/127.0.0.1/fisco-bcos \
            nodes/127.0.0.1/node0/conf/group.1.genesis \
            nodes/127.0.0.1/node0/conf/channel_cert/ca.crt \
-           "../kms-distribute/extracted/ruoyi (2)/backend/start.sh" \
-           "../kms-distribute/extracted/ruoyi (2)/requirements.txt" \
-           "../kms-distribute/extracted/ruoyi (2)/docker_env/django/Dockerfile"; do
+           "../kms-distribute/dvadmin/backend/start.sh" \
+           "../kms-distribute/dvadmin/requirements.txt" \
+           "../kms-distribute/dvadmin/docker_env/django/Dockerfile"; do
     if [ ! -e "$f" ]; then
       warn "缺少构建输入: $f"
       build_missing=$((build_missing+1))

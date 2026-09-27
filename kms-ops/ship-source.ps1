@@ -53,7 +53,7 @@ function Ok($m)   { Write-Host "  [OK] $m" -ForegroundColor Green }
 function Warn2($m){ Write-Host "  [!] $m" -ForegroundColor Yellow }
 
 $repo = Split-Path -Parent $PSScriptRoot          # 仓库根
-$distContextRel = 'kms-distribute/extracted/ruoyi (2)'
+$distContextRel = 'kms-distribute/dvadmin'
 $distContext = Join-Path $repo $distContextRel
 
 Step '0. 前置检查'
@@ -123,9 +123,12 @@ if (Test-Path $nodesStage) {
 }
 
 # --- Django 构建上下文：只带 Dockerfile 真正 COPY 的那几项 ----------------
-# 该目录整包 553MB，其中 web/ 占 543MB，而 Dockerfile 只 COPY requirements.txt 与 ./backend/。
-# 远端构建不需要 web/，因此这里刻意不带 —— FTP 场景下这是最大的一笔浪费。
-$distStage = Join-Path $staging 'kms-distribute\extracted\ruoyi (2)'
+# 只带 Dockerfile 实际需要的 3 项（requirements.txt、./backend/、docker_env/）。
+#
+# 原先这里还有一句"该目录整包 553MB，其中 web/ 占 543MB"的说明 —— 那个 web/
+# （分发自带后台）已于 2026-09-26 随代码清理删除，不再是本目录的负担。
+# 保留"只带 3 项"的做法：Dockerfile 确实只 COPY 这些，多带无益。
+$distStage = Join-Path $staging 'kms-distribute\dvadmin'
 New-Item -ItemType Directory -Force -Path $distStage | Out-Null
 foreach ($it in @('backend', 'requirements.txt', 'docker_env')) {
     $src = Join-Path $distContext $it
@@ -233,7 +236,7 @@ $checks = @{
     'kms-ops/nodes/127.0.0.1/fisco-bcos'  = 'FISCO 链'
     'kms-ops/fisco/console/conf/sdk.key'  = 'SDK 证书（打进 Java 镜像 + console 挂载）'
     'kms-ops/mysql/init/29_distribution_native_pages.sql' = '建库脚本（含菜单迁移）'
-    'kms-distribute/extracted/ruoyi (2)/backend/start.sh' = 'Django 上下文'
+    'kms-distribute/dvadmin/backend/start.sh' = 'Django 上下文'
 }
 $bad = @()
 foreach ($k in $checks.Keys) {

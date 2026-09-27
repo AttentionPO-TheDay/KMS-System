@@ -437,7 +437,7 @@ services:
     # 显式指定镜像名：原先只有 build:，剥离 build 段后 compose 会因为
     # 「既无 image 又无 build」而报错，无法用于远端纯镜像部署。
     build:
-      context: ../kms-distribute/extracted/ruoyi (2)
+      context: ../kms-distribute/dvadmin
       dockerfile: ./docker_env/django/Dockerfile
     image: kms-dvadmin3-django:local
     container_name: dvadmin3-django

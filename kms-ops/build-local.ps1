@@ -172,7 +172,8 @@ function Invoke-GoLinuxBuild {
 $generateJavaDir = Join-Path $repoRoot "kms-generate\java-backend"
 $updatedelJavaDir = Join-Path $repoRoot "kms-updatedel\java-backend"
 # $distributeJavaDir 已移除：旧分发 Java 服务已整体下线（Q11）。
-# $distributeFrontDir 也已移除（2026-09-26）：分发自带后台（extracted/ruoyi (2)/web）
+# $distributeFrontDir 也已移除（2026-09-26）：分发自带后台
+# （原 kms-distribute/extracted/ruoyi (2)/web，该目录已随本次清理删除）
 # 随本次清理下线。**注意其原有的保留理由是过时的**——旧注释说"它产出的 /distribute/
 # 仍被管理端 iframe 内嵌"，但 29_distribution_native_pages.sql 已把菜单 9101/9102
 # 从 iframe 改成原生组件（distOverview/index、chain/index，query 清空），9103 更早

@@ -22,9 +22,9 @@ for f in \
   nodes/127.0.0.1/fisco-bcos \
   nodes/127.0.0.1/node0/conf/group.1.genesis \
   nodes/127.0.0.1/node0/conf/channel_cert/ca.crt \
-  "../kms-distribute/extracted/ruoyi (2)/backend/start.sh" \
-  "../kms-distribute/extracted/ruoyi (2)/requirements.txt" \
-  "../kms-distribute/extracted/ruoyi (2)/docker_env/django/Dockerfile" ; do
+  "../kms-distribute/dvadmin/backend/start.sh" \
+  "../kms-distribute/dvadmin/requirements.txt" \
+  "../kms-distribute/dvadmin/docker_env/django/Dockerfile" ; do
   if [ -e "$f" ]; then printf '  [ok]   %s\n' "$f"
   else printf '  [缺]   %s\n' "$f"; miss=$((miss+1)); fi
 done
