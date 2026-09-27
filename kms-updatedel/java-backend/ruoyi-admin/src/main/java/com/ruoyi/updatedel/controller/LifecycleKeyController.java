@@ -5,8 +5,10 @@ import com.ruoyi.common.core.controller.BaseController;
 import com.ruoyi.common.core.page.TableDataInfo;
 import com.ruoyi.common.utils.SecurityUtils;
 import com.ruoyi.updatedel.domain.KeyAnalysisResultDto;
+import com.ruoyi.updatedel.domain.KeyHealthResult;
 import com.ruoyi.updatedel.domain.KeyStatus;
 import com.ruoyi.updatedel.domain.Keymanage;
+import com.ruoyi.updatedel.service.KeyHealthService;
 import com.ruoyi.updatedel.service.KeyValueSanitizer;
 import com.ruoyi.updatedel.service.LifecycleService;
 import com.ruoyi.updatedel.service.PermissionRequestService;
@@ -31,11 +33,14 @@ public class LifecycleKeyController extends BaseController {
 
     private final LifecycleService lifecycleService;
     private final PermissionRequestService permissionRequestService;
+    private final KeyHealthService keyHealthService;
 
     public LifecycleKeyController(LifecycleService lifecycleService,
-                                  PermissionRequestService permissionRequestService) {
+                                  PermissionRequestService permissionRequestService,
+                                  KeyHealthService keyHealthService) {
         this.lifecycleService = lifecycleService;
         this.permissionRequestService = permissionRequestService;
+        this.keyHealthService = keyHealthService;
     }
 
     @PreAuthorize("isAuthenticated()")
@@ -93,6 +98,38 @@ public class LifecycleKeyController extends BaseController {
                     KeyValueSanitizer.sanitizeDetail(snapshot, isOwner);
                 }
                 return AjaxResult.success(history);
+            })
+            .orElseGet(() -> AjaxResult.error("密钥不存在: " + keyId));
+    }
+
+    /**
+     * 阶段 7（文档 §8.1 + §8.2）：单把密钥的健康检查。
+     *
+     * <p>一致性检查与异常检测合并成一个接口 —— 两者读同一份数据，
+     * 分开只会把同样的表扫两遍，且可能给出互相矛盾的结论。
+     *
+     * <p>准入与 {@link #getInfo} 一致：健康检查会读到 ua/keyValue 的存在与长度
+     * 并回显，不校验属主就成了"用别人 keyId 探测其密钥材料是否齐备"的旁路。
+     */
+    @PreAuthorize("isAuthenticated()")
+    @GetMapping("/health/{keyId}")
+    public AjaxResult getHealth(@PathVariable Long keyId) {
+        return lifecycleService.findById(keyId)
+            .map(key -> {
+                if (!canAccess(key)) {
+                    return AjaxResult.error("无权访问该密钥数据");
+                }
+                KeyHealthResult result = keyHealthService.check(keyId);
+                if (result == null) {
+                    return AjaxResult.error("密钥不存在: " + keyId);
+                }
+                // 观测值里含 ua/keyValue 的长度信息；非属主只保留结论，
+                // 去掉带材料细节的观测，避免侧面泄露。
+                boolean isOwner = key.getUserId() != null && key.getUserId().equals(getUserId());
+                if (!isOwner) {
+                    result.getObservations().removeIf(o -> o.contains("ua ") || o.contains("keyValue "));
+                }
+                return AjaxResult.success(result);
             })
             .orElseGet(() -> AjaxResult.error("密钥不存在: " + keyId));
     }
