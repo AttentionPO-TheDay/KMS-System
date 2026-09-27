@@ -39,7 +39,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from . import kms_service_client as kms
-from .models import DistributionBatch, Node, PreDistributedKey, UserKeyEnvelope, UserNodeAuthorization
+from .models import DistributionBatch, Node, PreDistributedKey, SessionKey, UserKeyEnvelope, UserNodeAuthorization
 from .sm4_crypto import PAYLOAD_ALGORITHM_SM4, PayloadCipher
 from .wrappers import (
     NODE_DEFAULT_WRAPPING,
@@ -105,6 +105,64 @@ def require_kms_user(view):
         return view(request, *args, identity=identity, **kwargs)
 
     return wrapper
+
+
+def _create_initiated_sessions(user_id, node_map, succeeded_node_ids, batch_id, expires_at):
+    """为本次分发成功送达的每个节点登记一条 **initiated** 会话（文档 §6.5）。
+
+    发起方是发起分发的用户 —— 按阶段 2 的 Node↔sys_user 一一映射，
+    该用户本身也是一个节点。取不到映射时（管理员发起的场景）**不建会话**：
+    会话是"两个节点之间"的东西，没有发起节点就不存在这条边。
+
+    只建 initiated，不建 established —— 理由见调用点的说明：
+    验签（§6.3/§6.4）尚未实现，建 established 等于宣称一个没验证过的属性。
+
+    幂等：session_id 由 batch_id + 节点后缀构成并带唯一约束，
+    重复执行同一批次不会产生重复会话（走 get_or_create）。
+    """
+    sender_node = Node.objects.filter(sys_user_id=user_id).first()
+    if sender_node is None:
+        logger.info('分发批次 %s：发起用户 %s 未映射到节点，不建会话', batch_id, user_id)
+        return 0
+
+    created = 0
+    for node_db_id in succeeded_node_ids:
+        target = node_map.get(node_db_id)
+        if target is None or target.id == sender_node.id:
+            # 自己和自己不建会话（节点向自己分发的场景没有意义）
+            continue
+        session_id = f'{batch_id}-n{target.id}'
+        try:
+            _, was_created = SessionKey.objects.get_or_create(
+                session_id=session_id,
+                defaults={
+                    'node1': sender_node,
+                    'node2': target,
+                    'session_type': 'kyber_kem',
+                    # 会话密钥本体不在服务端 —— 服务端只有包给双方的密文，
+                    # 所以这两列如实标注"材料在信封里，不在本表"，
+                    # 而不是塞一个占位明文进去（那会让"服务端不存明文"这条不变量失真）。
+                    'encrypted_session_key': f'see envelopes of batch {batch_id}',
+                    'key_exchange_data': json.dumps({
+                        'batch_id': batch_id,
+                        'dispatch': 'user_distribution',
+                        'note': '会话密钥经信封分发，服务端不持有明文',
+                    }, ensure_ascii=False),
+                    'status': 'initiated',
+                    'expires_at': expires_at,
+                },
+            )
+            if was_created:
+                created += 1
+        except Exception as exc:  # noqa: BLE001
+            # 单节点建会话失败不该让整次分发回滚 —— 信封已经发给它了，
+            # 回滚反而会造成"用户以为没发、节点其实收到了"的更糟状态。
+            logger.warning('批次 %s 为节点 %s 建会话失败: %s', batch_id, target.node_id, exc)
+
+    if created:
+        logger.info('分发批次 %s：登记 %d 条 initiated 会话（发送方 %s）',
+                    batch_id, created, sender_node.node_id)
+    return created
 
 
 def _authorized_node_ids(user_id: int) -> List[int]:
@@ -291,6 +349,9 @@ def distribution_batches(request, identity):
                 'sourceDomainId': batch.source_domain_id or '',
                 'distributionType': batch.distribution_type or '',
                 'targetDomainIds': _safe_json_list(batch.target_domain_ids),
+                # 阶段 5（§6.5）：本次分发登记了哪些会话（均为 initiated，未确认）
+                'sessionCount': _safe(lambda b=batch: SessionKey.objects.filter(
+                    session_id__startswith=b.batch_id + '-').count(), 'batch.sessions'),
             }
         )
     return _ok({'items': items, 'total': len(items)})
@@ -559,6 +620,23 @@ def distribute_to_user(request, identity):
                 target_domain_ids=json.dumps(target_domains, ensure_ascii=False),
                 distribution_type=dist_type,
             )
+
+            # 阶段 5（文档 §6.5）：分发成功后建立会话。
+            #
+            # ⚠️ 只建 **initiated**，不建 established —— 这个区别是刻意的。
+            #
+            # 文档 §6.5 规定只有满足三条之后才算会话建立：
+            #   ① 接收方验签成功 ② 成功恢复 SM4 会话密钥 ③ 双方完成确认
+            # 而第 ① 条依赖 Falcon 对信封签名（§6.3/§6.4），**本轮尚未实现**
+            # （协议级改造，见本仓库提交说明）。在没有验证手段的情况下建
+            # established 会话，等于**宣称一个没验证过的安全属性** ——
+            # 比不建会话更危险：后续用它传数据时，没人知道对面是否真的持有同一把密钥。
+            #
+            # 所以这里只如实登记"会话已发起"：接收方已拿到信封、
+            # 密钥材料已就位，**尚未确认**。待验签流程补齐后再由那条链路提升为
+            # established。`SessionKey.status` 的默认值本就是 'initiated'。
+            _create_initiated_sessions(user_id, node_map, succeeded_node_ids, batch_id, expires_at)
+
     except WrapperError as exc:
         logger.error('封装失败: batch=%s err=%s', batch_id, exc)
         return _error(f'封装失败：{exc}', 500)
