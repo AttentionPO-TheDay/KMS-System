@@ -88,8 +88,22 @@ ENV/
 .idea/
 *.db
 .DS_Store
-**/migrations/*.py
-!**/migrations/__init__.py
+
+# 迁移文件**纳入版本控制**（2026-09-28 起）。
+#
+# 原先此处是：
+#     **/migrations/*.py
+#     !**/migrations/__init__.py
+# 即只保留 __init__.py、忽略全部迁移。这个约定与运行方式**不兼容**：
+# 容器的 `start.sh:48` 只执行 `manage.py migrate --noinput`，**不跑
+# `makemigrations`**，所以迁移文件必须预先存在。当前部署没暴露问题，
+# 只是因为镜像用 `COPY ./backend/ /backend/` 把工作区整个打进去 ——
+# gitignore 不影响 Docker 构建。但从 git 重新 clone 部署时，迁移全缺，
+# `migrate` 建不出表，服务会以"运行但无表"的状态起来（所有 PQKDS 接口 500）。
+#
+# 而且这个约定会导致"半吊子提交"更危险：若只提交新增的 0008、
+# 而它依赖的 0007 仍被忽略，Django 会直接报迁移历史不一致 —— 比全不提交更糟。
+# 因此整个目录一并入库。
 *.pyc
 conf/*
 !conf/env.example.py
