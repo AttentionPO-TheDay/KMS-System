@@ -93,6 +93,31 @@ public class SysUser extends BaseEntity {
     /** 用户等级（0管理员 1中级用户 2普通用户） */
     private Integer roleLevel;
 
+    /**
+     * 登录主体类型（阶段 2）：ADMIN=平台管理员 / NODE=区块链节点。
+     *
+     * <p>与 {@link #roleLevel} 是**两个正交概念**，文档 §2.2 明确要求拆开：
+     * <ul>
+     *   <li>{@code principalType} —— 「登录主体是谁」，决定进哪个业务视图；</li>
+     *   <li>{@code roleLevel} —— 过渡期仍在生效的准入判据（前端 isAdminLevel() 读它）。</li>
+     * </ul>
+     * 过渡期两者必须一致（roleLevel&lt;=0 即 ADMIN），由迁移 31_*.sql 回填，
+     * 并与 node_account_service 建档时的取值共同保证。阶段 9 收口 roleLevel 后，
+     * 这里就成为唯一的主体判据。
+     *
+     * <p>为空表示历史数据未回填 —— 前端按「最小权限」当 NODE 处理，
+     * 而不是默认放行成 ADMIN。
+     */
+    private String principalType;
+
+    public String getPrincipalType() {
+        return principalType;
+    }
+
+    public void setPrincipalType(String principalType) {
+        this.principalType = principalType;
+    }
+
     public String getUserType() {
         return userType;
     }

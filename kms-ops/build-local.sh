@@ -190,13 +190,15 @@ generate_go_dir="$REPO_ROOT/kms-generate/go-backend"
 updatedel_go_dir="$REPO_ROOT/kms-updatedel/go-backend"
 acceptance_go_dir="$REPO_ROOT/kms-acceptance/backend"
 updatedel_front_dir="$REPO_ROOT/kms-updatedel/front"
-user_front_dir="$REPO_ROOT/kms-user/front"
+# user_front_dir 已移除（阶段 1 前端合并）：kms-user 的业务页已迁入 kms-updatedel，
+# 其唯一登录入口的角色由主控制台承担（见 doc/three-subsystem-refactor-plan-v2.md 阶段 1）。
+# 应用**尚未退役**（阶段 9 才删除目录），只是不再参与构建 —— 保留上一版产物会让
+# /user/ 继续对外提供一个已经语义过时的前台。
 acceptance_front_dir="$REPO_ROOT/kms-acceptance/front"
 acceptance_security_dir="$REPO_ROOT/security"
 
 new_clean_directory "$RUNTIME_ROOT"
 new_clean_directory "$FRONT_ROOT/updatedel"
-new_clean_directory "$FRONT_ROOT/user"
 new_clean_directory "$FRONT_ROOT/acceptance"
 
 invoke_maven_build "$generate_java_dir"
@@ -212,7 +214,6 @@ invoke_go_project_build "$acceptance_go_dir" "kms-acceptance-backend"
 # kms-generate-service，仍供 /generate-api/ 与统一管理端使用）。
 # 详见 kms-generate/front/RETIRED.md，不要在没有决策的情况下把这段构建加回来。
 invoke_frontend_build "$updatedel_front_dir" "build:prod"
-invoke_frontend_build "$user_front_dir" "build"
 invoke_frontend_build "$acceptance_front_dir" "build"
 
 copy_artifact "$generate_java_dir/ruoyi-admin/target/kms-generate.jar" "$RUNTIME_ROOT/generate-java/kms-generate.jar"
@@ -225,9 +226,8 @@ copy_artifact "$updatedel_go_dir/dist/kms-updatedel-service" "$RUNTIME_ROOT/upda
 copy_artifact "$acceptance_go_dir/dist/kms-acceptance-backend" "$RUNTIME_ROOT/acceptance-go/kms-acceptance-backend"
 copy_artifact "$acceptance_security_dir/security_test.sh" "$RUNTIME_ROOT/acceptance-go/security/security_test.sh"
 
-# 前端产物投放：3 个（generate 与 distribute 均已退役/下线，见上面的说明）
+# 前端产物投放：2 个（generate / distribute / user 均已下线或随阶段 1 合并退役）
 copy_artifact "$updatedel_front_dir/dist/." "$FRONT_ROOT/updatedel"
-copy_artifact "$user_front_dir/dist/." "$FRONT_ROOT/user"
 copy_artifact "$acceptance_front_dir/dist/." "$FRONT_ROOT/acceptance"
 
 echo "Local build artifacts are ready under kms-ops/runtime and kms-ops/front."

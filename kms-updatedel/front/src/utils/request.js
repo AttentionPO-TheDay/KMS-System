@@ -11,6 +11,18 @@ let downloadLoadingInstance;
 // 是否显示重新登录
 export let isRelogin = { show: false };
 
+/**
+ * 本应用（唯一主控制台）自己的登录页路径。
+ *
+ * 阶段 1 前端合并前，会话过期会整页跳到 kms-user 的登录页；合并后
+ * 用户前台已退役，跨应用跳转同步删除（文档阶段 1 第 3 项），
+ * 因此这里改为回到本应用自己的 /login。
+ */
+function getLoginPath() {
+  const base = import.meta.env.BASE_URL || '/'
+  return `${base.replace(/\/?$/, '/')}login`
+}
+
 axios.defaults.headers['Content-Type'] = 'application/json;charset=utf-8'
 // 创建axios实例
 const service = axios.create({
@@ -81,13 +93,30 @@ service.interceptors.response.use(res => {
     if (res.request.responseType ===  'blob' || res.request.responseType ===  'arraybuffer') {
       return res.data
     }
+    // 防御：接口路径未命中代理/网关时，会落到 SPA fallback 并返回 index.html。
+    // 这类响应 HTTP 状态是 200，但 body 是 HTML 且没有 code 字段；
+    // 若直接走 `res.data.code || 200` 会被当成成功，表现为「空数据且无任何报错」，
+    // 同时反复 404 还会触发网关的 IP 封禁，属最难排查的故障模式，故在此显式拦截。
+    // （阶段 1 前端合并时自 kms-user 迁入；合并后分发页 / 生成页走本应用同一实例。）
+    const contentType = (res.headers && res.headers['content-type']) || ''
+    const rawData = res.data
+    if (typeof rawData === 'string' || contentType.includes('text/html')) {
+        const preview = typeof rawData === 'string' ? rawData.slice(0, 60) : ''
+        const looksLikeHtml = contentType.includes('text/html') || preview.trim().startsWith('<')
+        if (looksLikeHtml) {
+            const hint = `接口未命中后端（返回了 HTML 而非 JSON）：${res.config && res.config.url}`
+            console.error('[request] ' + hint)
+            ElMessage({ message: hint, type: 'error', duration: 5 * 1000 })
+            return Promise.reject(new Error(hint))
+        }
+    }
     if (code === 401) {
       if (!isRelogin.show) {
         isRelogin.show = true;
         ElMessageBox.confirm('登录状态已过期，您可以继续留在该页面，或者重新登录', '系统提示', { confirmButtonText: '重新登录', cancelButtonText: '取消', type: 'warning' }).then(() => {
           isRelogin.show = false;
           useUserStore().logOut().then(() => {
-            location.href = `${import.meta.env.BASE_URL}index`;
+            location.href = getLoginPath();
           })
       }).catch(() => {
         isRelogin.show = false;

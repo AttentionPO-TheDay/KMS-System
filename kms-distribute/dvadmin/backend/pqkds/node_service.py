@@ -324,6 +324,210 @@ class NodeService:
                 'message': f'节点注册失败: {str(e)}'
             }
 
+    def provision_node(self, name: str, ip_address: str, port: int, **kwargs) -> Dict[str, Any]:
+        """
+        阶段 2：**建节点只建账号**，不生成任何密钥。
+
+        与 `register_node` 的区别
+        ------------------------
+        改造前（register_node）：建节点 → 服务端立刻生成 Kyber/Falcon/SM2/SSCL
+                                四套密钥 → status='registered'。实测 18~22 秒。
+        改造后（本方法）：建节点 → 建 Node 行 + 建 kms.sys_user 账号
+                                → status='PENDING_INIT'。**毫秒级**。
+                         四套密钥推迟到**节点首次登录**时生成（见 initialize_base_keys）。
+
+        这条改动对应文档 §2.4 与 §3.1：
+        「节点创建和密码学初始化是两个阶段，不能再由后台在创建节点时直接生成完整私钥。」
+
+        为什么整体挪到事务里
+        ------------------
+        Node 在 `falcon_kds`、sys_user 在 `kms`，两者 schema 不同但**同一个 MySQL
+        实例**。`transaction.atomic()` 关掉 autocommit 后，同一条连接上的跨 schema
+        INSERT 属于同一个事务，因此不会出现"Node 建了、账号没建"的半截状态。
+        """
+        from django.db import transaction
+        from .node_account_service import ensure_node_account
+
+        with transaction.atomic():
+            if self.node is None:
+                self.node = Node.objects.create(
+                    node_id=self.node_id,
+                    name=name,
+                    ip_address=ip_address,
+                    port=port,
+                    status='PENDING_INIT',
+                )
+                logger.info("节点 %s 创建成功（待初始化）", self.node_id)
+            else:
+                self.node.name = name
+                self.node.ip_address = ip_address
+                self.node.port = port
+                # 已存在的节点不重置状态：它可能已经完成初始化，
+                # 重新注册不该把它打回 PENDING_INIT。
+                self.node.save()
+                logger.info("节点 %s 更新成功", self.node_id)
+
+            for field, value in kwargs.items():
+                if hasattr(self.node, field) and value is not None:
+                    setattr(self.node, field, value)
+            self.node.save()
+
+            # 建对应的登录账号（跨 schema，见 node_account_service 的说明）
+            user_id = ensure_node_account(self.node)
+            self.node.sys_user_id = user_id
+            self.node.save(update_fields=['sys_user_id'])
+
+        return {
+            'success': True,
+            'message': f'节点 {self.node_id} 已创建（账号已就绪，等待节点首次登录完成密钥初始化）',
+            'node_id': self.node_id,
+            'status': self.node.status,
+            'sys_user_id': user_id,
+        }
+
+    def initialize_base_keys(self) -> Dict[str, Any]:
+        """
+        阶段 2：**节点首次登录时**初始化四套基础密钥（文档 §3.1）。
+
+        流程：节点侧（浏览器）→ 首次登录 → 调本方法 → Kyber/SSCL/SM2/Falcon
+              四套全部成功 → status='ACTIVE'。
+
+        为什么复用 generate_* 而不是重写一套生成逻辑
+        ------------------------------------------
+        文档 §3.4 明确要求：「不要为'首次四把基础密钥'再维护另一套密码学实现」，
+        首次初始化只是把既有能力**自动连续调用**一遍。所以这里只是编排，
+        密码学实现仍是 Kyber/Falcon/国密的原有代码。
+
+        幂等与失败语义
+        -------------
+        * 已是 ACTIVE 的节点直接返回，不重复生成（再次登录不应重跑）。
+        * 任一套失败即整体失败并**保持 PENDING_INIT**，允许再次登录重试 ——
+          比"成功三套也算成功"安全：缺任何一套都算初始化未完成。
+        """
+        from django.utils import timezone
+
+        if (self.node.status or '').lower() == 'active':
+            return {
+                'success': True,
+                'already_initialized': True,
+                'status': self.node.status,
+                'message': '节点已完成初始化，无需重复生成',
+            }
+
+        steps = []
+        failures = []
+
+        # 1) Kyber —— 与旧 register_node 一致：先建 Node 行再生成
+        try:
+            import time
+            t0 = time.time()
+            kyber_kp = self.keygen_service.generate_kyber_keypair(self.node_id)
+            if not kyber_kp.get('success'):
+                failures.append(f"Kyber: {kyber_kp.get('error')}")
+            else:
+                kyber_pk = kyber_kp['kyber_public_key']
+                kyber_sk = kyber_kp['kyber_private_key']
+                self.node.kyber_public_key = base64.b64encode(kyber_pk).decode('utf-8')
+                self.node.kyber_private_key = base64.b64encode(kyber_sk).decode('utf-8')
+                _cl_pk = kyber_kp.get('cl_public_key')
+                _cl_sk = kyber_kp.get('cl_private_key')
+                _sys_A = kyber_kp.get('system_A')
+                self.node.kyber_partial_key_data = json.dumps({
+                    'partial_key_t': kyber_kp.get('partial_key_t'),
+                    'secret_value_s_id': kyber_kp.get('secret_value_s_id'),
+                    'hash_c': kyber_kp.get('hash_c'),
+                    'u_prime_id': kyber_kp.get('u_prime_id'),
+                    'cl_public_key': _cl_pk.tolist() if hasattr(_cl_pk, 'tolist') else _cl_pk,
+                    'cl_private_key': _cl_sk.tolist() if hasattr(_cl_sk, 'tolist') else _cl_sk,
+                    'A': _sys_A.tolist() if hasattr(_sys_A, 'tolist') else _sys_A,
+                    'algorithm': kyber_kp.get('algorithm', 'CertificatelessKyber512_DLL'),
+                    'parameters': {'n': 512, 'm': 1024, 'q': 12289},
+                })
+                self.node.kyber_keygen_time = timezone.now()
+                self.node.kyber_keygen_duration = time.time() - t0
+                self.node.status = 'kyber_uploaded'
+                self.node.save()
+                steps.append('Kyber')
+        except Exception as exc:  # noqa: BLE001
+            failures.append(f"Kyber: {exc}")
+
+        # 2) 国密（SM2 + SSCL）
+        try:
+            gm = self.generate_gm_keys()
+            if gm.get('success'):
+                steps.append('国密(SM2/SSCL)')
+            else:
+                failures.append(f"国密: {gm.get('message')}")
+        except Exception as exc:  # noqa: BLE001
+            failures.append(f"国密: {exc}")
+
+        # 3) Falcon
+        try:
+            falcon = self.generate_falcon_keys_v2()
+            if falcon.get('success'):
+                steps.append('Falcon')
+            else:
+                failures.append(f"Falcon: {falcon.get('message')}")
+        except Exception as exc:  # noqa: BLE001
+            failures.append(f"Falcon: {exc}")
+
+        self.node.refresh_from_db()
+
+        if failures:
+            logger.error("节点 %s 基础密钥初始化失败: %s", self.node_id, failures)
+            return {
+                'success': False,
+                'status': self.node.status,
+                'completed': steps,
+                'message': '基础密钥初始化未完成：' + '；'.join(failures),
+            }
+
+        # 4) 落库校验 —— **必须**在置 ACTIVE 之前。
+        #
+        # 前三步各自返回 success 只说明"该步的函数没报错"，**不等于数据真的写进去了**。
+        # 2026-09-27 实测过一个真实的静默数据丢失：Falcon 路径在长耗时计算前会
+        # `connection.close()`（node_service.py:1022），若外层用事务包裹，
+        # 这个 close 会把此前未提交的 Kyber/国密写入一并丢弃 ——
+        # 结果就是"四步全报成功、状态被置成 ACTIVE，库里却只有 Falcon"。
+        # 回查一次数据库，把这类问题从"静默成功"变成"明确失败"。
+        missing = [
+            name for name, value in (
+                ('Kyber', self.node.kyber_public_key),
+                ('SM2', self.node.gm_public_key),
+                ('SSCL', self.node.sscl_public_key),
+                ('Falcon', self.node.falcon_public_key),
+            ) if not value
+        ]
+        if missing:
+            logger.error("节点 %s 密钥未落库: %s（拒绝置为 ACTIVE）", self.node_id, missing)
+            return {
+                'success': False,
+                'status': self.node.status,
+                'completed': steps,
+                'message': '以下密钥生成成功但未写入数据库：' + '、'.join(missing) + '，请重试',
+            }
+
+        # 5) 四套齐备且已落库 → ACTIVE（文档 §3.1）
+        self.node.status = 'active'
+        self.node.initialized_at = timezone.now()
+        self.node.save(update_fields=['status', 'initialized_at'])
+
+        # 5) 上链（与旧 register_node 一致；失败不影响初始化结论）
+        try:
+            up = self.upload_service.upload_node_registration(self.node)
+            if not up.get('success'):
+                logger.warning("节点 %s 上链失败: %s", self.node_id, up.get('message'))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("节点 %s 上链异常: %s", self.node_id, exc)
+
+        logger.info("节点 %s 基础密钥初始化完成，状态置为 ACTIVE", self.node_id)
+        return {
+            'success': True,
+            'status': 'active',
+            'completed': steps,
+            'message': '四套基础密钥初始化完成',
+        }
+
     @ensure_db_connection
     def generate_falcon_keypair(self) -> Dict[str, Any]:
         try:

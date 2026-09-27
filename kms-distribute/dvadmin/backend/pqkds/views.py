@@ -909,19 +909,24 @@ class NodeViewSet(CustomModelViewSet):
                 basic_data = {field: node_data[field] for field in basic_fields}
                 optional_fields = ['phone', 'email', 'contact_person', 'organization',
                                  'department', 'location', 'node_type', 'hardware_spec',
-                                 'description', 'tags', 'kyber_security_level', 'falcon_security_level']
+                                 'description', 'tags', 'kyber_security_level', 'falcon_security_level',
+                                 # 阶段 2：节点多级授权与跨域标记由管理员在建节点时指定
+                                 'permission_level', 'domain_id']
                 optional_data = {field: node_data.get(field) for field in optional_fields if field in node_data}
-                logger.info(f" 开始调用node_service.register_node")
-                result = node_service.register_node(**basic_data, **optional_data)
+                # 阶段 2：改走 provision_node —— 只建账号，**不生成密钥**（文档 §2.4/§3.1）。
+                # 四套基础密钥推迟到节点首次登录时由 initialize_base_keys 生成。
+                # 旧 register_node 保留未删：存量节点/其它调用方可能仍在用，
+                # 等阶段 9 统一清理时再收敛。
+                logger.info(f" 开始调用node_service.provision_node")
+                result = node_service.provision_node(**basic_data, **optional_data)
                 if result['success']:
-                    logger.info(f" 节点注册成功: {node_data['node_id']}")
+                    logger.info(f" 节点创建成功: {node_data['node_id']}")
                     return SuccessResponse(data={
                         'node_id': result.get('node_id'),
                         'status': result.get('status'),
-                        'message': result.get('message'),
-                        'kyber_keygen_time': result.get('kyber_keygen_time'),
-                        'kyber_keygen_duration': result.get('kyber_keygen_duration')
-                    }, msg="节点注册成功")
+                        'sys_user_id': result.get('sys_user_id'),
+                        'message': result.get('message')
+                    }, msg="节点创建成功，等待节点首次登录完成密钥初始化")
                 else:
                     logger.error(f" 节点注册失败: {result['message']}")
                     return ErrorResponse(msg=result['message'])

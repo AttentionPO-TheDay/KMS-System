@@ -99,7 +99,7 @@ kms-gateway-nginx:local kms-dvadmin3-django:local"
            runtime/updatedel-go/kms-updatedel-service \
            runtime/acceptance-go/kms-acceptance-backend \
            runtime/acceptance-go/security/security_test.sh \
-           front/updatedel/index.html front/user/index.html \
+           front/updatedel/index.html \
            front/acceptance/index.html \
            build/generate-java.Dockerfile build/updatedel-java.Dockerfile \
            build/generate-go.Dockerfile build/updatedel-go.Dockerfile \
@@ -376,21 +376,32 @@ do_verify() {
   }
   probe "gateway /ping"        "$base/ping"
   probe "portal /"             "$base/"
-  probe "user /user/"          "$base/user/"
   probe "updatedel"            "$base/updatedel/"
-  probe "distribute"           "$base/distribute/"
   probe "acceptance"           "$base/acceptance/"
   probe "generate-api"         "$base/generate-api/generate/ping"
   probe "lifecycle-api"        "$base/lifecycle-api/lifecycle/ping"
   probe "acceptance-api"       "$base/acceptance-api/health"
 
-  # `/generate/` 前端已退役（页面并入管理端），网关对它**显式返回 404**。
-  # 这里按"应当 404"来验：以前把它当 200 来探，于是每次 verify 都固定报 1 项未通过，
-  # 久而久之就没人看这一行了 —— 一个恒假的告警比没有告警更糟。
-  local gcode
-  gcode=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$base/generate/" || echo 000)
-  if [ "$gcode" = "404" ]; then ok "generate 前端 -> 404（已退役，符合预期）"
-  else warn "generate 前端 -> $gcode（期望 404）"; fail=$((fail+1)); fi
+  # 已退役的静态前端：按"应当 404"来验，而不是当 200 探。
+  #
+  # 背景：这三处的 `probe` 都曾按 200 来断言，而网关对它们**显式返回 404**，
+  # 于是每次 verify 都固定报未通过。久而久之就没人看这一行 ——
+  # 一个恒假的告警比没有告警更糟（它会训练读者忽略整块输出）。
+  #   /generate/     —— 遗留重复应用，页面并入统一管理端
+  #   /distribute/   —— 随旧分发前端下线（后端 /pqkds-api/ 不受影响）
+  #   /user/         —— 阶段 1 前端合并：业务页迁入 updatedel，跨应用跳转已删除
+  #
+  # ⚠️ 这三处的**后端**路由都还在服务，不要连带删掉：
+  #    /generate-api/ 与 /pqkds-api/ 各有独立的 probe（见上）。
+  expect_404() {
+    local name="$1" url="$2" code
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$url" || echo 000)
+    if [ "$code" = "404" ]; then ok "$name -> 404（已退役，符合预期）"
+    else warn "$name -> $code（期望 404）"; fail=$((fail+1)); fi
+  }
+  expect_404 "generate 前端 /generate/"     "$base/generate/"
+  expect_404 "distribute 前端 /distribute/" "$base/distribute/"
+  expect_404 "user 前端 /user/"             "$base/user/"
 
   if [ "$fail" -eq 0 ]; then
     log "全部通过"

@@ -111,6 +111,10 @@ class Node(CoreModel):
     status = models.CharField(
         max_length=20,
         choices=[
+            # 阶段 2 新增：节点已建立账号，但**尚未完成首次密钥初始化**。
+            # 建节点只创建账号与这一行记录，四套基础密钥推迟到节点首次登录时生成
+            # （文档 §2.4 / §3.1：节点创建与密码学初始化是两个阶段）。
+            ('PENDING_INIT', '待初始化'),
             ('registered', '已注册'),
             ('kyber_uploaded', 'Kyber公钥已上传'),
             ('partial_key_received', '部分私钥已接收'),
@@ -118,11 +122,51 @@ class Node(CoreModel):
             ('active', '活跃'),
             ('inactive', '非活跃')
         ],
-        default='registered',
+        default='PENDING_INIT',
         verbose_name="节点状态",
         help_text="节点当前状态"
     )
     last_active = models.DateTimeField(default=timezone.now, verbose_name="最后活跃时间", help_text="节点最后活跃时间")
+
+    # -------------------------------------------------------------------------
+    # 阶段 2（身份模型）新增字段
+    # -------------------------------------------------------------------------
+    # 节点与 kms.sys_user 的**真实一一映射**（文档 §2.3：Node 1 ── 1 sys_user）。
+    #
+    # 为什么不建 ForeignKey：两者分属不同 schema（本模型在 falcon_kds，
+    # sys_user 在 kms）。MySQL 的 FK 不能跨 schema，所以这里存 sys_user 的
+    # 主键值并**在应用层维护一致性**，而不是声明一个建不出来的约束。
+    #
+    # 与 UserNodeAuthorization 的区别要说清楚，否则会被误当成同一个东西：
+    #   那张表是「某个用户**被授权**可以向某个节点分发」—— 用户与节点是**两个实体**；
+    #   本字段是「这个节点**就是**这个账号」—— 节点与账号是**同一实体**。
+    #   文档 §3 明确前者与设定二冲突，属于待删语义；本字段才是目标模型。
+    sys_user_id = models.BigIntegerField(
+        null=True, blank=True, db_index=True, unique=True,
+        verbose_name="关联登录账号ID",
+        help_text="kms.sys_user.user_id；跨 schema 无 FK，由应用层维护一一映射"
+    )
+    # 节点多级授权（文档 §8.4）。与「登录主体类型」是两回事：
+    #   principal_type 决定「能不能登录、进哪个视图」；
+    #   permission_level 决定「登录后能做什么」——L1 查询 / L2 +生成分发 / L3 +更新回收。
+    permission_level = models.CharField(
+        max_length=4,
+        choices=[('L1', '查询'), ('L2', '查询+生成+分发'), ('L3', '查询+生成+分发+更新+回收')],
+        default='L1',
+        verbose_name="节点权限等级",
+        help_text="节点多级授权等级"
+    )
+    # 跨域分发标记（文档 §8.5）。第一版不部署多套 KMS，只把跨域语义做完整。
+    domain_id = models.CharField(
+        max_length=64, blank=True, default='domain-1',
+        verbose_name="所属域",
+        help_text="用于判定同域/跨域分发"
+    )
+    # 首次初始化完成时间。PENDING_INIT → ACTIVE 的那一刻写入，用于审计与排查。
+    initialized_at = models.DateTimeField(
+        null=True, blank=True, verbose_name="首次初始化完成时间",
+        help_text="四套基础密钥全部就绪的时间"
+    )
     blockchain_synced = models.BooleanField(default=False, verbose_name="是否同步到区块链", help_text="节点信息是否已同步到区块链")
     blockchain_sync_time = models.DateTimeField(null=True, blank=True, verbose_name="同步时间", help_text="节点同步到区块链的时间")
     class Meta:

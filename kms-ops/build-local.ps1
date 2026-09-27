@@ -182,13 +182,13 @@ $generateGoDir = Join-Path $repoRoot "kms-generate\go-backend"
 $updatedelGoDir = Join-Path $repoRoot "kms-updatedel\go-backend"
 $acceptanceGoDir = Join-Path $repoRoot "kms-acceptance\backend"
 $updatedelFrontDir = Join-Path $repoRoot "kms-updatedel\front"
-$userFrontDir = Join-Path $repoRoot "kms-user\front"
+# $userFrontDir 已移除（阶段 1 前端合并）：kms-user 的业务页已迁入 kms-updatedel。
+# 应用**尚未退役**（阶段 9 才删除目录），只是不再参与构建。
 $acceptanceFrontDir = Join-Path $repoRoot "kms-acceptance\front"
 $acceptanceSecurityDir = Join-Path $repoRoot "security"
 
 New-CleanDirectory $runtimeRoot
 New-CleanDirectory (Join-Path $frontRoot "updatedel")
-New-CleanDirectory (Join-Path $frontRoot "user")
 New-CleanDirectory (Join-Path $frontRoot "acceptance")
 
 Invoke-MavenBuild $generateJavaDir
@@ -205,7 +205,6 @@ Invoke-GoProjectBuild -ProjectDir $acceptanceGoDir -OutputName "kms-acceptance-b
 # kms-generate-service，仍供 /generate-api/ 与统一管理端使用）。
 # 详见 kms-generate/front/RETIRED.md，不要在没有决策的情况下把这段构建加回来。
 Invoke-FrontendBuild -ProjectDir $updatedelFrontDir -BuildScript "build:prod"
-Invoke-FrontendBuild -ProjectDir $userFrontDir -BuildScript "build"
 Invoke-FrontendBuild -ProjectDir $acceptanceFrontDir -BuildScript "build"
 
 Copy-Artifact -Source (Join-Path $generateJavaDir "ruoyi-admin\target\kms-generate.jar") -Destination (Join-Path $runtimeRoot "generate-java\kms-generate.jar")
@@ -219,9 +218,8 @@ Copy-Artifact -Source (Join-Path $updatedelGoDir "dist\kms-updatedel-service") -
 Copy-Artifact -Source (Join-Path $acceptanceGoDir "dist\kms-acceptance-backend") -Destination (Join-Path $runtimeRoot "acceptance-go\kms-acceptance-backend")
 Copy-Artifact -Source (Join-Path $acceptanceSecurityDir "security_test.sh") -Destination (Join-Path $runtimeRoot "acceptance-go\security\security_test.sh")
 
-# 前端产物投放：3 个（generate 与 distribute 均已退役/下线，见上面的说明）
+# 前端产物投放：2 个（generate / distribute / user 均已下线或随阶段 1 合并退役）
 Copy-Item -Path (Join-Path $updatedelFrontDir "dist\*") -Destination (Join-Path $frontRoot "updatedel") -Recurse -Force
-Copy-Item -Path (Join-Path $userFrontDir "dist\*") -Destination (Join-Path $frontRoot "user") -Recurse -Force
 Copy-Item -Path (Join-Path $acceptanceFrontDir "dist\*") -Destination (Join-Path $frontRoot "acceptance") -Recurse -Force
 
 Write-Host "Local build artifacts are ready under kms-ops/runtime and kms-ops/front."

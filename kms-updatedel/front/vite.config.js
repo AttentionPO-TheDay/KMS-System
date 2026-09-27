@@ -44,6 +44,13 @@ export default defineConfig(({ mode, command }) => {
           target: 'http://localhost:9082',
           changeOrigin: true,
           rewrite: (p) => p.replace(/^\/lifecycle-api/, '')
+        },
+        // 分发模块（Django）走网关的 /pqkds-api/，见 §5.1。
+        // 阶段 1 从 kms-user 一并迁入（分发页现由本控制台承载），
+        // 因此这里必须补上，否则联调时分发页会打到 SPA fallback 拿到 HTML。
+        '/pqkds-api': {
+          target: 'http://localhost:8001',
+          changeOrigin: true
         }
       }
     },

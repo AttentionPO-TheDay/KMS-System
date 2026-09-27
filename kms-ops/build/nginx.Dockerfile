@@ -21,13 +21,16 @@ COPY nginx/nginx.conf /etc/nginx/nginx.conf
 #   location 里再 include 一次，见 nginx.conf 注释）
 COPY nginx/snippets/ /etc/nginx/snippets/
 
-# 静态资源：门户 + 3 个前端
+# 静态资源：门户 + 2 个前端
 # （/generate/ 与 /distribute/ 两个静态前端均已退役：前者页面并入统一管理端，
 #   后者随 2026-09-26 代码清理下线，网关对两者均显式返回 404。
 #   两者的**后端**路由不受影响：/generate-api/ 与 /pqkds-api/ 仍在服务）
+#
+# /user/ 于阶段 1（前端合并）下线：kms-user 的业务页整体迁入 kms-updatedel，
+# 跨应用跳转同步删除，网关对 /user/ 显式返回 404。应用目录保留至阶段 9，
+# 但已不再构建，因此这里**不再 COPY** —— 继续 COPY 会因产物缺失而构建失败。
 COPY portal/ /usr/share/nginx/html/
 COPY front/updatedel/   /usr/share/nginx/html/updatedel/
-COPY front/user/        /usr/share/nginx/html/user/
 COPY front/acceptance/  /usr/share/nginx/html/acceptance/
 
 # 清理镜像自带的示例页，避免 / 被默认页覆盖

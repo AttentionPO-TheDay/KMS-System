@@ -19,6 +19,8 @@ from .user_distribution_views import (
     user_symmetric_key_detail,
     user_symmetric_keys,
 )
+# 阶段 2：节点自助（首次登录后的密钥初始化）。身份取自令牌自省，见该模块 docstring。
+from .node_self_views import node_self, node_self_init
 app_name = 'pqkds'
 router = DefaultRouter()
 router.register(r'system-parameters', SystemParametersViewSet, basename='systemparameters')
@@ -40,6 +42,13 @@ urlpatterns = [
     # 现象是"接口通了但字段全 undefined"，很难反查到是路由顺序问题。
     # Django 按顺序取第一个匹配，所以这里必须在前。
     path('user-nodes/', user_nodes, name='user-nodes'),
+
+    # --- 阶段 2：节点自助 ---
+    # 必须排在 router 之前，理由同下：router 的 `nodes/<pk>/` 通配段会把
+    # `node-self/` 吃成 pk='node-self'，请求落到 NodeViewSet 返回 200 但没有 data，
+    # 现象是"接口通了但字段全 undefined"。
+    path('node-self/', node_self, name='node-self'),
+    path('node-self/init/', node_self_init, name='node-self-init'),
     path('user-symmetric-keys/', user_symmetric_keys, name='user-symmetric-keys'),
     path('user-symmetric-keys/<int:pk>/', user_symmetric_key_detail, name='user-symmetric-key-detail'),
     path('distribution-batches/', distribution_batches, name='distribution-batches'),

@@ -8,8 +8,9 @@ import { isRelogin } from '@/utils/request'
 import useUserStore from '@/store/modules/user'
 import useSettingsStore from '@/store/modules/settings'
 import usePermissionStore from '@/store/modules/permission'
-import { userConsoleUrl, userLoginUrl } from '@/config/app-bases'
 import { isAdminLevel } from '@/utils/role'
+import { resolvePrincipalType, PRINCIPAL_NODE } from '@/utils/principal'
+import { fetchNodeInitStatus } from '@/utils/node-init-status'
 
 NProgress.configure({ showSpinner: false })
 
@@ -80,19 +81,64 @@ router.beforeEach((to, from, next) => {
       if (useUserStore().roles.length === 0) {
         isRelogin.show = true
         // 判断当前用户是否已拉取完user_info信息
-        useUserStore().getInfo().then((res) => {
+        useUserStore().getInfo().then(async (res) => {
           isRelogin.show = false
+
+          // 阶段 2：先按**主体类型**分流，再谈准入。
+          //
+          // 判据全部收敛到 utils/principal.js 的 resolvePrincipalType()，
+          // 不在守卫里散写 —— 这套判据在顶栏、引导页、各业务页入口都要用，
+          // 散着写必然漂移（仓库里 role_level 曾因三处各写一份而分裂过）。
+          const principal = resolvePrincipalType({
+            principalType: useUserStore().principalType,
+            roleLevel: useUserStore().roleLevel
+          })
+
+          // NODE 主体：检查首次初始化状态。
+          // PENDING_INIT 的节点**没有完整菜单**，不能走 generateRoutes ——
+          // 直接送去引导页，那里是静态路由，不依赖菜单下发。
+          if (principal === PRINCIPAL_NODE) {
+            if (to.path === '/node-init') {
+              next()
+              NProgress.done()
+              return
+            }
+            const status = await fetchNodeInitStatus()
+            if (status === 'PENDING_INIT') {
+              next({ path: '/node-init', replace: true })
+              NProgress.done()
+              return
+            }
+            // DISABLED 节点没有可用视图；如实告知而不是给一个空控制台。
+            if (status === 'DISABLED') {
+              window.location.replace(`${import.meta.env.BASE_URL}401`)
+              NProgress.done()
+              return
+            }
+            // ACTIVE 节点：正常放行（菜单仍是 sys_menu 下发的那套）。
+          }
+
           usePermissionStore().generateRoutes().then(accessRoutes => {
-            // 管理控制台只对管理员开放，判据是 role_level <= 0（D9 / D13）。
+            // 准入判据分两类主体，**不能只留 isAdminLevel**（阶段 2）。
             //
-            // 原实现按 role_id === 1 || role_id === 2 判定，有两个问题：
-            //   1. role_id=2 是「普通角色」，普通用户恰好持有它 —— 等于对普通用户
-            //      开放了整个管理端（能否看到页面只剩 sys_role_menu 一层拦截）；
-            //   2. test01/user01 持有的是 role_id=3，而 sys_role 里根本没有 3 号角色，
-            //      他们被判成非管理员后会被踢到 /userKeys，与其 role_level=2 的
-            //      实际身份并不一致。
-            // 统一改用 role_level，与用户前台、生命周期页、权限页的判据完全一致。
-            if (isAdminLevel(useUserStore().roleLevel)) {
+            // 改造前这里只有 `isAdminLevel(roleLevel)` 一道门禁，它守的是
+            // 「role_id=2 那条通用角色带了 system:user/role:* 管理权限」这个问题
+            // （2026-09-27 实测：用 yx 的令牌能 200 读到角色/用户/操作日志列表）。
+            //
+            // 但节点的 role_level 也是 2 —— 只留这一道，节点完成初始化后会被
+            // 当成"非管理员"整页踢到 /401，**一个业务页都进不去**。
+            // 2026-09-28 实测踩到：初始化完成后访问 /workbench 落在 401。
+            //
+            // 所以按主体分流：
+            //   ADMIN → 必须 isAdminLevel 才放行（保住上面那条防线）
+            //   NODE  → 已通过前面的"初始化状态"检查（PENDING_INIT/DISABLED 都已被
+            //           送走），到这里只可能是 ACTIVE 节点，应当放行。
+            //           它能看到什么由 sys_menu 下发决定，与 role_level 无关。
+            const allowed = principal === PRINCIPAL_NODE
+              ? true
+              : isAdminLevel(useUserStore().roleLevel)
+
+            if (allowed) {
               // 根据roles权限生成可访问的路由表
               accessRoutes.forEach(route => {
                 if (!isHttp(route.path)) {
@@ -101,9 +147,10 @@ router.beforeEach((to, from, next) => {
               });
               next({ ...to, replace: true }); // hack方法 确保addRoutes已完成
             } else {
-              // 非管理员不得停留在管理端：整页跳回用户前台。
-              // 两应用同源且共用 Admin-Token，因此不会要求二次登录。
-              window.location.replace(userConsoleUrl());
+              // 非管理员且非节点：整页跳本应用的 401 提示页。
+              // 用整页跳转（而非 next()）是为了丢掉本次导航上下文，
+              // 避免守卫在 addRoute 之后被再次触发形成循环。
+              window.location.replace(`${import.meta.env.BASE_URL}401`);
             }
           })
         }).catch(err => {
@@ -117,17 +164,12 @@ router.beforeEach((to, from, next) => {
       }
     }
   } else {
-    // 没有 token —— 整页跳到**唯一登录入口**（用户前台），不在本应用里再显示一套登录页。
+    // 没有 token —— 进本应用**自己的**登录页。
     //
-    // 依据是 D9（见 config/app-bases.js 的注释）：系统只有一个登录入口（kms-user），
-    // 登录后按 roleLevel 分流；管理端不是入口。此前这里 next('/login') 会把管理端
-    // 自己的 login.vue 渲染出来 —— 于是系统里出现了**两个登录页**，而且两者的
-    // 验证码策略还不一样（管理端后端有 KMS_CAPTCHA_ENABLED 覆盖、用户前台后端没有），
-    // 表现为"有的登录页要验证码、有的不要"，看起来像 bug（2026-09-24 用户反馈）。
-    //
-    // 两个应用同源、共用 Admin-Token，跳过去登录一次即可；管理员登录后由
-    // 用户前台的守卫按 roleLevel 送回本应用。
-    window.location.replace(userLoginUrl())
+    // 阶段 1（前端合并）前，这里整页跳到 kms-user 的登录页（D9「唯一登录入口」）。
+    // 用户前台随本次合并退役后，那个入口已不存在，故改为回到本应用的 /login，
+    // 与 request.js 里 getLoginPath() 的会话过期处理保持一致。
+    next(`/login?redirect=${to.fullPath}`)
     NProgress.done()
   }
 })

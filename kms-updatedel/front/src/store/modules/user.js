@@ -1,6 +1,7 @@
 import { login, logout, getInfo } from '@/api/login'
 import { getToken, setToken, removeToken } from '@/utils/auth'
 import { isHttp, isEmpty } from "@/utils/validate"
+import { resetNodeInitStatusCache } from '@/utils/node-init-status'
 import defAva from '@/assets/images/profile.jpg'
 
 const useUserStore = defineStore(
@@ -13,7 +14,15 @@ const useUserStore = defineStore(
       avatar: '',
       roles: [],
       permissions: [],
-      roleLevel: null  // 用户等级
+      roleLevel: null,  // 用户等级
+      /**
+       * 登录主体类型（阶段 2）：'ADMIN' | 'NODE' | null。
+       *
+       * 与 roleLevel 正交：principalType 决定「进哪个业务视图」，
+       * roleLevel 是过渡期仍在生效的准入判据。两者的关系见 utils/principal.js。
+       * 为 null 表示后端未返回（历史数据/接口未就绪）——按最小权限当 NODE 处理。
+       */
+      principalType: null
     }),
     actions: {
       // 登录
@@ -51,6 +60,7 @@ const useUserStore = defineStore(
             this.name = user.userName
             this.avatar = avatar
             this.roleLevel = user.roleLevel  // 存储用户等级
+            this.principalType = user.principalType  // 存储登录主体类型（ADMIN/NODE）
             resolve(res)
           }).catch(error => {
             reject(error)
@@ -64,6 +74,11 @@ const useUserStore = defineStore(
             this.token = ''
             this.roles = []
             this.permissions = []
+            this.roleLevel = null
+            this.principalType = null
+            // 清节点初始化状态缓存：它按会话缓存，不清的话下一个登录的账号
+            // 会继承上一个账号的主体/初始化状态（阶段 2）。
+            resetNodeInitStatusCache()
             removeToken()
             resolve()
           }).catch(error => {

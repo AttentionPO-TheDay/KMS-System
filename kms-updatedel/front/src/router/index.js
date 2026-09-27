@@ -83,6 +83,25 @@ export const constantRoutes = [
     component: () => import('@/views/error/401.vue'),
     hidden: true
   },
+  // 阶段 2：节点首次登录的密钥初始化引导页。
+  //
+  // 刻意放在 **constantRoutes**（静态注册）而不是 sys_menu，原因：
+  // 状态为 PENDING_INIT 的节点尚未完成初始化，不该假定它有完整菜单；
+  // 而路由守卫在检测到 PENDING_INIT 时会把它送到这里 —— 如果这个页面本身
+  // 依赖菜单下发，就会形成"要进引导页得先有菜单、要菜单得先完成初始化"的死循环。
+  {
+    path: '/node-init',
+    component: Layout,
+    hidden: true,
+    children: [
+      {
+        path: '',
+        component: () => import('@/views/nodeInit/index.vue'),
+        name: 'NodeInit',
+        meta: { title: '节点首次初始化', icon: 'lock' }
+      }
+    ]
+  },
   {
     path: '/:pathMatch(.*)*',
     component: () => import('@/views/error/404.vue'),

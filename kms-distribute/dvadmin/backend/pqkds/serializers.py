@@ -29,7 +29,12 @@ class NodeCreateSerializer(CustomModelSerializer):
             'phone', 'email', 'contact_person',
             'organization', 'department', 'location',
             'node_type', 'hardware_spec', 'description', 'tags',
-            'kyber_security_level', 'falcon_security_level'
+            'kyber_security_level', 'falcon_security_level',
+            # 阶段 2：管理员建节点时一并指定多级授权与所属域。
+            # ⚠️ 漏在 fields 外面的字段会被 DRF **静默丢弃** —— 请求带着
+            # permission_level='L2' 进来、模型却落默认值 'L1'，且没有任何报错
+            # （2026-09-27 实测踩到：建完节点查库才发现是 L1）。
+            'permission_level', 'domain_id',
         ]
     def validate_node_id(self, value):
         from rest_framework import serializers
@@ -97,6 +102,9 @@ class NodeListSerializer(CustomModelSerializer):
             'node_type', 'hardware_spec', 'description', 'tags',
             'status', 'partial_key_received', 'last_active', 'create_datetime',
             'kyber_security_level', 'falcon_security_level',
+            # 阶段 2：管理页要能显示"这个节点属于哪个账号、授权等级多少、
+            # 在哪个域、有没有完成首次初始化"。这几项都不含大字段，可以安全进列表。
+            'permission_level', 'domain_id', 'sys_user_id', 'initialized_at',
             'kyber_key_ready', 'falcon_key_ready', 'gm_key_ready', 'sscl_key_ready',
         ]
 
@@ -120,7 +128,11 @@ class NodeUpdateSerializer(CustomModelSerializer):
             'phone', 'email', 'contact_person',
             'organization', 'department', 'location',
             'node_type', 'hardware_spec', 'description', 'tags',
-            'kyber_security_level', 'falcon_security_level'
+            'kyber_security_level', 'falcon_security_level',
+            # 阶段 2：管理员可改节点的授权等级与所属域（文档 §8.4/§8.5）。
+            # `sys_user_id` 刻意**不在**这里 —— 账号映射由建节点流程建立，
+            # 手工改它会让 Node 与 sys_user 的一一映射被任意破坏。
+            'permission_level', 'domain_id',
         ]
         read_only_fields = [
             'id', 'node_id', 'name', 'ip_address', 'port',
