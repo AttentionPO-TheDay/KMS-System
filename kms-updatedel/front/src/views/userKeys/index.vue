@@ -123,9 +123,25 @@ const { queryParams, form } = toRefs(data)
 
 let userId, userName
 
-// Session中生成的全局部分公钥和私钥（与老系统行为一致）
-// 在每次刷新页面时生成一对随机公私钥用于作为当前用户的部分秘钥份额
-const { publicKey, privateKey } = SM2.generateKeyPair()
+// 本机部分密钥份额（u / uA）。
+//
+// ⚠️ 阶段 3 改动：原先是模块级 `const { publicKey, privateKey } = SM2.generateKeyPair()`，
+// 即**每次页面加载只生成一次**，之后所有轮换、所有列表项都复用它。
+// 后果是同一页面会话内的多次轮换提交同一个 uA —— 对 SSCL 而言，
+// 相同 ID+uA+ms 下材料是确定性的，等于"轮换了但密钥没变"
+// （文档 §4.1 明确禁止；历史库中已出现过 ua 被多把密钥共用）。
+//
+// 现在改成可变绑定，并在**每次轮换前**重新生成一对，保证每把新密钥
+// 都持有独立的 u。公钥与私钥必须**同时**更新：d_A 是用私钥算的，
+// 只换公钥会让二者对不上。
+let { publicKey, privateKey } = SM2.generateKeyPair()
+
+/** 重新生成本机份额（u 与 uA 成套更新） */
+function regenerateLocalShare() {
+  const pair = SM2.generateKeyPair()
+  publicKey = pair.publicKey
+  privateKey = pair.privateKey
+}
 
 function handleCommand(command) {
   if (command === "logout") {
@@ -288,6 +304,9 @@ function canRotateCertlessKey(row) {
 // 密钥更新，重新触发表单编辑提交流即可
 function handleRotate(row) {
   proxy.$modal.confirm(`确认使用当前环境材料更新密钥 ${row.keyName} 吗？\n注意：这会下发新的密钥对`).then(() => {
+    // 阶段 3：轮换必须是**新的** u，不能复用页面加载时那一对，
+    // 否则同一会话内多次轮换会提交相同的 uA（SSCL 下材料完全不变）。
+    regenerateLocalShare()
     form.value = Object.assign({}, row)
     form.value.uA = publicKey // 使用新的公钥份额
     return updateKeymanage(form.value)

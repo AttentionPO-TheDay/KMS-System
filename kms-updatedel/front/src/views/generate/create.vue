@@ -334,7 +334,11 @@ const commonParams = ref(null)
 const errorMessage = ref('')
 const activeTab = ref('generate')
 const encrytNameOptions = ref([])
-const pqAlgorithms = ['PQ_FALCON', 'PQ_KYBER', 'PQ_CERTIFICATELESS', 'PQ_CL_KYBER', 'PQ_CL_FALCON', 'CL-Kyber', 'CL-Falcon']
+// 阶段 3（文档 §0.5/§9.4）：对外统一 Kyber / Falcon。
+// `CL-` 前缀（certificateless）是历史误称 —— 这两个算法不是无证书方案，
+// 它们的私钥与 KGC 份额协议无关（见 workbench 里各自的职责说明）。
+// 旧值仍在数组里，是为了让历史记录能正常归类显示；新选择一律产生新值。
+const pqAlgorithms = ['PQ_FALCON', 'PQ_KYBER', 'PQ_CERTIFICATELESS', 'PQ_CL_KYBER', 'PQ_CL_FALCON', 'CL-Kyber', 'CL-Falcon', 'Kyber', 'Falcon']
 const keyUseOptions = [
   { label: '签名 / 验签', value: '签名 / 验签' },
   { label: '密钥封装 / 解封装', value: '密钥封装 / 解封装' },
@@ -449,8 +453,11 @@ function handleEncrytTypeChange(value) {
     encrytNameOptions.value = [
       { label: 'SM2', value: 'SM2' },
       { label: 'SSCL', value: 'SSCL' },
-      { label: 'CL-Falcon', value: 'CL-Falcon' },
-      { label: 'CL-Kyber', value: 'CL-Kyber' }
+      // 阶段 3：标签与取值都用 Kyber / Falcon，不再带 `CL-` 前缀。
+      // 用户看到的名称要与算法实际性质一致 —— 它们由标准 KeyGen 生成，
+      // 不是无证书方案，`CL-` 会误导人以为走 KGC 份额协议。
+      { label: 'Falcon（抗量子签名）', value: 'Falcon' },
+      { label: 'Kyber（抗量子封装）', value: 'Kyber' }
     ]
   } else {
     encrytNameOptions.value = []
@@ -486,7 +493,19 @@ async function submitGenerate() {
     errorMessage.value = '当前登录用户信息不完整，请刷新后重试。'
     return
   }
-  if (!pqAlgorithms.includes(generateForm.encrytName) && (!localMaterial.publicKey || !localMaterial.privateKey)) {
+  // 阶段 3（文档 §4.1）：**每次生成都必须用全新的 `u`**。
+  //
+  // 原实现是 `if (!localMaterial.publicKey) regenerateLocalMaterial()` ——
+  // 只在"本地材料为空"时才生成。后果是同一次页面会话里连续生成的多把密钥
+  // **复用同一个 u / uA**，表现为「不同 key_id，密码学材料却相同」：
+  //   * SM2  因 KGC 侧还有随机 w，材料仍会不同，掩盖了复用；
+  //   * SSCL 在相同 ID+uA+ms 下是**确定性**的，两次生成会得到完全一样的密钥。
+  // 而且历史数据里已经出现过「遗漏的 ua 被多把密钥共用」
+  // （见 kms-ops/mysql/init/24_reset_legacy_key_data.sql:12）。
+  //
+  // 目标语义：Generate Key-001→u1, Key-002→u2, Key-003→u3，
+  // **页面刷新与否不得改变密码学语义**。
+  if (!pqAlgorithms.includes(generateForm.encrytName)) {
     regenerateLocalMaterial()
   }
 

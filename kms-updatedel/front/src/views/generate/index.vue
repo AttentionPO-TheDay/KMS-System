@@ -291,16 +291,18 @@ function parsePqMode(keyValue) {
 
 function handleEncrytTypeChange(value) {
   if (value === '无证书非对称加密') {
+    // 阶段 3（文档 §9.4）：收敛为 4 个规范算法名。
+    //
+    // 这里原有 9 个选项，其中 PQ_FALCON / CL-Falcon / PQ_CL_FALCON 指的是**同一个
+    // 算法**的三个别名，Kyber 同理 —— 管理员面对这堆名字无法判断该选哪个，
+    // 而且 `CL-` 前缀会让人以为它是无证书方案（实际不是，私钥不经过 KGC 份额协议）。
+    // 旧名不再作为**新选择**出现；历史记录仍能正常显示，因为列表渲染读的是
+    // 记录自身的 encrytName，与下拉选项无关。
     encrytNameOptions.value = [
       { label: 'SM2', value: 'SM2' },
       { label: 'SSCL', value: 'SSCL' },
-      { label: 'Falcon抗量子签名', value: 'PQ_FALCON' },
-      { label: 'Kyber抗量子密钥封装', value: 'PQ_KYBER' },
-      { label: 'CL-Falcon无证书抗量子签名', value: 'CL-Falcon' },
-      { label: 'CL-Kyber无证书抗量子封装', value: 'CL-Kyber' },
-      { label: 'PQ CL-Falcon无证书抗量子签名', value: 'PQ_CL_FALCON' },
-      { label: 'PQ CL-Kyber无证书抗量子封装', value: 'PQ_CL_KYBER' },
-      { label: '无证书抗量子密钥', value: 'PQ_CERTIFICATELESS' }
+      { label: 'Falcon（抗量子签名）', value: 'Falcon' },
+      { label: 'Kyber（抗量子封装）', value: 'Kyber' }
     ]
   } else {
     encrytNameOptions.value = []

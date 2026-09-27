@@ -208,7 +208,9 @@ const CHART_PALETTE = [
   CHART_COLORS.neutral
 ]
 
-const ALGORITHM_ORDER = ['SM2', 'SSCL', 'CL-Kyber', 'CL-Falcon']
+// 阶段 3：新签发的记录用 Kyber / Falcon；CL-* 留在末尾，
+// 只为让历史记录的排序位置保持稳定，不再产生新值。
+const ALGORITHM_ORDER = ['SM2', 'SSCL', 'Kyber', 'Falcon', 'CL-Kyber', 'CL-Falcon']
 
 // 生命周期状态：0 有效 / 1 已冻结 / 2 已更新 / 3 已回收（文本状态为英文别名）
 const KEY_STATUS_META = [

@@ -24,10 +24,16 @@ const (
 )
 
 var pqAlgorithms = map[string]struct{}{
+	// 阶段 3（文档 §0.5 / §9.4）：对外统一用 **Kyber** / **Falcon**。
+	// 这两个算法并不是无证书方案，`CL-` 前缀（certificateless）是历史误称，
+	// 会造成"Kyber 也走 KGC 份额协议"的误解 —— 它们由节点侧标准 KeyGen 生成。
+	"Kyber":  {},
+	"Falcon": {},
+	// 以下旧值继续接受：历史数据里已经存在用这些名字签发的记录，
+	// 收紧掉会让那些密钥无法再被引用。新代码一律用上面的 Kyber/Falcon。
 	"CL-Kyber":           {},
-	"ML-KEM":             {},
-	"Falcon":             {},
 	"CL-Falcon":          {},
+	"ML-KEM":             {},
 	"PQ_KYBER":           {},
 	"PQ_FALCON":          {},
 	"PQ_ML_KEM":          {},
