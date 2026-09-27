@@ -1,7 +1,0 @@
-tunnel: f8bf52ad-d8d7-4b80-bb7e-972efe259877
-credentials-file: /etc/cloudflared/credentials.json
-
-ingress:
-  - hostname: kms.sinrotic233.com
-    service: http://host.docker.internal:80
-  - service: http_status:404
