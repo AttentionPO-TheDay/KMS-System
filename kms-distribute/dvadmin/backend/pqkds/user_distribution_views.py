@@ -387,6 +387,24 @@ def distribute_to_user(request, identity):
         return _error('请求体应为 JSON 对象')
 
     user_id = identity['userId']
+
+    # 阶段 7（文档 §8.4）：节点多级授权 —— 发起分发需要 distribute 能力（L2 及以上）。
+    #
+    # 为什么在这里强制：节点就是 `kms.sys_user`（阶段 2 建立的一一映射），
+    # 所以"节点发起分发"走的正是这个入口。此前 permission_level **只存不用**，
+    # 管理员设了等级却不产生任何效果 —— 那比没有这个字段更糟，
+    # 使用者会以为自己已经限制了权限。
+    #
+    # 管理员（未映射到节点）不受此限：他们是治理主体，不是业务节点。
+    _node = Node.objects.filter(sys_user_id=user_id).only('permission_level').first()
+    if _node is not None:
+        from .node_permission import CAP_DISTRIBUTE, NodePermissionError, require_capability
+        try:
+            require_capability(_node, CAP_DISTRIBUTE)
+        except NodePermissionError as exc:
+            # 给出结构化提示（需要什么能力、当前什么等级），而不是笼统的"无权限"
+            return _error(str(exc), 403)
+
     params, error = _validate_request(payload, user_id)
     if error is not None:
         return error

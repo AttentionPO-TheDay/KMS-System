@@ -30,6 +30,14 @@ from django.views.decorators.http import require_http_methods
 
 from .models import Node
 from .node_service import NodeService
+from .node_permission import (
+    CAP_GENERATE,
+    LEVEL_LABELS,
+    NodePermissionError,
+    capabilities_of,
+    normalize_level,
+    require_capability,
+)
 from .user_distribution_views import require_kms_user
 
 logger = logging.getLogger(__name__)
@@ -61,6 +69,11 @@ def _node_payload(node: Node) -> dict:
         'status': _public_status(node),
         'rawStatus': node.status,
         'permissionLevel': node.permission_level,
+        # 阶段 7（§8.4）：把"这个等级能做什么"一并下发。
+        # 前端据此隐藏/禁用入口，而不是自己维护一份等级表 ——
+        # 两份表必然漂移，而漂移的表现是"界面能点、后端拒绝"。
+        'capabilities': sorted(capabilities_of(node.permission_level)),
+        'levelLabel': LEVEL_LABELS.get(normalize_level(node.permission_level), ''),
         'domainId': node.domain_id,
         'nodeType': node.node_type,
         'initializedAt': node.initialized_at.isoformat() if node.initialized_at else None,
