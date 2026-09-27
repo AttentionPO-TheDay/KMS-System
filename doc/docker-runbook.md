@@ -48,17 +48,20 @@
 
 1. 构建 `kms-generate/java-backend`
 2. 构建 `kms-updatedel/java-backend`
-3. 构建 `kms-distribute/java-backend`
-4. 构建 `kms-generate/go-backend`
-5. 构建 `kms-updatedel/go-backend`
-6. 构建 `kms-acceptance/backend`
-7. 构建 `kms-generate/front`
-8. 构建 `kms-updatedel/front`
-9. 构建 `kms-distribute/extracted/ruoyi (2)/web`（新分发 demo 前端；
-   旧 `kms-distribute/front` 已不再构建与发布）
-10. 构建 `kms-user/front`
-11. 构建 `kms-acceptance/front`
-12. 整理产物到 `kms-ops/runtime` 和 `kms-ops/front`
+3. 构建 `kms-generate/go-backend`
+4. 构建 `kms-updatedel/go-backend`
+5. 构建 `kms-acceptance/backend`
+6. 构建 `kms-updatedel/front`
+7. 构建 `kms-user/front`
+8. 构建 `kms-acceptance/front`
+9. 整理产物到 `kms-ops/runtime` 和 `kms-ops/front`
+
+> **2026-09-26 更新**：以下构建项已随代码清理移除——
+> `kms-distribute/java-backend`（Q11 下线）、`kms-generate/front`（已退役）、
+> `kms-distribute/front`（从未构建）、
+> `kms-distribute/extracted/ruoyi (2)/web`（分发自带后台已下线，
+> 该路径现为 `kms-distribute/dvadmin/`）。
+> 现在构建 3 个前端，不是 5 个。
 
 ## 启动方式
 
@@ -180,8 +183,7 @@ Docker 网关路径与本地 Vite 开发代理不是一回事。
 
 当前本地开发应保持：
 
-1. `kms-generate/front`：`/generate-api` -> `http://localhost:9081`
-2. `kms-updatedel/front`：`/generate-api` -> `http://localhost:9081`
+1. `kms-updatedel/front`：`/generate-api` -> `http://localhost:9081`
 3. `kms-updatedel/front`：`/lifecycle-api` -> `http://localhost:9082`
 4. `kms-user/front`：`/generate-api` -> `http://localhost:9081`
 5. `kms-user/front`：`/lifecycle-api` -> `http://localhost:9082`
@@ -223,7 +225,9 @@ Docker 网关路径与本地 Vite 开发代理不是一回事。
    `kms-ops/runtime/` 下的产物而启动失败。这是当前采用的部署口径；
    若后续改为镜像内构建，需同步修改本节与各服务 Dockerfile。
 2. `kms-user` 和 `kms-acceptance/front` 当前作为静态前端产物由 `nginx` 提供。
-3. `legacy-kms/` 仍然保留为历史参考，不参与当前 Docker 编排。
+3. ~~`legacy-kms/` 仍然保留为历史参考，不参与当前 Docker 编排。~~
+   **已于 2026-09-26 删除**（连同 `legacy-kms-go/`，共 667 个文件）。
+   需要查阅用 `git checkout pre-cleanup-20260926 -- legacy-kms` 取回。
 4. 旧版编排文件如 `docker-compose-before.yml` 仅作历史对照，不代表当前部署方式。
 5. 当前编排除基础设施外共 9 个应用服务：`generate-go`、`generate-java`、
    `updatedel-go`、`updatedel-java`、`kms-distribute`、`dvadmin3-django`、

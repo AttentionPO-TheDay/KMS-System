@@ -337,6 +337,11 @@ Java 服务内部通过合约包装器完成以下动作：
 
 ### 11.2 分发系统对链结果的消费
 
+> **2026-09-26 注**：本节描述的 `kms-distribute/java-backend` 与其中的
+> `DistributeKafkaConsumer` **已随代码清理删除**（Q11 已确认该服务整体下线，
+> 网关 `/distribute-api/` 也已改为显式 404）。以下内容保留作历史记录；
+> 当前分发侧的链上数据由 dvadmin（`kms-distribute/dvadmin/backend/`）承载。
+
 `kms-distribute/java-backend` 中的 `DistributeKafkaConsumer` 会监听 `key_chain_result`，并根据：
 
 - `key_id`

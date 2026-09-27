@@ -157,14 +157,16 @@ Docker 网关发布环境仍由 `kms-ops/nginx/nginx.conf` 统一处理，不依
 4. 构建 `kms-updatedel/go-backend`
 5. 构建 `kms-acceptance/backend`
 6. 构建 `kms-updatedel/front`
-7. 构建 `kms-distribute/java-backend` 后台服务
-8. 构建 `kms-distribute/extracted/ruoyi (2)/web` 新分发 demo 前端
-9. 构建 `kms-user/front`
-10. 构建 `kms-acceptance/front`
-11. 整理产物到 `kms-ops/runtime` 和 `kms-ops/front`
+7. 构建 `kms-user/front`
+8. 构建 `kms-acceptance/front`
+9. 整理产物到 `kms-ops/runtime` 和 `kms-ops/front`
 
-说明：`/generate/` 前端（`kms-generate/front`）已退役，脚本**不再构建它**，
-generate 只保留后端构建（第 1、3 项）；见 `kms-generate/front/RETIRED.md`。
+说明：以下构建项已随 2026-09-26 代码清理移除——
+`kms-generate/front`（已退役，见 `doc/retired-generate-frontend.md`）、
+`kms-distribute/java-backend`（Q11 下线）、
+`kms-distribute/extracted/ruoyi (2)/web`（分发自带后台已下线；
+该目录现为 `kms-distribute/dvadmin/`，只保留后端）。
+现在构建 **3 个前端**，不是 5 个。
 
 如果只需单独校验前端，可分别在各自 `front/` 目录执行：
 
@@ -172,7 +174,7 @@ generate 只保留后端构建（第 1、3 项）；见 `kms-generate/front/RETI
 npm run build:prod
 ```
 
-说明：RuoYi 前端项目默认使用 `build:prod`，extracted demo 前端使用 `build`；旧 `kms-distribute/front` 不再构建和发布。
+说明：RuoYi 前端项目默认使用 `build:prod`。
 
 ## 启动方式
 

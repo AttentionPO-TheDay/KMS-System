@@ -17,6 +17,10 @@ KMS 5 个前端共用的设计令牌与基础样式层。
 且 `kms-official-theme.scss` 在 3 个应用中逐字节重复，靠 58 处 `!important` 硬压 Element 样式。
 本目录把颜色、间距、圆角、阴影收敛为**唯一真源**，并改用 Element 官方 CSS 变量驱动。
 
+> **2026-09-26 注**：上表是**收敛之前**的状态，保留作设计依据的历史说明。
+> 其中 `kms-generate/front` 与 `kms-distribute/.../web` 两个前端**已随代码清理删除**，
+> 现在引用本目录的是 **3 个前端**（`kms-user`、`kms-updatedel`、`kms-acceptance`）。
+
 ## 目录结构
 
 ```
