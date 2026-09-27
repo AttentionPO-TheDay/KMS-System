@@ -100,7 +100,7 @@ kms-gateway-nginx:local kms-dvadmin3-django:local"
            runtime/acceptance-go/kms-acceptance-backend \
            runtime/acceptance-go/security/security_test.sh \
            front/updatedel/index.html front/user/index.html \
-           front/distribute/index.html front/acceptance/index.html \
+           front/acceptance/index.html \
            build/generate-java.Dockerfile build/updatedel-java.Dockerfile \
            build/generate-go.Dockerfile build/updatedel-go.Dockerfile \
            build/acceptance-go.Dockerfile build/nginx.Dockerfile \

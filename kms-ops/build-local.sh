@@ -183,19 +183,19 @@ invoke_go_linux_build() {
 generate_java_dir="$REPO_ROOT/kms-generate/java-backend"
 updatedel_java_dir="$REPO_ROOT/kms-updatedel/java-backend"
 # distribute_java_dir 已移除：旧分发 Java 服务整体下线（Q11）。
-# distribute_front_dir 保留 —— /distribute/ 仍被管理端 iframe 内嵌。
+# distribute_front_dir 也已移除（2026-09-26）：其原有的保留理由是**过时的**——
+# 旧注释说"/distribute/ 仍被管理端 iframe 内嵌"，但 29_distribution_native_pages.sql
+# 已把菜单 9101/9102 改成原生组件，9103 更早（27_node_management_page.sql）就改了。
 generate_go_dir="$REPO_ROOT/kms-generate/go-backend"
 updatedel_go_dir="$REPO_ROOT/kms-updatedel/go-backend"
 acceptance_go_dir="$REPO_ROOT/kms-acceptance/backend"
 updatedel_front_dir="$REPO_ROOT/kms-updatedel/front"
-distribute_front_dir="$REPO_ROOT/kms-distribute/extracted/ruoyi (2)/web"
 user_front_dir="$REPO_ROOT/kms-user/front"
 acceptance_front_dir="$REPO_ROOT/kms-acceptance/front"
 acceptance_security_dir="$REPO_ROOT/security"
 
 new_clean_directory "$RUNTIME_ROOT"
 new_clean_directory "$FRONT_ROOT/updatedel"
-new_clean_directory "$FRONT_ROOT/distribute"
 new_clean_directory "$FRONT_ROOT/user"
 new_clean_directory "$FRONT_ROOT/acceptance"
 
@@ -212,7 +212,6 @@ invoke_go_project_build "$acceptance_go_dir" "kms-acceptance-backend"
 # kms-generate-service，仍供 /generate-api/ 与统一管理端使用）。
 # 详见 kms-generate/front/RETIRED.md，不要在没有决策的情况下把这段构建加回来。
 invoke_frontend_build "$updatedel_front_dir" "build:prod"
-invoke_frontend_build "$distribute_front_dir" "build"
 invoke_frontend_build "$user_front_dir" "build"
 invoke_frontend_build "$acceptance_front_dir" "build"
 
@@ -226,9 +225,8 @@ copy_artifact "$updatedel_go_dir/dist/kms-updatedel-service" "$RUNTIME_ROOT/upda
 copy_artifact "$acceptance_go_dir/dist/kms-acceptance-backend" "$RUNTIME_ROOT/acceptance-go/kms-acceptance-backend"
 copy_artifact "$acceptance_security_dir/security_test.sh" "$RUNTIME_ROOT/acceptance-go/security/security_test.sh"
 
-# 前端产物投放：4 个（generate 已退役，见上面的说明与 kms-generate/front/RETIRED.md）
+# 前端产物投放：3 个（generate 与 distribute 均已退役/下线，见上面的说明）
 copy_artifact "$updatedel_front_dir/dist/." "$FRONT_ROOT/updatedel"
-copy_artifact "$distribute_front_dir/dist/." "$FRONT_ROOT/distribute"
 copy_artifact "$user_front_dir/dist/." "$FRONT_ROOT/user"
 copy_artifact "$acceptance_front_dir/dist/." "$FRONT_ROOT/acceptance"
 

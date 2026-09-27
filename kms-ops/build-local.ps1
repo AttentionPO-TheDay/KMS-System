@@ -172,20 +172,21 @@ function Invoke-GoLinuxBuild {
 $generateJavaDir = Join-Path $repoRoot "kms-generate\java-backend"
 $updatedelJavaDir = Join-Path $repoRoot "kms-updatedel\java-backend"
 # $distributeJavaDir 已移除：旧分发 Java 服务已整体下线（Q11）。
-# 注意 `$distributeFrontDir`（extracted/ruoyi (2)/web）**保留** —— 它产出的 /distribute/
-# 仍被管理端「分发与区块链」菜单以 iframe 内嵌，不能一起删。
+# $distributeFrontDir 也已移除（2026-09-26）：分发自带后台（extracted/ruoyi (2)/web）
+# 随本次清理下线。**注意其原有的保留理由是过时的**——旧注释说"它产出的 /distribute/
+# 仍被管理端 iframe 内嵌"，但 29_distribution_native_pages.sql 已把菜单 9101/9102
+# 从 iframe 改成原生组件（distOverview/index、chain/index，query 清空），9103 更早
+# （27_node_management_page.sql）就改了。此后没有任何脚本再把 /distribute/ 加回菜单。
 $generateGoDir = Join-Path $repoRoot "kms-generate\go-backend"
 $updatedelGoDir = Join-Path $repoRoot "kms-updatedel\go-backend"
 $acceptanceGoDir = Join-Path $repoRoot "kms-acceptance\backend"
 $updatedelFrontDir = Join-Path $repoRoot "kms-updatedel\front"
-$distributeFrontDir = Join-Path $repoRoot "kms-distribute\extracted\ruoyi (2)\web"
 $userFrontDir = Join-Path $repoRoot "kms-user\front"
 $acceptanceFrontDir = Join-Path $repoRoot "kms-acceptance\front"
 $acceptanceSecurityDir = Join-Path $repoRoot "security"
 
 New-CleanDirectory $runtimeRoot
 New-CleanDirectory (Join-Path $frontRoot "updatedel")
-New-CleanDirectory (Join-Path $frontRoot "distribute")
 New-CleanDirectory (Join-Path $frontRoot "user")
 New-CleanDirectory (Join-Path $frontRoot "acceptance")
 
@@ -203,7 +204,6 @@ Invoke-GoProjectBuild -ProjectDir $acceptanceGoDir -OutputName "kms-acceptance-b
 # kms-generate-service，仍供 /generate-api/ 与统一管理端使用）。
 # 详见 kms-generate/front/RETIRED.md，不要在没有决策的情况下把这段构建加回来。
 Invoke-FrontendBuild -ProjectDir $updatedelFrontDir -BuildScript "build:prod"
-Invoke-FrontendBuild -ProjectDir $distributeFrontDir -BuildScript "build"
 Invoke-FrontendBuild -ProjectDir $userFrontDir -BuildScript "build"
 Invoke-FrontendBuild -ProjectDir $acceptanceFrontDir -BuildScript "build"
 
@@ -218,9 +218,8 @@ Copy-Artifact -Source (Join-Path $updatedelGoDir "dist\kms-updatedel-service") -
 Copy-Artifact -Source (Join-Path $acceptanceGoDir "dist\kms-acceptance-backend") -Destination (Join-Path $runtimeRoot "acceptance-go\kms-acceptance-backend")
 Copy-Artifact -Source (Join-Path $acceptanceSecurityDir "security_test.sh") -Destination (Join-Path $runtimeRoot "acceptance-go\security\security_test.sh")
 
-# 前端产物投放：4 个（generate 已退役，见上面的说明与 kms-generate/front/RETIRED.md）
+# 前端产物投放：3 个（generate 与 distribute 均已退役/下线，见上面的说明）
 Copy-Item -Path (Join-Path $updatedelFrontDir "dist\*") -Destination (Join-Path $frontRoot "updatedel") -Recurse -Force
-Copy-Item -Path (Join-Path $distributeFrontDir "dist\*") -Destination (Join-Path $frontRoot "distribute") -Recurse -Force
 Copy-Item -Path (Join-Path $userFrontDir "dist\*") -Destination (Join-Path $frontRoot "user") -Recurse -Force
 Copy-Item -Path (Join-Path $acceptanceFrontDir "dist\*") -Destination (Join-Path $frontRoot "acceptance") -Recurse -Force
 

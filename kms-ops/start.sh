@@ -163,9 +163,9 @@ mkdir -p mysql/data mysql/init redis/data kafka/kafka_data
 mkdir -p fisco/console/account fisco/console/accounts fisco/console/log
 mkdir -p fisco/live
 mkdir -p nginx/logs
-# 注意：/generate/ 静态前端已退役，不再需要 front/generate
-#（详见 kms-generate/front/RETIRED.md；generate 后端仍在下面的 runtime/ 清单里）
-mkdir -p front/updatedel front/distribute front/user front/acceptance
+# 注意：/generate/ 与 /distribute/ 两个静态前端均已退役/下线，不再需要
+# front/generate 与 front/distribute（各自后端路由 /generate-api/ 与 /pqkds-api/ 不受影响）
+mkdir -p front/updatedel front/user front/acceptance
 mkdir -p runtime/generate-go runtime/generate-java runtime/updatedel-go runtime/updatedel-java runtime/acceptance-go
 
 if [ ! -f "runtime/generate-go/kms-generate-service" ] \
@@ -175,7 +175,6 @@ if [ ! -f "runtime/generate-go/kms-generate-service" ] \
     || [ ! -f "runtime/acceptance-go/kms-acceptance-backend" ] \
     || [ ! -f "runtime/acceptance-go/security/security_test.sh" ] \
     || [ ! -f "front/updatedel/index.html" ] \
-    || [ ! -f "front/distribute/index.html" ] \
     || [ ! -f "front/user/index.html" ] \
     || [ ! -f "front/acceptance/index.html" ]; then
     echo "[ERROR] 缺少运行产物，请先执行 bash ./build-local.sh" >&2

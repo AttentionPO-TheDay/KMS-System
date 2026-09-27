@@ -43,8 +43,7 @@ key-service-v1
 # Node.js / Frontend specifics
 node_modules/
 dist-ssr/
-npm-debug.log
-yarn-error.log
+npm-debug.logyarn-error.log
 
 # Temporary and Swap files
 *.swp
@@ -96,6 +95,19 @@ yarn-error.log
 *.bak-*
 *.broken.*
 */src.bak-*/
+# Python 虚拟环境：不以 `kms-ops/` 为前缀也会命中（例如
+# kms-ops/experiments/p0b-server-side-decrypt/.venv 里的第三方包）。
+# 2026-09-26 踩过：`git add -A -- kms-ops/` 一次带进 2039 个 .venv 文件。
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+# 实验与一次性验证目录（含体量大的 .venv 与产物），不参与部署也不该入库
+/kms-ops/experiments/
+# 验证脚本的输出（截图与 JSON 报告）
+/kms-ops/tests/out-*/
+# FISCO 工具链二进制（29MB，可重新获取；构建与部署脚本均不引用它）
+/kms-ops/fisco/fisco-bcos.bin
 /kms-ops/nginx/logs/
 /kms-ops/runtime/
 /kms-ops/front/generate/

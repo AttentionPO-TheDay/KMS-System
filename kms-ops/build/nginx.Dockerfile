@@ -21,11 +21,12 @@ COPY nginx/nginx.conf /etc/nginx/nginx.conf
 #   location 里再 include 一次，见 nginx.conf 注释）
 COPY nginx/snippets/ /etc/nginx/snippets/
 
-# 静态资源：门户 + 4 个前端（/generate/ 前端已退役，不再打入镜像，
-# 见 kms-generate/front/RETIRED.md；/generate-api/ 后端路由不受影响）
+# 静态资源：门户 + 3 个前端
+# （/generate/ 与 /distribute/ 两个静态前端均已退役：前者页面并入统一管理端，
+#   后者随 2026-09-26 代码清理下线，网关对两者均显式返回 404。
+#   两者的**后端**路由不受影响：/generate-api/ 与 /pqkds-api/ 仍在服务）
 COPY portal/ /usr/share/nginx/html/
 COPY front/updatedel/   /usr/share/nginx/html/updatedel/
-COPY front/distribute/  /usr/share/nginx/html/distribute/
 COPY front/user/        /usr/share/nginx/html/user/
 COPY front/acceptance/  /usr/share/nginx/html/acceptance/
 
