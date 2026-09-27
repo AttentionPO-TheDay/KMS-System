@@ -1,0 +1,151 @@
+<template>
+  <div class="app-container">
+    <el-card shadow="never">
+      <template #header>
+        <div class="la-header">
+          <h2>泄漏关联分析</h2>
+          <div class="la-query">
+            <el-input
+              v-model="keyId"
+              placeholder="输入疑遭泄漏的密钥ID"
+              clearable
+              style="width: 200px"
+              @keyup.enter="load"
+            />
+            <el-button type="primary" icon="Search" :loading="loading" @click="load">分析</el-button>
+          </div>
+        </div>
+      </template>
+
+      <el-alert
+        v-if="!keyId"
+        type="info"
+        :closable="false"
+        show-icon
+        title="输入密钥 ID，查出这把密钥影响到了哪些地方"
+        description="用于回答：它被分发到了哪些节点、产生过哪些操作、以及应当如何处置。"
+      />
+
+      <template v-else>
+        <el-descriptions v-if="base" :column="3" border size="small" class="la-base">
+          <!-- ⚠️ baseInfo 是后端直接序列化的 Keymanage，字段为 **snake_case**
+               （key_id / key_name / encryt_name / user_name）。只读 camelCase
+               会得到一排空值 —— 页面看着没报错，但什么都没显示。 -->
+          <el-descriptions-item label="密钥ID">{{ pick(base, 'keyId', 'key_id') }}</el-descriptions-item>
+          <el-descriptions-item label="名称">{{ pick(base, 'keyName', 'key_name') || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="算法">{{ pick(base, 'encrytName', 'encryt_name') || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="版本">v{{ pick(base, 'version') }}</el-descriptions-item>
+          <el-descriptions-item label="状态">
+            <el-tag :type="String(pick(base, 'status')) === '3' ? 'danger' : 'success'" size="small">
+              {{ String(pick(base, 'status')) === '3' ? '已回收' : '有效' }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="所属用户">{{ pick(base, 'userName', 'user_name') || '-' }}</el-descriptions-item>
+        </el-descriptions>
+
+        <h3 class="la-title">分发足迹（这把密钥保护过的分发）</h3>
+        <el-table :data="footprints" size="small" border empty-text="没有分发记录">
+          <el-table-column v-for="col in footprintCols" :key="col"
+                           :label="col" :prop="col" min-width="140" show-overflow-tooltip />
+        </el-table>
+
+        <h3 class="la-title">操作轨迹</h3>
+        <el-table :data="trails" size="small" border empty-text="没有操作记录">
+          <el-table-column v-for="col in trailCols" :key="col"
+                           :label="col" :prop="col" min-width="140" show-overflow-tooltip />
+        </el-table>
+
+        <el-alert
+          v-if="!loading && !footprints.length && !trails.length"
+          class="la-empty"
+          type="success"
+          :closable="false"
+          show-icon
+          title="未发现关联痕迹"
+          description="这把密钥没有被分发过，也没有留下操作记录 —— 影响范围为空。"
+        />
+      </template>
+    </el-card>
+  </div>
+</template>
+
+<script setup>
+import { onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import { getKeymanageAnalysis } from '@/api/lifecycle/lifecycle'
+
+const route = useRoute()
+const keyId = ref('')
+const loading = ref(false)
+const base = ref(null)
+const footprints = ref([])
+const trails = ref([])
+
+// 列名从数据自身推导：后端返回的是 Map 列表，字段名由查询决定，
+// 前端写死列会在后端调整字段时静默变成空表。
+const footprintCols = ref([])
+const trailCols = ref([])
+
+/** 兼容 snake_case 与 camelCase：后端不同接口的命名并不统一 */
+const pick = (obj, ...keys) => {
+  for (const k of keys) {
+    const v = obj?.[k]
+    if (v !== undefined && v !== null && v !== '') return v
+  }
+  return ''
+}
+
+const norm = (r) => {
+  const o = {}
+  Object.entries(r || {}).forEach(([k, v]) => {
+    o[k] = (v === null || v === undefined) ? '' : String(v)
+  })
+  return o
+}
+
+async function load() {
+  const id = String(keyId.value || '').trim()
+  if (!id) return
+  loading.value = true
+  base.value = null
+  footprints.value = []
+  trails.value = []
+  footprintCols.value = []
+  trailCols.value = []
+  try {
+    const res = await getKeymanageAnalysis(id)
+    if (res?.code && res.code !== 200) {
+      ElMessage.error(res.msg || '分析失败')
+      return
+    }
+    const d = res?.data || res || {}
+    base.value = d.baseInfo || null
+    footprints.value = (d.distributeFootprints || []).map(norm)
+    trails.value = (d.operationTrails || []).map(norm)
+    footprintCols.value = footprints.value.length ? Object.keys(footprints.value[0]) : []
+    trailCols.value = trails.value.length ? Object.keys(trails.value[0]) : []
+  } catch (error) {
+    ElMessage.error(`分析失败：${error.message}`)
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(() => {
+  const q = route.query.keyId
+  if (q) {
+    keyId.value = String(q)
+    load()
+  }
+})
+</script>
+
+<style scoped>
+.la-header { display: flex; align-items: center; justify-content: space-between; }
+.la-header h2 { margin: 0; font-size: 18px; }
+.la-query { display: flex; gap: 8px; }
+.la-base { margin-bottom: 20px; }
+.la-title { margin: 20px 0 10px; font-size: 14px; font-weight: 600; }
+.la-empty { margin-top: 16px; }
+</style>

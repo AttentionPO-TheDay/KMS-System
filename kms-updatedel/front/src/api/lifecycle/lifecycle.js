@@ -69,6 +69,34 @@ export function getKeymanageAnalysis(keyId) {
   })
 }
 
+/**
+ * 阶段 4（文档 §5.2）：某逻辑密钥的历史版本列表。
+ *
+ * 返回**不含当前版本** —— 当前版本在 keymanage 表里（走 getKeymanage），
+ * 历史快照在版本历史表里。要看完整版本序列，需把两者拼起来。
+ */
+export function getKeyVersionHistory(keyId) {
+  return request({
+    url: '/lifecycle/keymanage/' + keyId + '/versions',
+    method: 'get'
+  })
+}
+
+/**
+ * 阶段 7（文档 §8.1 + §8.2）：单把密钥的健康检查。
+ *
+ * 返回 { health, findings[], observations[] }：
+ *   health       OK / SUSPICIOUS / REVOKED
+ *   findings     命中的规则，每条带 rule/severity/message/advice
+ *   observations 原始观测值，供人工核对（不参与判定）
+ */
+export function getKeyHealth(keyId) {
+  return request({
+    url: '/lifecycle/keymanage/health/' + keyId,
+    method: 'get'
+  })
+}
+
 // 说明：原此处有 getComParam()，POST /lifecycle/keymanage/comparam。
 // 该端点从未在 kms-updatedel/java-backend 中实现（已核对全部 controller），
 // 且全仓库无任何调用方，属死契约，故移除。
