@@ -108,6 +108,11 @@ __pycache__/
 /kms-ops/tests/out-*/
 # FISCO 工具链二进制（29MB，可重新获取；构建与部署脚本均不引用它）
 /kms-ops/fisco/fisco-bcos.bin
+# 设计文档目录（2026-09-27 用户决定不纳入版本库）。
+# 文件保留在本地，只是不进仓库；如需查阅用回滚点：
+#   git checkout pre-cleanup-20260926 -- doc/
+# ⚠️ 只根目录的 doc/，不要误伤 kms-generate/docs/（那是代码模块的一部分）
+/doc/
 /kms-ops/nginx/logs/
 /kms-ops/runtime/
 /kms-ops/front/generate/
