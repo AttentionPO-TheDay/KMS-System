@@ -7,6 +7,9 @@ import hashlib
 import numpy as np
 from typing import Tuple, Dict, Any, Optional
 from pathlib import Path
+
+# 载荷层：新数据用国密 SM4（16 字节），历史数据按密钥长度/信封标记回退 AES-256（决策 D3）
+from .sm4_crypto import PAYLOAD_ALGORITHM_SM4, PayloadCipher
 logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent.parent
 FALCON_512_DLL = BASE_DIR / "falcon" / "falcon512.dll"
@@ -117,6 +120,13 @@ class RealFalconSignature:
         else:
             return self.demo_impl.verify(signature, message, public_key)
 class RealAESCipher:
+    """载荷加解密（历史类名保留，实现已随 D3 切到 SM4）。
+
+    `crypto_utils.AESCrypto` 已改为委托 `sm4_crypto.PayloadCipher`：
+    16 字节密钥走 SM4-GCM，32 字节走历史 AES-256-GCM。因此本类无需单独改动，
+    但名字已名不副实 —— 新代码请直接用 `PayloadCipher`。
+    """
+
     def __init__(self):
         pass
     def encrypt(self, data: bytes, key: bytes) -> Tuple[bytes, bytes]:
@@ -364,8 +374,9 @@ class BlockchainBasedCertificatelessFalcon:
                     'message': '接收方Falcon公钥为空'
                 }
             logger.info(f" [Falcon] 接收方公钥长度: {len(receiver_falcon_pk)} 字符")
-            session_key = os.urandom(32)
-            logger.info(f" [Falcon] AES会话密钥生成成功，长度: {len(session_key)}")
+            # 会话密钥 = 载荷密钥：D3 后是 SM4 的 16 字节（原为 AES-256 的 32 字节）
+            session_key = PayloadCipher.generate_key()
+            logger.info(f" [Falcon] SM4 会话密钥生成成功，长度: {len(session_key)}")
             # 自动从公钥中检测安全级别
             falcon_service = FalconAESSessionKeyEncryption()
             enc_result = falcon_service.encrypt_aes_key_with_falcon(
@@ -556,14 +567,21 @@ class BlockchainBasedCertificatelessFalcon:
                     'message': f'Kyber KEM encaps失败: {str(e)}'
                 }
             partial_key_json = json.dumps(partial_key_data).encode('utf-8')
-            encrypted_partial_key, nonce_tag = self.aes.encrypt(partial_key_json, kyber_shared_secret)
-            logger.info(f"[KGC] 部分私钥加密成功")
+            # 载荷层按 D3 用 SM4：KEK 从 Kyber 共享秘密取前 16 字节。
+            # （原先是 AES-256 + 32 字节 KEK；信封里的 `payload_algorithm` 让读取端
+            #   能区分新老数据 —— `key_update_service` 的两个解密点据此分派。）
+            payload_kek = PayloadCipher.kek_from_shared_secret(PAYLOAD_ALGORITHM_SM4, kyber_shared_secret)
+            encrypted_partial_key, nonce_tag = PayloadCipher.encrypt_with(
+                PAYLOAD_ALGORITHM_SM4, partial_key_json, payload_kek
+            )
+            logger.info("[KGC] 部分私钥加密成功（SM4-GCM）")
             encrypted_package = {
                 'kyber_ciphertext': base64.b64encode(kyber_ciphertext).decode('utf-8'),
                 'encrypted_partial_key': base64.b64encode(encrypted_partial_key).decode('utf-8'),
                 'nonce_tag': base64.b64encode(nonce_tag).decode('utf-8'),
                 'node_id': node_id,
-                'algorithm': 'CertificatelessKyberV2'
+                'algorithm': 'CertificatelessKyberV2',
+                'payload_algorithm': PAYLOAD_ALGORITHM_SM4,
             }
             elapsed = time.time() - start_time
             logger.info(f"[KGC] Kyber V2部分私钥生成并加密完成，耗时: {elapsed:.3f}秒")

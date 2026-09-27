@@ -30,6 +30,15 @@ public interface KeyOperationRecordMapper {
                          @Param("verifyStatus") String verifyStatus,
                          @Param("verifyMessage") String verifyMessage);
 
+    /**
+     * 写入单条记录的 Merkle 证明路径。
+     *
+     * @param recordId  记录主键
+     * @param proofPath 以 {@code |} 分隔的证明路径
+     * @return 影响行数
+     */
+    int updateProofPath(@Param("recordId") Long recordId, @Param("proofPath") String proofPath);
+
     int markReceived(@Param("recordId") Long recordId, @Param("userId") Long userId);
 
     KeyOperationRecord selectKeyOperationRecordById(Long recordId);

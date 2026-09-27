@@ -166,18 +166,39 @@ getCode();
   justify-content: center;
   align-items: center;
   height: 100%;
+  position: relative;
   background-image: url("../assets/images/login-background.jpg");
   background-size: cover;
+  background-position: center;
 }
+
+/* 背景为亮色调实景照，加一层压暗叠加以保证标题/页脚文字对比度 */
+.register::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.35);
+  pointer-events: none;
+}
+
+.register > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* 标题位于白色注册卡片内部，故用深色文字（此前误设为反色白字） */
 .title {
   margin: 0px auto 30px auto;
   text-align: center;
-  color: #707070;
+  color: var(--kms-text-primary);
+  font-weight: 600;
 }
 
 .register-form {
-  border-radius: 6px;
-  background: #ffffff;
+  border-radius: var(--kms-radius-lg);
+  background: var(--kms-surface-1);
+  border: 1px solid var(--kms-border);
+  box-shadow: var(--kms-shadow-lg);
   width: 400px;
   padding: 25px 25px 5px 25px;
   .el-input {
@@ -195,7 +216,7 @@ getCode();
 .register-tip {
   font-size: 13px;
   text-align: center;
-  color: #bfbfbf;
+  color: var(--kms-text-secondary);
 }
 .register-code {
   width: 33%;
@@ -213,8 +234,9 @@ getCode();
   bottom: 0;
   width: 100%;
   text-align: center;
-  color: #fff;
-  font-family: Arial;
+  color: var(--kms-text-inverse);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  font-family: var(--kms-font-sans);
   font-size: 12px;
   letter-spacing: 1px;
 }

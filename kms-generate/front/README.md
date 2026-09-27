@@ -1,5 +1,7 @@
 # KMS Generate Front
 
+> **已退役**：本前端不再构建、也不再由网关提供（`/generate/` 现返回 404），详见 [RETIRED.md](./RETIRED.md)；下方内容仅作历史存档。
+
 密钥生成系统管理员前端，基于 RuoYi-Vue3 构建。
 
 ## 当前定位
@@ -28,9 +30,12 @@
 
 ## 开发配置
 
-1. Vite 开发端口：`81`
+1. Vite 开发端口：`82`
+   （此前为 `81`，与 `kms-user`、`kms-updatedel` 冲突导致三者无法同时启动；
+   现分配为 kms-user 81 / kms-generate 82 / kms-updatedel 83 / kms-acceptance 5176）
 2. 开发环境 `VITE_APP_BASE_API='/generate-api'`
 3. 当前 `vite.config.js` 内置 `/generate-api -> http://localhost:9081` 代理
+4. `vite.config.js` 内含 `@tokens` 别名，指向仓库根目录 `design-tokens/`（共享设计令牌）
 
 ## 说明
 

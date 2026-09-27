@@ -35,9 +35,14 @@ type Keymanage struct {
 }
 
 // KeyEnrollPayload Kafka 消息协议结构
+//
+// 注意：这里**不再有 raw_password 字段**。
+// 历史上它把用户的**明文口令**随密钥材料一起投递到 Kafka（PLAINTEXT），
+// 而消费端 GenerateKafkaConsumer 早已明确忽略该字段（只打印一条"已忽略"的告警）。
+// 也就是说：它没有任何用途，却让明文口令经过了一条本不必要的链路。
+// 现已从协议中移除；消费端对旧消息里多出来的该字段是无害的（未知字段被忽略）。
 type KeyEnrollPayload struct {
 	RawUser      string    `json:"raw_user"`
-	RawPassword  string    `json:"raw_password"`
 	GeneratedKey Keymanage `json:"generated_key"`
 	ActionType   string    `json:"action_type"`
 }

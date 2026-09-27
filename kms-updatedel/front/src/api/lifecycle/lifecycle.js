@@ -69,14 +69,10 @@ export function getKeymanageAnalysis(keyId) {
   })
 }
 
-// 获取公共参数
-export function getComParam(data) {
-  return request({
-    url: '/lifecycle/keymanage/comparam',
-    method: 'post',
-    data: data
-  })
-}
+// 说明：原此处有 getComParam()，POST /lifecycle/keymanage/comparam。
+// 该端点从未在 kms-updatedel/java-backend 中实现（已核对全部 controller），
+// 且全仓库无任何调用方，属死契约，故移除。
+// 公共参数应由生成系统提供：POST /generate/keymanage/comparam。
 
 // 新增密钥管理
 export function addKeymanage(data) {

@@ -31,6 +31,12 @@ public class KeyOperationRecord {
     private String commitment;
     private String consistencyHash;
     private String batchRoot;
+    /**
+     * Merkle 证明路径：从该叶子到根的每一层兄弟哈希与方向，
+     * 形如 {@code ["R:<hash>", "L:<hash>", "ROOT:<hash>"]}，以 {@code |} 分隔存储。
+     * 验证方可仅凭本字段 + 叶子值 + batchRoot 独立重算，无需查库。
+     */
+    private String proofPath;
     private String verifyStatus;
     private String verifyMessage;
     private String resultMessage;

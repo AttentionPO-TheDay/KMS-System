@@ -1,27 +1,6 @@
 <template>
   <div class="app-container">
-    <el-alert
-      title="密钥自动更新管理"
-      type="info"
-      :closable="false"
-      style="margin-bottom: 20px;"
-    >
-      <template #default>
-        <p>您可以在此管理密钥的自动更新状态</p>
-        <el-button
-          v-if="showRollbackButton"
-          type="warning"
-          size="small"
-          icon="RefreshLeft"
-          @click="handleRollback"
-          style="margin-top: 10px;"
-        >
-          操作完成，回退权限
-        </el-button>
-      </template>
-    </el-alert>
-
-    <el-form :model="queryParams" ref="queryRef" :inline="true" v-show="showSearch" label-width="88px">
+<el-form :model="queryParams" ref="queryRef" :inline="true" v-show="showSearch" label-width="88px">
       <el-form-item label="密钥名称" prop="keyName">
         <el-input
           v-model="queryParams.keyName"
@@ -169,7 +148,7 @@ function handleRollback() {
 
       userStore.getInfo().then(() => {
         setTimeout(() => {
-          proxy.$router.push({ path: `${import.meta.env.BASE_URL}index` }).then(() => {
+          proxy.$router.push({ path: '/index' }).then(() => {
             window.location.reload();
           });
         }, 1000);
@@ -183,7 +162,8 @@ function handleRollback() {
 onMounted(() => {
   if (userStore.roleLevel > 0) {
     proxy.$message.warning('您没有权限访问此页面');
-    proxy.$router.push({ path: `${import.meta.env.BASE_URL}index` });
+    // 路径不带 /updatedel 前缀：router 的 base 会自动拼接，手写前缀会翻倍成 404。
+    proxy.$router.push({ path: '/index' });
     return;
   }
   checkPendingRollback();

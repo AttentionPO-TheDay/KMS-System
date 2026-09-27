@@ -1,5 +1,5 @@
 <template>
-  <div class="proof-wrapper glass-panel">
+  <div class="proof-wrapper">
     <div class="panel-header">
       <div>
         <h2>树型更新与半诚实证明可视化测试</h2>
@@ -30,8 +30,8 @@
       <button class="btn-primary cyber-btn" :disabled="proofLoading" @click="runProofVisualTest">
         <span class="cyber-btn-text">{{ proofLoading ? '执行中...' : '执行可视化测试' }}</span>
       </button>
-      <button class="btn-ghost" @click="loadProofRuns">↻</button>
-      <p v-if="error" class="error-msg">⚠️ {{ error }}</p>
+      <button class="btn-ghost" @click="loadProofRuns">刷新</button>
+      <p v-if="error" class="error-msg">{{ error }}</p>
     </div>
 
     <div v-if="latestProofRun" class="proof-grid">
@@ -104,7 +104,7 @@
     </div>
     
     <div v-else class="empty-state">
-      <div class="empty-icon">⚛️</div>
+      <div class="empty-icon" aria-hidden="true"></div>
       <p>证明网络空闲中。配置 Batch Size 后发起 Inject 指令。</p>
     </div>
   </div>
@@ -172,13 +172,13 @@ async function runProofVisualTest() {
 
 <style scoped>
 .proof-wrapper { grid-column: 1 / -1; margin-bottom: 24px; }
-.subtitle { color: #8b9eb3; margin-top: 8px; font-size: 14px; }
+.subtitle { color: var(--kms-text-tertiary); margin-top: 8px; font-size: 14px; }
 
 .tech-bar {
   display: flex;
   align-items: center;
   gap: 16px;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--kms-surface-3);
   padding: 16px;
   border-radius: 12px;
   margin-top: 20px;
@@ -192,7 +192,7 @@ async function runProofVisualTest() {
   margin: 0;
 }
 .small-input { width: 80px; }
-.error-msg { color: #ff4d4f; font-size: 13px; margin: 0; }
+.error-msg { color: var(--kms-danger-strong); font-size: 13px; margin: 0; }
 
 .proof-grid {
   display: grid;
@@ -200,8 +200,8 @@ async function runProofVisualTest() {
   gap: 24px;
 }
 .inner-glass {
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: var(--kms-surface-2);
+  border: 1px solid var(--kms-surface-3);
   border-radius: 12px;
   padding: 24px;
 }
@@ -211,16 +211,16 @@ async function runProofVisualTest() {
   align-items: center;
   margin-bottom: 12px;
 }
-.proof-card-head h3 { margin: 0; font-size: 16px; color: #e2e8f0; }
-.desc { color: #64748b; font-size: 13px; margin-bottom: 20px; }
+.proof-card-head h3 { margin: 0; font-size: 16px; color: var(--kms-text-primary); }
+.desc { color: var(--kms-text-tertiary); font-size: 13px; margin-bottom: 20px; }
 
 .hash {
   font-family: 'JetBrains Mono', monospace;
-  color: #00f2fe;
+  color: var(--kms-brand-text);
 }
 .tree-root-box {
-  background: rgba(0, 242, 254, 0.1);
-  border: 1px dashed rgba(0, 242, 254, 0.3);
+  background: var(--kms-brand-subtle);
+  border: 1px dashed var(--kms-brand-border);
   padding: 12px;
   border-radius: 8px;
   display: flex;
@@ -231,7 +231,7 @@ async function runProofVisualTest() {
   margin-bottom: 12px;
 }
 .parent-node {
-  background: rgba(255,255,255,0.05);
+  background: var(--kms-surface-3);
   padding: 8px 12px;
   display: flex;
   justify-content: space-between;
@@ -243,17 +243,17 @@ async function runProofVisualTest() {
   grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
   gap: 8px;
   padding: 12px;
-  background: rgba(0,0,0,0.2);
+  background: var(--kms-surface-2);
   border-radius: 0 0 6px 6px;
 }
 .leaf-node {
-  background: rgba(255,255,255,0.05);
+  background: var(--kms-surface-3);
   padding: 8px;
   border-radius: 4px;
   text-align: center;
 }
-.leaf-id { font-size: 11px; color: #fff; margin-bottom: 4px; }
-.leaf-path { font-size: 10px; color: #64748b; font-family: monospace; }
+.leaf-id { font-size: 11px; color: var(--kms-text-primary); margin-bottom: 4px; }
+.leaf-path { font-size: 10px; color: var(--kms-text-tertiary); font-family: monospace; }
 
 .proof-flow {
   display: grid;
@@ -262,26 +262,26 @@ async function runProofVisualTest() {
   margin-bottom: 20px;
 }
 .flow-item {
-  background: rgba(0,0,0,0.3);
+  background: var(--kms-surface-3);
   padding: 12px;
   border-radius: 8px;
   display: flex;
   flex-direction: column;
 }
-.flow-item span { font-size: 11px; color: #8b9eb3; margin-bottom: 4px; }
+.flow-item span { font-size: 11px; color: var(--kms-text-tertiary); margin-bottom: 4px; }
 .flow-item strong { font-size: 15px; }
 
 .record-row {
   display: flex;
   justify-content: space-between;
   padding: 10px;
-  border-bottom: 1px solid rgba(255,255,255,0.05);
+  border-bottom: 1px solid var(--kms-surface-3);
   align-items: center;
 }
-.record-id { font-size: 13px; color: #e2e8f0; font-family: monospace; }
+.record-id { font-size: 13px; color: var(--kms-text-primary); font-family: monospace; }
 .record-hashes { display: flex; gap: 12px; }
-.hash-tag { font-size: 11px; color: #64748b; }
-.text-info { color: #00f2fe; }
+.hash-tag { font-size: 11px; color: var(--kms-text-tertiary); }
+.text-info { color: var(--kms-brand-text); }
 
 @media (max-width: 1024px) {
   .proof-grid { grid-template-columns: 1fr; }

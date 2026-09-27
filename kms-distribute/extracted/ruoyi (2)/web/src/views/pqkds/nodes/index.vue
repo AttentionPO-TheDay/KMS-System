@@ -102,7 +102,7 @@
         </el-table-column>
         <el-table-column label="Kyber密钥" width="100">
           <template #default="scope">
-            <el-tag v-if="scope.row.kyber_public_key" type="success" size="small">
+            <el-tag v-if="scope.row.kyber_key_ready" type="success" size="small">
               已生成
             </el-tag>
             <el-tag v-else type="warning" size="small">
@@ -112,7 +112,7 @@
         </el-table-column>
         <el-table-column label="Falcon密钥" width="100">
           <template #default="scope">
-            <el-tag v-if="scope.row.falcon_public_key" type="success" size="small">
+            <el-tag v-if="scope.row.falcon_key_ready" type="success" size="small">
               已生成
             </el-tag>
             <el-tag v-else type="warning" size="small">
@@ -134,7 +134,7 @@
                 测试会话密钥
               </el-button>
               <el-button
-                v-if="!scope.row.falcon_public_key"
+                v-if="!scope.row.falcon_key_ready"
                 type="warning"
                 size="small"
                 @click="generateFalconKeys(scope.row)"
@@ -1012,9 +1012,11 @@ const sessionForm = reactive({
 
 // 计算属性
 const availableNodes = computed(() => {
-  return nodeList.value.filter(node => 
-    node.node_id !== sessionForm.from_node?.node_id && 
-    node.falcon_public_key
+  return nodeList.value.filter(node =>
+    node.node_id !== sessionForm.from_node?.node_id &&
+    // 列表接口（NodeListSerializer）只回就绪布尔值，不带公钥本身 ——
+    // falcon_public_key 实测 7.8MB/节点，列表带上它会撑爆响应。
+    node.falcon_key_ready
   )
 })
 

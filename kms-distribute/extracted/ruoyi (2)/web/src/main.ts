@@ -7,6 +7,13 @@ import other from '/@/utils/other';
 import '/@/assets/style/tailwind.css'; // 先引入tailwind css, 以免element-plus冲突
 import ElementPlus from 'element-plus';
 import 'element-plus/dist/index.css';
+// 共享设计令牌：必须在 Element 样式之后、自有主题之前引入，
+// 使 --el-* 变量被令牌覆盖，从而与其余 4 个前端呈现同一套浅色企业级配色。
+// fonts 需最先加载（自托管 Inter + Noto Sans SC）。
+// 注意：此处必须写全 .scss 扩展名，本工程的 vite 不会为无扩展名路径解析 scss。
+import '@tokens/fonts.scss';
+import '@tokens/tokens.scss';
+import '@tokens/element-light.scss';
 import '/@/theme/index.scss';
 import mitt from 'mitt';
 import VueGridLayout from 'vue-grid-layout';

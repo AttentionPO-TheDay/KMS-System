@@ -18,13 +18,17 @@ export default defineConfig(({ mode, command }) => {
         // 设置路径
         '~': path.resolve(__dirname, './'),
         // 设置别名
-        '@': path.resolve(__dirname, './src')
+        '@': path.resolve(__dirname, './src'),
+        // 共享设计令牌包（仓库根目录 design-tokens/），5 个前端统一引用
+        '@tokens': path.resolve(__dirname, '../../design-tokens')
       },
       // https://cn.vitejs.dev/config/#resolve-extensions
       extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json', '.vue']
     },
     // vite 相关配置
     server: {
+      // 端口分配（避免与其它前端 dev server 冲突，可同时启动联调）：
+      //   kms-user 81 / kms-generate 82 / kms-updatedel 83 / kms-acceptance 5176
       port: 81,
       host: true,
       open: true,
@@ -40,10 +44,12 @@ export default defineConfig(({ mode, command }) => {
           changeOrigin: true,
           rewrite: (p) => p.replace(/^\/lifecycle-api/, '')
         },
-        '/distribute-api': {
-          target: 'http://localhost:8083',
-          changeOrigin: true,
-          rewrite: (p) => p.replace(/^\/distribute-api/, '')
+        // 分发模块（Django）走网关的 /pqkds-api/，见 §5.1。
+        // 原先这里还有一条 `/distribute-api` → 8083 的代理，指向已被 P5 删除的旧分发后端
+        // （kms-distribute Java + kms.key_distribute_record）。
+        '/pqkds-api': {
+          target: 'http://localhost:8001',
+          changeOrigin: true
         }
       }
     },

@@ -2,6 +2,7 @@ package com.ruoyi.updatedel.service;
 
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
+import com.ruoyi.common.crypto.KgcMasterSecret;
 import com.ruoyi.updatedel.contracts.KeyEvidence;
 import com.ruoyi.updatedel.domain.Keymanage;
 import com.ruoyi.updatedel.mapper.KeymanageMapper;
@@ -251,7 +252,33 @@ public class UpdatedelChainService {
         }
     }
 
-    private String calculatePA(Keymanage keymanage) {
+    /**
+     * 计算无证书密钥的**加密目标点** {@code P_A}（16 进制、未压缩、130 字符、`04` 开头）。
+     *
+     * <h2>这是全系统唯一一份 P_A 推导，切勿另写第二份</h2>
+     * {@code P_A} 是用户**实际可解**的公钥点：客户端持有
+     * {@code d_A = (t_A + u) mod n}，而 {@code d_A·G = W_A + λ·P_pub}。
+     * 因此任何人若拿 {@code key_value} 里的 {@code finalPublicKey}（= {@code W_A}）
+     * 去加密，做出来的信封**谁都打不开** —— 连用户自己也不行。
+     * 这正是计划 §3.2.3 用实验纠正过的那个错误，也是本方法被提为 public、
+     * 由 {@link com.ruoyi.updatedel.service.UserPublicKeyService} 对外统一提供的原因：
+     * 分发模块必须拿到**这个**点，而不是 {@code key_value} 里的任何一个字段。
+     *
+     * <p>两条分支：
+     * <ul>
+     *   <li><b>SM2</b>：{@code P_A = W_A + λ·P_pub}，其中
+     *       {@code λ = SM3(W_A_x || W_A_y || H_A)}，{@code P_pub = ms·G}。
+     *       <b>ms 必须按记录自己的 {@code ms_key_id} 取</b>，否则轮换过 ms 之后
+     *       历史记录会算出与链上存证不一致的点。</li>
+     *   <li><b>SSCL</b>：{@code P_A = u_A + (e_A·m)·G}，{@code e_A} 直接取自记录里存的
+     *       {@code SSCLEA} —— 它已经把 ms 的影响包含在内，所以这一支**不需要 ms**，
+     *       也天然不受轮换影响。</li>
+     * </ul>
+     *
+     * @return 计算失败（缺字段、点不在曲线上、算法不支持等）时返回 {@code null}，
+     *         调用方必须把它当作错误处理，**不得**回退到 {@code finalPublicKey}
+     */
+    public String calculatePA(Keymanage keymanage) {
         try {
             if (keymanage.getKeyValue() == null) {
                 return null;
@@ -270,7 +297,7 @@ public class UpdatedelChainService {
             if (wA == null) {
                 return null;
             }
-            return calculateSM2FinalPublicKey(keymanage.getUserName(), wA);
+            return calculateSM2FinalPublicKey(keymanage.getUserName(), wA, keymanage.getMsKeyId());
         } catch (Exception e) {
             logDetailFailure("Failed to calculate PA", keymanage.getKeyId(), e);
             return null;
@@ -304,11 +331,15 @@ public class UpdatedelChainService {
         return Hex.toHexString(pa.getEncoded(false)).toUpperCase();
     }
 
-    private String calculateSM2FinalPublicKey(String userId, String uAStr) {
+    private String calculateSM2FinalPublicKey(String userId, String uAStr, String msKeyId) {
         org.bouncycastle.math.ec.custom.gm.SM2P256V1Curve curve = new org.bouncycastle.math.ec.custom.gm.SM2P256V1Curve();
         BigInteger n = curve.getOrder();
         ECPoint g = curve.createPoint(SM2_GX, SM2_GY);
-        BigInteger ms = new BigInteger("6BDD93B210F79415FE0F6388C1C932C208319FF7D7E99C972B3535C9F19A9FF9", 16);
+        // 按**记录自己那一版**的 ms 取密钥，而不是当前启用版本。
+        // 这是"轮换 ms 不再破坏历史可审计性"的关键一步：
+        // 用启用版本算出来的 P_A 与链上旧存证必然不一致，历史记录会当场变得无法验证。
+        // msKeyId 为空表示早期记录 → KgcMasterSecret 内部按 ms_v1 处理。
+        BigInteger ms = new BigInteger(KgcMasterSecret.getById(msKeyId), 16);
         ECPoint pPub = g.multiply(ms).normalize();
 
         if (uAStr.startsWith("04")) {

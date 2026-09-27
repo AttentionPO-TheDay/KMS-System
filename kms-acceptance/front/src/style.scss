@@ -1,0 +1,222 @@
+/* ============================================================================
+ * KMS 验收与压测前端 · 全局样式（浅色企业级）
+ * ----------------------------------------------------------------------------
+ * 颜色/间距/圆角一律引用 design-tokens 令牌，不再自建一套暗色配色。
+ *
+ * 改造前：本文件自带一套暗色科技风（--bg-dark #020617 / --accent-cyan #00f2fe 等），
+ * 与 kms-user 的 #050507 / #00e5ff 又不相同，5 个前端共 4 套配色。
+ *
+ * 兼容策略：保留原有变量名，但改为指向共享令牌的别名。
+ * 这样 vue 组件里既有的 var(--accent-cyan) 等引用无需逐个替换即可生效，
+ * 后续可逐步改为直接使用 --kms-*。
+ * ========================================================================== */
+
+@import '@tokens/fonts';
+@import '@tokens/tokens';
+@import '@tokens/base';
+@import '@tokens/element-light';
+
+:root {
+  /* ---------- 旧变量名 → 共享令牌（别名，勿在此写具体色值） ---------- */
+  --bg-dark: var(--kms-surface-page);
+  --text-primary: var(--kms-text-primary);
+  --text-secondary: var(--kms-text-secondary);
+  --accent-cyan: var(--kms-brand);
+  --accent-blue: var(--kms-brand);
+  --border-subtle: var(--kms-border);
+  --panel-bg: var(--kms-surface-1);
+  --input-bg: var(--kms-surface-1);
+
+  font-family: var(--kms-font-sans);
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--kms-surface-page);
+  color: var(--kms-text-primary);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  /* 移除暗色网格背景：浅色企业级风格下会显得杂乱 */
+}
+
+/* ---------- 面板 ---------- */
+.glass-panel {
+  background: var(--kms-surface-1);
+  border: 1px solid var(--kms-border);
+  border-radius: var(--kms-radius);
+  box-shadow: var(--kms-shadow-sm);
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--kms-space-6);
+  padding-bottom: var(--kms-space-4);
+  border-bottom: 1px solid var(--kms-border);
+}
+
+.panel-header h2 {
+  margin: 0;
+  font-size: var(--kms-font-size-lg);
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--kms-text-primary);
+}
+
+/* ---------- 表单 ---------- */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--kms-space-2);
+  margin-bottom: var(--kms-space-4);
+}
+
+.field span {
+  font-size: var(--kms-font-size-sm);
+  font-weight: 600;
+  color: var(--kms-text-secondary);
+  letter-spacing: 0.02em;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--kms-space-4);
+}
+
+.field-row.triple {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+.tech-input,
+.select-wrapper select,
+textarea {
+  background: var(--kms-surface-1);
+  border: 1px solid var(--kms-border-strong);
+  color: var(--kms-text-primary);
+  padding: var(--kms-space-3) var(--kms-space-4);
+  border-radius: var(--kms-radius);
+  font-size: var(--kms-font-size-base);
+  font-family: inherit;
+  transition: border-color var(--kms-transition-fast), box-shadow var(--kms-transition-fast);
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.tech-input.code {
+  font-family: var(--kms-font-mono);
+  font-size: var(--kms-font-size-sm);
+}
+
+.tech-input:focus,
+.select-wrapper select:focus,
+textarea:focus {
+  border-color: var(--kms-brand);
+  box-shadow: 0 0 0 2px var(--kms-brand-subtle);
+}
+
+/* ---------- 徽标 ---------- */
+.badge {
+  padding: 2px var(--kms-space-3);
+  border-radius: var(--kms-radius-pill);
+  font-size: var(--kms-font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  background: var(--kms-surface-3);
+  border: 1px solid var(--kms-border);
+  color: var(--kms-text-secondary);
+}
+
+.badge.ok,
+.badge.healthy {
+  background: var(--kms-success-subtle);
+  color: var(--kms-success-strong);
+  border-color: var(--kms-success-border);
+}
+
+.badge.warn {
+  background: var(--kms-warning-subtle);
+  color: var(--kms-warning-strong);
+  border-color: var(--kms-warning-border);
+}
+
+.badge.error {
+  background: var(--kms-danger-subtle);
+  color: var(--kms-danger-strong);
+  border-color: var(--kms-danger-border);
+}
+
+/* ---------- 按钮 ---------- */
+button {
+  cursor: pointer;
+  border: none;
+  font-family: inherit;
+  font-weight: 600;
+  transition: all var(--kms-transition-fast);
+  border-radius: var(--kms-radius);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  padding: var(--kms-space-3) var(--kms-space-6);
+  background: var(--kms-brand-fill);
+  color: var(--kms-text-on-brand);
+  font-size: var(--kms-font-size-base);
+  box-shadow: var(--kms-shadow-sm);
+}
+
+.btn-primary:not(:disabled):hover {
+  background: var(--kms-brand-fill-hover);
+  box-shadow: var(--kms-shadow);
+}
+
+.btn-ghost {
+  padding: var(--kms-space-3) var(--kms-space-6);
+  background: var(--kms-surface-1);
+  color: var(--kms-brand-text);
+  border: 1px solid var(--kms-brand);
+  font-size: var(--kms-font-size-base);
+}
+
+.btn-ghost:not(:disabled):hover {
+  background: var(--kms-brand-subtle);
+}
+
+/* ---------- 提示框 ---------- */
+.info-box {
+  background: var(--kms-info-subtle);
+  border-left: 3px solid var(--kms-brand);
+  padding: var(--kms-space-3) var(--kms-space-4);
+  border-radius: var(--kms-radius-sm);
+  margin-bottom: var(--kms-space-4);
+}
+
+.info-box p {
+  margin: 0 0 var(--kms-space-2) 0;
+  font-size: var(--kms-font-size-sm);
+  color: var(--kms-text-primary);
+}
+
+.info-box ul {
+  margin: 0;
+  padding-left: var(--kms-space-5);
+  font-size: var(--kms-font-size-xs);
+  color: var(--kms-text-secondary);
+}
+
+ul {
+  margin: 0;
+  padding: 0;
+}
+
+li {
+  margin-bottom: var(--kms-space-1);
+}

@@ -29,23 +29,14 @@
       <el-table-column label="申请用户" align="center" prop="userName" width="120" />
       <el-table-column label="当前等级" align="center" width="100">
         <template #default="scope">
-          <template v-if="scope.row.status === '1'">
-            <el-tag v-if="scope.row.requestLevel === 0" type="danger">管理员</el-tag>
-            <el-tag v-else-if="scope.row.requestLevel === 1" type="warning">中级用户</el-tag>
-            <el-tag v-else type="info">普通用户</el-tag>
-          </template>
-          <template v-else>
-            <el-tag v-if="scope.row.originalLevel === 0" type="danger">管理员</el-tag>
-            <el-tag v-else-if="scope.row.originalLevel === 1" type="warning">中级用户</el-tag>
-            <el-tag v-else type="info">普通用户</el-tag>
-          </template>
+          <el-tag :type="levelTagType(scope.row.status === '1' ? scope.row.requestLevel : scope.row.originalLevel)">
+            {{ levelText(scope.row.status === '1' ? scope.row.requestLevel : scope.row.originalLevel) }}
+          </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="申请等级" align="center" prop="requestLevel" width="100">
+      <el-table-column label="申请等级" align="center" width="100">
         <template #default="scope">
-          <el-tag v-if="scope.row.requestLevel === 0" type="danger">管理员</el-tag>
-          <el-tag v-else-if="scope.row.requestLevel === 1" type="warning">中级用户</el-tag>
-          <el-tag v-else type="info">普通用户</el-tag>
+          <el-tag :type="levelTagType(scope.row.requestLevel)">{{ levelText(scope.row.requestLevel) }}</el-tag>
         </template>
       </el-table-column>
       <el-table-column label="申请理由" align="center" prop="requestReason" :show-overflow-tooltip="true" />
@@ -103,8 +94,7 @@
           <el-input v-model="approveForm.userName" disabled />
         </el-form-item>
         <el-form-item label="申请等级">
-          <el-tag v-if="approveForm.requestLevel === 0" type="danger">管理员</el-tag>
-          <el-tag v-else-if="approveForm.requestLevel === 1" type="warning">中级用户</el-tag>
+          <el-tag :type="levelTagType(approveForm.requestLevel)">{{ levelText(approveForm.requestLevel) }}</el-tag>
         </el-form-item>
         <el-form-item label="申请理由">
           <el-input v-model="approveForm.requestReason" type="textarea" :rows="3" disabled />
@@ -138,13 +128,10 @@
         <el-descriptions-item label="申请用户">{{ currentRequest.userName }}</el-descriptions-item>
         <el-descriptions-item label="用户ID">{{ currentRequest.userId }}</el-descriptions-item>
         <el-descriptions-item label="原始等级">
-          <el-tag v-if="currentRequest.originalLevel === 0" type="danger">管理员</el-tag>
-          <el-tag v-else-if="currentRequest.originalLevel === 1" type="warning">中级用户</el-tag>
-          <el-tag v-else type="info">普通用户</el-tag>
+          <el-tag :type="levelTagType(currentRequest.originalLevel)">{{ levelText(currentRequest.originalLevel) }}</el-tag>
         </el-descriptions-item>
         <el-descriptions-item label="申请等级">
-          <el-tag v-if="currentRequest.requestLevel === 0" type="danger">管理员</el-tag>
-          <el-tag v-else-if="currentRequest.requestLevel === 1" type="warning">中级用户</el-tag>
+          <el-tag :type="levelTagType(currentRequest.requestLevel)">{{ levelText(currentRequest.requestLevel) }}</el-tag>
         </el-descriptions-item>
         <el-descriptions-item label="是否临时">
           <el-tag v-if="currentRequest.isTemp === 1" type="success">是</el-tag>
@@ -192,6 +179,19 @@ import { listPermissionRequests, approveRequest, rejectRequest } from "@/api/per
 
 const { proxy } = getCurrentInstance();
 
+/**
+ * 权限等级文案与标签色。
+ * Q2 / D13 已把角色收成 2 级：0=管理员、2=普通用户；
+ * 历史上的 1=「中级用户」随 PUBLIC_KEY_LIST 功能一并废弃。
+ * 这里用 `<= 0` 判定，避免再出现散落的 === 1 分支。
+ */
+function levelText(level) {
+  return Number(level) <= 0 ? '管理员' : '普通用户';
+}
+function levelTagType(level) {
+  return Number(level) <= 0 ? 'danger' : 'info';
+}
+
 const requestList = ref([]);
 const loading = ref(true);
 const showSearch = ref(true);
@@ -219,8 +219,7 @@ const approveForm = ref({
 
 const approveRules = {
   approveNote: [
-    { max: 500, message: "审批备注长度不能超过500个字符", trigger: "blur" }
-  ]
+    { max: 500, message: "审批备注长度不能超过500个字符", trigger: "blur" }  ]
 };
 
 const currentRequest = ref({});

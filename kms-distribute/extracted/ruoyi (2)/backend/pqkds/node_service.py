@@ -11,6 +11,13 @@ from .models import Node, SessionKey, FalconKeyPair
 from .optimized_keygen_service import OptimizedKeygenService
 from .blockchain_service import BlockchainService
 from .node_blockchain_upload_service import NodeBlockchainUploadService
+# 载荷层：新数据用国密 SM4，历史数据按密钥长度/信封形状回退到 AES-256（决策 D3）
+from .sm4_crypto import (
+    GCM_IV_BYTES,
+    LEGACY_AES_KEY_BYTES,
+    PayloadCipher,
+    SM4Crypto,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -251,6 +258,45 @@ class NodeService:
             self.node.status = 'kyber_uploaded'
             self.node.save()
 
+            # 顺带生成国密密钥（SM2 + SSCL）—— 2026-09-26 起。
+            # 这样新建的节点四种节点腿算法（Kyber / Falcon / 国密 SM2 / 国密 SSCL）里
+            # 国密那两种开箱可用。
+            # 失败只记日志、不阻断注册：节点没有国密密钥时，对应算法会在分发时报明确原因。
+            try:
+                gm_result = self.generate_gm_keys()
+                if gm_result.get('success'):
+                    logger.info(f"节点 {self.node_id} 国密密钥已随注册生成")
+                else:
+                    logger.warning(f"节点 {self.node_id} 国密密钥生成失败: {gm_result.get('message')}")
+            except Exception as gm_exc:  # noqa: BLE001
+                logger.warning(f"节点 {self.node_id} 国密密钥生成异常: {gm_exc}")
+            self.node.refresh_from_db()
+
+            # 顺带生成 Falcon 密钥 —— 2026-09-26 起（此前必须手动点「生成 Falcon 密钥」）。
+            #
+            # 为什么要自动生成：密钥池的 Falcon 路径要求**接收方**已有 Falcon 公钥，
+            # 否则直接拒绝。少了这一步，新建的演示节点在 Falcon 体系下不可用。
+            #
+            # 代价（本机实测，Falcon-512）：Falcon 本身 KGC 部分私钥 5.9s + 密钥对 1.9s，
+            # 加上写库（Falcon 公钥 7.8MB + 私钥 1.4MB）与上链等开销，
+            # **注册整体从约 2 秒变成约 18~22 秒**（改造前实测 21.7s，
+            # 停写 falcon_lattice_params 后 18.1s）。
+            # 前端必须为此显示"生成中"且抑制重复提交（见 views/nodes/index.vue 的创建对话框）。
+            #
+            # 与国密同样：失败只记日志、不阻断注册。Kyber 已经落库，节点是可用的，
+            # 缺 Falcon 时界面上仍有单节点/批量生成入口可补。
+            try:
+                falcon_result = self.generate_falcon_keys_v2()
+                if falcon_result.get('success'):
+                    logger.info(f"节点 {self.node_id} Falcon密钥已随注册生成")
+                else:
+                    logger.warning(
+                        f"节点 {self.node_id} Falcon密钥生成失败: {falcon_result.get('message')}"
+                    )
+            except Exception as falcon_exc:  # noqa: BLE001
+                logger.warning(f"节点 {self.node_id} Falcon密钥生成异常: {falcon_exc}")
+            self.node.refresh_from_db()
+
             try:
                 upload_result = self.upload_service.upload_node_registration(self.node)
                 if upload_result['success']:
@@ -262,9 +308,9 @@ class NodeService:
 
             return {
                 'success': True,
-                'message': f'节点 {self.node_id} Kyber密钥对生成成功，请点击生成Falcon密钥按钮继续',
+                'message': f'节点 {self.node_id} 密钥对生成成功（Kyber / Falcon / 国密 均已就绪）',
                 'node_id': self.node_id,
-                'status': 'kyber_uploaded',
+                'status': self.node.status,
                 'kyber_keygen_time': self.node.kyber_keygen_time.isoformat() if self.node.kyber_keygen_time else None,
                 'kyber_keygen_duration': round(self.node.kyber_keygen_duration, 4) if self.node.kyber_keygen_duration else None
             }
@@ -353,13 +399,6 @@ class NodeService:
                     json.dumps(falcon_sk_data).encode('utf-8')
                 ).decode('utf-8'))
 
-                lattice_params_json = json.dumps({
-                    'D_id': falcon_kp.get('D_id'),
-                    'S_id': falcon_kp.get('S_id'),
-                    'H_id': falcon_kp.get('H_id'),
-                    'security_level': security_level,
-                    'parameters': falcon_kp.get('parameters', {})
-                })
                 keygen_time = timezone.now()
 
                 logger.info(
@@ -373,13 +412,19 @@ class NodeService:
                     'message': f"Falcon密钥生成失败: {falcon_kp.get('error')}"
                 }
 
-            # 逐字段写入，避免单条 UPDATE 超过 max_allowed_packet
+            # 逐字段写入，避免单条 UPDATE 超过 max_allowed_packet。
+            #
+            # ⚠️ 这里**不再写 falcon_lattice_params**（2026-09-26）。
+            # 该列实测 10.2MB/节点，而全仓库没有任何读取方 —— 只有两个打印长度的
+            # 排障命令 fix_all_falcon_keys / fix_node_005_falcon 引用过它。
+            # 它的内容（D_id/S_id/H_id 与格参数）本来就重复自 falcon_private_key
+            # 与 KGC 部分私钥。写它是纯粹的浪费：实测写库 11 秒里它占了大头，
+            # 而 Falcon 计算本身只要 1.9 秒。
+            # 模型字段保留、历史数据保留，只是不再产生新的。
             _safe_update_node(self.node_id,
                 falcon_public_key=falcon_public_key_b64)
             _safe_update_node(self.node_id,
                 falcon_private_key=falcon_private_key_b64)
-            _safe_update_node(self.node_id,
-                falcon_lattice_params=lattice_params_json)
             _safe_update_node(self.node_id,
                 falcon_keygen_time=keygen_time,
                 falcon_keygen_duration=falcon_duration,
@@ -474,9 +519,9 @@ class NodeService:
             session_hash = hashlib.sha256(session_hash_input.encode()).hexdigest()[:32]
             session_id = f"sess_{session_hash}"
 
-            # Step 1: 生成随机 AES 会话密钥
-            aes_key = os.urandom(32)
-            logger.info(f"生成 AES 会话密钥: {len(aes_key)} bytes")
+            # Step 1: 生成随机会话密钥 —— D3 后是 SM4 的 16 字节（原为 AES-256 的 32 字节）
+            aes_key = PayloadCipher.generate_key()
+            logger.info(f"生成 SM4 会话密钥: {len(aes_key)} bytes")
 
             # Step 2: 获取目标节点安全级别并初始化 Falcon 加密
             target_security_level = int(getattr(target_node, 'falcon_security_level', '512') or '512')
@@ -592,9 +637,9 @@ class NodeService:
             session_hash = hashlib.sha256(session_hash_input.encode()).hexdigest()[:32]
             session_id = f"sess_{session_hash}"
 
-            # 第1步: 生成随机AES会话密钥
-            aes_session_key = os.urandom(32)
-            logger.info(f"[KyberCL] 生成AES会话密钥: {len(aes_session_key)} bytes")
+            # 第1步: 生成随机会话密钥 —— D3 后是 SM4 的 16 字节
+            aes_session_key = PayloadCipher.generate_key()
+            logger.info(f"[KyberCL] 生成 SM4 会话密钥: {len(aes_session_key)} bytes")
 
             # 第2步: 从无证书密钥数据中获取 A 和 u (公钥)
             cl_pk = _KyberCLKeyCache.get_cl_public_key(target_node.kyber_partial_key_data)
@@ -647,6 +692,68 @@ class NodeService:
             return {'success': False, 'message': f'Kyber KEM密钥协商失败: {str(e)}'}
 
     @ensure_db_connection
+    def generate_gm_keys(self) -> Dict[str, Any]:
+        """给节点生成**国密密钥对**（SM2 与 SSCL 各一对）。
+
+        为什么需要（2026-09-26）：节点腿原本只有抗量子（Kyber/Falcon），
+        于是"这次分发不用抗量子"在界面上无路可走。生成国密密钥后，
+        用户在「密钥分发」里可选「国密 SM2」或「国密 SSCL」，节点腿即走国密。
+
+        实现要点：
+          * 复用本仓库自带的 `sm2_crypto`（用户腿的 SM2/SSCL 封装也是它），不引入新依赖；
+          * 私钥是一个 32 字节标量，必须落在 [1, n-1] 内 —— 直接取随机 32 字节
+            有极小概率超出曲线阶，所以按 n 取模后 +1；
+          * **SSCL 与 SM2 用同一套曲线运算**（见 wrappers.py 里 SsclWrapper 的说明：
+            d_A 是 sm2p256v1 上的标量、P_A 是同一曲线上的点，差别只在密钥怎么派生），
+            所以这里生成的形状一致，只是分别存到两组字段里，互不混用。
+        """
+        import secrets
+        import time
+        from .sm2_crypto import SM2Crypto, SM2_CURVE
+
+        if self.node is None:
+            return {'success': False, 'message': f'节点 {self.node_id} 不存在'}
+
+        started = time.time()
+        order = int(SM2_CURVE.n)
+
+        def new_pair() -> tuple:
+            scalar = secrets.randbelow(order - 1) + 1  # 1 <= d <= n-1
+            private_hex = '%064x' % scalar
+            public_hex = SM2Crypto.public_key_of(private_hex)
+            if not SM2Crypto.is_valid_public_key(public_hex):
+                raise ValueError('生成的公钥未通过曲线校验')
+            return private_hex, public_hex
+
+        try:
+            gm_private, gm_public = new_pair()
+            sscl_private, sscl_public = new_pair()
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"节点 {self.node_id} 国密密钥生成失败: {exc}")
+            return {'success': False, 'message': f'国密密钥生成失败: {exc}'}
+
+        self.node.gm_public_key = gm_public
+        self.node.gm_private_key = gm_private
+        self.node.gm_keygen_time = timezone.now()
+        self.node.sscl_public_key = sscl_public
+        self.node.sscl_private_key = sscl_private
+        self.node.save(update_fields=[
+            'gm_public_key', 'gm_private_key', 'gm_keygen_time',
+            'sscl_public_key', 'sscl_private_key',
+        ])
+
+        duration = time.time() - started
+        logger.info(f"节点 {self.node_id} 国密密钥生成成功（SM2 + SSCL），耗时: {duration:.4f}秒")
+        return {
+            'success': True,
+            'message': f'国密密钥对生成成功（SM2 + SSCL），耗时: {duration:.4f}秒',
+            'node_id': self.node_id,
+            'public_key': gm_public,
+            'sscl_public_key': sscl_public,
+            'public_key_length': len(gm_public),
+            'duration_sec': round(duration, 4),
+        }
+
     def generate_falcon_keys_v2(self) -> Dict[str, Any]:
         try:
             import time
@@ -789,17 +896,6 @@ class NodeService:
                     json.dumps(falcon_private_key_data).encode('utf-8')
                 ).decode('utf-8'))
 
-                # 序列化 Falcon 格密码参数
-                lattice_params_json = json.dumps({
-                    'D_id': falcon_kp.get('D_id'),
-                    'S_id': falcon_kp.get('S_id'),
-                    'H_id': falcon_kp.get('H_id'),
-                    'algorithm': f'CertificatelessFalcon-{security_level}',
-                    'security_level': security_level,
-                    'node_id': self.node_id,
-                    'parameters': kp_params
-                })
-
                 keygen_time = timezone.now()
                 has_kyber = bool(self.node.kyber_public_key)
 
@@ -811,9 +907,12 @@ class NodeService:
                 _safe_update_node(self.node_id,
                     falcon_private_key=falcon_private_key_b64)
                 logger.info(f"[DB] falcon_private_key 写入完成 ({len(falcon_private_key_b64)} chars)")
-                _safe_update_node(self.node_id,
-                    falcon_lattice_params=lattice_params_json)
-                logger.info(f"[DB] falcon_lattice_params 写入完成 ({len(lattice_params_json)} chars)")
+                # ⚠️ 这里**不再写 falcon_lattice_params**（2026-09-26）。
+                # 该列实测 10.2MB/节点，而全仓库没有任何读取方 —— 只有两个打印长度的
+                # 排障命令 fix_all_falcon_keys / fix_node_005_falcon 引用过它，
+                # 它的内容（D_id/S_id/H_id 与格参数）本就重复自 falcon_private_key
+                # 与 KGC 部分私钥。实测写库 11 秒里它占大头，而 Falcon 计算本身只要 1.9 秒。
+                # 模型字段保留、历史数据保留，只是不再产生新的。
                 _safe_update_node(self.node_id,
                     falcon_keygen_time=keygen_time,
                     falcon_keygen_duration=falcon_duration,
@@ -902,12 +1001,20 @@ class NodeService:
             return {'success': False, 'message': f'查询失败: {str(e)}'}
 
     def encrypt_message(self, message: str, recipient_public_key: str) -> str:
+        """把一个字符串"加密"成 JSON 信封。
+
+        ⚠️ 诚实说明：本方法**并不提供机密性**，历史实现如此，本次只做了算法替换：
+          1. 随机密钥被**明文放在同一个信封里**（`key` 字段），拿到信封即可解密；
+          2. 调用方 `chat_views.send_message` 还把 `message_content` 原文一并落库。
+        因此这里的 `encrypted_message` 只是演示用的封装，不是安全边界。
+        若要真正加密，应当用 `recipient_public_key` 做 KEM 封装而不是自带密钥。
+
+        载荷层按 D3 换成 SM4（16 字节，原为 AES-256 的 32 字节）。
+        """
         try:
             logger.info(f"节点 {self.node_id} 加密消息")
 
             import json as _json
-            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-            import os
 
             if isinstance(recipient_public_key, str):
                 try:
@@ -915,17 +1022,13 @@ class NodeService:
                 except (ValueError, TypeError):
                     pass
 
-            key = os.urandom(32)
-            nonce = os.urandom(12)
-
-            cipher = AESGCM(key)
-            plaintext = message.encode('utf-8')
-            ciphertext = cipher.encrypt(nonce, plaintext, None)
+            key = PayloadCipher.generate_key()
+            ciphertext, nonce_tag = SM4Crypto.encrypt(message.encode('utf-8'), key)
 
             encrypted_data = {
                 'ciphertext': base64.b64encode(ciphertext).decode('utf-8'),
-                'nonce': base64.b64encode(nonce).decode('utf-8'),
-                'key': base64.b64encode(key).decode('utf-8')
+                'nonce': base64.b64encode(nonce_tag[:GCM_IV_BYTES]).decode('utf-8'),
+                'key': base64.b64encode(key).decode('utf-8'),
             }
 
             return json.dumps(encrypted_data)
@@ -938,37 +1041,50 @@ class NodeService:
 
     @property
     def real_aes(self):
-        class AESEncryptor:
+        """会话消息的载荷加解密器（SM4-GCM）。
+
+        ⚠️ 名字是历史遗留。实现已切到 `PayloadCipher`，因此：
+          - 新会话（池里的载荷密钥是 16 字节 SM4）可直接使用；
+          - 历史会话（32 字节 AES 密钥）按长度自动分派到旧 AES-256-GCM，
+            仍能解开。
+        历史实现硬性要求 `len(key) >= 32`，那在 SM4 落地后会直接抛
+        "AES密钥长度不足" —— 这正是本次必须一起改掉的地方。
+        """
+
+        class PayloadEncryptor:
             @staticmethod
             def encrypt(plaintext: bytes, key: bytes) -> tuple:
-                from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-                import os
+                """返回 `(ciphertext, nonce_tag)`。
 
-                # 验证密钥长度
-                if not key or len(key) < 32:
-                    raise ValueError(f"AES密钥长度不足，期望至少32字节，实际: {len(key) if key else 0}字节")
-
-                nonce = os.urandom(12)
-                cipher = AESGCM(key[:32])
-                # AESGCM.encrypt返回的是密文+tag的组合
-                ciphertext = cipher.encrypt(nonce, plaintext, None)
-
-                return ciphertext, nonce
+                新信封：`ciphertext` 是**纯密文**，`nonce_tag = iv(12) || tag(16)`。
+                （历史实现返回的是 `(ct||tag, nonce(12))`，见 decrypt 的兼容分支。）
+                """
+                if not key:
+                    raise ValueError("载荷密钥为空")
+                # 不做长度硬校验：由 PayloadCipher 按长度分派，
+                # 长度非法时它会抛出明确的 ValueError。
+                return PayloadCipher.encrypt(plaintext, key)
 
             @staticmethod
             def decrypt(ciphertext: bytes, key: bytes, nonce: bytes) -> bytes:
-                from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+                if not key:
+                    raise ValueError("载荷密钥为空")
 
-                # 验证密钥长度
-                if not key or len(key) < 32:
-                    raise ValueError(f"AES密钥长度不足，期望至少32字节，实际: {len(key) if key else 0}字节")
+                # ---- 历史信封兼容 ----
+                # 旧实现用的是 cryptography 的 AESGCM：`encrypt` 返回 `nonce(12)`，
+                # 而 tag 被**追加在密文尾部**，落库形状是
+                #     {'ciphertext': ct||tag, 'nonce': <12 字节>, 'alg': 'AES-256-GCM'}
+                # 这与本模块新信封（纯密文 + nonce_tag）不同，必须分开处理，
+                # 否则存量会话消息会以 "nonce_tag 长度非法" 解不开。
+                if len(key) == LEGACY_AES_KEY_BYTES and len(nonce) == 12:
+                    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-                cipher = AESGCM(key[:32])
-                plaintext = cipher.decrypt(nonce, ciphertext, None)
+                    return AESGCM(key).decrypt(nonce, ciphertext, None)
 
-                return plaintext
+                # 新信封：SM4（12+16）或历史 AES 的 nonce_tag（16+16）
+                return PayloadCipher.decrypt(ciphertext, key, nonce)
 
-        return AESEncryptor()
+        return PayloadEncryptor()
 
     def update_kyber_keys(self, security_level: int = 512) -> Dict[str, Any]:
         """
@@ -1204,17 +1320,8 @@ class NodeService:
                 except:
                     falcon_partial_data = {}
 
-                # 保存Falcon格密码参数（完整的参数，包含部分私钥信息）
-                self.node.falcon_lattice_params = json.dumps({
-                    'D_id': falcon_kp.get('D_id'),
-                    'S_id': falcon_kp.get('S_id'),
-                    'H_id': falcon_kp.get('H_id'),
-                    'algorithm': 'CertificatelessFalcon',
-                    'node_id': self.node_id,
-                    'partial_key_source': 'KGC',
-                    'partial_key_timestamp': falcon_partial_data.get('timestamp')
-                })
-
+                # ⚠️ 这里原先写 falcon_lattice_params（10.2MB，无读取方），
+                # 2026-09-26 起停写，理由见 generate_falcon_keys_v2 中的说明。
                 self.node.falcon_keygen_time = timezone.now()
                 self.node.falcon_keygen_duration = falcon_duration
                 self.node.falcon_security_level = str(security_level)
@@ -1245,8 +1352,7 @@ class NodeService:
                         Node.objects.filter(id=self.node.id).update(falcon_private_key=self.node.falcon_private_key)
                     if self.node.falcon_partial_key_data:
                         Node.objects.filter(id=self.node.id).update(falcon_partial_key_data=self.node.falcon_partial_key_data)
-                    if self.node.falcon_lattice_params:
-                        Node.objects.filter(id=self.node.id).update(falcon_lattice_params=self.node.falcon_lattice_params)
+                    # falcon_lattice_params 已停写（10.2MB/节点、无读取方）—— 见 generate_falcon_keys_v2
                 except Exception as save_error:
                     logger.error(f"第一次保存失败: {save_error}，尝试重新连接数据库")
                     try:
@@ -1462,18 +1568,7 @@ class NodeService:
             ).decode('utf-8')
             self.node.falcon_private_key = compress_key_data(falcon_private_key_b64)
 
-            # 保存Falcon格密码参数
-            self.node.falcon_lattice_params = json.dumps({
-                'D_id': falcon_kp.get('D_id'),
-                'S_id': falcon_kp.get('S_id'),
-                'H_id': falcon_kp.get('H_id'),
-                'algorithm': f'CertificatelessFalcon-{falcon_security_level}',
-                'security_level': falcon_security_level,
-                'node_id': self.node_id,
-                'parameters': kp_params,
-                'partial_key_source': 'KGC',
-                'partial_key_timestamp': falcon_partial.get('timestamp')
-            })
+            # falcon_lattice_params 已停写（10.2MB/节点、无读取方）—— 见 generate_falcon_keys_v2
 
             self.node.falcon_keygen_time = timezone.now()
             self.node.falcon_keygen_duration = falcon_duration
@@ -1511,8 +1606,7 @@ class NodeService:
                     Node.objects.filter(id=self.node.id).update(falcon_private_key=self.node.falcon_private_key)
                 if self.node.falcon_partial_key_data:
                     Node.objects.filter(id=self.node.id).update(falcon_partial_key_data=self.node.falcon_partial_key_data)
-                if self.node.falcon_lattice_params:
-                    Node.objects.filter(id=self.node.id).update(falcon_lattice_params=self.node.falcon_lattice_params)
+                # falcon_lattice_params 已停写（10.2MB/节点、无读取方）—— 见 generate_falcon_keys_v2
             except Exception as save_error:
                 logger.error(f"第一次保存失败: {save_error}，尝试重新连接数据库")
                 try:

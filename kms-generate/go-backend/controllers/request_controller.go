@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"key-service-generate/middleware"
 	"key-service-generate/models"
 	"key-service-generate/service"
 	"regexp"
@@ -70,9 +71,11 @@ func (c *RequestController) EnrollKey(ctx *fiber.Ctx) error {
 		})
 	}
 
-	if req.User == "" {
-		return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code": 500, "msg": "必填参数缺失(User)",
+	// 身份只取自 Java 验证过的内部头，请求体中的 user 字段不再被信任。
+	verifiedUser, ok := middleware.VerifiedUser(ctx)
+	if !ok {
+		return ctx.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"code": 401, "msg": "缺少已认证身份(" + middleware.VerifiedUserHeader + ")，拒绝受理",
 		})
 	}
 
@@ -113,7 +116,7 @@ func (c *RequestController) EnrollKey(ctx *fiber.Ctx) error {
 	}
 
 	km := &models.Keymanage{
-		UserName:   req.User,
+		UserName:   verifiedUser,
 		EncrytType: req.EncrytType,
 		EncrytName: req.EncrytName,
 		UA:         req.UA,
@@ -125,8 +128,7 @@ func (c *RequestController) EnrollKey(ctx *fiber.Ctx) error {
 		PQMode:     req.PQMode,
 	}
 
-	// 由内部 Token 保证身份，不再需要明文密码鉴权
-	// 传空字符串作为 rawPassword，Kafka 消息中 Java 端将基于 Session 用户信息补充
+	// 身份已由 Java 侧会话鉴权并以 X-Kms-User 传递，Go 侧不再校验明文密码。
 	keyValue, err := c.keyService.EnrollKey(km, "")
 	if err != nil {
 		return ctx.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
@@ -160,12 +162,18 @@ func (c *RequestController) PartialKey(ctx *fiber.Ctx) error {
 		})
 	}
 
-	req.User = strings.TrimSpace(req.User)
+	verifiedUser, ok := middleware.VerifiedUser(ctx)
+	if !ok {
+		return ctx.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"code": 401, "msg": "缺少已认证身份(" + middleware.VerifiedUserHeader + ")，拒绝受理",
+		})
+	}
+
 	req.EncrytName = strings.TrimSpace(req.EncrytName)
 	req.UA = strings.TrimSpace(req.UA)
-	if req.User == "" || req.UA == "" {
+	if req.UA == "" {
 		return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"code": 500, "msg": "必填参数缺失(User/UA)",
+			"code": 500, "msg": "必填参数缺失(UA)",
 		})
 	}
 	if req.EncrytName != "SM2" && req.EncrytName != "SSCL" {
@@ -179,7 +187,7 @@ func (c *RequestController) PartialKey(ctx *fiber.Ctx) error {
 		})
 	}
 
-	keyValue, err := c.keyService.GeneratePartialKey(req.EncrytName, req.User, req.UA, req.KeyDomain, req.KeyUse)
+	keyValue, err := c.keyService.GeneratePartialKey(req.EncrytName, verifiedUser, req.UA, req.KeyDomain, req.KeyUse)
 	if err != nil {
 		return ctx.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
 			"code": 500, "msg": "部分私钥生成失败: " + err.Error(),

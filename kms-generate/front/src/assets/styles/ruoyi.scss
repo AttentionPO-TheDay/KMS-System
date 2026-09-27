@@ -78,9 +78,9 @@
 	.el-table__header-wrapper, .el-table__fixed-header-wrapper {
 		th {
 			word-break: break-word;
-			background-color: #f8f8f9 !important;
-			color: #515a6e;
-			height: 40px !important;
+			background-color: var(--kms-surface-2);
+			color: var(--kms-text-primary);
+			height: 40px;
 			font-size: 13px;
 		}
 	}
@@ -94,8 +94,8 @@
 /** 表单布局 **/
 .form-header {
     font-size:15px;
-	color:#6379bb;
-	border-bottom:1px solid #ddd;
+	color: var(--kms-brand-text);
+	border-bottom:1px solid var(--kms-border);
 	margin:8px 10px 25px 10px;
 	padding-bottom:5px
 }
@@ -145,9 +145,9 @@
 /* tree border */
 .tree-border {
     margin-top: 5px;
-    border: 1px solid var(--el-border-color-light, #e5e6e7);
-    background: var(--el-bg-color, #FFFFFF) none;
-    border-radius:4px;
+    border: 1px solid var(--kms-border);
+    background: var(--kms-surface-1) none;
+    border-radius: var(--kms-radius-sm);
     width: 100%;
 }
 
@@ -186,8 +186,8 @@
 }
 
 .list-group-item {
-	border-bottom: 1px solid #e7eaec;
-	border-top: 1px solid #e7eaec;
+	border-bottom: 1px solid var(--kms-border);
+	border-top: 1px solid var(--kms-border);
 	margin-bottom: -1px;
 	padding: 11px 0px;
 	font-size: 13px;
@@ -212,30 +212,30 @@
 	margin-bottom: 10px;
 }
 
-/* button color */
+/* button color —— 由 Teal 旧的 #20B2AA 收敛到品牌主色 */
 .el-button--cyan.is-active,
 .el-button--cyan:active {
-  background: #20B2AA;
-  border-color: #20B2AA;
-  color: #FFFFFF;
+  background: var(--kms-brand-active);
+  border-color: var(--kms-brand-active);
+  color: var(--kms-text-on-brand);
 }
 
 .el-button--cyan:focus,
 .el-button--cyan:hover {
-  background: #48D1CC;
-  border-color: #48D1CC;
-  color: #FFFFFF;
+  background: var(--kms-brand-fill-hover);
+  border-color: var(--kms-brand-hover);
+  color: var(--kms-text-on-brand);
 }
 
 .el-button--cyan {
-  background-color: #20B2AA;
-  border-color: #20B2AA;
-  color: #FFFFFF;
+  background-color: var(--kms-brand-fill);
+  border-color: var(--kms-brand);
+  color: var(--kms-text-on-brand);
 }
 
-/* text color */
+/* text color —— 统一指向令牌，不再使用 RuoYi 旧配色 */
 .text-navy {
-	color: #1ab394;
+	color: var(--kms-success-strong);
 }
 
 .text-primary {
@@ -243,23 +243,23 @@
 }
 
 .text-success {
-	color: #1c84c6;
+	color: var(--kms-brand-text);
 }
 
 .text-info {
-	color: #23c6c8;
+	color: var(--kms-info-strong);
 }
 
 .text-warning {
-	color: #f8ac59;
+	color: var(--kms-warning-strong);
 }
 
 .text-danger {
-	color: #ed5565;
+	color: var(--kms-danger-strong);
 }
 
 .text-muted {
-	color: #888888;
+	color: var(--kms-text-secondary);
 }
 
 /* image */

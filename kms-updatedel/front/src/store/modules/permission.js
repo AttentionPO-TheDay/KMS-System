@@ -8,15 +8,14 @@ import InnerLink from '@/layout/components/InnerLink'
 // 匹配views里面所有的.vue文件
 const modules = import.meta.glob('./../../views/**/*.vue')
 
-const ADMIN_ROUTE_ORDER = {
-  system: 80,
-  log: 81
-}
-
-const ADMIN_ROUTE_WHITELIST = {
-  system: ['user', 'role', 'menu'],
-  log: ['operlog', 'logininfor']
-}
+// 说明：此处原先有 ADMIN_ROUTE_WHITELIST / ADMIN_ROUTE_ORDER，
+// 把后端菜单裁剪到只剩 system 与 log 两组。后果是**所有 KMS 业务菜单**
+// （密钥生成、密钥更新、密钥回收、权限审批、密钥查询等）被一并过滤掉，
+// 管理员登录后侧边栏里根本看不到这些入口——这正是「没有可进入的接口」的根因。
+// 现改为直接采用后端 sys_menu 返回的完整菜单树：
+//   - 菜单分组与排序统一由 sys_menu 的 parent_id / order_num 决定
+//   - 不存在的页面（component 指向缺失文件）已在数据库迁移中删除
+// 这样菜单只有一个真实来源，前端不再做二次裁剪。
 
 const usePermissionStore = defineStore(
   'permission',
@@ -44,19 +43,11 @@ const usePermissionStore = defineStore(
       },
       generateRoutes(roles) {
         return new Promise(resolve => {
-          // 向后端请求路由数据
+          // 向后端请求路由数据（完整菜单树，不再做前端裁剪）
           getRouters().then(res => {
-            // Remove redundant English sidebar items
-            if (res.data && res.data.length) {
-              res.data = res.data.filter(r => {
-                const title = r.meta && r.meta.title;
-                return title !== 'Permission Approval' && title !== 'Permission Request';
-              });
-            }
-            const normalizedRoutes = normalizeRouteTree(filterAdminRoutes(res.data))
-            const sdata = JSON.parse(JSON.stringify(normalizedRoutes))
-            const rdata = JSON.parse(JSON.stringify(normalizedRoutes))
-            const defaultData = JSON.parse(JSON.stringify(normalizedRoutes))
+            const sdata = JSON.parse(JSON.stringify(res.data))
+            const rdata = JSON.parse(JSON.stringify(res.data))
+            const defaultData = JSON.parse(JSON.stringify(res.data))
             const sidebarRoutes = filterAsyncRouter(sdata)
             const rewriteRoutes = filterAsyncRouter(rdata, false, true)
             const defaultRoutes = filterAsyncRouter(defaultData)
@@ -127,43 +118,6 @@ function filterChildren(childrenMap, lastRouter = false) {
     children = children.concat(el)
   })
   return children
-}
-
-function normalizeRouteTree(routes = []) {
-  return routes
-    .map(route => {
-      const normalized = { ...route }
-      if (normalized.children && normalized.children.length) {
-        normalized.children = normalizeRouteTree(normalized.children)
-      }
-      return normalized
-    })
-    .sort((a, b) => getRouteOrder(a) - getRouteOrder(b))
-}
-
-function filterAdminRoutes(routes = []) {
-  return routes
-    .filter(route => {
-      const routeKey = normalizeAdminRoutePath(route.path)
-      return Object.prototype.hasOwnProperty.call(ADMIN_ROUTE_WHITELIST, routeKey)
-    })
-    .map(route => ({
-      ...route,
-      children: (route.children || []).filter(child => {
-        const routeKey = normalizeAdminRoutePath(route.path)
-        return ADMIN_ROUTE_WHITELIST[routeKey].includes(child.path)
-      })
-    }))
-    .filter(route => route.children && route.children.length)
-}
-
-function getRouteOrder(route) {
-  const path = normalizeAdminRoutePath(route.path)
-  return ADMIN_ROUTE_ORDER[path] ?? 10
-}
-
-function normalizeAdminRoutePath(path = '') {
-  return path.replace(/^\//, '')
 }
 
 // 动态路由遍历，验证是否具备权限

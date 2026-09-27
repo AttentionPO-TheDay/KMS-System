@@ -12,7 +12,7 @@ body {
   -moz-osx-font-smoothing: grayscale;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  font-family: Helvetica Neue, Helvetica, PingFang SC, Hiragino Sans GB, Microsoft YaHei, Arial, sans-serif;
+  font-family: var(--kms-font-sans);
 }
 
 label {
@@ -99,24 +99,24 @@ div:focus {
 }
 
 aside {
-  background: #eef1f6;
+  background: var(--kms-surface-2);
   padding: 8px 24px;
   margin-bottom: 20px;
-  border-radius: 2px;
+  border-radius: var(--kms-radius-sm);
   display: block;
   line-height: 32px;
   font-size: 16px;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
-  color: #2c3e50;
+  font-family: var(--kms-font-sans);
+  color: var(--kms-text-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
   a {
-    color: #337ab7;
+    color: var(--kms-brand-text);
     cursor: pointer;
 
     &:hover {
-      color: rgb(32, 160, 255);
+      color: var(--kms-brand-hover);
     }
   }
 }
@@ -147,29 +147,29 @@ aside {
   text-align: right;
   padding-right: 20px;
   transition: 600ms ease position;
-  background: linear-gradient(90deg, rgba(32, 182, 249, 1) 0%, rgba(32, 182, 249, 1) 0%, rgba(33, 120, 241, 1) 100%, rgba(33, 120, 241, 1) 100%);
+  background: linear-gradient(90deg, var(--kms-brand) 0%, var(--kms-brand-active) 100%);
 
   .subtitle {
     font-size: 20px;
-    color: #fff;
+    color: var(--kms-text-inverse);
   }
 
   &.draft {
-    background: #d0d0d0;
+    background: var(--kms-surface-3);
   }
 
   &.deleted {
-    background: #d0d0d0;
+    background: var(--kms-surface-3);
   }
 }
 
 .link-type,
 .link-type:focus {
-  color: #337ab7;
+  color: var(--kms-brand-text);
   cursor: pointer;
 
   &:hover {
-    color: rgb(32, 160, 255);
+    color: var(--kms-brand-hover);
   }
 }
 

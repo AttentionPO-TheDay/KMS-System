@@ -22,8 +22,8 @@
     left: 0;
     z-index: 1001;
     overflow: hidden;
-    -webkit-box-shadow: 2px 0 6px rgba(0,21,41,.35);
-    box-shadow: 2px 0 6px rgba(0,21,41,.35);
+    // 浅色风格下侧栏阴影改为克制的分隔线阴影（原 rgba(0,21,41,.35) 是暗色重阴影）
+    box-shadow: 1px 0 4px rgba(0, 0, 0, 0.06);
 
     // reset element-ui css
     .horizontal-collapse-transition {
@@ -82,12 +82,12 @@
     .sub-menu-title-noDropdown,
     .el-sub-menu__title {
       &:hover {
-        background-color: rgba(0, 0, 0, 0.06) !important;
+        background-color: var(--kms-surface-3) !important;
       }
     }
 
     & .theme-dark .is-active > .el-sub-menu__title {
-      color: $base-menu-color-active !important;
+      color: var(--kms-brand-text) !important;
     }
 
     & .nest-menu .el-sub-menu>.el-sub-menu__title,
@@ -95,16 +95,18 @@
       min-width: $base-sidebar-width !important;
 
       &:hover {
-        background-color: rgba(0, 0, 0, 0.06) !important;
+        background-color: var(--kms-surface-3) !important;
       }
     }
 
+    // 子菜单背景：原实现使用暗色 $base-sub-menu-background(#1f2d3d)，
+    // 浅色风格下改为跟随表面层次，并去掉 !important。
     & .theme-dark .nest-menu .el-sub-menu>.el-sub-menu__title,
     & .theme-dark .el-sub-menu .el-menu-item {
-      background-color: $base-sub-menu-background;
+      background-color: var(--kms-surface-2);
 
       &:hover {
-        background-color: $base-sub-menu-hover !important;
+        background-color: var(--kms-surface-3);
       }
     }
   }
@@ -210,8 +212,7 @@
   .nest-menu .el-sub-menu>.el-sub-menu__title,
   .el-menu-item {
     &:hover {
-      // you can use $sub-menuHover
-      background-color: rgba(0, 0, 0, 0.06) !important;
+      background-color: var(--kms-surface-3) !important;
     }
   }
 

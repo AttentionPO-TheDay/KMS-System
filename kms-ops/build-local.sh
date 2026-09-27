@@ -182,11 +182,11 @@ invoke_go_linux_build() {
 
 generate_java_dir="$REPO_ROOT/kms-generate/java-backend"
 updatedel_java_dir="$REPO_ROOT/kms-updatedel/java-backend"
-distribute_java_dir="$REPO_ROOT/kms-distribute/java-backend"
+# distribute_java_dir 已移除：旧分发 Java 服务整体下线（Q11）。
+# distribute_front_dir 保留 —— /distribute/ 仍被管理端 iframe 内嵌。
 generate_go_dir="$REPO_ROOT/kms-generate/go-backend"
 updatedel_go_dir="$REPO_ROOT/kms-updatedel/go-backend"
 acceptance_go_dir="$REPO_ROOT/kms-acceptance/backend"
-generate_front_dir="$REPO_ROOT/kms-generate/front"
 updatedel_front_dir="$REPO_ROOT/kms-updatedel/front"
 distribute_front_dir="$REPO_ROOT/kms-distribute/extracted/ruoyi (2)/web"
 user_front_dir="$REPO_ROOT/kms-user/front"
@@ -194,7 +194,6 @@ acceptance_front_dir="$REPO_ROOT/kms-acceptance/front"
 acceptance_security_dir="$REPO_ROOT/security"
 
 new_clean_directory "$RUNTIME_ROOT"
-new_clean_directory "$FRONT_ROOT/generate"
 new_clean_directory "$FRONT_ROOT/updatedel"
 new_clean_directory "$FRONT_ROOT/distribute"
 new_clean_directory "$FRONT_ROOT/user"
@@ -202,13 +201,16 @@ new_clean_directory "$FRONT_ROOT/acceptance"
 
 invoke_maven_build "$generate_java_dir"
 invoke_maven_build_with_args "$updatedel_java_dir" -pl ruoyi-admin -am -DskipTests package
-invoke_maven_build_with_args "$distribute_java_dir" -B -DskipTests -pl ruoyi-admin -am clean package
 
 invoke_go_linux_build "$generate_go_dir" "kms-generate-service"
 invoke_go_linux_build "$updatedel_go_dir" "kms-updatedel-service"
 invoke_go_project_build "$acceptance_go_dir" "kms-acceptance-backend"
 
-invoke_frontend_build "$generate_front_dir" "build:prod"
+# 说明：/generate/ 静态前端（kms-generate/front）已退役 —— 它是与统一管理端高度重复的
+# 遗留应用，页面已并入 kms-updatedel。因此这里**不再构建它**，也不再往 kms-ops/front
+# 投放 generate 产物；generate 只保留**后端**构建（上面的 kms-generate.jar 与
+# kms-generate-service，仍供 /generate-api/ 与统一管理端使用）。
+# 详见 kms-generate/front/RETIRED.md，不要在没有决策的情况下把这段构建加回来。
 invoke_frontend_build "$updatedel_front_dir" "build:prod"
 invoke_frontend_build "$distribute_front_dir" "build"
 invoke_frontend_build "$user_front_dir" "build"
@@ -218,14 +220,13 @@ copy_artifact "$generate_java_dir/ruoyi-admin/target/kms-generate.jar" "$RUNTIME
 copy_artifact "$generate_java_dir/config-fisco.toml" "$RUNTIME_ROOT/generate-java/config-fisco.toml"
 copy_artifact "$updatedel_java_dir/ruoyi-admin/target/kms-updatedel.jar" "$RUNTIME_ROOT/updatedel-java/kms-updatedel.jar"
 copy_artifact "$updatedel_java_dir/ruoyi-admin/src/main/resources/config-fisco.toml" "$RUNTIME_ROOT/updatedel-java/config-fisco.toml"
-copy_artifact "$distribute_java_dir/ruoyi-admin/target/kms-distribute.jar" "$RUNTIME_ROOT/distribute-java/kms-distribute.jar"
 
 copy_artifact "$generate_go_dir/dist/kms-generate-service" "$RUNTIME_ROOT/generate-go/kms-generate-service"
 copy_artifact "$updatedel_go_dir/dist/kms-updatedel-service" "$RUNTIME_ROOT/updatedel-go/kms-updatedel-service"
 copy_artifact "$acceptance_go_dir/dist/kms-acceptance-backend" "$RUNTIME_ROOT/acceptance-go/kms-acceptance-backend"
 copy_artifact "$acceptance_security_dir/security_test.sh" "$RUNTIME_ROOT/acceptance-go/security/security_test.sh"
 
-copy_artifact "$generate_front_dir/dist/." "$FRONT_ROOT/generate"
+# 前端产物投放：4 个（generate 已退役，见上面的说明与 kms-generate/front/RETIRED.md）
 copy_artifact "$updatedel_front_dir/dist/." "$FRONT_ROOT/updatedel"
 copy_artifact "$distribute_front_dir/dist/." "$FRONT_ROOT/distribute"
 copy_artifact "$user_front_dir/dist/." "$FRONT_ROOT/user"

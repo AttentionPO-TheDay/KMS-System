@@ -85,6 +85,25 @@ class Node(CoreModel):
     partial_key_received = models.BooleanField(default=False, verbose_name="是否已接收部分私钥", help_text="标识是否已从KGC接收部分私钥")
     partial_key_data = models.TextField(blank=True, verbose_name="部分私钥数据（兼容旧版）", help_text="JSON格式存储加密的部分私钥数据，保留用于向后兼容")
     falcon_lattice_params = models.TextField(blank=True, verbose_name="Falcon格密码参数", help_text="JSON格式存储Falcon无证书格密码参数：A、B、H_id、U_id、D_id、S_id")
+    # 国密（SM2）节点密钥 —— 2026-09-26 新增。
+    #
+    # 为什么需要：节点腿上原本**只有抗量子**（Kyber/Falcon），于是"这次分发不用抗量子"
+    # 在界面上无路可走。加上国密后，用户可在分发时三选一：
+    #   kyber_kem / falcon_lattice / gm_sm2
+    # 选 gm_sm2 时节点信封用本字段里的 SM2 公钥封装，节点用私钥解封。
+    #
+    # 与 Kyber/Falcon 的区别：那两者是格密码（抗量子），SM2 是椭圆曲线国密；
+    # 三者都是**节点持有私钥**的真实密钥，不是演示占位。
+    gm_public_key = models.TextField(blank=True, verbose_name="国密公钥", help_text="SM2 公钥（130 位十六进制，04 开头）")
+    gm_private_key = models.TextField(blank=True, verbose_name="国密私钥", help_text="SM2 私钥（64 位十六进制标量），仅节点本地存储")
+    gm_keygen_time = models.DateTimeField(null=True, blank=True, verbose_name="国密密钥生成时间", help_text="SM2 节点密钥对生成的时间")
+    # SSCL（无证书国密）节点密钥 —— 与 SM2 并列的第四种节点腿算法。
+    #
+    # 加解密算法与 SM2 **完全相同**（SSCL 的 d_A 是 sm2p256v1 上的标量、
+    # P_A 是同一曲线上的点，见 wrappers.py 里 SsclWrapper 的说明），
+    # 差别只在密钥怎么派生；因此这里同样存一对标量/点，由本模块生成。
+    sscl_public_key = models.TextField(blank=True, verbose_name="SSCL 公钥", help_text="SSCL 加密目标点（130 位十六进制，04 开头）")
+    sscl_private_key = models.TextField(blank=True, verbose_name="SSCL 私钥", help_text="SSCL 私钥标量（64 位十六进制），仅节点本地存储")
     kyber_keygen_time = models.DateTimeField(null=True, blank=True, verbose_name="Kyber密钥生成时间", help_text="Kyber密钥对生成的时间")
     kyber_keygen_duration = models.FloatField(null=True, blank=True, verbose_name="Kyber密钥生成耗时", help_text="Kyber密钥对生成花费的时间（秒）")
     falcon_keygen_time = models.DateTimeField(null=True, blank=True, verbose_name="Falcon密钥生成时间", help_text="Falcon密钥对生成的时间")
@@ -337,13 +356,55 @@ class PreDistributedKey(CoreModel):
         ('expired', '已过期'),
         ('distributed', '已下发'),
     ]
+    #: 载荷层（被封装的那把对称密钥）用的算法。与上面的 `algorithm` 是两回事：
+    #: `algorithm` 是**封装**算法（Kyber/Falcon），本字段是**载荷**算法。
+    #: D3 之后载荷统一为 SM4；历史行为 AES-256，由迁移脚本回填为 aes_256。
+    PAYLOAD_ALGORITHM_CHOICES = [
+        ('sm4', '国密 SM4-GCM'),
+        ('aes_256', 'AES-256-GCM（历史数据）'),
+    ]
     pool_id = models.CharField(max_length=64, verbose_name="密钥池ID", help_text="标识一次批量预分配的批次ID")
     key_index = models.IntegerField(verbose_name="密钥序号", help_text="该密钥在批次中的序号")
-    node1 = models.ForeignKey(Node, on_delete=models.CASCADE, related_name='predist_keys_as_node1', verbose_name="节点1", help_text="密钥对的第一个节点")
-    node2 = models.ForeignKey(Node, on_delete=models.CASCADE, related_name='predist_keys_as_node2', verbose_name="节点2", help_text="密钥对的第二个节点")
-    algorithm = models.CharField(max_length=20, choices=ALGORITHM_CHOICES, verbose_name="加密算法", help_text="预分配使用的格密码算法")
-    encrypted_key_data = models.TextField(verbose_name="加密的密钥数据", help_text="使用格密码加密后的AES会话密钥（JSON）")
-    key_hash = models.CharField(max_length=64, verbose_name="密钥哈希", help_text="AES密钥的SHA256哈希，用于校验")
+    node1 = models.ForeignKey(Node, on_delete=models.CASCADE, related_name='predist_keys_as_node1', verbose_name="节点1", help_text="密钥对的第一个节点；用户发起时为收件节点")
+    # `node2` 可空：这张表原本只表达**节点间**预分配（两个节点都不能少），
+    # 而用户发起的「分发」只有**一个**收件节点 —— 硬要求 node2 会让那条路径无处落脚。
+    # 计划 §4.3 当初另建 `user_key_envelopes` 正是为了绕开这个约束，
+    # 但**节点那一份仍需一个落脚处**，所以这里放开为可空，
+    # 并用 §4.1 新增的 `recipient_type` 区分两种语义。
+    node2 = models.ForeignKey(Node, on_delete=models.CASCADE, related_name='predist_keys_as_node2',
+                              null=True, blank=True, verbose_name="节点2",
+                              help_text="密钥对的第二个节点；recipient_type=user 时为空")
+    algorithm = models.CharField(max_length=20, choices=ALGORITHM_CHOICES, verbose_name="加密算法", help_text="预分配使用的格密码算法（封装算法）")
+    payload_algorithm = models.CharField(
+        max_length=20,
+        choices=PAYLOAD_ALGORITHM_CHOICES,
+        default='sm4',
+        verbose_name="载荷算法",
+        help_text="被封装的对称密钥所用算法：sm4（新）/ aes_256（历史数据，由迁移脚本回填）",
+    )
+    # --- 用户腿分发（P3）新增的三个字段 ---
+    # `algorithm` 是**封装**算法，历史上只有 kyber_kem / falcon_lattice 两种取值；
+    # D3+D4 之后需要表达"用哪把用户非对称密钥把载荷封给谁"，
+    # 因此补上封装算法、来源密钥与收件人。`algorithm` 保留不删（兼容既有数据）。
+    wrapping_algorithm = models.CharField(
+        max_length=20, null=True, blank=True,
+        verbose_name="封装算法",
+        help_text="kyber_kem / falcon_lattice / sm2 / sscl；新逻辑一律读写本字段",
+    )
+    source_key_id = models.BigIntegerField(
+        null=True, blank=True, verbose_name="来源密钥ID",
+        help_text="用户所选非对称密钥的 kms.keymanage.key_id（逻辑引用，不建跨库外键）",
+    )
+    recipient_type = models.CharField(
+        max_length=10, default='node', verbose_name="收件人类型",
+        help_text="node=节点间预分配；user=分发给用户本人",
+    )
+    recipient_user_id = models.BigIntegerField(
+        null=True, blank=True, verbose_name="收件用户ID",
+        help_text="recipient_type=user 时的 kms.sys_user.user_id（逻辑引用，不建外键）",
+    )
+    encrypted_key_data = models.TextField(verbose_name="加密的密钥数据", help_text="使用格密码封装后的对称会话密钥（JSON）")
+    key_hash = models.CharField(max_length=64, verbose_name="密钥哈希", help_text="对称密钥的SHA256哈希，用于校验")
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='unused', verbose_name="状态", help_text="密钥当前状态")
     used_at = models.DateTimeField(null=True, blank=True, verbose_name="使用时间", help_text="密钥被消耗的时间")
     used_by_session = models.ForeignKey(SessionKey, on_delete=models.SET_NULL, null=True, blank=True, related_name='predist_key', verbose_name="使用该密钥的会话", help_text="消耗此密钥的会话")
@@ -392,3 +453,133 @@ class SessionKeyInvalidation(CoreModel):
         ]
     def __str__(self):
         return f"会话 {self.session.session_id[:8]}... - {self.reason}"
+
+# =============================================================================
+# 用户腿分发（P3）新增的三张表
+# -----------------------------------------------------------------------------
+# 身份打通说明（D7 / 计划 §4.5）：`falcon_kds` 侧一律用 `user_id` **逻辑引用**
+# `kms.sys_user.user_id`，**不建跨库外键** —— MySQL 不支持跨库外键，
+# 而且两库本就由不同服务负责，硬绑会让迁移相互阻塞。
+# 主身份源永远是 `kms.sys_user`；`dvadmin_system_users` 只是节点侧附属信息。
+# =============================================================================
+
+
+class UserNodeAuthorization(CoreModel):
+    """用户 ↔ 节点授权（即「节点鉴权」，计划 §4.2）。
+
+    `Node` 模型原本**没有任何 user 外键**，而 D5 要求用户只能选择"自己有权的节点"。
+    分发接口必须据此在**服务端**校验，不能只靠前端下拉过滤。
+    """
+
+    STATUS_CHOICES = [
+        ('active', '有效'),
+        ('revoked', '已撤销'),
+    ]
+
+    user_id = models.BigIntegerField(verbose_name="用户ID", help_text="kms.sys_user.user_id（逻辑引用，不建跨库外键）")
+    node = models.ForeignKey(
+        Node, on_delete=models.CASCADE, related_name='user_authorizations',
+        verbose_name="节点", help_text="被授权的节点",
+    )
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='active', verbose_name="状态")
+    granted_by = models.CharField(max_length=64, null=True, blank=True, verbose_name="授权人", help_text="执行授权的管理员")
+    granted_at = models.DateTimeField(default=timezone.now, verbose_name="授权时间")
+    revoked_at = models.DateTimeField(null=True, blank=True, verbose_name="撤销时间")
+    remark = models.CharField(max_length=500, null=True, blank=True, verbose_name="备注")
+
+    class Meta:
+        verbose_name = "用户节点授权"
+        verbose_name_plural = "用户节点授权"
+        db_table = f"{table_prefix}pqkds_user_node_authorizations"
+        ordering = ['-granted_at']
+        # 同一用户对同一节点只应有一条记录：重复授权会让"到底有没有权限"依赖遍历顺序
+        unique_together = [('user_id', 'node')]
+        indexes = [
+            models.Index(fields=['user_id', 'status']),
+        ]
+
+    def __str__(self):
+        return f"用户{self.user_id}-节点{self.node_id}({self.status})"
+
+
+class UserKeyEnvelope(CoreModel):
+    """分发到**用户本人**的对称密钥信封（计划 §4.3）。
+
+    刻意不复用 `PreDistributedKey`：那张表的 `node1`/`node2` 都是 `NOT NULL`，
+    而用户侧没有 `node2`，硬塞进去会产生大量可空外键。
+
+    「对称密钥查看」页就读这张表。**不存明文对称密钥**，只有哈希与密文信封。
+    """
+
+    STATUS_CHOICES = [
+        ('unused', '未使用'),
+        ('used', '已使用'),
+        ('expired', '已过期'),
+    ]
+
+    batch_id = models.CharField(max_length=64, verbose_name="批次号", help_text="一次分发动作的批次号")
+    user_id = models.BigIntegerField(verbose_name="用户ID", help_text="kms.sys_user.user_id（逻辑引用）")
+    key_hash = models.CharField(max_length=64, verbose_name="密钥哈希", help_text="SM4 密钥的 SHA256，用于核对，不存明文")
+    encrypted_key_data = models.TextField(
+        verbose_name="加密的密钥数据",
+        help_text="用用户所选非对称密钥加密后的 SM4 密钥（JSON：算法 + 密文 + 目标公钥）",
+    )
+    wrapping_algorithm = models.CharField(
+        max_length=20, verbose_name="封装算法", help_text="SM2 / SSCL（D17：用户腿只允许这两种）",
+    )
+    source_key_id = models.BigIntegerField(
+        verbose_name="来源密钥ID", help_text="用户所选非对称密钥 kms.keymanage.key_id",
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='unused', verbose_name="状态")
+    expires_at = models.DateTimeField(verbose_name="过期时间", help_text="固定 24 小时（D8）")
+
+    class Meta:
+        verbose_name = "用户对称密钥信封"
+        verbose_name_plural = "用户对称密钥信封"
+        db_table = f"{table_prefix}pqkds_user_key_envelopes"
+        ordering = ['-create_datetime']
+        indexes = [
+            models.Index(fields=['user_id', 'expires_at']),
+            models.Index(fields=['batch_id']),
+        ]
+
+    def __str__(self):
+        return f"用户{self.user_id}信封-{self.batch_id[:8]}#{self.wrapping_algorithm}"
+
+
+class DistributionBatch(CoreModel):
+    """用户发起的一次「选节点 + 分发」动作（计划 §4.4）。
+
+    有了它才能回答"这次分发发给了哪些节点、成功几个、用户那份成没成"。
+    也是 P5 里工作台「分发记录」KPI 与「分发状态分布」图的新数据源
+    （替换掉那条派生自 Kafka 的旧链路）。
+    """
+
+    STATUS_CHOICES = [
+        ('pending', '进行中'),
+        ('partial', '部分成功'),
+        ('success', '全部成功'),
+        ('failed', '失败'),
+    ]
+
+    batch_id = models.CharField(max_length=64, unique=True, verbose_name="批次号")
+    user_id = models.BigIntegerField(verbose_name="发起用户ID", help_text="kms.sys_user.user_id（逻辑引用）")
+    source_key_id = models.BigIntegerField(verbose_name="来源密钥ID", help_text="用户所选非对称密钥")
+    wrapping_algorithm = models.CharField(max_length=20, verbose_name="封装算法", help_text="SM2 / SSCL")
+    node_ids = models.TextField(verbose_name="目标节点", help_text="JSON 数组，形如 [1,2,3]")
+    node_success_count = models.IntegerField(default=0, verbose_name="节点成功数")
+    user_envelope_ok = models.BooleanField(default=False, verbose_name="用户信封是否成功")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, verbose_name="状态")
+
+    class Meta:
+        verbose_name = "分发批次"
+        verbose_name_plural = "分发批次"
+        db_table = f"{table_prefix}pqkds_distribution_batches"
+        ordering = ['-create_datetime']
+        indexes = [
+            models.Index(fields=['user_id', '-create_datetime']),
+            models.Index(fields=['status']),
+        ]
+
+    def __str__(self):
+        return f"批次{self.batch_id[:8]}({self.status})"

@@ -174,18 +174,39 @@ getCookie();
   justify-content: center;
   align-items: center;
   height: 100%;
+  position: relative;
   background-image: url("../assets/images/login-background.jpg");
   background-size: cover;
+  background-position: center;
 }
+
+/* 背景为亮色调实景照，加一层压暗叠加以保证标题/页脚文字对比度 */
+.login::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.35);
+  pointer-events: none;
+}
+
+.login > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* 标题位于白色登录卡片内部，故用深色文字（此前误设为反色白字） */
 .title {
   margin: 0px auto 30px auto;
   text-align: center;
-  color: #ffffff;
+  color: var(--kms-text-primary);
+  font-weight: 600;
 }
 
 .login-form {
-  border-radius: 6px;
-  background: rgba(10, 15, 25, 0.85); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border: 1px solid rgba(0, 153, 255, 0.3); box-shadow: 0 15px 35px rgba(0, 0, 0, 0.6);
+  border-radius: var(--kms-radius-lg);
+  background: var(--kms-surface-1);
+  border: 1px solid var(--kms-border);
+  box-shadow: var(--kms-shadow-lg);
   width: 400px;
   padding: 25px 25px 5px 25px;
   .el-input {
@@ -203,7 +224,7 @@ getCookie();
 .login-tip {
   font-size: 13px;
   text-align: center;
-  color: #bfbfbf;
+  color: var(--kms-text-secondary);
 }
 .login-code {
   width: 33%;
@@ -221,8 +242,9 @@ getCookie();
   bottom: 0;
   width: 100%;
   text-align: center;
-  color: #fff;
-  font-family: Arial;
+  color: var(--kms-text-inverse);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  font-family: var(--kms-font-sans);
   font-size: 12px;
   letter-spacing: 1px;
 }

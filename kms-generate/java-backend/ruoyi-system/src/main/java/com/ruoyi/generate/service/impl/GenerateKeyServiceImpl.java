@@ -2,6 +2,8 @@ package com.ruoyi.generate.service.impl;
 
 import com.alibaba.fastjson2.JSONObject;
 import com.ruoyi.generate.domain.ComParam;
+import com.ruoyi.common.crypto.KgcMasterSecret;
+import com.ruoyi.common.crypto.KeyMaterialEpoch;
 import com.ruoyi.generate.domain.Keymanage;
 import com.ruoyi.generate.domain.KeyStatus;
 import com.ruoyi.generate.domain.PartialKey;
@@ -54,6 +56,12 @@ public class GenerateKeyServiceImpl implements GenerateKeyService {
         if (list == null || list.isEmpty()) {
             return 0;
         }
+        // 打版本标记必须在这里做：用户侧登记密钥走的是
+        // Go → Kafka → 本批量插入，**不经过 insertKey**，
+        // 早期只在 insertKey 里打标记会导致线上新记录的 ms_key_id 一直是 NULL。
+        for (Keymanage item : list) {
+            stampMaterialEpoch(item);
+        }
         int rows = keymanageMapper.insertKeymanageBatch(list);
         log.info("批量插入密钥 {} 条", rows);
         return rows;
@@ -70,7 +78,37 @@ public class GenerateKeyServiceImpl implements GenerateKeyService {
         if (isBlank(keymanage.getKeyValue())) {
             generateKeyValue(keymanage);
         }
+        stampMaterialEpoch(keymanage);
         return keymanageMapper.insertkeymanage(keymanage);
+    }
+
+    /**
+     * 给**新签发**的记录打上版本标记。
+     *
+     * <p>三件事缺一不可：
+     * <ol>
+     *   <li>{@code msKeyId} —— 用当前启用版本的 ms 签发，日后按它复算 P_A。
+     *       轮换 ms 后，历史记录靠这个字段仍能被正确复算；</li>
+     *   <li>{@code algorithmVersion} —— 当前算法参数版本
+     *       （SSCL 域参数已从"每进程随机"改为"由 ms 确定性派生"）；</li>
+     *   <li>{@code keyMaterialState = active} —— 材料是新的，用户会拿到配套的 d_a，
+     *       因此可用于解密（与早期那批 {@code legacy_unusable} 区分开）。</li>
+     * </ol>
+     * 只在字段为空时写入，避免覆盖调用方显式指定的值（例如导入历史记录）。
+     */
+    private void stampMaterialEpoch(Keymanage keymanage) {
+        if (keymanage == null) {
+            return;
+        }
+        if (isBlank(keymanage.getMsKeyId())) {
+            keymanage.setMsKeyId(KgcMasterSecret.activeId());
+        }
+        if (isBlank(keymanage.getAlgorithmVersion())) {
+            keymanage.setAlgorithmVersion(KeyMaterialEpoch.ALGORITHM_V1_DERIVED);
+        }
+        if (isBlank(keymanage.getKeyMaterialState())) {
+            keymanage.setKeyMaterialState(KeyMaterialEpoch.STATE_ACTIVE);
+        }
     }
 
     @Override

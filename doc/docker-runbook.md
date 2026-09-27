@@ -54,7 +54,8 @@
 6. 构建 `kms-acceptance/backend`
 7. 构建 `kms-generate/front`
 8. 构建 `kms-updatedel/front`
-9. 构建 `kms-distribute/front`
+9. 构建 `kms-distribute/extracted/ruoyi (2)/web`（新分发 demo 前端；
+   旧 `kms-distribute/front` 已不再构建与发布）
 10. 构建 `kms-user/front`
 11. 构建 `kms-acceptance/front`
 12. 整理产物到 `kms-ops/runtime` 和 `kms-ops/front`
@@ -119,18 +120,50 @@ bash ./kms-ops/start.sh
 docker compose down
 ```
 
+## 宿主机端口发布口径（2026-09-24 收紧）
+
+**对外只需要 80 端口**（网关）。其余一律不发布，或只绑回环：
+
+| 端口 | 服务 | 宿主发布 | 说明 |
+|---|---|---|---|
+| 80 | 网关 nginx | `0.0.0.0:80` | 唯一对外入口 |
+| 3307 / 6379 / 9092 | MySQL / Redis / Kafka | `127.0.0.1` | 仅宿主机可连 |
+| 8545~8548 / 20200~20203 | 4 个 FISCO 节点 | `127.0.0.1` | 仅宿主机可连 |
+| 8081 / 8082 / 9081 / 9082 / 8001 | Go 入站层 ×2、Java 业务层 ×2、dvadmin | **不发布** | 网关与验收容器都按**服务名**在 Docker 内网访问 |
+
+后 5 个原先发布到宿主机，2026-09-24 去掉，原因两条：
+
+1. **部署环境不允许占用这些端口**（远端实测
+   `failed to bind host port 127.0.0.1:8081/tcp: address already in use`），
+   而它们本来就不需要宿主端口 —— 网关走 `http://generate-go:8081` 这类服务名；
+   验收容器也走内网（`ACCEPTANCE_*_BASE_URL` 注入的就是内网地址，
+   调用 `security_test.sh` 时用 `--GenerateGoBaseUrl` 等参数传进去）。
+2. 少发布一个端口就少一份暴露面：Go 入站层的身份来自 Java 写入的 `X-Kms-User`
+   内部头，dvadmin 的演示接口没有鉴权，都不该对外可达。
+
+**本机调试**若需要直连这些端口（`kms-ops/check.ps1`、`kms-ops/tests/*_load_test.sh`、
+`tools/verify-pa-target.mjs` 用的是 `127.0.0.1:8081` 这类地址），加覆盖文件即可：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.debug-ports.yml up -d
+```
+
+覆盖文件只绑回环，不会对局域网暴露；**部署时不要带这个 `-f`**。
+
 ## 网关路径
 
 ### API
 
-1. `/generate-ingress/` -> generate Go
-2. `/generate-api/` -> generate Java
-3. `/updatedel-ingress/` -> updatedel Go
-4. `/lifecycle-ingress/` -> `/updatedel-ingress/`
-5. `/updatedel-api/` -> updatedel Java
-6. `/lifecycle-api/` -> updatedel Java
-7. `/distribute-api/` -> distribute Java
-8. `/acceptance-api/` -> acceptance backend `/api/`
+1. `/generate-api/` -> generate Java
+2. `/updatedel-api/` -> updatedel Java
+3. `/lifecycle-api/` -> updatedel Java
+4. `/distribute-api/` -> distribute Java（8083，kms-user 分发记录查询）
+5. `/pqkds-api/` -> dvadmin3-django
+6. `/acceptance-api/` -> acceptance backend `/api/`
+
+已下架（安全加固）：`/generate-ingress/`、`/updatedel-ingress/`、`/lifecycle-ingress/`。
+Go 入站层仅限 Docker 内网调用，不再经网关对外暴露，
+因为其身份来源为 Java 写入的 `X-Kms-User` 内部头，对外暴露会导致身份可伪造。
 
 ### 前端
 
@@ -186,6 +219,18 @@ Docker 网关路径与本地 Vite 开发代理不是一回事。
 ## 说明
 
 1. `docker-compose.yml` 当前直接消费本地构建产物，不在容器内执行 Maven 或 Go 编译。
+   因此**必须先执行 `build-local.ps1` / `build-local.sh`**，否则容器会因缺少
+   `kms-ops/runtime/` 下的产物而启动失败。这是当前采用的部署口径；
+   若后续改为镜像内构建，需同步修改本节与各服务 Dockerfile。
 2. `kms-user` 和 `kms-acceptance/front` 当前作为静态前端产物由 `nginx` 提供。
 3. `legacy-kms/` 仍然保留为历史参考，不参与当前 Docker 编排。
 4. 旧版编排文件如 `docker-compose-before.yml` 仅作历史对照，不代表当前部署方式。
+5. 当前编排除基础设施外共 9 个应用服务：`generate-go`、`generate-java`、
+   `updatedel-go`、`updatedel-java`、`kms-distribute`、`dvadmin3-django`、
+   `acceptance-backend`、`fisco-console`、`nginx`。
+   其中 `dvadmin3-django`（8001→8000）与 `fisco-console`
+   （`network_mode: service:fisco-node`，无独立端口）在早前版本中曾被遗漏。
+6. 需轮换的安全凭据（均无默认值，参见 `kms-ops/.env.example`）：
+   `KMS_TOKEN_SECRET`、`INTERNAL_TOKEN`、`MYSQL_ROOT_PASSWORD`、
+   `DRUID_LOGIN_USERNAME/PASSWORD`；可选 `KGC_MASTER_SECRET`。
+   任一必填项缺失时 `docker compose` 会直接报错退出，这是有意设计。

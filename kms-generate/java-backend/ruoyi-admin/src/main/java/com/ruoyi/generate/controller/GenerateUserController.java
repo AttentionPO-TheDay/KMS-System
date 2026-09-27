@@ -3,9 +3,11 @@ package com.ruoyi.generate.controller;
 import com.ruoyi.common.annotation.Anonymous;
 import com.ruoyi.common.core.controller.BaseController;
 import com.ruoyi.common.core.domain.AjaxResult;
+import com.ruoyi.common.utils.SecurityUtils;
 import com.ruoyi.generate.domain.GenerateUser;
 import com.ruoyi.generate.service.GenerateUserService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -41,15 +43,35 @@ public class GenerateUserController extends BaseController {
         return rows > 0 ? success("操作成功") : error("注册失败");
     }
 
+    /**
+     * 用户列表属于管理面能力，仅管理员可访问。
+     * 此前无鉴权，任意登录用户可枚举全部用户名（后续可据此伪造归属）。
+     */
+    @PreAuthorize("@ss.hasRole('admin')")
     @GetMapping("/non-admin-list")
     public AjaxResult nonAdminList() {
         List<GenerateUser> users = generateUserService.selectNonAdminUsers();
         return AjaxResult.success("查询成功", users);
     }
 
+    /**
+     * 查询用户资料：非管理员只能查询本人，防止任意读取他人资料。
+     */
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/profile")
     public AjaxResult profile(@RequestParam(required = false) Long userId,
                               @RequestParam(required = false) String userName) {
+        if (!isCurrentAdmin()) {
+            Long currentUserId = getUserId();
+            String currentUserName = getUsername();
+            boolean selfById = userId != null && userId.equals(currentUserId);
+            boolean selfByName = userName != null && !userName.trim().isEmpty()
+                && userName.trim().equals(currentUserName);
+            if (!selfById && !selfByName) {
+                return AjaxResult.error(403, "无权查询其他用户资料");
+            }
+        }
+
         GenerateUser user = null;
         if (userId != null) {
             user = generateUserService.selectByUserId(userId);
@@ -63,5 +85,15 @@ public class GenerateUserController extends BaseController {
 
         user.setPassword(null);
         return AjaxResult.success("查询成功", user);
+    }
+
+    private boolean isCurrentAdmin() {
+        try {
+            return SecurityUtils.getLoginUser() != null
+                && SecurityUtils.getLoginUser().getUser() != null
+                && SecurityUtils.getLoginUser().getUser().isAdmin();
+        } catch (Exception e) {
+            return false;
+        }
     }
 }

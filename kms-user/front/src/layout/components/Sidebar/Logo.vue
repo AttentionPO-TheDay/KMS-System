@@ -38,11 +38,13 @@ const getLogoBackground = computed(() => {
 });
 
 // 获取Logo文字颜色
+// 注意：siteTheme 未启用暗色（isDark 为 false），若此处理沿用旧实现的 '#fff'，
+// 会在浅色侧栏上形成白字白底不可见。因此两个分支都返回浅色文字。
 const getLogoTextColor = computed(() => {
   if (settingsStore.isDark) {
     return 'var(--sidebar-text)';
   }
-  return sideTheme.value === 'theme-dark' ? '#fff' : variables.menuLightText;
+  return sideTheme.value === 'theme-dark' ? variables.menuText : variables.menuLightText;
 });
 </script>
 

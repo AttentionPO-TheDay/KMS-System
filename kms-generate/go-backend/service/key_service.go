@@ -253,9 +253,11 @@ func (s *KeyManageService) Register(user, password string) error {
 }
 
 func (s *KeyManageService) sendToKafka(km *models.Keymanage, rawPassword, action string) error {
+	// rawPassword 刻意**不再进入消息体**：消费端早已忽略它，而 Kafka 是 PLAINTEXT，
+	// 让明文口令经过一条无人使用的链路没有任何收益。参数保留是为了不改动调用方签名。
+	_ = rawPassword
 	payload := &models.KeyEnrollPayload{
 		RawUser:      km.UserName,
-		RawPassword:  rawPassword,
 		ActionType:   action,
 		GeneratedKey: *km,
 	}

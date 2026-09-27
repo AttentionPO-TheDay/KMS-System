@@ -7,8 +7,8 @@ spring:
             # 主库数据源
             master:
                 url: jdbc:mysql://${DB_HOST:mysql}:${DB_PORT:3306}/${DB_NAME:kms}?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&serverTimezone=GMT%2B8&rewriteBatchedStatements=true&allowPublicKeyRetrieval=true&cachePrepStmts=true&prepStmtCacheSize=250&prepStmtCacheSqlLimit=2048
-                username: ${DB_USERNAME:root}
-                password: ${DB_PASSWORD:root123456}
+                username: ${DB_USERNAME}
+                password: ${DB_PASSWORD}
             # 从库数据源
             slave:
                 # 从数据源开关/默认关闭
@@ -46,9 +46,9 @@ spring:
                 # 设置白名单，不填则允许所有访问
                 allow:
                 url-pattern: /druid/*
-                # 控制台管理用户名和密码
-                login-username: ruoyi
-                login-password: 123456
+                # 控制台管理用户名和密码：必须由环境变量注入，无默认值
+                login-username: ${DRUID_LOGIN_USERNAME}
+                login-password: ${DRUID_LOGIN_PASSWORD}
             filter:
                 stat:
                     enabled: true

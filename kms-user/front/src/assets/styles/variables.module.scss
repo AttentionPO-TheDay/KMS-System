@@ -1,54 +1,64 @@
-// base color
-$blue: #324157;
-$light-blue: #333c46;
-$red: #C03639;
-$pink: #E65D6E;
-$green: #30B08F;
-$tiffany: #4AB7BD;
-$yellow: #FEC171;
-$panGreen: #30B08F;
+// ============================================================================
+// 布局与菜单变量
+// ----------------------------------------------------------------------------
+// 本文件承担两个职责：
+//   1. :export —— 供 JS 读取（Sidebar / Logo / Settings 组件用它设置内联样式），
+//      必须是具体颜色值，不能是 CSS 变量。
+//   2. CSS 变量 —— 供 SCSS 规则使用，统一指向 design-tokens 令牌。
+//
+// 改造前的问题：定义了 24 个 SCSS 变量，其中多数已无引用；并有一个
+// `html.dark {}` 块用 36 处硬编码暗色值 + 22 处 !important 覆盖组件样式。
+// 现在统一为浅色企业级，去掉 !important，颜色指向 --kms-* 令牌。
+// ============================================================================
 
-// 默认主题变量
-$menuText: #bfcbd9;
-$menuActiveText: #409eff;
-$menuBg: #304156;
-$menuHover: #263445;
-
-// 浅色主题theme-light
+// ---------------------------------------------------------------------------
+// :export 供 JS 使用 —— 全部为浅色值
+// ---------------------------------------------------------------------------
+// 注意：Sidebar 与 Logo 依据 sideTheme 在 menuBg(L) / menuLightBg(R) 之间选择。
+// 站点已统一为浅色风格，两侧分支都返回浅色值，避免切到 dark 主题时出现深色侧栏。
+$menuBg: #ffffff; // 侧栏底色
+$menuText: #646a73; // 侧栏未选中文字
+$menuActiveText: #1677ff; // 侧栏选中文字
+$menuHover: #f0f2f5; // 侧栏悬停底色
 $menuLightBg: #ffffff;
-$menuLightHover: #f0f1f5;
-$menuLightText: #303133;
-$menuLightActiveText: #409EFF;
+$menuLightHover: #f0f2f5;
+$menuLightText: #1f2329;
+$menuLightActiveText: #1677ff;
 
-// 基础变量
-$base-sidebar-width: 200px;
-$sideBarWidth: 200px;
+// 布局尺寸（SCSS 侧计算需要具体值）
+$base-sidebar-width: 210px;
+$sideBarWidth: 210px;
 
-// 菜单暗色变量
-$base-menu-color: #bfcbd9;
-$base-menu-color-active: #f4f4f5;
-$base-menu-background: #304156;
-$base-sub-menu-background: #1f2d3d;
-$base-sub-menu-hover: #001528;
-
-// 组件变量
-$--color-primary: #409EFF;
-$--color-success: #67C23A;
-$--color-warning: #E6A23C;
-$--color-danger: #F56C6C;
-$--color-info: #909399;
+// ---------------------------------------------------------------------------
+// 保留原有 :export 键（含 RuoYi 演示按钮配色）
+// ---------------------------------------------------------------------------
+// 这些键在原文件中已导出，虽经检索在当前源码中未被引用，
+// 但保持键名不变可避免破坏任何间接消费方。取值已对齐 design-tokens。
+$blue: #1677ff;
+$light-blue: #4096ff;
+$red: #f53f3f;
+$pink: #e65d6e;
+$green: #00b42a;
+$tiffany: #14c9c9;
+$yellow: #ff7d00;
+$panGreen: #00b42a;
+$--color-primary: #1677ff;
+$--color-success: #00b42a;
+$--color-warning: #ff7d00;
+$--color-danger: #f53f3f;
+$--color-info: #646a73;
 
 :export {
+  menuBg: $menuBg;
   menuText: $menuText;
   menuActiveText: $menuActiveText;
-  menuBg: $menuBg;
   menuHover: $menuHover;
   menuLightBg: $menuLightBg;
   menuLightHover: $menuLightHover;
   menuLightText: $menuLightText;
   menuLightActiveText: $menuLightActiveText;
   sideBarWidth: $sideBarWidth;
-  // 导出基础颜色
+  baseSidebarWidth: $base-sidebar-width;
   blue: $blue;
   lightBlue: $light-blue;
   red: $red;
@@ -57,7 +67,6 @@ $--color-info: #909399;
   tiffany: $tiffany;
   yellow: $yellow;
   panGreen: $panGreen;
-  // 导出组件颜色
   colorPrimary: $--color-primary;
   colorSuccess: $--color-success;
   colorWarning: $--color-warning;
@@ -65,157 +74,115 @@ $--color-info: #909399;
   colorInfo: $--color-info;
 }
 
-// CSS变量定义
+// ---------------------------------------------------------------------------
+// CSS 变量 —— 指向令牌，供 SCSS 规则使用
+// ---------------------------------------------------------------------------
 :root {
-  /* 亮色模式变量 */
-  --sidebar-bg: #{$menuBg};
-  --sidebar-text: #{$menuText};
-  --menu-hover: #{$menuHover};
-  
-  --navbar-bg: #ffffff;
-  --navbar-text: #303133;
-  
-  /* splitpanes default-theme 变量 */
-  --splitpanes-default-bg: #ffffff;
+  --sidebar-bg: var(--kms-surface-1);
+  --sidebar-text: var(--kms-text-secondary);
+  --menu-hover: var(--kms-surface-3);
+  --menu-active-text: var(--kms-brand);
 
+  --navbar-bg: var(--kms-surface-1);
+  --navbar-text: var(--kms-text-primary);
+  --navbar-hover: var(--kms-surface-3);
+
+  --tags-bg: var(--kms-surface-1);
+  --tags-item-bg: var(--kms-surface-2);
+  --tags-item-border: var(--kms-border);
+  --tags-item-text: var(--kms-text-secondary);
+  --tags-item-hover: var(--kms-surface-3);
+  --tags-close-hover: var(--kms-text-disabled);
+
+  --splitpanes-bg: var(--kms-surface-1);
+  --splitpanes-border: var(--kms-border);
+  --splitpanes-splitter-bg: var(--kms-surface-2);
+  --splitpanes-splitter-hover-bg: var(--kms-surface-3);
+  --splitpanes-default-bg: var(--kms-surface-1);
+
+  --blockquote-bg: var(--kms-surface-2);
+  --blockquote-border: var(--kms-border-strong);
+  --blockquote-text: var(--kms-text-secondary);
+
+  --cron-border: var(--kms-border);
 }
 
-// 暗黑模式变量
-html.dark {
-  /* 默认通用 */
-  --el-bg-color: #141414;
-  --el-bg-color-overlay: #1d1e1f;
-  --el-text-color-primary: #ffffff;
-  --el-text-color-regular: #d0d0d0;
-  --el-border-color: #434343;
-  --el-border-color-light: #434343;
+// ---------------------------------------------------------------------------
+// 组件适配（去掉 !important，靠选择器层级生效）
+// ---------------------------------------------------------------------------
 
-  /* 侧边栏 */
-  --sidebar-bg: #141414;
-  --sidebar-text: #ffffff;
-  --menu-hover: #2d2d2d;
-  --menu-active-text: #{$menuActiveText};
-
-  /* 顶部导航栏 */
-  --navbar-bg: #141414;
-  --navbar-text: #ffffff;
-  --navbar-hover: #141414;
-
-  /* 标签栏 */
-  --tags-bg: #141414;
-  --tags-item-bg: #1d1e1f;
-  --tags-item-border: #303030;
-  --tags-item-text: #d0d0d0;
-  --tags-item-hover: #2d2d2d;
-  --tags-close-hover: #64666a;
-
-  /* splitpanes 组件暗黑模式变量 */
-  --splitpanes-bg: #141414;
-  --splitpanes-border: #303030;
-  --splitpanes-splitter-bg: #1d1e1f;
-  --splitpanes-splitter-hover-bg: #2d2d2d;
-
-  /* blockquote 暗黑模式变量 */
-  --blockquote-bg: #1d1e1f;
-  --blockquote-border: #303030;
-  --blockquote-text: #d0d0d0;
-  
-  /* Cron 时间表达式 模式变量 */
-  --cron-border: #303030;
-
-  /* splitpanes default-theme 暗黑模式变量 */
-  --splitpanes-default-bg: #141414;
-
-  /* 侧边栏菜单覆盖 */
-   .sidebar-container {
-    .el-menu-item, .menu-title {
-      color: var(--el-text-color-regular);
-    }
-    & .theme-dark .nest-menu .el-sub-menu>.el-sub-menu__title,
-    & .theme-dark .el-sub-menu .el-menu-item {
-      background-color: var(--el-bg-color) !important;
-    }
+// 侧边栏菜单文字
+.sidebar-container {
+  .el-menu-item,
+  .menu-title {
+    color: var(--kms-text-secondary);
   }
+}
 
-  /* 顶部栏栏菜单覆盖 */
-  .el-menu--horizontal {
-    .el-menu-item {
-      &:not(.is-disabled) {
-        &:hover,
-        &:focus {
-          background-color: var(--navbar-hover) !important;
-        }
+// 顶栏横向菜单悬停
+.el-menu--horizontal {
+  .el-menu-item {
+    &:not(.is-disabled) {
+      &:hover,
+      &:focus {
+        background-color: var(--kms-surface-3);
       }
     }
   }
+}
 
-  /* 分割窗格覆盖 */
-  .splitpanes {
+// 分割窗格
+.splitpanes {
+  background-color: var(--splitpanes-bg);
+
+  .splitpanes__pane {
     background-color: var(--splitpanes-bg);
+    border-color: var(--splitpanes-border);
+  }
 
-    .splitpanes__pane {
-      background-color: var(--splitpanes-bg);
-      border-color: var(--splitpanes-border);
+  .splitpanes__splitter {
+    background-color: var(--splitpanes-splitter-bg);
+    border-color: var(--splitpanes-border);
+
+    &:hover {
+      background-color: var(--splitpanes-splitter-hover-bg);
     }
 
-    .splitpanes__splitter {
-      background-color: var(--splitpanes-splitter-bg);
-      border-color: var(--splitpanes-border);
-
-      &:hover {
-        background-color: var(--splitpanes-splitter-hover-bg);
-      }
-
-      &:before,
-      &:after {
-        background-color: var(--splitpanes-border);
-      }
+    &:before,
+    &:after {
+      background-color: var(--splitpanes-border);
     }
   }
-
-  /* 表格样式覆盖 */
-  .el-table {
-    --el-table-header-bg-color: var(--el-bg-color-overlay) !important;
-    --el-table-header-text-color: var(--el-text-color-regular) !important;
-    --el-table-border-color: var(--el-border-color-light) !important;
-    --el-table-row-hover-bg-color: var(--el-bg-color-overlay) !important;
-
-    .el-table__header-wrapper, .el-table__fixed-header-wrapper {
-      th {
-        background-color: var(--el-bg-color-overlay, #f8f8f9) !important;
-        color: var(--el-text-color-regular, #515a6e);
-      }
-    }
-  }
-
-  /* 树组件高亮样式覆盖 */
-  .el-tree {
-    .el-tree-node.is-current > .el-tree-node__content {
-      background-color: var(--el-bg-color-overlay) !important;
-      color: var(--el-color-primary);
-    }
-
-    .el-tree-node__content:hover {
-      background-color: var(--el-bg-color-overlay);
-    }
-  }
-  
-  /* 下拉菜单样式覆盖 */
-  .el-dropdown-menu__item:not(.is-disabled):focus, .el-dropdown-menu__item:not(.is-disabled):hover{
-    background-color: var(--navbar-hover) !important;
-  }
-
-  /* blockquote样式覆盖 */
-  blockquote {
-    background-color: var(--blockquote-bg) !important;
-    border-left-color: var(--blockquote-border) !important;
-    color: var(--blockquote-text) !important;
-  }
-  
-  /* 时间表达式标题样式覆盖 */
-  .popup-result .title {
-    background: var(--cron-border);
-  }
-
 }
 
+// 树组件
+.el-tree {
+  .el-tree-node.is-current > .el-tree-node__content {
+    background-color: var(--kms-brand-subtle);
+    color: var(--kms-brand-text);
+  }
+
+  .el-tree-node__content:hover {
+    background-color: var(--kms-surface-3);
+  }
+}
+
+// 下拉菜单
+.el-dropdown-menu__item:not(.is-disabled) {
+  &:focus,
+  &:hover {
+    background-color: var(--kms-surface-3);
+  }
+}
+
+// 引用块
+blockquote {
+  background-color: var(--blockquote-bg);
+  border-left-color: var(--blockquote-border);
+  color: var(--blockquote-text);
+}
+
+// Cron 表达式
+.popup-result .title {
+  background: var(--cron-border);
+}

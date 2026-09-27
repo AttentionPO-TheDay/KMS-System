@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ruoyi.updatedel.domain.KeyPayload;
 import com.ruoyi.updatedel.domain.Keymanage;
 import com.ruoyi.updatedel.domain.KeyStatus;
-import com.ruoyi.updatedel.domain.SysUser;
 import com.ruoyi.updatedel.mapper.KeymanageMapper;
 import com.ruoyi.updatedel.mapper.SysUserMapper;
 import com.ruoyi.updatedel.service.LifecycleService;
@@ -20,7 +19,6 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -31,7 +29,6 @@ public class LifecycleKafkaConsumer {
     private final SysUserMapper sysUserMapper;
     private final KeymanageMapper keymanageMapper;
     private final LifecycleService lifecycleService;
-    private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
     public LifecycleKafkaConsumer(ObjectMapper objectMapper,
                                   SysUserMapper sysUserMapper,
@@ -86,6 +83,21 @@ public class LifecycleKafkaConsumer {
                 payloadCount++;
                 if (payload.getKeyId() == null || !isAuthorized(payload, authCache)) {
                     skippedCount++;
+                    continue;
+                }
+                // 归属校验：消息声明的用户必须确实是该密钥的所有者，
+                // 否则可借批量回收接口跨用户回收他人密钥。
+                Keymanage owner = keymanageMapper.selectkeymanageByKeyId(payload.getKeyId());
+                if (owner == null) {
+                    skippedCount++;
+                    log.warn("lifecycle kafka revoke key not found, keyId={}, traceId={}",
+                        payload.getKeyId(), payload.getTraceId());
+                    continue;
+                }
+                if (!payload.getRawUser().equals(owner.getUserName())) {
+                    skippedCount++;
+                    log.warn("lifecycle kafka revoke owner mismatch, keyId={}, declaredUser={}, traceId={}",
+                        payload.getKeyId(), payload.getRawUser(), payload.getTraceId());
                     continue;
                 }
                 keyIdsByUser.computeIfAbsent(payload.getRawUser(), ignored -> new LinkedHashSet<>())
@@ -148,19 +160,22 @@ public class LifecycleKafkaConsumer {
         }
     }
 
+    /**
+     * 校验消息声明的用户确实存在。
+     * <p>
+     * 安全边界已上移到 Go 入站层（身份经 X-Kms-User 内部头由 Java 业务层传递，
+     * Go 不再信任请求体中的 user，且入站路由不对外暴露）。
+     * 此处不再以「密码为空」作为可信判据——那正是先前的鉴权绕过点。
+     * 密钥归属（key.user_name == payload.raw_user）由 handle / handleRevokeBatch 单独校验。
+     */
     private boolean isAuthorized(KeyPayload payload) {
         if (payload.getRawUser() == null || payload.getRawUser().trim().isEmpty()) {
             return false;
         }
-        Optional<SysUser> userOptional = Optional.ofNullable(sysUserMapper.selectUserByUserName(payload.getRawUser()));
-        if (!userOptional.isPresent()) {
-            return false;
+        if (payload.getRawPassword() != null && !payload.getRawPassword().trim().isEmpty()) {
+            log.warn("收到携带明文密码的生命周期消息（旧调用方），已忽略该字段: user={}", payload.getRawUser());
         }
-        if (payload.getRawPassword() == null || payload.getRawPassword().trim().isEmpty()) {
-            return true;
-        }
-        String encodedPassword = userOptional.get().getPassword();
-        return encodedPassword != null && passwordEncoder.matches(payload.getRawPassword(), encodedPassword);
+        return sysUserMapper.selectUserByUserName(payload.getRawUser()) != null;
     }
 
     private boolean isAuthorized(KeyPayload payload, Map<String, Boolean> authCache) {

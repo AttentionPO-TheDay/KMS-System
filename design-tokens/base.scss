@@ -1,0 +1,272 @@
+// ============================================================================
+// KMS 基础样式层（浅色企业级）
+// ----------------------------------------------------------------------------
+// 依赖 tokens.scss（CSS 变量）。只做 reset、排版基线与通用布局基类，
+// 不覆盖 Element Plus 组件外观（那部分见 element-light.scss）。
+// ============================================================================
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--kms-surface-page);
+  color: var(--kms-text-primary);
+  font-family: var(--kms-font-sans);
+  font-size: var(--kms-font-size-base);
+  line-height: var(--kms-line-height);
+  font-weight: var(--kms-font-weight-normal);
+  letter-spacing: var(--kms-letter-spacing);
+  font-feature-settings: 'cv05' 1, 'cv08' 1; // Inter: 区分 l/I、衬线化 1
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  // 注意：不再使用 body::before / body::after 做网格与辉光背景。
+  // 深色科技风的装饰在浅色企业级风格下会显得杂乱，且会与卡片阴影叠加。
+}
+
+// ---------- 标题排版 ----------
+// 统一标题的字重/字距/行高，避免各处 font-weight 不一致（原先是 500/600 混用）
+h1, h2, h3, h4, h5, h6 {
+  margin: 0;
+  font-weight: var(--kms-font-weight-semibold);
+  line-height: var(--kms-line-height-tight);
+  letter-spacing: var(--kms-letter-spacing-tight);
+  color: var(--kms-text-primary);
+}
+
+h1 { font-size: var(--kms-font-size-xxl); }
+h2 { font-size: var(--kms-font-size-xl); }
+h3 { font-size: var(--kms-font-size-lg); }
+h4 { font-size: var(--kms-font-size-md); }
+h5, h6 { font-size: var(--kms-font-size-base); }
+
+// 中文正文：不加字距，行距略放宽以提高可读性
+p {
+  margin: 0 0 var(--kms-space-3);
+  line-height: var(--kms-line-height-loose);
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+}
+
+strong, b {
+  font-weight: var(--kms-font-weight-semibold);
+}
+
+// ---------- Element Plus 排版对齐 ----------
+// 让 Element 组件的字号/字重/行高与令牌一致（否则会回落到它自己的 14px/1.5）
+.el-button,
+.el-input__inner,
+.el-textarea__inner,
+.el-select__placeholder,
+.el-form-item__label,
+.el-table,
+.el-tag,
+.el-pagination,
+.el-message-box__message,
+.el-notification__content {
+  font-family: var(--kms-font-sans);
+  letter-spacing: var(--kms-letter-spacing);
+}
+
+.el-form-item__label {
+  font-weight: var(--kms-font-weight-medium);
+  color: var(--kms-text-secondary);
+}
+
+// 表格：表头字重适中，单元格数字用等宽更易纵向对比
+.el-table {
+  font-size: var(--kms-font-size-base);
+
+  th.el-table__cell {
+    font-weight: var(--kms-font-weight-semibold);
+    color: var(--kms-text-secondary);
+    font-size: var(--kms-font-size-sm);
+  }
+
+  .el-table__cell {
+    padding: var(--kms-space-3) 0;
+  }
+}
+
+// 数字/ID/哈希类内容用等宽，纵向对齐更容易扫读
+.kms-num,
+.kms-hash {
+  font-family: var(--kms-font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--kms-letter-spacing-none);
+}
+
+a {
+  color: var(--kms-brand-text);
+  text-decoration: none;
+  transition: color var(--kms-transition-fast);
+
+  &:hover,
+  &:focus {
+    color: var(--kms-brand-hover);
+  }
+}
+
+code,
+kbd,
+pre,
+samp {
+  font-family: var(--kms-font-mono);
+  font-size: 0.92em;
+}
+
+code {
+  padding: 2px 6px;
+  border-radius: var(--kms-radius-sm);
+  background: var(--kms-surface-3);
+  color: var(--kms-text-primary);
+}
+
+// ---------- 通用卡片 ----------
+.kms-card {
+  background: var(--kms-surface-1);
+  border: 1px solid var(--kms-border);
+  border-radius: var(--kms-radius);
+  box-shadow: var(--kms-shadow-sm);
+  padding: var(--kms-space-4);
+}
+
+.kms-card + .kms-card {
+  margin-top: var(--kms-space-4);
+}
+
+// ---------- 页面容器 ----------
+.kms-page {
+  padding: var(--kms-space-4);
+}
+
+.kms-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--kms-space-3);
+  margin-bottom: var(--kms-space-4);
+
+  h1,
+  h2 {
+    margin: 0;
+    font-size: var(--kms-font-size-lg);
+    font-weight: 600;
+    color: var(--kms-text-primary);
+  }
+}
+
+.kms-page-subtitle {
+  margin: var(--kms-space-1) 0 0;
+  font-size: var(--kms-font-size-sm);
+  color: var(--kms-text-secondary);
+}
+
+// ---------- 工具类 ----------
+.kms-text-secondary {
+  color: var(--kms-text-secondary);
+}
+
+.kms-text-tertiary {
+  color: var(--kms-text-tertiary);
+}
+
+.kms-text-mono {
+  font-family: var(--kms-font-mono);
+}
+
+.kms-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kms-flex-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.kms-gap-2 {
+  gap: var(--kms-space-2);
+}
+
+.kms-gap-4 {
+  gap: var(--kms-space-4);
+}
+
+.kms-mt-2 {
+  margin-top: var(--kms-space-2);
+}
+
+.kms-mt-4 {
+  margin-top: var(--kms-space-4);
+}
+
+.kms-mb-2 {
+  margin-bottom: var(--kms-space-2);
+}
+
+.kms-mb-4 {
+  margin-bottom: var(--kms-space-4);
+}
+
+.kms-p-4 {
+  padding: var(--kms-space-4);
+}
+
+// ---------- 空态 ----------
+.kms-empty {
+  padding: var(--kms-space-10) var(--kms-space-4);
+  text-align: center;
+  color: var(--kms-text-tertiary);
+  font-size: var(--kms-font-size-sm);
+}
+
+// 空态（各应用通用）：.empty-state 此前无任何样式，
+// 移除 emoji 后只剩空 div，故在此统一提供图形标记与排版。
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--kms-space-3);
+  padding: var(--kms-space-10) var(--kms-space-4);
+  text-align: center;
+  color: var(--kms-text-tertiary);
+
+  p {
+    margin: 0;
+    font-size: var(--kms-font-size-sm);
+    line-height: var(--kms-line-height-loose);
+  }
+}
+
+.empty-icon {
+  width: 40px;
+  height: 40px;
+  border: 2px dashed var(--kms-border-strong);
+  border-radius: var(--kms-radius);
+  position: relative;
+
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 10px;
+    border-radius: 2px;
+    background: var(--kms-surface-3);
+  }
+}

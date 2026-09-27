@@ -75,10 +75,11 @@
               <el-icon><Setting /></el-icon>
               <div class="btn-text">公共参数</div>
             </div>
-            <div class="action-btn info" @click="$router.push('/permission/request/index')">
-              <el-icon><Stamp /></el-icon>
-              <div class="btn-text">系统权限审批</div>
-            </div>
+            <!--
+              原「系统权限审批」快捷入口已删除：按 D2 / 系统归属，生成域不再受理权限申请与审批，
+              后端整套生成域权限申请接口已随 P1 下线（全部 404），
+              对应页面与路由也已移除，这里不重建任何替代入口。
+            -->
           </div>
         </div>
       </el-col>
@@ -88,7 +89,7 @@
 
 <script setup>
 import { ref, reactive, onMounted, onUnmounted, markRaw } from 'vue'
-import { Key, User, TrendCharts, Link, Lock, Calendar, Setting, Stamp } from '@element-plus/icons-vue'
+import { Key, User, TrendCharts, Link, Lock, Calendar, Setting } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import { getDashboardSummary } from '@/api/generate/keymanage'
 
@@ -129,7 +130,7 @@ async function initData() {
     chartState.distribution = Object.entries(summary.algorithmDistribution || {}).map(([name, value], index) => ({
       name,
       value,
-      itemStyle: { color: ['#0099ff', '#9c27b0', '#00e5ff', '#e6a23c'][index % 4] }
+      itemStyle: { color: [CHART_COLORS.brand, CHART_COLORS.brand, CHART_COLORS.brand, CHART_COLORS.warning][index % 4] }
     }))
 
     initCharts()
@@ -138,9 +139,26 @@ async function initData() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// ECharts 配色（必须使用字面量）
+// ---------------------------------------------------------------------------
+// ECharts 使用 canvas 渲染，无法解析 CSS 自定义属性（var(--kms-*) 会渲染为黑色）。
+// 因此图表相关颜色在此显式声明，取值与 design-tokens/tokens.scss 保持一致。
+// 修改品牌色时需同步此处。
+const CHART_COLORS = {
+  brand: '#1677ff',
+  brandHover: '#4096ff',
+  brandBorder: '#91caff',
+  warning: '#ff7d00',
+  textPrimary: '#1f2329',
+  textSecondary: '#646a73',
+  border: '#e5e7eb',
+  borderStrong: '#d0d5dd',
+  surfaceOverlay: '#ffffff'
+}
 function initCharts() {
-  const textColor = 'rgba(255, 255, 255, 0.7)'
-  const splitLineColor = 'rgba(255, 255, 255, 0.1)'
+  const textColor = CHART_COLORS.textSecondary
+  const splitLineColor = CHART_COLORS.border
 
   if (!lineChart && lineChartRef.value) {
     lineChart = echarts.init(lineChartRef.value)
@@ -150,7 +168,7 @@ function initCharts() {
   }
 
   lineChart?.setOption({
-    tooltip: { trigger: 'axis', backgroundColor: 'rgba(15,23,30,0.9)', borderColor: '#0099ff', textStyle: { color: '#fff' } },
+    tooltip: { trigger: 'axis', backgroundColor: CHART_COLORS.surfaceOverlay, borderColor: CHART_COLORS.brand, textStyle: { color: CHART_COLORS.textPrimary } },
     legend: { data: ['SM2生成量', 'SSCL生成量'], textStyle: { color: textColor } },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
     xAxis: {
@@ -167,25 +185,25 @@ function initCharts() {
     series: [
       {
         name: 'SM2生成量', type: 'line', smooth: true,
-        itemStyle: { color: '#0099ff' },
+        itemStyle: { color: CHART_COLORS.brand },
         areaStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: 'rgba(0,153,255,0.3)' },
-            { offset: 1, color: 'rgba(0,153,255,0)' }
+            { offset: 0, color: CHART_COLORS.brandBorder },
+            { offset: 1, color: 'transparent' }
           ])
         },
         data: chartState.sm2
       },
       {
         name: 'SSCL生成量', type: 'line', smooth: true,
-        itemStyle: { color: '#00e5ff' },
+        itemStyle: { color: CHART_COLORS.brand },
         data: chartState.sscl
       }
     ]
   })
 
   pieChart?.setOption({
-    tooltip: { trigger: 'item', backgroundColor: 'rgba(15,23,30,0.9)', borderColor: '#5e4d9a', textStyle: { color: '#fff' } },
+    tooltip: { trigger: 'item', backgroundColor: CHART_COLORS.surfaceOverlay, borderColor: CHART_COLORS.borderStrong, textStyle: { color: CHART_COLORS.textPrimary } },
     legend: { bottom: '0%', left: 'center', textStyle: { color: textColor } },
     series: [
       {
@@ -193,7 +211,7 @@ function initCharts() {
         type: 'pie',
         radius: ['40%', '70%'],
         avoidLabelOverlap: false,
-        itemStyle: { borderRadius: 10, borderColor: 'rgba(0,0,0,0.5)', borderWidth: 2 },
+        itemStyle: { borderRadius: 10, borderColor: CHART_COLORS.border, borderWidth: 2 },
         label: { show: false, position: 'center' },
         emphasis: { label: { show: true, fontSize: 20, fontWeight: 'bold' } },
         labelLine: { show: false },
@@ -231,22 +249,22 @@ onUnmounted(() => {
 
 .page-title h1 {
   font-size: 28px;
-  color: #fff;
+  color: var(--kms-text-primary);
   margin: 0 0 8px 0;
   font-weight: 600;
   letter-spacing: 1px;
 }
 
 .page-title .subtitle {
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--kms-text-secondary);
   margin: 0;
   font-size: 14px;
 }
 
 .stat-card {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--kms-surface-1);
   backdrop-filter: blur(24px);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--kms-border);
   border-radius: 12px;
   padding: 24px;
   display: flex;
@@ -258,8 +276,8 @@ onUnmounted(() => {
 
 .stat-card:hover {
   transform: translateY(-5px);
-  border-color: rgba(255, 255, 255, 0.1);
-  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+  border-color: var(--kms-border);
+  box-shadow: 0 10px 30px -10px var(--kms-border-strong);
 }
 
 .stat-icon-wrapper {
@@ -285,14 +303,14 @@ onUnmounted(() => {
   z-index: -1;
 }
 
-.stat-icon-wrapper.blue { color: #0099ff; background: rgba(0, 153, 255, 0.1); }
-.stat-icon-wrapper.blue .glow { background: #0099ff; }
-.stat-icon-wrapper.green { color: #00e5ff; background: rgba(0, 229, 255, 0.1); }
-.stat-icon-wrapper.green .glow { background: #00e5ff; }
-.stat-icon-wrapper.orange { color: #e6a23c; background: rgba(230, 162, 60, 0.1); }
-.stat-icon-wrapper.orange .glow { background: #e6a23c; }
-.stat-icon-wrapper.purple { color: #9c27b0; background: rgba(156, 39, 176, 0.1); }
-.stat-icon-wrapper.purple .glow { background: #9c27b0; }
+.stat-icon-wrapper.blue { color: var(--kms-brand-text); background: var(--kms-brand-subtle); }
+.stat-icon-wrapper.blue .glow { background: var(--kms-brand-fill); }
+.stat-icon-wrapper.green { color: var(--kms-brand-text); background: var(--kms-brand-subtle); }
+.stat-icon-wrapper.green .glow { background: var(--kms-brand-fill); }
+.stat-icon-wrapper.orange { color: var(--kms-warning-strong); background: var(--kms-warning-subtle); }
+.stat-icon-wrapper.orange .glow { background: var(--kms-warning); }
+.stat-icon-wrapper.purple { color: var(--kms-brand-hover); background: var(--kms-brand-subtle); }
+.stat-icon-wrapper.purple .glow { background: var(--kms-brand-hover); }
 
 .stat-content {
   flex: 1;
@@ -300,27 +318,27 @@ onUnmounted(() => {
 
 .stat-title {
   font-size: 14px;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--kms-text-secondary);
   margin-bottom: 8px;
 }
 
 .stat-value .num {
   font-size: 28px;
   font-weight: bold;
-  color: #fff;
+  color: var(--kms-text-primary);
   font-family: 'Inter', sans-serif;
 }
 
 .stat-note {
   margin-top: 8px;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--kms-text-secondary);
   font-size: 13px;
 }
 
 .glass-card {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--kms-surface-1);
   backdrop-filter: blur(24px);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--kms-border);
   border-radius: 12px;
   padding: 20px;
   height: 100%;
@@ -329,7 +347,7 @@ onUnmounted(() => {
 .card-header {
   font-size: 16px;
   font-weight: 600;
-  color: #fff;
+  color: var(--kms-text-primary);
   margin-bottom: 20px;
   display: flex;
   align-items: center;
@@ -340,7 +358,7 @@ onUnmounted(() => {
   display: inline-block;
   width: 4px;
   height: 16px;
-  background: #0099ff;
+  background: var(--kms-brand-fill);
   border-radius: 2px;
   margin-right: 10px;
 }
@@ -360,15 +378,15 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   padding: 12px 16px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--kms-surface-2);
   border-radius: 8px;
   border-left: 2px solid transparent;
   transition: all 0.2s;
 }
 
 .notice-item:hover {
-  background: rgba(255, 255, 255, 0.06);
-  border-left-color: #0099ff;
+  background: var(--kms-surface-3);
+  border-left-color: var(--kms-brand);
 }
 
 .notice-tag {
@@ -376,20 +394,20 @@ onUnmounted(() => {
   padding: 4px 8px;
   margin-right: 12px;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.08);
-  color: #d9ecff;
+  background: var(--kms-surface-3);
+  color: var(--kms-text-secondary);
   text-align: center;
   font-size: 12px;
 }
 
 .notice-tag.new {
-  background: rgba(0, 153, 255, 0.18);
-  color: #8fd2ff;
+  background: var(--kms-brand-subtle);
+  color: var(--kms-text-secondary);
 }
 
 .notice-text {
   flex: 1;
-  color: rgba(255, 255, 255, 0.78);
+  color: var(--kms-text-secondary);
   line-height: 1.6;
 }
 
@@ -407,7 +425,7 @@ onUnmounted(() => {
   gap: 10px;
   min-height: 116px;
   border-radius: 12px;
-  color: #fff;
+  color: var(--kms-text-primary);
   cursor: pointer;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
@@ -416,10 +434,10 @@ onUnmounted(() => {
   transform: translateY(-4px);
 }
 
-.action-btn.primary { background: linear-gradient(135deg, rgba(0, 153, 255, 0.24), rgba(0, 153, 255, 0.08)); }
-.action-btn.success { background: linear-gradient(135deg, rgba(103, 194, 58, 0.24), rgba(103, 194, 58, 0.08)); }
-.action-btn.warning { background: linear-gradient(135deg, rgba(230, 162, 60, 0.24), rgba(230, 162, 60, 0.08)); }
-.action-btn.info { background: linear-gradient(135deg, rgba(144, 147, 153, 0.24), rgba(144, 147, 153, 0.08)); }
+.action-btn.primary { background: linear-gradient(135deg, var(--kms-brand-subtle), var(--kms-brand-subtle)); }
+.action-btn.success { background: linear-gradient(135deg, var(--kms-success-subtle), var(--kms-success-subtle)); }
+.action-btn.warning { background: linear-gradient(135deg, var(--kms-warning-subtle), var(--kms-warning-subtle)); }
+.action-btn.info { background: linear-gradient(135deg, var(--kms-surface-3), var(--kms-surface-3)); }
 
 .action-btn .el-icon {
   font-size: 28px;

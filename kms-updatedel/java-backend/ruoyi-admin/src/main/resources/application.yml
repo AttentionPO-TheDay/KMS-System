@@ -50,7 +50,8 @@ spring:
       max-request-size: 20MB
   devtools:
     restart:
-      enabled: true
+      # 生产配置中不得开启热重启：会导致类加载器泄漏与不可预期的重启。
+      enabled: false
   redis:
     host: ${REDIS_HOST:redis}
     port: ${REDIS_PORT:6379}
@@ -67,8 +68,13 @@ spring:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:9092}
     consumer:
       group-id: kms-updatedel-consumer-group
-      auto-offset-reset: latest
-      enable-auto-commit: true
+      # earliest：本系统的核心动作是「回收」，丢一条回收消息意味着密钥未真正失效。
+      # 原 latest 会在消费者离线期间静默跳过消息，对回收语义是不可接受的。
+      auto-offset-reset: earliest
+      # 关闭自动提交：原 auto-commit 会在消息被消费后（而非处理成功后）提交位点，
+      # 导致处理失败的消息也被确认并静默丢失。
+      # 配合 listener ack-mode: BATCH，改为整批处理完成后提交。
+      enable-auto-commit: false
       auto-commit-interval: 1000
       max-poll-records: ${KMS_LIFECYCLE_MAX_POLL_RECORDS:1000}
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
@@ -82,10 +88,16 @@ spring:
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
     listener:
       type: batch
+      # BATCH：整批处理完成后才提交位点。现有监听方法签名接收
+      # List<ConsumerRecord> 且未注入 Acknowledgment，无法直接使用 MANUAL_IMMEDIATE。
+      ack-mode: BATCH
 
 token:
   header: Authorization
-  secret: abcdefghijklmnopqrstuvwxyz
+  # JWT 签名密钥，必须由环境变量 KMS_TOKEN_SECRET 注入，无默认值。
+  # 三个后端必须使用同一值（共用 Redis 与登录态以支持跨服务调用）。
+  # 历史上硬编码为 "abcdefghijklmnopqrstuvwxyz"，属公开值，可被用于伪造管理员 Token。
+  secret: ${KMS_TOKEN_SECRET}
   expireTime: 30
 
 mybatis:
@@ -110,7 +122,8 @@ xss:
 kms:
   go-backend:
     url: ${GO_BACKEND_URL:http://updatedel-go:8082}
-    internal-token: ${INTERNAL_TOKEN:kms-generate-internal-secret-2026}
+    # 必须由环境变量注入，无默认值（历史默认为公开值，泄露后可触达生成/更新/回收）。
+    internal-token: ${INTERNAL_TOKEN}
   lifecycle:
     batch-size: ${KMS_LIFECYCLE_BATCH_SIZE:500}
     chain-sync-enabled: ${KMS_LIFECYCLE_CHAIN_SYNC_ENABLED:true}

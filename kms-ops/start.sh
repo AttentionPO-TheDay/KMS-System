@@ -163,17 +163,17 @@ mkdir -p mysql/data mysql/init redis/data kafka/kafka_data
 mkdir -p fisco/console/account fisco/console/accounts fisco/console/log
 mkdir -p fisco/live
 mkdir -p nginx/logs
-mkdir -p front/generate front/updatedel front/distribute front/user front/acceptance
-mkdir -p runtime/generate-go runtime/generate-java runtime/updatedel-go runtime/updatedel-java runtime/distribute-java runtime/acceptance-go
+# 注意：/generate/ 静态前端已退役，不再需要 front/generate
+#（详见 kms-generate/front/RETIRED.md；generate 后端仍在下面的 runtime/ 清单里）
+mkdir -p front/updatedel front/distribute front/user front/acceptance
+mkdir -p runtime/generate-go runtime/generate-java runtime/updatedel-go runtime/updatedel-java runtime/acceptance-go
 
 if [ ! -f "runtime/generate-go/kms-generate-service" ] \
     || [ ! -f "runtime/generate-java/kms-generate.jar" ] \
     || [ ! -f "runtime/updatedel-go/kms-updatedel-service" ] \
     || [ ! -f "runtime/updatedel-java/kms-updatedel.jar" ] \
-    || [ ! -f "runtime/distribute-java/kms-distribute.jar" ] \
     || [ ! -f "runtime/acceptance-go/kms-acceptance-backend" ] \
     || [ ! -f "runtime/acceptance-go/security/security_test.sh" ] \
-    || [ ! -f "front/generate/index.html" ] \
     || [ ! -f "front/updatedel/index.html" ] \
     || [ ! -f "front/distribute/index.html" ] \
     || [ ! -f "front/user/index.html" ] \
@@ -215,12 +215,61 @@ run_compose up -d --force-recreate \
     generate-java \
     updatedel-go \
     updatedel-java \
-    kms-distribute \
     acceptance-backend \
     nginx
 
 echo "[INFO] 等待中间件启动..."
 sleep 5
+
+# ---------------------------------------------------------------------------
+# 幂等补齐运行期新增的数据库列
+# ---------------------------------------------------------------------------
+# key_operation_record.proof_path 是本次改造新增的列，用于存储 Merkle 证明路径。
+# 注意：mysql/init/ 下的脚本只在 MySQL 数据卷为空时执行，
+# 因此对已存在的部署必须在此补齐，否则证明刷新会因缺列而失败。
+ensure_key_operation_record_proof_path() {
+    local db_password
+    db_password="${MYSQL_ROOT_PASSWORD:-}"
+    if [ -z "$db_password" ] && [ -f ".env" ]; then
+        db_password=$(grep '^MYSQL_ROOT_PASSWORD=' .env | tail -n 1 | cut -d '=' -f 2-)
+    fi
+    if [ -z "$db_password" ]; then
+        echo "[WARN] 未找到 MYSQL_ROOT_PASSWORD，跳过 proof_path 列补齐检查"
+        return 0
+    fi
+
+    # 等待 MySQL 可用（最多 ~60s）
+    local i
+    for i in $(seq 1 30); do
+        if docker exec kms_mysql mysqladmin ping -h localhost -p"$db_password" >/dev/null 2>&1; then
+            break
+        fi
+        sleep 2
+    done
+
+    local exists
+    exists=$(docker exec kms_mysql mysql -N -B -uroot -p"$db_password" -D kms \
+        -e "SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='kms' AND TABLE_NAME='key_operation_record' AND COLUMN_NAME='proof_path';" 2>/dev/null || echo "")
+
+    if [ "$exists" = "1" ]; then
+        echo "[INFO] key_operation_record.proof_path 已存在，跳过"
+        return 0
+    fi
+    if [ "$exists" != "0" ]; then
+        echo "[WARN] 无法确认 proof_path 列状态（MySQL 可能尚未就绪），跳过补齐"
+        return 0
+    fi
+
+    echo "[INFO] 补齐 key_operation_record.proof_path 列（Merkle 证明路径）..."
+    if docker exec kms_mysql mysql -uroot -p"$db_password" -D kms -e \
+        "ALTER TABLE key_operation_record ADD COLUMN proof_path VARCHAR(2000) DEFAULT NULL COMMENT 'Merkle proof path: R:<hash>|L:<hash>|ROOT:<hash>';" >/dev/null 2>&1; then
+        echo "[INFO] proof_path 列补齐完成"
+    else
+        echo "[WARN] proof_path 列补齐失败，请手动执行 kms-updatedel/sql/4_key_operation_record_merkle_proof_path.sql"
+    fi
+}
+
+ensure_key_operation_record_proof_path
 
 if ! grep -q '^FISCO_CONTRACT_ADDRESS=0x' .env; then
     if [ -f "$FISCO_LIVE_STATE_ENV" ]; then

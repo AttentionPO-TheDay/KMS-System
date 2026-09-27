@@ -3,16 +3,13 @@
     <div class="generate-dashboard">
       <nav class="inner-sidenav">
         <div class="nav-item" :class="{ active: activeTab === 'generate' }" @click="activeTab = 'generate'">
-          <span class="icon">🚀</span> 密钥生成
+          <el-icon class="icon"><MagicStick /></el-icon> 密钥生成
         </div>
         <div class="nav-item" :class="{ active: activeTab === 'records' }" @click="activeTab = 'records'">
-          <span class="icon">📊</span> 历史记录
-        </div>
-        <div class="nav-item" :class="{ active: activeTab === 'public' }" @click="activeTab = 'public'">
-          <span class="icon">🌐</span> 公共库
+          <el-icon class="icon"><TrendCharts /></el-icon> 历史记录
         </div>
         <div class="nav-item" :class="{ active: activeTab === 'params' }" @click="activeTab = 'params'">
-          <span class="icon">⚙️</span> 参数查询
+          <el-icon class="icon"><Setting /></el-icon> 参数查询
         </div>
       </nav>
 
@@ -22,7 +19,7 @@
       <article class="summary-card">
         <span class="summary-label">当前用户</span>
         <strong>{{ profile.userName || '未登录' }}</strong>
-        <small>ID: {{ profile.userId || '-' }}</small>
+        <small>{{ roleLevelText(profile.roleLevel) }}</small>
       </article>
       <article class="summary-card">
         <span class="summary-label">生成能力</span>
@@ -30,36 +27,35 @@
         <small>支持 SM2 / SSCL / 抗量子签名密钥 / 抗量子封装密钥</small>
       </article>
       <article class="summary-card">
-        <span class="summary-label">公共密钥权限</span>
-        <strong>{{ canViewPublicKeys ? '已具备' : '需申请' }}</strong>
-        <small>{{ canViewPublicKeys ? '可直接查询公共密钥' : '去权限页申请临时权限' }}</small>
+        <span class="summary-label">本地私钥份额</span>
+        <strong>{{ localMaterial.privateKey ? '已生成' : '未生成' }}</strong>
+        <small>只在浏览器内保存，不会上传服务端</small>
+      </article>
+      <article class="summary-card">
+        <!--
+          P3 步骤 0b：把"密钥凭据"这件事显式呈现出来。
+          生成密钥后必须下载密钥文件并自行保存 —— 服务端只有 KGC 分片，
+          没有它就解不开分发过来的信封。
+        -->
+        <span class="summary-label">密钥凭据</span>
+        <strong>{{ keyring.size > 0 ? `已导入 ${keyring.size} 把` : '未导入' }}</strong>
+        <small class="keyring-line">
+          <key-file-import ref="keyFileImportRef" @imported="handleKeyFileImported" />
+        </small>
       </article>
     </div>
 
-    <el-card class="panel glass-panel" shadow="never">
+    <el-card class="panel" shadow="never">
       <template #header>
         <div class="panel-head">
           <div>
             <h3>密钥生成</h3>
-            <p class="muted">SM2/SSCL 仍按无证书流程在用户侧生成本地份额；CL-Kyber/CL-Falcon 当前为 demo_generated 模式，由 Demo 后端为演示路径生成并返回材料或引用。strict_certificateless 模式需要用户/节点本地秘密材料，当前薄 API 未实现。</p>
-          </div>
-          <RouterLink class="inline-link" to="/permissions/index">查看权限申请</RouterLink>
+</div>
         </div>
       </template>
 
       <div class="generate-layout">
         <div class="generate-main generation-box">
-          <div class="profile-grid">
-            <label>
-              <span>用户 ID</span>
-              <input :value="profile.userId || '-'" type="text" disabled />
-            </label>
-            <label>
-              <span>用户名</span>
-              <input :value="profile.userName || '-'" type="text" disabled />
-            </label>
-          </div>
-
           <el-form ref="generateFormRef" :model="generateForm" :rules="generateRules" label-width="108px" class="generate-form">
             <div class="form-grid two-col">
               <el-form-item label="算法类型" prop="encrytType">
@@ -101,11 +97,8 @@
             <h3>本地材料</h3>
             <el-tag :type="pqAlgorithms.includes(generateForm.encrytName) ? 'info' : 'success'">{{ pqAlgorithms.includes(generateForm.encrytName) ? 'PQ demo_generated' : '浏览器侧' }}</el-tag>
           </div>
-          <p class="muted">SM2/SSCL 的本地部分私钥只保留在当前页面中，不会提交到后端。CL-Kyber/CL-Falcon 当前使用 demo_generated，不发送 uA；strict_certificateless 才需要用户/节点本地秘密材料。</p>
-
-          <div v-if="pqAlgorithms.includes(generateForm.encrytName)" class="pq-mode-note">
+<div v-if="pqAlgorithms.includes(generateForm.encrytName)" class="pq-mode-note">
             <strong>当前 PQ 模式：demo_generated</strong>
-            <span>Demo 后端为演示链路生成并返回材料或引用；这不代表 CL-Kyber/CL-Falcon 不需要本地秘密材料。strict_certificateless 模式需由用户/节点持有本地秘密材料。</span>
           </div>
           <div v-else-if="!localMaterial.publicKey" style="display: flex; justify-content: center; padding: 40px 0;">
             <el-button type="primary" plain @click="regenerateLocalMaterial">点击生成本地公私钥</el-button>
@@ -121,7 +114,7 @@
             </div>
             <div class="material-item full">
               <span>本地部分私钥 (浏览器侧生成且不在网络中传输)</span>
-              <code class="danger-text" style="color: #ff4d4f;">{{ maskedPrivateKey }}</code>
+              <code class="danger-text" style="color: var(--kms-danger-strong);">{{ maskedPrivateKey }}</code>
             </div>
             <div class="action-row compact">
               <el-button text type="primary" @click="copyLocalMaterial">复制材料摘要</el-button>
@@ -141,23 +134,22 @@
         <div class="panel-head">
           <div>
             <h3>生成记录</h3>
-            <p class="muted">默认聚焦当前登录用户的生成记录，可查看链上状态与单条详情。</p>
-          </div>
+</div>
         </div>
       </template>
 
-      <el-form :model="filters" inline label-width="88px" class="query-form">
+      <el-form :model="filters" inline label-width="88px" class="query-form" @submit.prevent>
         <el-form-item label="用户 ID">
-          <el-input v-model="filters.userId" type="number" min="1" placeholder="按用户 ID 筛选" />
+          <el-input v-model="filters.userId" type="number" min="1" placeholder="按用户 ID 筛选" clearable @keyup.enter="handleSearchKeys" />
         </el-form-item>
         <el-form-item label="用户名">
-          <el-input v-model="filters.userName" placeholder="按用户名筛选" />
+          <el-input v-model="filters.userName" placeholder="按用户名筛选" clearable @keyup.enter="handleSearchKeys" />
         </el-form-item>
         <el-form-item label="算法名称">
-          <el-input v-model="filters.encrytName" placeholder="SM2 / SSCL" />
+          <el-input v-model="filters.encrytName" placeholder="SM2 / SSCL" clearable @keyup.enter="handleSearchKeys" />
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" @click="loadKeys">刷新</el-button>
+          <el-button type="primary" @click="handleSearchKeys">查询</el-button>
           <el-button @click="resetFilters">重置</el-button>
         </el-form-item>
       </el-form>
@@ -191,70 +183,13 @@
     </el-card>
         </div>
 
-        <div v-show="activeTab === 'public'" class="tab-pane">
-    <el-card class="panel" shadow="never">
-      <template #header>
-        <div class="panel-head">
-          <div>
-            <h3>公共密钥列表</h3>
-            <p class="muted">该能力需要生成域临时权限，审批通过后只展示脱敏后的公共值。</p>
-          </div>
-          <RouterLink class="inline-link" to="/permissions/index">去申请权限</RouterLink>
-        </div>
-      </template>
-
-      <el-alert
-        v-if="!canViewPublicKeys"
-        title="当前账号没有查看公共密钥列表的权限，请先到权限管理页申请临时权限。"
-        type="warning"
-        :closable="false"
-        show-icon
-        class="mb12"
-      />
-
-      <el-alert
-        v-if="showPublicKeysRollback"
-        title="当前公共密钥访问权限为临时权限，完成查看后建议立即回退。"
-        type="info"
-        :closable="false"
-        show-icon
-        class="mb12"
-      >
-        <template #default>
-          <el-button type="primary" link @click="handleRollbackPublicKeys">回退权限</el-button>
-        </template>
-      </el-alert>
-
-      <el-form :model="publicKeyQuery" inline label-width="88px" class="query-form">
-        <el-form-item label="用户名">
-          <el-input v-model="publicKeyQuery.userName" placeholder="请输入用户名" clearable />
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" :disabled="!canViewPublicKeys" @click="loadPublicKeys">搜索</el-button>
-          <el-button :disabled="!canViewPublicKeys" @click="resetPublicKeys">重置</el-button>
-        </el-form-item>
-      </el-form>
-
-      <el-table v-loading="publicListLoading" :data="publicKeys">
-        <el-table-column label="密钥 ID" prop="keyId" width="90" />
-        <el-table-column label="用户名" prop="userName" width="120" />
-        <el-table-column label="算法类型" prop="encrytType" min-width="140" />
-        <el-table-column label="算法名称" prop="encrytName" width="120" />
-        <el-table-column label="密钥名称" prop="keyName" min-width="160" />
-        <el-table-column label="公钥值" prop="keyValue" min-width="260" show-overflow-tooltip />
-        <el-table-column label="创建时间" prop="creTime" width="180" />
-      </el-table>
-    </el-card>
-        </div>
-
         <div v-show="activeTab === 'params'" class="tab-pane">
     <el-card class="panel" shadow="never">
       <template #header>
         <div class="panel-head">
           <div>
             <h3>公共参数查询</h3>
-            <p class="muted">用于核对 SSCL 公共参数，便于和 legacy 结果做比对。</p>
-          </div>
+</div>
         </div>
       </template>
 
@@ -281,14 +216,34 @@
     </div>
 
     <el-dialog v-model="resultOpen" title="本地最终结果" width="760px" append-to-body destroy-on-close>
-      <el-alert title="请立即保存用户侧私钥材料。刷新页面后将无法再次恢复。" type="warning" :closable="false" show-icon class="mb16" />
+      <!--
+        这里的提示语已按 P3 步骤 0b 更新：
+        原来只说"刷新后无法恢复"，把保存私钥的责任全推给用户手抄。
+        现在有一个正式的**密钥文件**出口 —— 用户下载它，日后解密时再导入回来。
+      -->
+      <el-alert
+        v-if="canExportKeyFile"
+        title="请下载密钥文件并妥善保存。这是日后解开分发信封的唯一凭据，刷新页面后无法再次生成。"
+        type="warning"
+        :closable="false"
+        show-icon
+        class="mb16"
+      />
+      <el-alert
+        v-else
+        title="请立即保存用户侧私钥材料。刷新页面后将无法再次恢复。"
+        type="warning"
+        :closable="false"
+        show-icon
+        class="mb16"
+      />
       <div class="detail-grid">
         <p><strong>算法类型：</strong>{{ localResult.encrytType || '-' }}</p>
         <p><strong>算法名称：</strong>{{ localResult.encrytName || '-' }}</p>
         <p><strong>密钥名称：</strong>{{ localResult.keyName || '-' }}</p>
         <p><strong>所属域：</strong>{{ localResult.keyDomain || '-' }}</p>
         <p v-if="pqAlgorithms.includes(localResult.encrytName)" class="detail-span"><strong>PQ 模式：</strong>{{ localResult.pqMode || localResult.pq_mode || 'demo_generated' }}</p>
-        <p v-if="pqAlgorithms.includes(localResult.encrytName)" class="detail-span"><strong>PQ 材料说明：</strong>demo_generated 表示 Demo 后端为当前演示路径生成并返回材料或引用；strict_certificateless 模式才要求用户/节点本地秘密材料。</p>
+        
         <p v-if="!pqAlgorithms.includes(localResult.encrytName)" class="detail-span"><strong>用户公钥份额 uA：</strong>{{ localResult.uA || '-' }}</p>
         <p v-if="!pqAlgorithms.includes(localResult.encrytName)" class="detail-span"><strong>用户私钥份额：</strong>{{ localResult.clientPrivateKey || '-' }}</p>
         <p class="detail-span"><strong>服务端返回值：</strong>{{ localResult.keyValue || '-' }}</p>
@@ -299,6 +254,9 @@
       </div>
       <template #footer>
         <el-button @click="copyResultSummary">复制结果</el-button>
+        <el-button v-if="canExportKeyFile" type="warning" plain @click="exportKeyFile">
+          下载密钥文件
+        </el-button>
         <el-button type="primary" @click="downloadResultSummary">下载结果</el-button>
       </template>
     </el-dialog>
@@ -319,7 +277,7 @@
         <p><strong>创建时间：</strong>{{ selectedKey.creTime || '-' }}</p>
         <p><strong>更新时间：</strong>{{ selectedKey.updTime || '-' }}</p>
         <p v-if="pqAlgorithms.includes(selectedKey.encrytName)" class="detail-span"><strong>PQ 模式：</strong>{{ selectedPqMode }}</p>
-        <p v-if="pqAlgorithms.includes(selectedKey.encrytName)" class="detail-span"><strong>PQ 材料说明：</strong>demo_generated 表示 Demo 后端为当前演示路径生成并返回材料或引用；strict_certificateless 模式才要求用户/节点本地秘密材料。</p>
+        
         <p class="detail-span"><strong>密钥值：</strong>{{ selectedKey.keyValue || '-' }}</p>
       </div>
     </el-dialog>
@@ -329,15 +287,27 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+// 统一使用 Element 图标，替代此前的 emoji（emoji 字形与配色随系统变化，观感不统一）
+import { MagicStick, TrendCharts, Setting } from '@element-plus/icons-vue'
 import { SM2 } from 'gm-crypto'
 import { BigInteger } from 'jsbn'
 import { weierstrass } from '@noble/curves/abstract/weierstrass.js'
 import { apiBases } from '@/config/api-bases'
-import { batchGetGenerateChainStatus, createGenerateKey, getCommonParams, getGenerateKey, listGenerateKeys, listPublicGenerateKeys } from '@/services/generate-api'
-import { getLatestApprovedTemporaryRequest, rollbackPermission } from '@/services/permission-api'
+import { batchGetGenerateChainStatus, createGenerateKey, getCommonParams, getGenerateKey, listGenerateKeys } from '@/services/generate-api'
 import useUserStore from '@/store/modules/user'
+import { roleLevelText } from '@/utils/role'
+import { buildKeyFile, serializeKeyFile, suggestFileName } from '@/utils/key-file'
+import useKeyringStore from '@/store/modules/keyring'
+import KeyFileImport from '@/components/KeyFileImport/index.vue'
 
 const userStore = useUserStore()
+const keyring = useKeyringStore()
+const keyFileImportRef = ref(null)
+
+/** 导入成功后给一条反馈 —— 用户需要确认"哪把密钥现在能解开了" */
+function handleKeyFileImported(keyFile) {
+  ElMessage.success(`密钥 ${keyFile.key_id} 已可用于解密`)
+}
 const apiBase = apiBases.generateApi
 const curveOrder = new BigInteger('FFFFFFFEFFFFFFFFFFFFFFFFFFFFFFFF7203DF6B21C6052B53BBF40939D54123', 16)
 const sm2Curve = weierstrass({
@@ -352,18 +322,17 @@ const sm2Curve = weierstrass({
 
 const listLoading = ref(false)
 const submitting = ref(false)
+// 密钥文件导出中的状态（P3 步骤 0b）
+const exporting = ref(false)
 const detailOpen = ref(false)
 const resultOpen = ref(false)
 const generateFormRef = ref(null)
 const selectedKey = ref(null)
 const localResult = ref({})
 const keys = ref([])
-const publicKeys = ref([])
 const commonParams = ref(null)
 const errorMessage = ref('')
-const publicListLoading = ref(false)
 const activeTab = ref('generate')
-const approvedPublicRequestId = ref(null)
 const encrytNameOptions = ref([])
 const pqAlgorithms = ['PQ_FALCON', 'PQ_KYBER', 'PQ_CERTIFICATELESS', 'PQ_CL_KYBER', 'PQ_CL_FALCON', 'CL-Kyber', 'CL-Falcon']
 const keyUseOptions = [
@@ -375,7 +344,8 @@ const keyUseOptions = [
 
 const profile = reactive({
   userId: '',
-  userName: ''
+  userName: '',
+  roleLevel: null
 })
 
 const localMaterial = reactive({
@@ -395,12 +365,6 @@ const paramForm = reactive({
   encrytName: 'SSCL'
 })
 
-const publicKeyQuery = reactive({
-  pageNum: 1,
-  pageSize: 10,
-  userName: ''
-})
-
 const generateForm = reactive({
   encrytType: '无证书非对称加密',
   encrytName: 'SM2',
@@ -417,10 +381,6 @@ const generateRules = {
   keyUse: [{ required: true, message: '请输入密钥用途', trigger: 'blur' }]
 }
 
-const hasPermanentPublicKeysAccess = computed(() => Number(userStore.roleLevel) <= 1)
-const hasTemporaryPublicKeysAccess = computed(() => Boolean(approvedPublicRequestId.value))
-const canViewPublicKeys = computed(() => hasPermanentPublicKeysAccess.value || hasTemporaryPublicKeysAccess.value)
-const showPublicKeysRollback = computed(() => hasTemporaryPublicKeysAccess.value)
 const maskedPrivateKey = computed(() => maskText(localMaterial.privateKey, 20))
 const selectedPqMode = computed(() => parsePqMode(selectedKey.value?.keyValue) || selectedKey.value?.pqMode || selectedKey.value?.pq_mode || 'demo_generated')
 
@@ -434,17 +394,11 @@ watch(
   async (value) => {
     profile.userId = value.id || ''
     profile.userName = value.name || ''
+    profile.roleLevel = value.roleLevel
     if (!value.token) {
       keys.value = []
-      publicKeys.value = []
       selectedKey.value = null
-      approvedPublicRequestId.value = null
       return
-    }
-
-    await loadPublicKeyPermissionState()
-    if (Number(value.roleLevel) <= 1) {
-      await loadPublicKeys()
     }
   },
   { immediate: true }
@@ -455,10 +409,6 @@ onMounted(async () => {
   await ensureProfile()
   fillDefaultFilters()
   await loadKeys()
-  await loadPublicKeyPermissionState()
-  if (canViewPublicKeys.value) {
-    await loadPublicKeys()
-  }
 })
 
 async function ensureProfile() {
@@ -593,6 +543,89 @@ async function handleSubmittedSnapshot(snapshot) {
   resultOpen.value = true
 }
 
+// ---------------------------------------------------------------------------
+// 密钥文件导出（P3 步骤 0b）
+// ---------------------------------------------------------------------------
+/**
+ * 是否具备导出密钥文件的条件。
+ *
+ * 需要三样东西同时具备：算出了最终私钥 `d_a`、是 SM2/SSCL（格算法不走这条路，
+ * 它们的私钥在服务端）、以及登录用户已知（文件里要写 user_id）。
+ */
+const canExportKeyFile = computed(() => {
+  const result = localResult.value || {}
+  if (pqAlgorithms.includes(result.encrytName)) {
+    return false
+  }
+  return Boolean(result.finalPrivateKey && userStore.id)
+})
+
+/**
+ * 解析这份结果对应的 `key_id`。
+ *
+ * 创建接口是"提交后异步入库"（经 Kafka），响应里拿不到 keyId，
+ * 所以这里回查列表、按「密钥名称 + 算法」取**最新的一条**。
+ * 带重试是因为 Kafka 落库与列表刷新之间有个时间窗。
+ */
+async function resolveKeyIdFor(result) {
+  if (result?.keyId) {
+    return String(result.keyId)
+  }
+  const wantedName = normalizeText(result?.keyName)
+  for (let attempt = 0; attempt < 8; attempt++) {
+    try {
+      const data = await listGenerateKeys({ pageNum: 1, pageSize: 50 })
+      const rows = data?.rows || []
+      const hit = rows.find((row) => row.keyName === wantedName && row.encrytName === result.encrytName)
+      if (hit?.keyId) {
+        return String(hit.keyId)
+      }
+    } catch {
+      // 列表暂时查不到就继续重试；真正的失败在下面统一报出来
+    }
+    await new Promise((resolve) => setTimeout(resolve, 600))
+  }
+  return null
+}
+
+/**
+ * 生成并下载密钥文件，同时把它存进本机密钥环。
+ *
+ * 为什么要"同时存进密钥环"：下载是**持久凭据**（换浏览器也能恢复），
+ * 而写入密钥环让当前浏览器立刻就能解密，不必马上走一次导入。
+ * 两者不冲突 —— 密钥环丢了还能用文件恢复。
+ */
+async function exportKeyFile() {
+  const result = localResult.value || {}
+  if (!canExportKeyFile.value) {
+    ElMessage.warning('当前结果没有可导出的用户私钥')
+    return
+  }
+  exporting.value = true
+  try {
+    const keyId = await resolveKeyIdFor(result)
+    if (!keyId) {
+      ElMessage.error('还没能在密钥列表里找到这条记录（入库可能仍在进行），请稍后重试')
+      return
+    }
+    const keyFile = await buildKeyFile({
+      keyId,
+      userId: userStore.id,
+      algorithm: result.encrytName,
+      privateShare: result.finalPrivateKey,
+      // P_A 不是秘密；带上它，导入时就能核对"这份私钥确实对应那把公钥"
+      publicKey: result.finalPublicKey || ''
+    })
+    downloadText(serializeKeyFile(keyFile), suggestFileName(keyFile))
+    await keyring.importKeyFile(keyFile)
+    ElMessage.success(`密钥文件已下载，并已存入本机密钥环（密钥 ${keyId}）`)
+  } catch (error) {
+    ElMessage.error(`导出密钥文件失败：${error.message}`)
+  } finally {
+    exporting.value = false
+  }
+}
+
 function enrichSm2Result(result) {
   const keyValue = safeJsonParse(result.keyValue)
   if (!keyValue?.partialKey) {
@@ -668,23 +701,14 @@ async function loadKeys() {
   }
 }
 
-async function loadPublicKeys() {
+/**
+ * 执行筛选查询。
+ * 此前该按钮标签为「刷新」，与其它页面的「查询」不一致，容易被误解为仅重新加载；
+ * 现统一为「查询」，并支持在输入框内回车触发。
+ */
+function handleSearchKeys() {
   errorMessage.value = ''
-  if (!canViewPublicKeys.value) {
-    publicKeys.value = []
-    return
-  }
-
-  publicListLoading.value = true
-  try {
-    const data = await listPublicGenerateKeys(publicKeyQuery)
-    publicKeys.value = data.rows || data.data || []
-  } catch (error) {
-    publicKeys.value = []
-    errorMessage.value = error.message
-  } finally {
-    publicListLoading.value = false
-  }
+  loadKeys()
 }
 
 function resetFilters() {
@@ -692,13 +716,6 @@ function resetFilters() {
   filters.userName = profile.userName || ''
   filters.encrytName = ''
   loadKeys()
-}
-
-function resetPublicKeys() {
-  publicKeyQuery.pageNum = 1
-  publicKeyQuery.pageSize = 10
-  publicKeyQuery.userName = ''
-  loadPublicKeys()
 }
 
 async function showDetail(keyId) {
@@ -722,38 +739,6 @@ async function loadParams() {
     commonParams.value = await getCommonParams(paramForm)
   } catch (error) {
     commonParams.value = null
-    errorMessage.value = error.message
-  }
-}
-
-async function loadPublicKeyPermissionState() {
-  approvedPublicRequestId.value = null
-  if (!profile.userId || !userStore.token) {
-    return
-  }
-
-  try {
-    const approved = await getLatestApprovedTemporaryRequest('PUBLIC_KEY_LIST', Number(profile.userId))
-    approvedPublicRequestId.value = approved?.requestId || null
-  } catch (error) {
-    errorMessage.value = error.message
-  }
-}
-
-async function handleRollbackPublicKeys() {
-  if (!approvedPublicRequestId.value) {
-    ElMessage.warning('没有可回退的临时权限')
-    return
-  }
-
-  try {
-    await rollbackPermission('PUBLIC_KEY_LIST', approvedPublicRequestId.value)
-    ElMessage.success('权限已回退成功')
-    approvedPublicRequestId.value = null
-    publicKeys.value = []
-    await userStore.getInfo()
-    await loadPublicKeyPermissionState()
-  } catch (error) {
     errorMessage.value = error.message
   }
 }
@@ -917,6 +902,12 @@ function downloadText(text, filename) {
 </script>
 
 <style scoped>
+/* 密钥环那一行里嵌着按钮，需要覆盖 summary-card 的 default 小字样式 */
+.keyring-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
 .generate-page {
   display: grid;
   gap: 16px;
@@ -938,17 +929,16 @@ function downloadText(text, filename) {
 .summary-card,
 .material-card {
   padding: 24px;
-  border: 1px solid rgba(255, 255, 255, 0.05); /* Global card style will handle standard, but we override here if needed */
-  border-radius: 20px;
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01));
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
-  transition: transform 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+  border: 1px solid var(--kms-border);
+  border-radius: var(--kms-radius);
+  background: var(--kms-surface-1);
+  box-shadow: var(--kms-shadow-sm);
+  transition: box-shadow var(--kms-transition), border-color var(--kms-transition);
 }
 
 .summary-card:hover, .material-card:hover {
-  transform: translateY(-2px);
-  border-color: rgba(0, 229, 255, 0.2);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3), 0 0 20px rgba(0, 153, 255, 0.1);
+  border-color: var(--kms-brand-border);
+  box-shadow: var(--kms-shadow-md);
 }
 
 .summary-card strong,
@@ -956,20 +946,19 @@ function downloadText(text, filename) {
   display: block;
   margin-top: 8px;
   font-size: 20px;
-  color: #fff;
-  font-weight: 500;
-  text-shadow: 0 0 10px rgba(0, 229, 255, 0.3);
+  color: var(--kms-text-primary);
+  font-weight: 600;
 }
 
 .summary-card small,
 .muted {
-  color: #94a3b8;
+  color: var(--kms-text-secondary);
 }
 
 .summary-label,
 .material-item span {
   font-size: 14px;
-  color: #bae6fd;
+  color: var(--kms-text-secondary);
 }
 
 .generate-layout {
@@ -984,7 +973,19 @@ function downloadText(text, filename) {
 .profile-grid,
 .form-grid.two-col,
 .detail-grid {
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  /* 320px 是按「108px 标签 + 控件最小宽度」定的下限，不是随手写的数：
+     原来写 220px，格子只有 220~240px 时控件（el-select 的 min-width 是 120px）
+     会被挤到标签下面一行；再叠加下面那条 margin-bottom:0，两行就直接压字
+     （用户截图里"算法类型"上压着"所属域"）。
+     显式给 row-gap 是第二道保险：万一将来某格内容变高，行与行也不会互相叠。 */
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  row-gap: 16px;
+}
+
+/* 控件宁可收缩，也不折到标签下面 —— 折行才是"塌陷"的起点 */
+.generate-form :deep(.el-form-item__content) {
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 
 .profile-grid label {
@@ -995,17 +996,17 @@ function downloadText(text, filename) {
 .profile-grid input {
   width: 100%;
   padding: 12px 14px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  background: rgba(0, 0, 0, 0.3);
-  color: #fff;
-  transition: all 0.3s;
+  border: 1px solid var(--kms-border-strong);
+  border-radius: var(--kms-radius);
+  background: var(--kms-surface-1);
+  color: var(--kms-text-primary);
+  transition: all var(--kms-transition);
 }
 
 .profile-grid input:focus {
   outline: none;
-  border-color: #00e5ff;
-  box-shadow: 0 0 0 3px rgba(0, 229, 255, 0.15);
+  border-color: var(--kms-brand);
+  box-shadow: 0 0 0 2px var(--kms-brand-subtle);
 }
 
 .panel-head {
@@ -1037,7 +1038,7 @@ function downloadText(text, filename) {
 
 .material-item {
   padding: 16px 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  border-top: 1px solid var(--kms-border);
   align-items: flex-start;
   animation: fade-in 0.5s ease forwards;
 }
@@ -1056,21 +1057,20 @@ function downloadText(text, filename) {
   display: grid;
   gap: 10px;
   padding: 16px;
-  border: 1px solid rgba(0, 153, 255, 0.2);
-  border-radius: 12px;
-  background: rgba(0, 153, 255, 0.05);
-  color: #bae6fd;
+  border: 1px solid var(--kms-info-border);
+  border-radius: var(--kms-radius);
+  background: var(--kms-info-subtle);
+  color: var(--kms-text-secondary);
 }
 
 .material-item code {
   margin-top: 8px;
   padding: 12px 14px;
-  border-radius: 12px;
-  background: rgba(0, 153, 255, 0.05);
-  border: 1px solid rgba(0, 153, 255, 0.2);
-  color: #00e5ff;
-  box-shadow: inset 0 0 10px rgba(0, 153, 255, 0.1);
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  border-radius: var(--kms-radius-sm);
+  background: var(--kms-surface-2);
+  border: 1px solid var(--kms-border);
+  color: var(--kms-text-primary);
+  font-family: var(--kms-font-mono);
 }
 
 .action-row {
@@ -1090,24 +1090,24 @@ function downloadText(text, filename) {
 
 .generation-box {
   padding: 24px;
-  border: 1px dashed rgba(0, 229, 255, 0.3);
-  border-radius: 16px;
-  background: rgba(0, 153, 255, 0.02);
+  border: 1px dashed var(--kms-border-strong);
+  border-radius: var(--kms-radius);
+  background: var(--kms-surface-2);
 }
 
 .json-block {
   margin: 0;
   padding: 20px;
-  border-radius: 16px;
-  background: rgba(0, 0, 0, 0.4);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #bae6fd;
+  border-radius: var(--kms-radius);
+  background: var(--kms-surface-2);
+  border: 1px solid var(--kms-border);
+  color: var(--kms-text-primary);
   overflow-y: auto;
   max-height: 400px;
   white-space: pre-wrap;
   word-wrap: break-word;
   word-break: break-all;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-family: var(--kms-font-mono);
 }
 
 .generate-dashboard {
@@ -1123,19 +1123,18 @@ function downloadText(text, filename) {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  background: rgba(255, 255, 255, 0.02);
-  backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 16px;
+  background: var(--kms-surface-1);
+  border: 1px solid var(--kms-border);
+  border-radius: var(--kms-radius);
   padding: 12px;
 }
 
 .inner-sidenav .nav-item {
   padding: 12px 16px;
-  border-radius: 10px;
+  border-radius: var(--kms-radius-sm);
   cursor: pointer;
-  color: rgba(255, 255, 255, 0.7);
-  transition: all 0.3s;
+  color: var(--kms-text-secondary);
+  transition: all var(--kms-transition);
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1143,15 +1142,14 @@ function downloadText(text, filename) {
 }
 
 .inner-sidenav .nav-item:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: #fff;
+  background: var(--kms-surface-3);
+  color: var(--kms-text-primary);
 }
 
 .inner-sidenav .nav-item.active {
-  background: rgba(0, 153, 255, 0.2);
-  color: #00e5ff;
-  border: 1px solid rgba(0, 153, 255, 0.3);
-  box-shadow: 0 4px 12px rgba(0, 153, 255, 0.1);
+  background: var(--kms-brand-subtle);
+  color: var(--kms-brand-text);
+  border: 1px solid var(--kms-brand-border);
 }
 
 .inner-sidenav .icon {
@@ -1170,6 +1168,17 @@ function downloadText(text, filename) {
 @keyframes fade-in {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/* 两列布局（左表单 + 右「本地材料」）在中等宽度会互相挤：
+ * 侧栏最小 320px，留给表单的不到 400px，而表单每格本身最少也要 320px，
+ * 于是侧栏文字直接压到表单控件上（1024px 实测）。
+ * 1200px 以下改为上下堆叠 —— 原来的断点是 960px，够不着这个区间。
+ */
+@media (max-width: 1200px) {
+  .generate-layout {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 960px) {

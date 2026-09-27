@@ -82,12 +82,29 @@ public class SysConfigServiceImpl implements ISysConfigService
 
     /**
      * 获取验证码开关
-     * 
+     *
+     * ⚠️ 这里的 env 覆盖必须与 kms-updatedel 的同名方法**保持一致**。
+     *
+     * 此前只有 updatedel-java 支持 `KMS_CAPTCHA_ENABLED`，本服务没有 —— 而两个前端的
+     * 登录分别打向各自的后端（用户前台 → 本服务，管理端 → updatedel-java），
+     * 于是同一个系统里出现"一个登录页要验证码、另一个不要"：
+     * 管理端被 compose 的 `KMS_CAPTCHA_ENABLED=false` 关掉了，本服务仍在读 DB 的
+     * `sys.account.captchaEnabled=true`，两边行为对不上（2026-09-24 用户反馈
+     * "为什么有的登录页没有验证码"）。
+     *
+     * 现在两端都先看这个变量：**一个开关决定所有登录页**。
+     *
      * @return true开启，false关闭
      */
     @Override
     public boolean selectCaptchaEnabled()
     {
+        String captchaEnabledOverride = System.getenv("KMS_CAPTCHA_ENABLED");
+        if (StringUtils.isNotEmpty(captchaEnabledOverride))
+        {
+            return Convert.toBool(captchaEnabledOverride);
+        }
+
         String captchaEnabled = selectConfigByKey("sys.account.captchaEnabled");
         if (StringUtils.isEmpty(captchaEnabled))
         {

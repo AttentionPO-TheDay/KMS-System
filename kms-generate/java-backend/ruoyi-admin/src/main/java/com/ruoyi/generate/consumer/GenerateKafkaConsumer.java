@@ -83,21 +83,19 @@ public class GenerateKafkaConsumer {
                     continue;
                 }
 
-                // 3. 校验用户身份，防止外部直接向 Kafka 注入生成消息
-                // 注意：当 rawPassword 为空时，表示请求来自 Java 后端内部（已通过 Session 鉴权），直接放行
+                // 3. 校验用户存在性
+                // 安全边界已上移到 Go 入站层：身份由 Java 业务层经 X-Kms-User 内部头传递，
+                // Go 不再信任请求体中的 user，且入站路由不对外暴露。
+                // 因此此处不再以「密码为空」作为可信判据（那正是先前的鉴权绕过点）。
                 String rawUser = payload.getRawUser();
-                String rawPassword = payload.getRawPassword();
                 GenerateUser user = generateUserService.selectByUserName(rawUser);
                 if (user == null) {
-                    log.warn("生成消息用户不存在: {}", rawUser);
+                    log.warn("生成消息用户不存在，丢弃: {}", rawUser);
                     continue;
                 }
-                // rawPassword 为空 = 来自 Java 内部可信调用，无需密码校验
-                if (rawPassword != null && !rawPassword.isEmpty()
-                        && !generateUserService.matchesPassword(rawPassword, user.getPassword())) {
-                    log.warn("生成消息用户鉴权失败: {}", rawUser);
-                    continue;
-                }
+                // 注意：KeyEnrollPayload 里**不再有明文口令字段**。
+                // 生产端已停止投递 raw_password（消费端本来就忽略它，而 Kafka 是 PLAINTEXT）。
+                // 历史遗留消息里若还带该字段，Jackson 默认忽略未知字段，不会报错。
 
                 // 4. 提取密钥数据
                 Keymanage km = payload.getGeneratedKey();

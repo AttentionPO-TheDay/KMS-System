@@ -69,9 +69,9 @@ export default {
       }
 
       &.active {
-        background-color: #42b983;
+        background-color: var(--kms-brand-fill);
         color: #fff;
-        border-color: #42b983;
+        border-color: var(--kms-brand);
       }
     }
   }

@@ -22,7 +22,7 @@ from .models import (
     FalconKeyPair, KeyDistributionLog
 )
 from .serializers import (
-    SystemParametersSerializer, NodeSerializer, NodeCreateSerializer, NodeDetailSerializer, NodeUpdateSerializer,
+    SystemParametersSerializer, NodeSerializer, NodeCreateSerializer, NodeDetailSerializer, NodeListSerializer, NodeUpdateSerializer,
     BlockSerializer, TransactionSerializer, SessionKeySerializer, SessionKeyCreateSerializer,
     MessageSerializer, MessageCreateSerializer, BlockchainConfigSerializer, BlockchainConfigCreateSerializer,
     FalconKeyPairSerializer, FalconKeyPairDetailSerializer, KeyDistributionLogSerializer,
@@ -40,6 +40,8 @@ from .public_key_retrieval_service import PublicKeyRetrievalService
 from .node_discovery_service import NodeDiscoveryService
 from .operation_log import set_request_msg
 from .optimized_keygen_service import OptimizedKeygenService
+# 载荷层：新数据用国密 SM4，历史数据按信封标记回退到 AES-256（决策 D3）。
+from .sm4_crypto import PAYLOAD_ALGORITHM_SM4, PayloadCipher, SM4Crypto
 logger = logging.getLogger(__name__)
 
 SM2_P = int('FFFFFFFEFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000FFFFFFFFFFFFFFFF', 16)
@@ -656,7 +658,11 @@ class NodeViewSet(CustomModelViewSet):
     def get_serializer_class(self):
         if self.action == 'create':
             return NodeCreateSerializer
-        elif self.action in ['retrieve', 'list']:
+        # 列表用瘦身版：NodeDetailSerializer 会连 7.8MB/节点的 falcon_public_key
+        # 一起返回（实测 3 个节点 23.4MB），列表只要布尔就绪状态。
+        elif self.action == 'list':
+            return NodeListSerializer
+        elif self.action == 'retrieve':
             return NodeDetailSerializer
         elif self.action in ['update', 'partial_update']:
             return NodeUpdateSerializer
@@ -1100,21 +1106,56 @@ class NodeViewSet(CustomModelViewSet):
             return ErrorResponse(msg=f"密钥更新失败: {str(e)}")
     @action(detail=True, methods=['get'])
     def keys(self, request, pk=None):
+        """节点密钥概览。
+
+        ⚠️ **刻意不返回公钥原文**（2026-09-26 改）。
+
+        原因：`falcon_public_key` 解压后实测 **17MB**。而自 2026-09-26 起 Falcon
+        改为注册时自动生成，**每个**节点都会有它 —— 于是每次打开「密钥」弹窗都要
+        拉 17MB 并渲染进 DOM，页面会卡死几秒。
+
+        调用方（管理端节点管理页）本来也只用这些字段做**布尔判断**：
+        "这一行该显示已就绪还是未生成"。所以这里改成回 `*_key_ready` 布尔值 +
+        指前若干位的指纹（用于人工比对，避免把两个不同节点的密钥看混）。
+
+        公钥本身另有去处，按需取：
+          * `/nodes/{id}/key_details/` —— 分发模块后台的「查看详情」用；
+          * `/falcon/verify/{node_id}/` —— 链上校验用；
+          * `/nodes/{id}/get_public_keys/`。
+        """
         try:
             node = self.get_object()
-            from .certificateless_key_update_service import decompress_key_data
-            kyber_public_key = decompress_key_data(node.kyber_public_key) if node.kyber_public_key else node.kyber_public_key
-            falcon_public_key = decompress_key_data(node.falcon_public_key) if node.falcon_public_key else node.falcon_public_key
+
+            def fingerprint(value):
+                """公钥指纹：SHA-256 前 32 位十六进制。
+
+                为什么是哈希而不是"前 64 个字符"：库里的 `falcon_public_key` 存的是
+                `COMPRESSED:<base64>` 的 zlib 信封，取前 64 字符的结果是每个节点都
+                一样的 `COMPRESSED:eNpcvcuu…` —— 完全没有区分度，还会误导人以为
+                两把密钥相同。哈希既短又能真正区分，且不需要解压（省掉 17MB 开销）。
+                """
+                if not value:
+                    return ''
+                return hashlib.sha256(value.encode('utf-8')).hexdigest()[:32]
+
             data = {
                 'node_id': node.node_id,
-                'kyber_public_key': kyber_public_key,
-                'falcon_public_key': falcon_public_key,
+                'kyber_public_key_fingerprint': fingerprint(node.kyber_public_key),
+                'falcon_public_key_fingerprint': fingerprint(node.falcon_public_key),
+                'gm_public_key': node.gm_public_key,
+                'sscl_public_key': node.sscl_public_key,
+                'kyber_key_ready': bool(node.kyber_public_key),
+                'falcon_key_ready': bool(node.falcon_public_key),
+                'gm_key_ready': bool(node.gm_public_key),
+                'sscl_key_ready': bool(node.sscl_public_key),
+                'kyber_security_level': node.kyber_security_level,
+                'falcon_security_level': node.falcon_security_level,
                 'partial_key_received': node.partial_key_received,
                 'status': node.status
             }
             return SuccessResponse(data=data, msg="获取节点密钥信息成功")
         except Exception as e:
-            return ErrorResponse(msg=f"获取节点密钥信息失败: {str(e)}")
+            return ErrorResponse(msg=f"获取节点密钥信息失败：{str(e)}")
     @action(detail=True, methods=['get'])
     def key_details(self, request, pk=None):
         try:
@@ -1909,11 +1950,19 @@ class SessionKeyViewSet(CustomModelViewSet):
                         kyber = RealKyberKEM(enc_variant)
                         shared_secret = kyber.decaps(kem_ct, receiver_sk)
 
-                        from Crypto.Cipher import AES as AES_Cipher
-                        aes_kem_key = shared_secret[:32]
-                        cipher = AES_Cipher.new(aes_kem_key, AES_Cipher.MODE_GCM, nonce=kem_nonce)
-                        session_key = cipher.decrypt_and_verify(encrypted_aes_key, kem_tag)
-                        logger.info(f"[PreDist/Kyber] DLL decaps + AES-GCM 恢复会话密钥成功, 长度: {len(session_key)} bytes")
+                        # 载荷层按信封里的 `payload_algorithm` 分派（D3）：
+                        #   sm4     → KEK 取共享秘密前 16 字节，SM4-GCM 解封
+                        #   缺省/旧 → KEK 取前 32 字节，旧 AES-256-GCM 解封
+                        # 缺省一律当 AES 处理，这样 2026-09 之前写入的池仍能解开。
+                        payload_alg = PayloadCipher.algorithm_from_envelope(enc_data)
+                        kek = PayloadCipher.kek_from_shared_secret(payload_alg, shared_secret)
+                        session_key = PayloadCipher.decrypt_with(
+                            payload_alg, encrypted_aes_key, kek, kem_nonce + kem_tag
+                        )
+                        logger.info(
+                            f"[PreDist/Kyber] DLL decaps + {payload_alg} 恢复会话密钥成功, "
+                            f"长度: {len(session_key)} bytes"
+                        )
                     else:
                         # Falcon 格密码: 用私钥解密
                         target_node = session.node2
@@ -2012,7 +2061,11 @@ class SessionKeyViewSet(CustomModelViewSet):
             payload = {
                 'ciphertext': base64.b64encode(ciphertext).decode('utf-8'),
                 'nonce': base64.b64encode(nonce).decode('utf-8'),
-                'alg': 'AES-256-GCM'
+                # 载荷层已按 D3 换成 SM4；这里的标记要如实反映算法，
+                # 否则排查时会被 'AES-256-GCM' 这个陈旧字段带偏。
+                # 读取端不依赖该字段判断算法（它按密钥长度/信封形状分派），
+                # 因此历史消息里写着 AES-256-GCM 也不影响解密。
+                'alg': 'SM4-GCM',
             }
             import hashlib
             import time
@@ -2155,11 +2208,16 @@ class SessionKeyViewSet(CustomModelViewSet):
                     from .real_crypto_with_fallback import RealKyberKEM
                     kyber = RealKyberKEM(variant)
                     shared_secret = kyber.decaps(kem_ct, receiver_sk)
-                    from Crypto.Cipher import AES as AES_Cipher
-                    aes_kem_key = shared_secret[:32]
-                    cipher = AES_Cipher.new(aes_kem_key, AES_Cipher.MODE_GCM, nonce=kem_nonce)
-                    session_key = cipher.decrypt_and_verify(encrypted_aes_key, kem_tag)
-                    logger.info(f"[PreDist/Kyber] DLL decaps 恢复会话密钥成功, 长度: {len(session_key)} bytes")
+                    # 同 1879 处：按信封标记分派 SM4 / 历史 AES-256
+                    payload_alg = PayloadCipher.algorithm_from_envelope(enc_data)
+                    kek = PayloadCipher.kek_from_shared_secret(payload_alg, shared_secret)
+                    session_key = PayloadCipher.decrypt_with(
+                        payload_alg, encrypted_aes_key, kek, kem_nonce + kem_tag
+                    )
+                    logger.info(
+                        f"[PreDist/Kyber] DLL decaps 恢复会话密钥成功({payload_alg}), "
+                        f"长度: {len(session_key)} bytes"
+                    )
                 else:
                     target_node = session.node2
                     if not target_node.falcon_private_key:
@@ -2806,6 +2864,39 @@ class SystemStatsViewSet(CustomModelViewSet):
             return ErrorResponse(msg=f"获取区块链统计失败: {str(e)}")
 @api_view(['POST'])
 @permission_classes([AllowAny])
+def generate_gm_keypair(request):
+    """给节点生成国密（SM2）密钥对。
+
+    用途：节点腿算法由用户选（kyber_kem / falcon_lattice / gm_sm2），
+    选国密时要求节点已有 SM2 公钥 —— 这个接口就是补这一步的入口。
+
+    与 `node/generate-falcon-keypair/` 同一套路数：AllowAny（分发模块的演示节点
+    管理接口历来如此），node_id 用节点编号而非主键。
+    """
+    try:
+        node_id = request.data.get('node_id')
+        if not node_id:
+            return ErrorResponse(msg="节点ID不能为空")
+        try:
+            node = Node.objects.get(node_id=node_id)
+        except Node.DoesNotExist:
+            return ErrorResponse(msg=f"节点 {node_id} 不存在")
+
+        set_request_msg(request, f'生成国密(SM2)密钥对(节点{node_id})')
+        from .node_service import NodeService
+        result = NodeService(node.node_id).generate_gm_keys()
+        if result.get('success'):
+            return SuccessResponse(data=result, msg=result.get('message') or '国密密钥生成成功')
+        return ErrorResponse(msg=result.get('message') or '国密密钥生成失败')
+    except Exception as exc:  # noqa: BLE001
+        logger.error(f"国密密钥生成失败: {exc}")
+        import traceback
+        traceback.print_exc()
+        return ErrorResponse(msg=f"国密密钥生成失败: {exc}")
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
 def generate_falcon_keypair_with_scheme(request):
     try:
         node_id = request.data.get('node_id')
@@ -3154,7 +3245,28 @@ class KeyPoolViewSet(CustomModelViewSet):
             expired_qs.delete()
             logger.info(f"[KeyPool] 列表加载时自动删除 {expired_count} 条过期密钥")
 
-        qs = PreDistributedKey.objects.all().order_by('-id')
+        # ⚠️ 列表必须**只取需要的列**（select_related + only），否则慢到前端超时。
+        #
+        # 成因：PreDistributedKeySerializer 要展示 node1/node2 的 node_id 与 name，
+        # 而 Node 行里带着 kyber_public_key（约 1KB）和 **falcon_public_key（可达 7.8MB）**。
+        # 一旦给节点生成过 Falcon 密钥，列表就会把这些大字段一起读出来。
+        #
+        # 实测（42 行 / 本机，2026-09-26）：
+        #   plain + 逐行取 node          → 10.6s（N+1，每行都读一次节点行）
+        #   select_related（不限制列）    →  9.0s
+        #   select_related + defer(...)  →  3.0s（把大列标成 deferred 仍然慢）
+        #   select_related + only(精确列) →  0.01s  ← 用这个
+        # 之前接口 10.6s 超过前端超时，页面报「系统接口请求超时」、表格空白。
+        qs = (
+            PreDistributedKey.objects.all()
+            .order_by('-id')
+            .select_related('node1', 'node2')
+            .only(
+                'id', 'pool_id', 'key_index', 'algorithm', 'status', 'key_hash',
+                'generation_time_ms', 'used_at', 'expires_at', 'create_datetime',
+                'node1__node_id', 'node1__name', 'node2__node_id', 'node2__name',
+            )
+        )
         node1_id = self.request.query_params.get('node1_id', '').strip()
         node2_id = self.request.query_params.get('node2_id', '').strip()
         algorithm = self.request.query_params.get('algorithm', '').strip()
@@ -3419,7 +3531,6 @@ class KeyPoolViewSet(CustomModelViewSet):
 
             import base64
             from .real_crypto_with_fallback import RealKyberKEM
-            from Crypto.Cipher import AES as AES_Cipher
 
             variant = package.get('variant', 512)
             kyber = RealKyberKEM(variant)
@@ -3443,13 +3554,15 @@ class KeyPoolViewSet(CustomModelViewSet):
                     # Kyber decaps 恢复 shared_secret
                     shared_secret = kyber.decaps(kem_ct, sk)
 
-                    # AES-GCM 解密恢复 AES 会话密钥
-                    cipher = AES_Cipher.new(shared_secret[:32], AES_Cipher.MODE_GCM, nonce=nonce)
-                    aes_key = cipher.decrypt_and_verify(enc_key, tag)
+                    # 载荷层：按该条信封的标记分派 SM4 / 历史 AES-256（D3）。
+                    # 逐条判断而不是整包判断：同一个包里可能既有新条目也有历史条目。
+                    payload_alg = PayloadCipher.algorithm_from_envelope(ek)
+                    kek = PayloadCipher.kek_from_shared_secret(payload_alg, shared_secret)
+                    payload_key = PayloadCipher.decrypt_with(payload_alg, enc_key, kek, nonce + tag)
 
                     decrypted_keys.append({
                         'index': ek['index'],
-                        'key_hex': aes_key.hex(),
+                        'key_hex': payload_key.hex(),
                         'key_hash': ek['key_hash'],
                     })
                 except Exception as e:

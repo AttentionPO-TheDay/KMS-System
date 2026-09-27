@@ -84,6 +84,16 @@ public class Keymanage implements Serializable {
     /** 上链状态 (0=待上链, 1=已上链, 2=失败) */
     @JSONField(name = "chain_status")
     private String chainStatus;
+    /**
+     * 本记录的密钥材料由哪一版 KGC 主私钥（ms）签发，例如 ms_v1 / ms_v2。
+     * 用于**按版本复算历史 P_A**：轮换 ms 后必须按记录自己那一版取密钥，
+     * 否则链上旧存证会当场失去可验证性。为空表示早期记录（按 ms_v1 处理）。
+     */
+    private String msKeyId;
+    /** 算法参数版本；见 updatedel 侧同名字段的说明。 */
+    private String algorithmVersion;
+    /** 材料可用状态：active / legacy_unusable。 */
+    private String keyMaterialState;
 
     public Long getKeyId() { return keyId; }
     public void setKeyId(Long keyId) { this.keyId = keyId; }
@@ -141,6 +151,12 @@ public class Keymanage implements Serializable {
 
     public String getChainStatus() { return chainStatus; }
     public void setChainStatus(String chainStatus) { this.chainStatus = chainStatus; }
+    public String getMsKeyId() { return msKeyId; }
+    public void setMsKeyId(String msKeyId) { this.msKeyId = msKeyId; }
+    public String getAlgorithmVersion() { return algorithmVersion; }
+    public void setAlgorithmVersion(String algorithmVersion) { this.algorithmVersion = algorithmVersion; }
+    public String getKeyMaterialState() { return keyMaterialState; }
+    public void setKeyMaterialState(String keyMaterialState) { this.keyMaterialState = keyMaterialState; }
 
     @Override
     public String toString() {

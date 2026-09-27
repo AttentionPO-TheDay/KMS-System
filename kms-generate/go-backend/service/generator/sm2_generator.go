@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"key-service-generate/config"
 	"key-service-generate/models"
 
 	"github.com/tjfoc/gmsm/sm2"
@@ -33,9 +34,9 @@ type eccWorkerCtx struct {
 	temp   *big.Int
 	tA     *big.Int
 
-	hasher  hash.Hash
-	buffer  []byte
-	temp32  []byte
+	hasher    hash.Hash
+	buffer    []byte
+	temp32    []byte
 	temp32Arr [32]byte
 }
 
@@ -57,8 +58,8 @@ func newECCGenerator() *ECCGenerator {
 	c := sm2.P256Sm2()
 	n := c.Params().N
 
-	msHex := "6BDD93B210F79415FE0F6388C1C932C208319FF7D7E99C972B3535C9F19A9FF9"
-	ms, _ := new(big.Int).SetString(msHex, 16)
+	// 主私钥来自统一配置源（KGC_MASTER_SECRET），不再硬编码。
+	ms, _ := new(big.Int).SetString(config.KgcMasterSecret, 16)
 
 	gx, gy := c.Params().Gx, c.Params().Gy
 	xPPub, yPPub := c.ScalarMult(gx, gy, ms.Bytes())
@@ -177,21 +178,17 @@ func (gen *ECCGenerator) GenPartialKey(identityData string, uAStr string, keyUse
 	ctx.buffer = append(ctx.buffer, zeros64[:]...)
 	hex.Encode(ctx.buffer[startIdx:], ctx.temp32)
 
-	// Appending intermediate variables for UI demystification IF needed for demo
-	if keyUse == "演示计算" || keyUse == "前置构建" {
-		ctx.buffer = append(ctx.buffer, `","kgcRandomW":"`...)
-		ctx.w.FillBytes(ctx.temp32)
-		startIdx = len(ctx.buffer)
-		ctx.buffer = append(ctx.buffer, zeros64[:]...)
-		hex.Encode(ctx.buffer[startIdx:], ctx.temp32)
-
-		ctx.buffer = append(ctx.buffer, `","kgcLambda":"`...)
-		ctx.lambda.FillBytes(ctx.temp32)
-		startIdx = len(ctx.buffer)
-		ctx.buffer = append(ctx.buffer, zeros64[:]...)
-		hex.Encode(ctx.buffer[startIdx:], ctx.temp32)
-	}
-
+	// ⚠️ 历史上这里会在 key_use == "演示计算" / "前置构建" 时把 KGC 中间量
+	// kgcRandomW（KGC 随机数 w）与 kgcLambda（SM3 派生标量 λ）一并写进 key_value。
+	//
+	// 那是**一条可反推主私钥的泄露路径**：t_A = w + λ·ms，于是
+	//     ms = (t_A − w) · λ⁻¹
+	// 任何人都能用一个只读的 /PARTIAL_KEY 调用（带 key_use=演示计算）拿到 w 与 λ，
+	// 从而解出 KGC 主私钥 ms —— 而 ms 是无证书方案里唯一的秘密。
+	// 泄露同时发生在两处：HTTP 响应体，以及随后落库的 key_value。
+	//
+	// 现已彻底移除该分支。界面上的"计算过程可视化"若仍需展示中间量，
+	// 必须改用**不含秘密**的演示数据，不能由真实 KGC 现场计算。
 	ctx.buffer = append(ctx.buffer, `"}`...)
 
 	return models.Keymanage{
@@ -213,4 +210,3 @@ func initTo32(i *big.Int) []byte {
 	}
 	return res
 }
-

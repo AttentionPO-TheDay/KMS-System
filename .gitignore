@@ -24,6 +24,12 @@ out/
 *.tar
 *.tar.gz
 *.zip
+
+# ⚠️ 例外：kms-ops/build/ 装的是**各服务的 Dockerfile**（构建输入，不是构建产物）。
+# 上面那条通用的 `build/` 会把整个目录一起忽略 —— 实测这 6 个 Dockerfile
+# 从未进入版本库，于是"下载/克隆仓库后再部署"时 `docker compose build` 必然失败：
+# 找不到 Dockerfile。构建目录必须受版本管理。
+!/kms-ops/build/
 *.rar
 *.exe
 *.dll
@@ -66,8 +72,31 @@ yarn-error.log
 /kms-ops/fisco/console/conf/*.key
 /kms-ops/fisco/console/conf/*.pem
 /kms-ops/fisco/console/conf/config.toml
+# 重建链时归档的 CA 私钥（ca.key / agency.key / agency/channel/ca.key）。
+# 它是"以后还能签发 SDK 证书"的唯一凭据，必须留在本地，但绝不该进版本库。
+/kms-ops/fisco/cert/
+# build_chain.sh 的原始产物（含每节点一份 30MB 二进制副本）
+/kms-ops/fisco/.rebuild/
+# Java 后端侧同一套 SDK 证书（与 console/conf 同源）
+/kms-ops/kms-java-backend/conf/*.crt
+/kms-ops/kms-java-backend/conf/*.key
+# 诊断用 Java 探针的编译产物
+/kms-ops/tests/_probe_out/
 /kms-ops/fisco/webase-front/log/
 /kms-ops/.env
+# ⚠️ 上面那条只匹配 `.env` **这一个文件名**，挡不住它的衍生文件。
+# 实测漏过一个 `kms-ops/.env.bak-fisco` —— 里面是 KGC_MASTER_SECRET、
+# FISCO_PRIVATE_KEY、INTERNAL_TOKEN、MYSQL_ROOT_PASSWORD 全套凭据，
+# 且因为文件名以 `-fisco` 结尾，连 `*.bak` 规则也没拦住。
+# 因此这里改用通配，并把模板文件显式放行。
+/kms-ops/.env.*
+!/kms-ops/.env.example
+# 备份/归档变体：`*.bak` 只匹配以 .bak 结尾的，挡不住 `X.bak-preimage`
+# 这类带后缀的写法（仓库里真实存在 docker-compose.yml.bak-preimage、
+# kms-updatedel/front/src.bak-premerge 两个）。
+*.bak-*
+*.broken.*
+*/src.bak-*/
 /kms-ops/nginx/logs/
 /kms-ops/runtime/
 /kms-ops/front/generate/
@@ -84,6 +113,33 @@ yarn-error.log
 # Temp files
 tmp.go
 /kms-distribute/extracted/ruoyi-111-compare-*/
+
+# 预构建二进制产物（源码可重建，禁止入库）
+**/key-service
+**/kms-generate-service
+**/kms-updatedel-service
+**/kms-acceptance-backend
+/kms-ops/kms-go-backend/
+/kms-ops/fisco/template/nodes/127.0.0.1/fisco-bcos
+/kms-ops/fisco/webase-front/static/static/js/
+/kms-ops/front/
+
+# 说明：门户落地页位于 /kms-ops/portal/（不在 front/ 之内，故不被上面的规则忽略），
+# 由 docker-compose 挂载到 nginx 的 /usr/share/nginx/html。
+
+# 密钥材料备份与归档包
+**/falcon_keys_backup/
+kms-distribute/111.7z
+*.7z
+
+# 课题文档（与系统无关）
+/课题2-*.docx
+/课题2-*.pdf
+/1-课题2-*.pdf
+
+# 容器构建文件（按需保留在工作树，不入库）
+**/Dockerfile
+**/.dockerignore
 
 # AI Tools
 .claude

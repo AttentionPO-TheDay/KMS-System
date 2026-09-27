@@ -1,6 +1,7 @@
 package com.ruoyi.updatedel.service.generator;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ruoyi.common.crypto.KgcMasterSecret;
 import com.ruoyi.updatedel.domain.PartialKey;
 import com.ruoyi.updatedel.domain.UserIdentity;
 import java.io.ByteArrayOutputStream;
@@ -25,7 +26,6 @@ import org.springframework.stereotype.Component;
 @Component
 public class EccKeyGenerator implements ECConstants {
     private static final String NAME_ID = "sm2p256v1";
-    private static final String MS_HEX = "6BDD93B210F79415FE0F6388C1C932C208319FF7D7E99C972B3535C9F19A9FF9";
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
@@ -38,7 +38,11 @@ public class EccKeyGenerator implements ECConstants {
     private final BigInteger n = ecSpec.getN();
     private final BigInteger a = ecSpec.getCurve().getA().toBigInteger();
     private final BigInteger b = ecSpec.getCurve().getB().toBigInteger();
-    private final BigInteger ms = new BigInteger(MS_HEX, 16);
+    // 主私钥来自统一配置源（KGC_MASTER_SECRET / kms.kgc.master-secret），不再硬编码。
+    // 注意：默认值与历史保持一致，因为该值同时用于链上公钥重算，擅自变更会使历史存证失效。
+    // 签发路径：必须用**当前启用**版本的 ms（getActive 不会返回退役密钥）。
+    // 生成出来的记录会带上 ms_key_id，日后按它复算 P_A。
+    private final BigInteger ms = new BigInteger(KgcMasterSecret.getActive(), 16);
     private final ECPoint pPub = g.multiply(ms).normalize();
 
     public String generate(String userName, String ua) {

@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KMS 密钥生命周期管理平台</title>
+  <style>
+    :root {
+      --brand: #1677ff;
+      --brand-text: #0e5fd8;
+      --surface-page: #f5f7fa;
+      --surface-1: #ffffff;
+      --text-primary: #1f2329;
+      --text-secondary: #646a73;
+      --border: #e5e7eb;
+      --radius: 8px;
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+      --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--surface-page);
+      color: var(--text-primary);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+        'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+      font-size: 14px;
+      line-height: 1.5715;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 24px;
+    }
+
+    .wrap { width: 100%; max-width: 960px; }
+
+    header { text-align: center; margin-bottom: 40px; }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 30px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: var(--text-secondary);
+      font-size: 14px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    a.card {
+      display: block;
+      padding: 20px;
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+      text-decoration: none;
+      color: inherit;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    a.card:hover {
+      border-color: var(--brand);
+      box-shadow: var(--shadow-md);
+    }
+
+    .card h2 {
+      margin: 0 0 6px;
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .card p {
+      margin: 0 0 10px;
+      color: var(--text-secondary);
+      font-size: 13px;
+    }
+
+    .path {
+      font-family: 'JetBrains Mono', Consolas, monospace;
+      font-size: 12px;
+      color: var(--brand-text);
+    }
+
+    footer {
+      margin-top: 32px;
+      text-align: center;
+      color: var(--text-secondary);
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>KMS 密钥生命周期管理平台</h1>
+      <p class="subtitle">密钥生成 · 更新回收 · 分发 · 验收压测</p>
+    </header>
+
+    <div class="grid">
+      <a class="card" href="/user/">
+        <h2>普通用户前台</h2>
+        <p>密钥生成、更新回收、分发记录查询、权限申请</p>
+        <span class="path">/user/</span>
+      </a>
+
+      <!--
+        「生成系统管理端 /generate/」这张卡片已移除：该前端已退役
+        （页面并入管理端，见 kms-generate/front/RETIRED.md），
+        网关对它**显式返回 404** —— 在门户首屏留一个死链，点进去只会莫名其妙。
+      -->
+
+      <a class="card" href="/updatedel/">
+        <h2>生命周期管理端</h2>
+        <p>更新回收任务、自动更新配置、密钥安全分析</p>
+        <span class="path">/updatedel/</span>
+      </a>
+
+      <a class="card" href="/distribute/">
+        <h2>分发系统</h2>
+        <p>分发记录查询、详情查看与维护</p>
+        <span class="path">/distribute/</span>
+      </a>
+
+      <a class="card" href="/acceptance/">
+        <h2>验收与压测</h2>
+        <p>TPS 压测、回收率核验、安全攻击验证</p>
+        <span class="path">/acceptance/</span>
+      </a>
+
+      <a class="card" href="/ping">
+        <h2>网关健康检查</h2>
+        <p>确认 Nginx 网关是否正常响应</p>
+        <span class="path">/ping</span>
+      </a>
+    </div>
+
+    <footer>KMS Gateway · 由 Nginx 统一提供静态资源与 API 反向代理</footer>
+  </div>
+</body>
+</html>

@@ -78,6 +78,23 @@ service.interceptors.request.use(config => {
 
 // 响应拦截器
 service.interceptors.response.use(res => {
+    // 防御：接口路径未命中代理/网关时，会落到 SPA fallback 并返回 index.html。
+    // 这类响应 HTTP 状态是 200，但 body 是 HTML 且没有 code 字段；
+    // 若直接走 `res.data.code || 200` 会被当成成功，表现为「空数据且无任何报错」，
+    // 同时反复 404 还会触发网关的 IP 封禁，属最难排查的故障模式，故在此显式拦截。
+    const contentType = (res.headers && res.headers['content-type']) || ''
+    const rawData = res.data
+    if (typeof rawData === 'string' || contentType.includes('text/html')) {
+        const preview = typeof rawData === 'string' ? rawData.slice(0, 60) : ''
+        const looksLikeHtml = contentType.includes('text/html') || preview.trim().startsWith('<')
+        if (looksLikeHtml) {
+            const hint = `接口未命中后端（返回了 HTML 而非 JSON）：${res.config && res.config.url}`
+            console.error('[request] ' + hint)
+            ElMessage({ message: hint, type: 'error', duration: 5 * 1000 })
+            return Promise.reject(new Error(hint))
+        }
+    }
+
     // 未设置状态码则默认成功状态
     const code = res.data.code || 200;
     // 获取错误信息

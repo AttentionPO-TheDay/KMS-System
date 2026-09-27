@@ -13,17 +13,9 @@ export function listKeymanage(query) {
   }))
 }
 
-export function listPublicKeys(query) {
-  return request({
-    url: '/generate/key/public-list',
-    method: 'get',
-    params: query
-  }).then(res => ({
-    ...res,
-    rows: res.rows || res.data || [],
-    total: res.total || ((res.data || []).length)
-  }))
-}
+// 原「公共密钥列表」接口封装已删除：它打的是用户侧「查看公共密钥列表」的接口，
+// 已随 D1 整体删除（该接口让任何被授权的用户都能读到别人的公钥集合）。
+// 公钥资产现只经 /generate/key/public-assets 暴露（仅管理员），见 api/query/keyQuery.js。
 
 // 查询密钥管理详细
 export function getKeymanage(keyId) {

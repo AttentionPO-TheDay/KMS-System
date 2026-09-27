@@ -279,7 +279,7 @@ type server struct {
 	dataDir        string
 	runsFile       string
 	defaultWrkPath string
-	bashPath string
+	bashPath       string
 	securityScript string
 	counter        uint64
 	cfg            acceptanceConfig
@@ -306,7 +306,7 @@ func main() {
 		dataDir:        dataDir,
 		runsFile:       filepath.Join(dataDir, "runs.json"),
 		defaultWrkPath: detectWrkPath(wd),
-		bashPath: detectBashPath(),
+		bashPath:       detectBashPath(),
 		securityScript: detectSecurityScriptPath(wd),
 		cfg:            cfg,
 		client:         &http.Client{Timeout: 30 * time.Second},
@@ -362,6 +362,9 @@ func defaultScenarios(cfg acceptanceConfig) map[string]Scenario {
 		"Content-Type":     "application/json",
 		"Accept":           "application/json",
 		"X-Internal-Token": cfg.GenerateInternalToken,
+		// Go 入站层不再信任请求体中的 user 字段，身份一律取自该内部头。
+		// 压测/验收直接调用 Go 时同样必须携带，否则会被 401 拒绝。
+		"X-Kms-User": cfg.AcceptanceUser,
 	}
 
 	return map[string]Scenario{

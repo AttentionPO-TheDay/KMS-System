@@ -4,8 +4,10 @@ import com.ruoyi.common.core.domain.AjaxResult;
 import com.ruoyi.common.core.controller.BaseController;
 import com.ruoyi.common.core.page.TableDataInfo;
 import com.ruoyi.common.utils.SecurityUtils;
+import com.ruoyi.updatedel.domain.KeyAnalysisResultDto;
 import com.ruoyi.updatedel.domain.KeyStatus;
 import com.ruoyi.updatedel.domain.Keymanage;
+import com.ruoyi.updatedel.service.KeyValueSanitizer;
 import com.ruoyi.updatedel.service.LifecycleService;
 import com.ruoyi.updatedel.service.PermissionRequestService;
 import org.slf4j.Logger;
@@ -19,6 +21,8 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/lifecycle/keymanage")
@@ -42,7 +46,12 @@ public class LifecycleKeyController extends BaseController {
         }
         query.setStatus(normalizeStatusQuery(query.getStatus()));
         startPage();
-        return getDataTable(lifecycleService.list(query));
+        List<Keymanage> list = lifecycleService.list(query);
+        // 列表一律不带密钥材料（见 KeyValueSanitizer 的说明）。
+        // 已核对现网页面：生命周期相关的列表都不消费 keyValue；
+        // 「更新」「安全分析」走的是更新响应与详情接口。
+        KeyValueSanitizer.stripMaterial(list);
+        return getDataTable(list);
     }
 
     @PreAuthorize("isAuthenticated()")
@@ -53,6 +62,8 @@ public class LifecycleKeyController extends BaseController {
                 if (!canAccess(key)) {
                     return AjaxResult.error("无权访问该密钥数据");
                 }
+                boolean isOwner = key.getUserId() != null && key.getUserId().equals(getUserId());
+                KeyValueSanitizer.sanitizeDetail(key, isOwner);
                 return AjaxResult.success(key);
             })
             .orElseGet(() -> AjaxResult.error("密钥不存在: " + keyId));
@@ -67,7 +78,14 @@ public class LifecycleKeyController extends BaseController {
                     return AjaxResult.error("无权分析该密钥数据");
                 }
                 try {
-                    return AjaxResult.success(lifecycleService.getAssociationAnalysis(keyId));
+                    KeyAnalysisResultDto analysis = lifecycleService.getAssociationAnalysis(keyId);
+                    // 该 DTO 的 baseInfo 里嵌着整条 Keymanage（含 key_value），同样要脱敏，
+                    // 否则"安全分析"会变成绕过列表脱敏的后门。
+                    if (analysis != null && analysis.getBaseInfo() != null) {
+                        boolean isOwner = key.getUserId() != null && key.getUserId().equals(getUserId());
+                        KeyValueSanitizer.sanitizeDetail(analysis.getBaseInfo(), isOwner);
+                    }
+                    return AjaxResult.success(analysis);
                 } catch (Exception e) {
                     log.error("密钥关联分析异常: keyId={}", keyId, e);
                     return AjaxResult.error("分析失败: " + e.getMessage());
@@ -108,31 +126,43 @@ public class LifecycleKeyController extends BaseController {
         if (!canAccess(current)) {
             return AjaxResult.error("无权修改该密钥");
         }
-        // Auto-update only toggle (backward compatibility)
-        if (request.getEncrytType() == null && request.getEncrytName() == null && request.getKeyName() == null
-            && request.getKeyUse() == null && request.getKeyDomain() == null && request.getUa() == null
-            && request.getUserName() == null) {
-            if (KeyStatus.REVOKED.getCode().equals(current.getStatus())) {
-                return AjaxResult.error("该密钥已被回收，无法修改自动更新状态");
-            }
-            if (!canManageAutoUpdate()) {
-                return AjaxResult.error("当前用户没有自动更新操作权限");
-            }
-            lifecycleService.updateAutoUpdate(request.getKeyId(), request.getAutoUpdate());
-            return AjaxResult.success("自动更新状态修改成功", lifecycleService.findById(request.getKeyId()).orElse(null));
+
+        // 只有当 autoUpdate 的**值真的发生变化**时才要求自动更新权限。
+        //
+        // 原实现是"只要请求带了这个字段就要权限"，而两个前端的"更新密钥"弹窗
+        // 都会把开关当前值一并提交（恒非空），于是只想改密钥名称的用户会被拦下，
+        // 报错还是"当前用户没有自动更新操作权限" —— 与他在做的事对不上
+        // （2026-09-24 用户截图）。
+        //
+        // 防绕过的本意保留：想借"顺手改个元数据"把自动更新打开，仍然会被拦。
+        if (lifecycleService.changesAutoUpdate(current, request.getAutoUpdate()) && !canManageAutoUpdate()) {
+            return AjaxResult.error("当前用户没有自动更新操作权限");
         }
 
-        // Synchronous key rotation — directly call service instead of Go → Kafka async chain
+        // 分流依据：是否提供了新的用户部分公钥 ua。
+        // 未提供 → 仅更新元数据（不重新生成密钥材料、version 不变）。
+        // 提供   → 视为真正的密钥轮换，重新生成密钥材料并递增 version。
+        if (!lifecycleService.requiresRotation(request)) {
+            try {
+                Keymanage updated = lifecycleService.updateMetadata(request);
+                return AjaxResult.success("密钥信息更新成功", updated);
+            } catch (IllegalStateException e) {
+                log.warn("密钥信息更新失败: keyId={}, error={}", request.getKeyId(), e.getMessage());
+                return AjaxResult.error(e.getMessage());
+            }
+        }
+
+        // Synchronous key rotation — 调用方已提供新的 ua
         try {
-            log.info("密钥更新: keyId={}, userId={}", request.getKeyId(), getUserId());
+            log.info("密钥轮换: keyId={}, userId={}", request.getKeyId(), getUserId());
             Keymanage rotated = lifecycleService.rotateKey(request);
-            return AjaxResult.success("密钥更新成功", rotated);
+            return AjaxResult.success("密钥轮换成功", rotated);
         } catch (IllegalStateException e) {
-            log.warn("密钥更新失败: keyId={}, error={}", request.getKeyId(), e.getMessage());
+            log.warn("密钥轮换失败: keyId={}, error={}", request.getKeyId(), e.getMessage());
             return AjaxResult.error(e.getMessage());
         } catch (Exception e) {
-            log.error("密钥更新异常: keyId={}", request.getKeyId(), e);
-            return AjaxResult.error("密钥更新失败: " + e.getMessage());
+            log.error("密钥轮换异常: keyId={}", request.getKeyId(), e);
+            return AjaxResult.error("密钥轮换失败: " + e.getMessage());
         }
     }
 
@@ -184,7 +214,12 @@ public class LifecycleKeyController extends BaseController {
     }
 
     private boolean canAccess(Keymanage keymanage) {
-        return SecurityUtils.isAdmin(getUserId()) || getUserId().equals(keymanage.getUserId());
+        if (keymanage == null) {
+            return false;
+        }
+        Long ownerId = keymanage.getUserId();
+        Long currentId = getUserId();
+        return SecurityUtils.isAdmin(currentId) || ownerId != null && ownerId.equals(currentId);
     }
 
     private boolean canManageAutoUpdate() {

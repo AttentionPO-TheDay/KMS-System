@@ -2,6 +2,7 @@ package com.ruoyi.generate.service.impl;
 
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
+import com.ruoyi.common.crypto.KgcMasterSecret;
 import com.ruoyi.generate.contracts.KeyEvidence;
 import com.ruoyi.generate.domain.Keymanage;
 import com.ruoyi.generate.service.GenerateChainService;
@@ -236,7 +237,7 @@ public class GenerateChainServiceImpl implements GenerateChainService {
             if (wA == null) return null;
 
             // 使用 SM2 计算最终公钥
-            return calculateSM2FinalPublicKey(km.getUserName(), wA);
+            return calculateSM2FinalPublicKey(km.getUserName(), wA, km.getMsKeyId());
 
         } catch (Exception e) {
             log.error("计算 PA 异常", e);
@@ -295,7 +296,7 @@ public class GenerateChainServiceImpl implements GenerateChainService {
     /**
      * SM2 无证书公钥计算
      */
-    private String calculateSM2FinalPublicKey(String userId, String uAStr) {
+    private String calculateSM2FinalPublicKey(String userId, String uAStr, String msKeyId) {
         try {
             org.bouncycastle.math.ec.custom.gm.SM2P256V1Curve curve =
                     new org.bouncycastle.math.ec.custom.gm.SM2P256V1Curve();
@@ -303,7 +304,10 @@ public class GenerateChainServiceImpl implements GenerateChainService {
 
             ECPoint G = curve.createPoint(SM2_GX, SM2_GY);
 
-            String msHex = "6BDD93B210F79415FE0F6388C1C932C208319FF7D7E99C972B3535C9F19A9FF9";
+            // 按**记录自己那一版**的 ms 取密钥，而不是当前启用版本 ——
+            // 否则轮换 ms 之后，这些历史记录算出的 P_A 与链上旧存证不一致，
+            // 历史存证会当场失去可验证性。msKeyId 为空表示早期记录（按 ms_v1 处理）。
+            String msHex = KgcMasterSecret.getById(msKeyId);
             BigInteger ms = new BigInteger(msHex, 16);
             ECPoint PPub = G.multiply(ms).normalize();
 

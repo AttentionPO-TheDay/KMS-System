@@ -2,7 +2,6 @@ package generator
 
 import (
 	"crypto/elliptic"
-	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"hash"
@@ -11,11 +10,31 @@ import (
 	"strings"
 	"sync"
 
+	"key-service-generate/config"
 	"key-service-generate/models"
 
 	"github.com/tjfoc/gmsm/sm2"
 	"github.com/tjfoc/gmsm/sm3"
 )
+
+// =============================================================================
+// SSCL 生成器：域参数由主私钥 ms 确定性派生（不再依赖任何随机源）
+// -----------------------------------------------------------------------------
+// 公开参数（wa、coefficients[1..T]、xIndexs、yIndexs）现在都是 ms 的确定性函数，
+// 因此：
+//   * 进程重启、扩容多副本、构建新镜像，派生出的公开参数都**完全一致**，
+//     已签发密钥里的 SSCLKey/SSCLEA 不会因为重启而失配；
+//   * Go（本文件，服务 GET /comparam）与 Java
+//     （kms-updatedel/java-backend/.../service/generator/SsclKeyGenerator.java，
+//      生命周期 update 路径生成 SSCL 密钥）落在**同一条多项式**上，
+//     客户端的 T+1 个插值点重新共线，x=0 处的拉格朗日插值才能还原常数项。
+//
+// 两个实现必须保持逐字节镜像：标签字符串、字节序、拒绝条件都一样才算一致。
+// 派生规则与完整说明见 sscl_domain_derive.go。
+//
+// 轮换 KGC_MASTER_SECRET（ms）会改变以上全部公开参数以及 PPub = ms*G，
+// 存量密钥必须整体重新登记；详见 doc/kms-restructure-plan.md 的 R17。
+// =============================================================================
 
 type SSCLGenerator struct {
 	curve        elliptic.Curve
@@ -64,8 +83,8 @@ func newSSCLGenerator() *SSCLGenerator {
 	n := c.Params().N
 	gx, gy := c.Params().Gx, c.Params().Gy
 
-	msHex := "6BDD93B210F79415FE0F6388C1C932C208319FF7D7E99C972B3535C9F19A9FF9"
-	ms, _ := new(big.Int).SetString(msHex, 16)
+	// 主私钥来自统一配置源（KGC_MASTER_SECRET），不再硬编码。
+	ms, _ := new(big.Int).SetString(config.KgcMasterSecret, 16)
 
 	xPPub, yPPub := c.ScalarMult(gx, gy, ms.Bytes())
 
@@ -75,13 +94,18 @@ func newSSCLGenerator() *SSCLGenerator {
 	t := 10
 	coefficients := make([]*big.Int, t+1)
 
-	wa := mustRand(n)
+	// 域参数全部由主私钥 ms 确定性派生，不再使用随机源：
+	// 否则每次重启都会换一套 wa/coef/xIndexs，已签发密钥存的 SSCLKey/SSCLEA
+	// 就与 /comparam 新发布的公开参数对不上；而且 Java 侧会独立随机出另一条多项式，
+	// 使客户端拿到的 T+1 个点根本不在同一条 T 次多项式上。
+	// 派生规则、标签字符串与"必须与 Java 镜像同步"的说明见 sscl_domain_derive.go。
+	wa := deriveDomainScalar(ms, domainLabelWA(), n)
 	eA := new(big.Int).Mul(ms, wa)
 	eA.Mod(eA, n)
 	coefficients[0] = eA
 
 	for i := 1; i <= t; i++ {
-		coefficients[i] = mustRand(n)
+		coefficients[i] = deriveDomainScalar(ms, domainLabelCoef(i), n)
 	}
 
 	xIndexs := make([]*big.Int, t)
@@ -95,7 +119,9 @@ func newSSCLGenerator() *SSCLGenerator {
 	}
 
 	for i := 0; i < t; i++ {
-		xIndexs[i] = mustRand(n)
+		// x 下标按 1-based 派生（x[1]..x[T] 对应 xIndexs[0]..xIndexs[T-1]），
+		// 已被接受的 x 作为"已接受集合"传入，用于按 first-non-colliding 规则去重。
+		xIndexs[i] = deriveDomainXIndex(ms, i+1, n, xIndexs[:i])
 		yIndexs[i] = computeShareInternal(coefficients, xIndexs[i], n, tempCtx)
 		yIndexs[i] = new(big.Int).Set(yIndexs[i])
 	}
@@ -186,15 +212,10 @@ func (gen *SSCLGenerator) GenPartialKey(identityData string, uAStr string, keyDo
 	ctx.buffer = append(ctx.buffer, `","SSCLDomain":"`...)
 	ctx.buffer = append(ctx.buffer, keyDomain...)
 
-	// Appending intermediate variables for UI demystification IF needed for demo
-	if keyUse == "演示计算" || keyUse == "前置构建" {
-		ctx.buffer = append(ctx.buffer, `","kgcMx":"`...)
-		ctx.mx.FillBytes(ctx.temp32)
-		startIdx = len(ctx.buffer)
-		ctx.buffer = append(ctx.buffer, zeros64[:]...)
-		hex.Encode(ctx.buffer[startIdx:], ctx.temp32)
-	}
-
+	// ⚠️ 历史上这里会在 key_use == "演示计算" / "前置构建" 时把 SSCL 的份额中间量
+	// kgcMx 一并写进 key_value。它与 SM2 侧同源的 kgcRandomW/kgcLambda 一起，
+	// 构成一条可从只读接口反推 KGC 主私钥 ms 的泄露路径。
+	// 现已彻底移除；界面若仍需展示计算过程，必须改用不含秘密的演示数据。
 	ctx.buffer = append(ctx.buffer, `"}`...)
 
 	return models.Keymanage{
@@ -215,14 +236,6 @@ func computeShareInternal(coefficients []*big.Int, x *big.Int, n *big.Int, ctx *
 		ctx.tempPow.Mod(ctx.tempPow, n)
 	}
 	return ctx.my
-}
-
-func mustRand(n *big.Int) *big.Int {
-	b := make([]byte, 32)
-	rand.Read(b)
-	r := new(big.Int).SetBytes(b)
-	r.Mod(r, n)
-	return r
 }
 
 func makePointStr(x, y *big.Int) string {

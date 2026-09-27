@@ -12,6 +12,10 @@ const alias: Record<string, string> = {
 	'/@': pathResolve('./src/'),
 	'@': pathResolve('./src/'),
 	'@views': pathResolve('./src/views'),
+	// 共享设计令牌包（仓库根目录 design-tokens/），5 个前端统一引用。
+	// 本应用为西电交付的独立 admin 工程（fast-crud + tailwind + 自有 theme/），
+	// 仅做令牌对齐，不重写其 vendor 主题文件。
+	'@tokens': resolve(__dirname, '../../../../design-tokens'),
 	'vue-i18n': 'vue-i18n/dist/vue-i18n.cjs.js',
 };
 

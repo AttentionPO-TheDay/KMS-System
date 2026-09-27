@@ -2,6 +2,7 @@ package com.ruoyi.generate.client;
 
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
+import com.ruoyi.common.utils.SecurityUtils;
 import com.ruoyi.generate.domain.Keymanage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,10 +34,17 @@ public class GoBackendClient {
 
     private static final String INTERNAL_TOKEN_HEADER = "X-Internal-Token";
 
+    /**
+     * 已认证身份头：由本客户端写入，Go 侧据此确定密钥归属。
+     * Go 端不再信任请求体中的 user 字段，避免伪造任意身份的生成请求。
+     */
+    private static final String VERIFIED_USER_HEADER = "X-Kms-User";
+
     @Value("${kms.go-backend.url:http://localhost:8081}")
     private String goBackendUrl;
 
-    @Value("${kms.go-backend.internal-token:kms-generate-internal-secret-2026}")
+    // 内部 Token 必须由环境变量 INTERNAL_TOKEN 注入，无默认值（历史默认值为公开值）。
+    @Value("${kms.go-backend.internal-token}")
     private String internalToken;
 
     private final RestTemplate restTemplate = new RestTemplate();
@@ -49,6 +57,18 @@ public class GoBackendClient {
      * @throws RuntimeException 调用失败时抛出
      */
     public String enrollKey(Keymanage keymanage) {
+        return enrollKey(keymanage, null);
+    }
+
+    /**
+     * 调用 Go 服务执行 ENROLL_KEY（密钥生成）
+     *
+     * @param keymanage       密钥信息（含 userName, encrytType, encrytName, uA, keyDomain 等）
+     * @param verifiedUserName 已由业务层校验归属的用户名；为 null 时取当前登录会话用户
+     * @return Go 计算生成的 keyValue 字符串（SM2/SSCL 为 JSON 串）
+     * @throws RuntimeException 调用失败时抛出
+     */
+    public String enrollKey(Keymanage keymanage, String verifiedUserName) {
         Map<String, Object> body = new HashMap<>();
         body.put("user", keymanage.getUserName());
         body.put("encryt_type", keymanage.getEncrytType());
@@ -62,10 +82,14 @@ public class GoBackendClient {
             body.put("pq_mode", "demo_generated");
         }
 
-        return callGoApi("/generate/request/ENROLL_KEY", body);
+        return callGoApi("/generate/request/ENROLL_KEY", body, verifiedUserName);
     }
 
     public String reenrollKey(Keymanage keymanage) {
+        return reenrollKey(keymanage, null);
+    }
+
+    public String reenrollKey(Keymanage keymanage, String verifiedUserName) {
         Map<String, Object> body = new HashMap<>();
         body.put("user", keymanage.getUserName());
         body.put("encryt_type", keymanage.getEncrytType());
@@ -79,7 +103,7 @@ public class GoBackendClient {
             body.put("pq_mode", "demo_generated");
         }
 
-        return callGoApi("/generate/request/REENROLL_KEY", body);
+        return callGoApi("/generate/request/REENROLL_KEY", body, verifiedUserName);
     }
 
     /**
@@ -93,7 +117,7 @@ public class GoBackendClient {
         Map<String, Object> body = new HashMap<>();
         body.put("encryt_type", encrytType);
         body.put("encryt_name", encrytName);
-        return callGoApi("/generate/request/comparam", body);
+        return callGoApi("/generate/request/comparam", body, null);
     }
 
     private boolean isPqAlgorithm(String algorithm) {
@@ -107,11 +131,12 @@ public class GoBackendClient {
     /**
      * 通用 Go API 调用方法
      *
-     * @param path 接口路径（如 /generate/request/ENROLL_KEY）
-     * @param body 请求体
+     * @param path             接口路径（如 /generate/request/ENROLL_KEY）
+     * @param body             请求体
+     * @param verifiedUserName 显式指定的已认证用户名；为 null 时取当前登录会话用户
      * @return 响应中 data 字段的 JSON 字符串，若无 data 则返回 code=200 时的空串
      */
-    private String callGoApi(String path, Map<String, Object> body) {
+    private String callGoApi(String path, Map<String, Object> body, String verifiedUserName) {
         String url = goBackendUrl + path;
         String bodyJson = JSON.toJSONString(body);
 
@@ -119,6 +144,12 @@ public class GoBackendClient {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             headers.set(INTERNAL_TOKEN_HEADER, internalToken);
+
+            String actingUser = resolveVerifiedUser(verifiedUserName);
+            if (actingUser != null && !actingUser.isEmpty()) {
+                headers.set(VERIFIED_USER_HEADER, actingUser);
+            }
+
             HttpEntity<String> request = new HttpEntity<>(bodyJson, headers);
 
             ResponseEntity<String> response = restTemplate.postForEntity(url, request, String.class);
@@ -146,6 +177,25 @@ public class GoBackendClient {
         } catch (RestClientException e) {
             log.error("Go 服务网络异常: path={}, error={}", path, e.getMessage(), e);
             throw new RuntimeException("无法连接 Go 生成服务: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 解析本次调用应携带的已认证身份。
+     * <p>
+     * 优先使用业务层显式校验过归属的用户名；否则回退到当前登录会话用户。
+     * 会话不可用时返回 null（调用方不会写该头，Go 端将拒绝受理）。
+     */
+    private String resolveVerifiedUser(String explicitUser) {
+        if (explicitUser != null && !explicitUser.trim().isEmpty()) {
+            return explicitUser.trim();
+        }
+        try {
+            String sessionUser = SecurityUtils.getUsername();
+            return sessionUser == null || sessionUser.trim().isEmpty() ? null : sessionUser.trim();
+        } catch (Exception e) {
+            log.warn("无法从当前会话解析用户名，将不携带 {} 头: {}", VERIFIED_USER_HEADER, e.getMessage());
+            return null;
         }
     }
 }

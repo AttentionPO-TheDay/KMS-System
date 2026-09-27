@@ -10,10 +10,12 @@ services:
     container_name: kms_mysql
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_general_ci --default-time-zone='+08:00'
     environment:
-      - "MYSQL_ROOT_PASSWORD=root123456"
+      # 数据库口令无默认值，必须由 .env 注入（参见 kms-ops/.env.example）
+      - "MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:?必须设置 MYSQL_ROOT_PASSWORD，参见 kms-ops/.env.example}"
       - "MYSQL_DATABASE=kms"
     ports:
-      - "3307:3306"
+      # 只绑回环：原先 0.0.0.0:3307 把带 root 口令的 MySQL 暴露给了局域网
+      - "127.0.0.1:3307:3306"
     volumes:
       - ./mysql/data:/var/lib/mysql
       - ./mysql/init:/docker-entrypoint-initdb.d
@@ -22,7 +24,8 @@ services:
     networks:
       - kms_net
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot123456"]
+      # 使用容器内的 MYSQL_ROOT_PASSWORD，避免在此重复明文口令
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -p\"$$MYSQL_ROOT_PASSWORD\""]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -31,7 +34,8 @@ services:
     image: redis:6.2
     container_name: kms_redis
     ports:
-      - "6379:6379"
+      # 只绑回环：Redis 默认无认证，不应对外暴露
+      - "127.0.0.1:6379:6379"
     command: redis-server --appendonly yes
     volumes:
       - ./redis/data:/data
@@ -48,7 +52,8 @@ services:
     image: apache/kafka:latest
     container_name: kms_kafka
     ports:
-      - "9092:9092"
+      # 只绑回环：Kafka 是 PLAINTEXT，且消息里带密钥材料（见 R18）
+      - "127.0.0.1:9092:9092"
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
@@ -66,11 +71,21 @@ services:
     volumes:
       - ./kafka/kafka_data:/var/lib/kafka/data
     healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      # ⚠️ 不写死脚本路径。
+      #
+      # `apache/kafka:latest` 是**浮动 tag**：本机是 Kafka 4.2.0（脚本在 /opt/kafka/bin），
+      # 远端若拉到另一个构建，bin 目录可能就变了 —— 于是 broker 明明在跑，
+      # 健康检查却永远不过，而所有依赖它的服务都起不来，报的还是
+      #     dependency failed to start: container kms_kafka is unhealthy
+      # 这种"看着像 kafka 挂了、其实是探针找不到脚本"的情况极难反查。
+      #
+      # 因此这里按已知路径逐个探测（$$p 是给 compose 转义的字面 $p）。
+      # start_period / retries 也放宽：小内存机器上 Kafka 首次启动要更久。
+      test: ["CMD-SHELL", "for p in /opt/kafka/bin /usr/bin /opt/bitnami/kafka/bin; do [ -x \"$$p/kafka-broker-api-versions.sh\" ] && exec \"$$p/kafka-broker-api-versions.sh\" --bootstrap-server localhost:9092 >/dev/null 2>&1; done; exit 1"]
       interval: 10s
       timeout: 10s
-      retries: 12
-      start_period: 20s
+      retries: 18
+      start_period: 40s
     restart: always
     networks:
       - kms_net
@@ -79,21 +94,97 @@ services:
         soft: 65535
         hard: 65535
 
-  fisco-node:
+  # =========================================================================
+  # 联盟链：4 节点 PBFT，**每节点一个容器**
+  # =========================================================================
+  # 拓扑选择说明（踩过两个坑，记在这里免得重来）：
+  #
+  #   1. **不用官方的 `build_chain.sh -d`（docker 模式）**：它靠 `--network=host`
+  #      让各节点共享宿主网络、从而沿用 `127.0.0.1` 的 peer 配置。
+  #      但 Docker Desktop for Windows **不支持 host 网络模式**，那条路走不通。
+  #
+  #   2. **也不用"单容器跑 4 个进程"**（我先试过）：各节点 config.ini 里 peer 写的
+  #      全是 `127.0.0.1:3030N`，同容器下能互通，但实测**共识起不来** ——
+  #      一直在换视图、`onPrepare`/`commitBlock` 恒为 0。
+  #
+  #   现在走的是「桥接网络 + 服务名解析」：各节点 config.ini 的 peer 已改写为
+  #   `fisco-nodeN:3030N`（见 kms-ops/tests/fisco_rewrite_peers.sh），
+  #   每个节点有自己的网络命名空间，靠 compose 的服务名互相解析。
+  #
+  # ⚠️ 4 个节点挂载的是**同一个宿主目录**（不同子目录），这是有意的：
+  #    fisco-bcos 二进制放在 `nodes/127.0.0.1/fisco-bcos`，各节点以 `../fisco-bcos` 引用它。
+  #    它们写的是各自的 nodeN 子目录，互不冲突。
+  fisco-node0:
     image: ubuntu:22.04
-    container_name: kms_fisco
-    dns:
-      - 8.8.8.8
+    container_name: kms_fisco_node0
+    # 注意：这里**不能**写 dns: —— 一旦显式指定 DNS，容器的 resolv.conf 就不再包含
+    # Docker 内置解析器 127.0.0.11，compose 的服务名（fisco-node1 等）就解析不了。
+    # 而各节点的 peer 正是靠服务名互相寻址（见 fisco_rewrite_peers.sh），
+    # 解析失败会让节点在初始化阶段直接崩溃。原单节点配置写 dns 没事，是因为它不需要解析服务名。
     volumes:
       - ./nodes/127.0.0.1:/data
     working_dir: /data/node0
-    command: bash -c "chmod +x /data/node0/start.sh && bash /data/node0/start.sh && tail -f /dev/null"
+    # 直接 exec 二进制（**不用**生成的 start.sh：它用 `ps | grep fisco-bcos` 判重，
+    # 在单容器多进程场景下会让后续节点静默退出；前台运行也更适合容器生命周期）
+    command: ["bash", "-c", "exec /data/fisco-bcos -c config.ini"]
     ports:
-      - "20200:20200"
-      - "8545:8545"
-    restart: always
+      # 只绑回环：JSON-RPC 无认证，不该暴露给局域网。
+      # 注意 ::1 也要显式写 —— 只写 127.0.0.1 时 Docker 仍会监听 IPv6 的 0.0.0.0。
+      - "127.0.0.1:8545:8545"
+      - "127.0.0.1:20200:20200"
     networks:
-      - kms_net
+      kms_net:
+        ipv4_address: 172.20.0.101
+        aliases:
+          # 保持 `fisco-node` 这个别名：generate-java / updatedel-java 的
+          # FISCO_HOST=fisco-node 与 console 的 network_mode 都还指向它
+          - fisco-node
+    restart: always
+
+  fisco-node1:
+    image: ubuntu:22.04
+    container_name: kms_fisco_node1
+    volumes:
+      - ./nodes/127.0.0.1:/data
+    working_dir: /data/node1
+    command: ["bash", "-c", "exec /data/fisco-bcos -c config.ini"]
+    ports:
+      - "127.0.0.1:8546:8546"
+      - "127.0.0.1:20201:20201"
+    networks:
+      kms_net:
+        ipv4_address: 172.20.0.102
+    restart: always
+
+  fisco-node2:
+    image: ubuntu:22.04
+    container_name: kms_fisco_node2
+    volumes:
+      - ./nodes/127.0.0.1:/data
+    working_dir: /data/node2
+    command: ["bash", "-c", "exec /data/fisco-bcos -c config.ini"]
+    ports:
+      - "127.0.0.1:8547:8547"
+      - "127.0.0.1:20202:20202"
+    networks:
+      kms_net:
+        ipv4_address: 172.20.0.103
+    restart: always
+
+  fisco-node3:
+    image: ubuntu:22.04
+    container_name: kms_fisco_node3
+    volumes:
+      - ./nodes/127.0.0.1:/data
+    working_dir: /data/node3
+    command: ["bash", "-c", "exec /data/fisco-bcos -c config.ini"]
+    ports:
+      - "127.0.0.1:8548:8548"
+      - "127.0.0.1:20203:20203"
+    networks:
+      kms_net:
+        ipv4_address: 172.20.0.104
+    restart: always
 
   fisco-console:
     image: eclipse-temurin:8-jre
@@ -104,29 +195,41 @@ services:
     working_dir: /app
     command: ["bash", "-lc", "chmod +x /app/*.sh && sleep infinity"]
     depends_on:
-      fisco-node:
+      fisco-node0:
         condition: service_started
-    network_mode: "service:fisco-node"
+    # 与 node0 共享网络命名空间：console 便能以 127.0.0.1 访问本节点，
+    # 同时又能用服务名访问 node1..3
+    network_mode: "service:fisco-node0"
     restart: always
 
   # ========================================
   # 2. kms-generate 系统 (密钥生成)
   # ========================================
   generate-go:
-    image: debian:bookworm-slim
+    # 自包含镜像：二进制在构建期打入镜像，运行期不再依赖宿主机挂载。
+    # 构建上下文为 kms-ops/，产物须先由 ../build-local.ps1 生成。
+    build:
+      context: .
+      dockerfile: build/generate-go.Dockerfile
+    image: kms-generate-go:local
     container_name: kms_generate_go
-    volumes:
-      - ./runtime/generate-go/kms-generate-service:/app/kms-generate-service:ro
     working_dir: /app
-    command: ["/app/kms-generate-service"]
-    ports:
-      - "8081:8081"
     environment:
       - KAFKA_ADDR=kafka:9092
       - KAFKA_TOPIC=key_generate_log
       - JAVA_BACKEND_BASE=http://generate-java:9081
       - DEMO_BACKEND_BASE=http://dvadmin3-django:8000/api/pqkds
-      - INTERNAL_TOKEN=${INTERNAL_TOKEN:-kms-generate-internal-secret-2026}
+      - INTERNAL_TOKEN=${INTERNAL_TOKEN:?必须设置 INTERNAL_TOKEN，参见 kms-ops/.env.example}
+      # KGC 主私钥：generate-go 才是真正生成 SM2/SSCL 部分私钥的地方。
+      # 此前这一项只注入给了 generate-java / updatedel-java / updatedel-go，
+      # generate-go 拿不到，于是一直在用硬编码的公开演示值 ——
+      # 也就是说生成侧的 KGC 秘密实际上是公开的。现已补齐。
+      - KGC_MASTER_SECRET=${KGC_MASTER_SECRET:?必须设置 KGC_MASTER_SECRET（KGC 主私钥），参见 kms-ops/.env.example}
+      # 版本化：启用版本号 + 已退役密钥集。
+      # 两个 Java 服务都需要退役集 —— 它们会**按记录自己的版本**复算历史 P_A，
+      # 少了退役密钥，那些历史记录就永久失去可验证性。
+      - KGC_MASTER_SECRET_ID=${KGC_MASTER_SECRET_ID:-}
+      - KGC_MASTER_SECRET_RETIRED=${KGC_MASTER_SECRET_RETIRED:-}
       - SERVER_PORT=8081
       - GOGC=500
     depends_on:
@@ -139,23 +242,39 @@ services:
       - kms_net
 
   generate-java:
-    image: eclipse-temurin:8-jre
+    # 自包含镜像：jar + FISCO 配置 + SDK 证书均打入镜像
+    build:
+      context: .
+      dockerfile: build/generate-java.Dockerfile
+    image: kms-generate-java:local
     container_name: kms_generate_java
-    volumes:
-      - ./runtime/generate-java/kms-generate.jar:/app/kms-generate.jar:ro
-      - ./runtime/generate-java/config-fisco.toml:/app/config-fisco.toml:ro
-      - ./fisco/console/conf:/app/conf:ro
     working_dir: /app
-    command: ["java", "-jar", "/app/kms-generate.jar"]
-    ports:
-      - "9081:9081"
     environment:
       - DB_HOST=mysql
       - DB_PORT=3306
       - DB_NAME=kms
       - DB_USERNAME=root
-      - DB_PASSWORD=root123456
+      - DB_PASSWORD=${MYSQL_ROOT_PASSWORD:?必须设置 MYSQL_ROOT_PASSWORD，参见 kms-ops/.env.example}
       - GO_BACKEND_URL=http://generate-go:8081
+      # Java 侧调用 Go 入站层所需的内部 Token。
+      # application.yml 中该项为 ${INTERNAL_TOKEN}（已移除公开默认值），必须注入。
+      - INTERNAL_TOKEN=${INTERNAL_TOKEN:?必须设置 INTERNAL_TOKEN，参见 kms-ops/.env.example}
+      # JWT 签名密钥：三后端必须一致；无默认值，缺失则启动失败
+      - KMS_TOKEN_SECRET=${KMS_TOKEN_SECRET:?必须设置 KMS_TOKEN_SECRET，参见 kms-ops/.env.example}
+      # Druid 控制台口令（/druid/** 已不再匿名放行）
+      - DRUID_LOGIN_USERNAME=${DRUID_LOGIN_USERNAME:?必须设置 DRUID_LOGIN_USERNAME}
+      - DRUID_LOGIN_PASSWORD=${DRUID_LOGIN_PASSWORD:?必须设置 DRUID_LOGIN_PASSWORD}
+      # KGC 主私钥（可选；未设置则使用公开演示值并告警）
+      - KGC_MASTER_SECRET=${KGC_MASTER_SECRET:?必须设置 KGC_MASTER_SECRET（KGC 主私钥），参见 kms-ops/.env.example}
+      # 版本化：启用版本号 + 已退役密钥集。
+      # 两个 Java 服务都需要退役集 —— 它们会**按记录自己的版本**复算历史 P_A，
+      # 少了退役密钥，那些历史记录就永久失去可验证性。
+      - KGC_MASTER_SECRET_ID=${KGC_MASTER_SECRET_ID:-}
+      - KGC_MASTER_SECRET_RETIRED=${KGC_MASTER_SECRET_RETIRED:-}
+      # 验证码开关：用户前台的登录打在本服务上，所以这个变量必须与 updatedel-java
+      # 注入的是**同一个值** —— 否则会出现"一个登录页要验证码、另一个不要"。
+      # 取值范围与含义见 kms-ops/.env 里的说明。
+      - KMS_CAPTCHA_ENABLED=${KMS_CAPTCHA_ENABLED:-false}
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
       - FISCO_HOST=fisco-node
       - FISCO_CONTRACT_ADDRESS=${FISCO_CONTRACT_ADDRESS:-}
@@ -169,7 +288,7 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
-      fisco-node:
+      fisco-node0:
         condition: service_started
       fisco-console:
         condition: service_started
@@ -183,14 +302,13 @@ services:
   # 3. kms-updatedel 系统 (密钥更新与回收)
   # ========================================
   updatedel-go:
-    image: debian:bookworm-slim
+    # 自包含镜像（同 generate-go）
+    build:
+      context: .
+      dockerfile: build/updatedel-go.Dockerfile
+    image: kms-updatedel-go:local
     container_name: kms_updatedel_go
-    volumes:
-      - ./runtime/updatedel-go/kms-updatedel-service:/app/kms-updatedel-service:ro
     working_dir: /app
-    command: ["/app/kms-updatedel-service"]
-    ports:
-      - "8082:8082"
     environment:
       - KAFKA_BROKERS=kafka:9092
       - KAFKA_UPDATE_TOPIC=key_update_log
@@ -200,9 +318,13 @@ services:
       - DB_PORT=3306
       - DB_NAME=kms
       - DB_USERNAME=root
-      - DB_PASSWORD=root123456
+      - DB_PASSWORD=${MYSQL_ROOT_PASSWORD:?必须设置 MYSQL_ROOT_PASSWORD，参见 kms-ops/.env.example}
       - SERVER_PORT=8082
       - GOGC=500
+      - INTERNAL_TOKEN=${INTERNAL_TOKEN:?必须设置 INTERNAL_TOKEN，参见 kms-ops/.env.example}
+      # 注意：这里**刻意不再注入** KGC_MASTER_SECRET。
+      # updatedel-go 的代码里完全不引用该值（KGC 相关计算都在 Java 侧与 generate-go），
+      # 而它是无证书方案里唯一的秘密，按最小权限原则不该发给用不到它的服务。
     depends_on:
       kafka:
         condition: service_healthy
@@ -213,22 +335,21 @@ services:
       - kms_net
 
   updatedel-java:
-    image: eclipse-temurin:8-jre
+    # 自包含镜像：jar + FISCO 配置 + SDK 证书均打入镜像
+    build:
+      context: .
+      dockerfile: build/updatedel-java.Dockerfile
+    image: kms-updatedel-java:local
     container_name: kms_updatedel_java
-    volumes:
-      - ./runtime/updatedel-java/kms-updatedel.jar:/app/kms-updatedel.jar:ro
-      - ./runtime/updatedel-java/config-fisco.toml:/app/config-fisco.toml:ro
-      - ./fisco/console/conf:/app/conf:ro
     working_dir: /app
-    command: ["java", "-jar", "/app/kms-updatedel.jar"]
-    ports:
-      - "9082:9082"
     environment:
       - DB_HOST=mysql
       - DB_PORT=3306
       - DB_NAME=kms
       - DB_USERNAME=root
-      - DB_PASSWORD=root123456
+      - DB_PASSWORD=${MYSQL_ROOT_PASSWORD:?必须设置 MYSQL_ROOT_PASSWORD，参见 kms-ops/.env.example}
+      # Java 侧调用 Go 入站层所需的内部 Token（application.yml 中无默认值，必须注入）
+      - INTERNAL_TOKEN=${INTERNAL_TOKEN:?必须设置 INTERNAL_TOKEN，参见 kms-ops/.env.example}
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
       - FISCO_HOST=fisco-node
       - FISCO_CONTRACT_ADDRESS=${FISCO_CONTRACT_ADDRESS:-}
@@ -237,9 +358,20 @@ services:
       - KMS_CHAIN_RESULT_TOPIC=${KMS_CHAIN_RESULT_TOPIC:-key_chain_result}
       - KMS_LIFECYCLE_CONSUMER_CONCURRENCY=${KMS_LIFECYCLE_CONSUMER_CONCURRENCY:-8}
       - KMS_LIFECYCLE_MAX_POLL_RECORDS=${KMS_LIFECYCLE_MAX_POLL_RECORDS:-1000}
+      # 自动更新（托管轮换）的节奏：默认值与代码里的 @Value 默认值一致（30 分钟 / 60 秒）。
+      # 这两个原先**没有接进来**，所以只能改代码或干等 30 分钟 —— 演示/测试时很别扭。
+      # 现在接到 .env 上：想快速演示就把间隔调到 1 分钟、扫描调到 10 秒。
+      # 判定条件（见 KeymanageMapper.xml.selectAutoUpdateCandidates）：
+      #   auto_update='1' 且 未回收 且 upd_time <= now - 间隔
+      - KMS_LIFECYCLE_AUTO_UPDATE_INTERVAL_MINUTES=${KMS_LIFECYCLE_AUTO_UPDATE_INTERVAL_MINUTES:-30}
+      - KMS_LIFECYCLE_AUTO_UPDATE_SCAN_DELAY_MS=${KMS_LIFECYCLE_AUTO_UPDATE_SCAN_DELAY_MS:-60000}
       - KMS_LIFECYCLE_BATCH_SIZE=${KMS_LIFECYCLE_BATCH_SIZE:-500}
-      - KMS_LIFECYCLE_CHAIN_SYNC_ENABLED=${KMS_LIFECYCLE_CHAIN_SYNC_ENABLED:-false}
-      - KMS_LIFECYCLE_CHAIN_CONSUMER_ENABLED=${KMS_LIFECYCLE_CHAIN_CONSUMER_ENABLED:-false}
+      # 这两项在 application.yml 里的默认值本就是 true，此前 compose 把它压成 false，
+      # 是为了在"链连不上"期间避免持续报错。2026-09-24 换链后 SDK 已能正常握手
+      # （见 scripts/rebuild-fisco-chain.ps1），恢复为 true —— 否则更新/回收
+      # 永远不会上链，而现象只是"链上查不到"，很容易被当成链的问题继续排查。
+      - KMS_LIFECYCLE_CHAIN_SYNC_ENABLED=${KMS_LIFECYCLE_CHAIN_SYNC_ENABLED:-true}
+      - KMS_LIFECYCLE_CHAIN_CONSUMER_ENABLED=${KMS_LIFECYCLE_CHAIN_CONSUMER_ENABLED:-true}
       - KMS_LIFECYCLE_CHAIN_EVENT_BATCH_SIZE=${KMS_LIFECYCLE_CHAIN_EVENT_BATCH_SIZE:-500}
       - KMS_LIFECYCLE_CHAIN_CONSUMER_CONCURRENCY=${KMS_LIFECYCLE_CHAIN_CONSUMER_CONCURRENCY:-4}
       - KMS_LIFECYCLE_CHAIN_WORKER_THREADS=${KMS_LIFECYCLE_CHAIN_WORKER_THREADS:-8}
@@ -253,12 +385,21 @@ services:
       - KMS_CAPTCHA_ENABLED=${KMS_CAPTCHA_ENABLED:-false}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - KMS_TOKEN_SECRET=${KMS_TOKEN_SECRET:?必须设置 KMS_TOKEN_SECRET，参见 kms-ops/.env.example}
+      - DRUID_LOGIN_USERNAME=${DRUID_LOGIN_USERNAME:?必须设置 DRUID_LOGIN_USERNAME}
+      - DRUID_LOGIN_PASSWORD=${DRUID_LOGIN_PASSWORD:?必须设置 DRUID_LOGIN_PASSWORD}
+      - KGC_MASTER_SECRET=${KGC_MASTER_SECRET:?必须设置 KGC_MASTER_SECRET（KGC 主私钥），参见 kms-ops/.env.example}
+      # 版本化：启用版本号 + 已退役密钥集。
+      # 两个 Java 服务都需要退役集 —— 它们会**按记录自己的版本**复算历史 P_A，
+      # 少了退役密钥，那些历史记录就永久失去可验证性。
+      - KGC_MASTER_SECRET_ID=${KGC_MASTER_SECRET_ID:-}
+      - KGC_MASTER_SECRET_RETIRED=${KGC_MASTER_SECRET_RETIRED:-}
     depends_on:
       mysql:
         condition: service_healthy
       kafka:
         condition: service_healthy
-      fisco-node:
+      fisco-node0:
         condition: service_started
       fisco-console:
         condition: service_started
@@ -269,48 +410,40 @@ services:
       - kms_net
 
   # ========================================
-  # 4. 旧 kms-distribute 后台服务 (原链路保留)
+  # 4. 旧 kms-distribute 服务已整体下线（Q11 已确认）
   # ========================================
-  kms-distribute:
-    image: eclipse-temurin:8-jre
-    container_name: kms_distribute_java
-    volumes:
-      - ./runtime/distribute-java/kms-distribute.jar:/app/kms-distribute.jar:ro
-    working_dir: /app
-    command: ["java", "-jar", "/app/kms-distribute.jar"]
-    ports:
-      - "8083:8083"
-    environment:
-      - DB_HOST=mysql
-      - DB_PORT=3306
-      - DB_NAME=kms
-      - DB_USERNAME=root
-      - DB_PASSWORD=root123456
-      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-      - KMS_CHAIN_RESULT_TOPIC=${KMS_CHAIN_RESULT_TOPIC:-key_chain_result}
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-    depends_on:
-      mysql:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: always
-    networks:
-      - kms_net
+  # 它曾是"分发记录"的独立后端（`/distribute-api/` → kms-distribute Java 8083
+  # → `kms.key_distribute_record`）。P5 收敛之后它**没有任何消费方**：
+  #   * 网关 `/distribute-api/` 已改为显式 404；
+  #   * 分发记录查询/看板/Kafka 消费者等 17 个 Java 文件已删除；
+  #   * 三个消费方（用户工作台分发图、密钥关联分析分发足迹、check.ps1）
+  #     全部迁到新链路的批次表；
+  #   * 它剩下的只有 RuoYi 系统管理控制器，而没有任何前端在调它们
+  #     （`/distribute/` 前端是 django-vue3-admin，走 `/pqkds-api/`）。
+  #
+  # 因此整个 service 移除，部署镜像 **8 → 7**，同时少一个 JVM 容器与一次 `docker save`。
+  #
+  # 早前先把它的 `ports` 去掉（当时 Q11 未定），现在连容器一起下线 ——
+  # 这两步是分开做的：**先让它不可达，再决定要不要留着**，
+  # 免得"要不要下线"这个决定把"它还在对外暴露"这件更要紧的事一起拖住。
+  #
+  # 源码目录 `kms-distribute/java-backend` 暂留（含刚删过文件的历史），
+  # 若日后确认不再需要，可整体移除。
 
   # ========================================
   # 5. extracted demo 系统 (新分发展示)
   # ========================================
   dvadmin3-django:
+    # 显式指定镜像名：原先只有 build:，剥离 build 段后 compose 会因为
+    # 「既无 image 又无 build」而报错，无法用于远端纯镜像部署。
     build:
       context: ../kms-distribute/extracted/ruoyi (2)
       dockerfile: ./docker_env/django/Dockerfile
+    image: kms-dvadmin3-django:local
     container_name: dvadmin3-django
     working_dir: /backend
-    command: ["sh", "-lc", "/opt/venv/bin/python manage.py migrate --noinput && exec /opt/venv/bin/gunicorn application.asgi:application -c gunicorn_conf.py"]
+    # 启动逻辑见 backend/start.sh：等待数据库就绪 → 迁移 → gunicorn（带重试）
+    command: ["bash", "/backend/start.sh"]
     environment:
       - PYTHONUNBUFFERED=1
       - TZ=Asia/Shanghai
@@ -318,20 +451,37 @@ services:
       - DATABASE_PORT=3306
       - DATABASE_NAME=falcon_kds
       - DATABASE_USER=root
-      - DATABASE_PASSWORD=root123456
-      - PQKDS_KMS_ADAPTER_SERVICE_TOKEN=${PQKDS_KMS_ADAPTER_SERVICE_TOKEN}
-      - PQKDS_KMS_ADAPTER_SERVICE_ID=${PQKDS_KMS_ADAPTER_SERVICE_ID}
+      - DATABASE_PASSWORD=${MYSQL_ROOT_PASSWORD:?必须设置 MYSQL_ROOT_PASSWORD，参见 kms-ops/.env.example}
+      # 这两项是「KMS → 分发模块」adapter 的服务凭据，**当前没有消费方**：
+      #   * 只有 pqkds/kms_adapter.py 读它们，而它守的 4 个接口
+      #     （generate_key / update_lifecycle / revoke / distribute_key_pool）
+      #     并没有挂进 urls.py —— urls.py import 的是 views.py 里的同名函数；
+      #   * 全仓库没有任何代码发送 X-Kms-Service-Token 头。
+      # 因此留空是**有效状态**（adapter 视为关闭），功能不受影响。
+      # 这里补 `:-` 默认值只是为了不再每次 compose 都刷两条 WARNING ——
+      # 那两条警告看着像配置缺失，实测排查了半天才发现是死代码的凭据。
+      - PQKDS_KMS_ADAPTER_SERVICE_TOKEN=${PQKDS_KMS_ADAPTER_SERVICE_TOKEN:-}
+      - PQKDS_KMS_ADAPTER_SERVICE_ID=${PQKDS_KMS_ADAPTER_SERVICE_ID:-}
       - GENERATE_BACKEND_BASE=http://generate-go:8081
       - GENERATE_JAVA_BASE=http://generate-java:9081
       - LIFECYCLE_BACKEND_BASE=http://updatedel-go:8082
-      - INTERNAL_TOKEN=${INTERNAL_TOKEN:-kms-generate-internal-secret-2026}
+      - INTERNAL_TOKEN=${INTERNAL_TOKEN:?必须设置 INTERNAL_TOKEN，参见 kms-ops/.env.example}
       - PQKDS_DEMO_GENERATE_USER=${PQKDS_DEMO_GENERATE_USER:-pqkds-demo-service}
       - PQKDS_DEMO_GENERATE_PASSWORD=${PQKDS_DEMO_GENERATE_PASSWORD:-admin123}
     volumes:
-      - ../kms-distribute/extracted/ruoyi (2)/backend:/backend
-      - ../kms-distribute/extracted/ruoyi (2)/logs/log:/var/log
-    ports:
-      - "8001:8000"
+      # 代码已由 Dockerfile 的 `COPY ./backend/ /backend/` 打入镜像，
+      # 此处原先的 backend 挂载是冗余的（镜像内已有），移除以免运行期
+      # 行为受宿主机工作区影响。仅保留日志挂载便于排查。
+      #
+      # 路径必须落在 kms-ops/ 之内：原值 `../kms-distribute/extracted/...`
+      # 会逃出部署目录，远端不存在该路径，导致部署包无法独立运行。
+      - ./dvadmin-logs:/var/log
+    depends_on:
+      # 必须等 MySQL healthy 再启动：本服务的启动命令会执行 migrate，
+      # 若数据库尚未就绪会以 "Can't connect to MySQL server ... Connection refused"
+      # 失败——迁移不执行则全部业务表缺失，PQKDS 所有接口返回 500。
+      mysql:
+        condition: service_healthy
     restart: always
     networks:
       - kms_net
@@ -340,13 +490,14 @@ services:
   # 5. kms-acceptance 系统 (验收与联调)
   # ========================================
   acceptance-backend:
-    image: debian:bookworm-slim
+    # 自包含镜像：二进制 + security 脚本打入镜像，依赖在构建期装好
+    # （原实现在启动命令里 apt-get install，会让启动依赖外网且不可复现）
+    build:
+      context: .
+      dockerfile: build/acceptance-go.Dockerfile
+    image: kms-acceptance-backend:local
     container_name: kms_acceptance_backend
-    volumes:
-      - ./runtime/acceptance-go/kms-acceptance-backend:/app/kms-acceptance-backend:ro
-      - ./runtime/acceptance-go/security:/app/security:ro
     working_dir: /app
-    command: ["sh", "-lc", "if ! command -v bash >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1 || ! command -v wrk >/dev/null 2>&1; then apt-get update && apt-get install -y --no-install-recommends bash curl jq wrk && rm -rf /var/lib/apt/lists/*; fi && exec /app/kms-acceptance-backend"]
     environment:
       - PORT=9090
       - WRK_PATH=/usr/bin/wrk
@@ -362,7 +513,7 @@ services:
       - ACCEPTANCE_LIFECYCLE_PROOF_URL=http://updatedel-java:9082/internal/lifecycle/batch-proof
       - ACCEPTANCE_GENERATE_JAVA_BASE_URL=http://generate-java:9081
       - ACCEPTANCE_LIFECYCLE_JAVA_BASE_URL=http://updatedel-java:9082
-      - ACCEPTANCE_INTERNAL_TOKEN=${INTERNAL_TOKEN:-kms-generate-internal-secret-2026}
+      - ACCEPTANCE_INTERNAL_TOKEN=${INTERNAL_TOKEN:?必须设置 INTERNAL_TOKEN，参见 kms-ops/.env.example}
     depends_on:
       - generate-go
       - generate-java
@@ -376,19 +527,17 @@ services:
   # 6. 网关层 (Nginx)
   # ========================================
   nginx:
-    image: nginx:alpine
+    # 自包含镜像：nginx.conf + 门户 + 5 个前端产物全部打入镜像。
+    # 仅保留日志挂载，便于在宿主机直接查看访问日志与排查问题。
+    build:
+      context: .
+      dockerfile: build/nginx.Dockerfile
+    image: kms-gateway-nginx:local
     container_name: kms_gateway
     ports:
       - "80:80"
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/logs:/var/log/nginx
-      - ./front/portal:/usr/share/nginx/html
-      - ./front/generate:/usr/share/nginx/html/generate
-      - ./front/updatedel:/usr/share/nginx/html/updatedel
-      - ./front/distribute:/usr/share/nginx/html/distribute
-      - ./front/user:/usr/share/nginx/html/user
-      - ./front/acceptance:/usr/share/nginx/html/acceptance
     depends_on:
       - generate-go
       - generate-java
@@ -405,3 +554,20 @@ services:
 networks:
   kms_net:
     driver: bridge
+    # ⚠️ 子网必须显式声明，不能靠 Docker 自动分配。
+    #
+    # 4 个 FISCO 节点用的是**静态 IP**（172.20.0.101~104，见各服务的 ipv4_address），
+    # 而它们的 peer 地址也写死在各自的 conf/../config.ini 里（同样是 172.20.0.10x）。
+    # 若这里不写子网，Docker 会从默认地址池里随便挑一个（本机是 172.20.0.0/16，
+    # 纯属池子顺序凑巧），换一台机器就可能分到别的网段，于是启动时报：
+    #     invalid endpoint settings: no configured subnet contains IP address 172.20.0.104
+    # 本机一直没暴露这个问题，是因为分到的恰好就是 172.20 —— 这种"靠运气"的配置
+    # 在别的机器上必然翻车（2026-09-24 远端部署实测）。
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+# 若目标机上 172.20.0.0/16 已被占用（报 "Pool overlaps with other one on this
+# address space"），**不要只改这里** —— 必须同时改三处，否则节点之间连不上：
+#   1. 本文件的 4 个 ipv4_address
+#   2. nodes/127.0.0.1/node0~3/config.ini 里的 node.0~3= 四行
+#   3. 重新执行 docker compose up -d --force-recreate fisco-node0..3

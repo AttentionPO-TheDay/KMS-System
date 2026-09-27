@@ -58,6 +58,15 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
 			<if test="operName != null and operName != ''">
 				AND oper_name like concat('%', #{operName}, '%')
 			</if>
+			<!--
+			  精确匹配操作人。用户侧「我的操作日志」必须用这个条件而不是上面的 operName：
+			  operName 走的是 LIKE，用户名 "yx" 会命中 "yx2"、"test" 会命中 "test01"，
+			  等于把别人的操作记录一并返回给当前用户。由服务端从令牌取用户名写入
+			  params.operNameExact，前端无法传入、也无法覆盖。
+			-->
+			<if test="params.operNameExact != null and params.operNameExact != ''">
+				AND oper_name = #{params.operNameExact}
+			</if>
 			<if test="params.beginTime != null and params.beginTime != ''"><!-- 开始时间检索 -->
 				AND oper_time &gt;= #{params.beginTime}
 			</if>

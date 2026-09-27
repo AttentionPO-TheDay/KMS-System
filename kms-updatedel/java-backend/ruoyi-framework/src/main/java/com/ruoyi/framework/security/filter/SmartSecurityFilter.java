@@ -203,6 +203,47 @@ public class SmartSecurityFilter implements Filter {
         private static final long WINDOW_DURATION = 5;
 
         /**
+         * 判定是否属于静态资源请求。
+         * <p>
+         * 前端打包产物（.js/.css/图片/字体）在部署不完整或版本不匹配时会产生大量 404，
+         * 这类请求不代表攻击行为。若不排除，会误伤正常用户并封禁其 IP 30 分钟，
+         * 且前端反复请求资源会自我强化封禁。
+         */
+        static boolean isStaticResource(String uri) {
+            if (uri == null) {
+                return false;
+            }
+            String path = uri.toLowerCase();
+            int queryIndex = path.indexOf('?');
+            if (queryIndex >= 0) {
+                path = path.substring(0, queryIndex);
+            }
+            return path.endsWith(".js") || path.endsWith(".css") || path.endsWith(".map")
+                    || path.endsWith(".png") || path.endsWith(".jpg") || path.endsWith(".jpeg")
+                    || path.endsWith(".gif") || path.endsWith(".svg") || path.endsWith(".ico")
+                    || path.endsWith(".webp") || path.endsWith(".woff") || path.endsWith(".woff2")
+                    || path.endsWith(".ttf") || path.endsWith(".eot")
+                    || path.endsWith(".html") || path.endsWith(".htm");
+        }
+
+        /** 读取可配置阈值；未配置时使用原有默认值。 */
+        private static int threshold(String key, int defaultValue) {
+            String raw = System.getProperty(key);
+            if (raw == null || raw.trim().isEmpty()) {
+                raw = System.getenv(key);
+            }
+            if (raw == null || raw.trim().isEmpty()) {
+                return defaultValue;
+            }
+            try {
+                int value = Integer.parseInt(raw.trim());
+                return value > 0 ? value : defaultValue;
+            } catch (NumberFormatException ex) {
+                return defaultValue;
+            }
+        }
+
+        /**
          * 记录请求
          */
         public synchronized void recordRequest(String uri, int status) {
@@ -211,6 +252,11 @@ public class SmartSecurityFilter implements Filter {
             if (now - windowStart > TimeUnit.MINUTES.toMillis(WINDOW_DURATION)) {
                 reset();
                 windowStart = now;
+            }
+
+            // 静态资源不计入统计：避免前端资源 404 触发误封禁
+            if (isStaticResource(uri)) {
+                return;
             }
 
             totalRequests++;
@@ -228,24 +274,29 @@ public class SmartSecurityFilter implements Filter {
          * 判断是否为异常模式
          */
         public boolean isAbnormal() {
+            int notFoundAbs = threshold("kms.security.blacklist.notfound-threshold", 30);
+            int notFoundRatioMin = threshold("kms.security.blacklist.notfound-ratio-min-requests", 15);
+            int forbiddenAbs = threshold("kms.security.blacklist.forbidden-threshold", 20);
+            int forbiddenRatioMin = threshold("kms.security.blacklist.forbidden-ratio-min-requests", 10);
+
             // 模式1：短时间内大量404（扫描行为）
-            if (notFoundCount > 30) {
+            if (notFoundCount > notFoundAbs) {
                 return true;
             }
 
-            // 模式2：404比例过高（>60%）且请求数>15
-            if (totalRequests > 15 &&
+            // 模式2：404比例过高且请求数达到下限
+            if (totalRequests > notFoundRatioMin &&
                     (double) notFoundCount / totalRequests > 0.6) {
                 return true;
             }
 
             // 模式3：大量403（尝试越权访问）
-            if (forbiddenCount > 20) {
+            if (forbiddenCount > forbiddenAbs) {
                 return true;
             }
 
-            // 模式4：403比例过高（>50%）且请求数>10
-            if (totalRequests > 10 &&
+            // 模式4：403比例过高且请求数达到下限
+            if (totalRequests > forbiddenRatioMin &&
                     (double) forbiddenCount / totalRequests > 0.5) {
                 return true;
             }
@@ -257,14 +308,15 @@ public class SmartSecurityFilter implements Filter {
          * 获取异常原因
          */
         public String getAbnormalReason() {
-            if (notFoundCount > 30 ||
-                    (totalRequests > 15 && (double) notFoundCount / totalRequests > 0.6)) {
+            int notFoundAbs = threshold("kms.security.blacklist.notfound-threshold", 30);
+            int forbiddenAbs = threshold("kms.security.blacklist.forbidden-threshold", 20);
+
+            if (notFoundCount > notFoundAbs) {
                 return String.format("疑似目录扫描 (404次数: %d, 总请求: %d)",
                         notFoundCount, totalRequests);
             }
 
-            if (forbiddenCount > 20 ||
-                    (totalRequests > 10 && (double) forbiddenCount / totalRequests > 0.5)) {
+            if (forbiddenCount > forbiddenAbs) {
                 return String.format("疑似越权攻击 (403次数: %d, 总请求: %d)",
                         forbiddenCount, totalRequests);
             }

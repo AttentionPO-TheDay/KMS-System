@@ -9,7 +9,9 @@ GenerateJavaBaseUrl="http://127.0.0.1:9081"
 LifecycleJavaBaseUrl="http://127.0.0.1:9082"
 GenerateKeyPoolUrl="http://127.0.0.1:9081/internal/generate/keys/recent"
 LifecycleVerifyUrl="http://127.0.0.1:9082/internal/lifecycle/key-status"
-InternalToken="kms-generate-internal-secret-2026"
+# 内部 Token 从环境变量读取，不再使用公开的硬编码默认值。
+# 可用 --InternalToken 覆盖；两者都缺失时脚本会在使用前报错。
+InternalToken="${INTERNAL_TOKEN:-}"
 AcceptanceUser="acceptance_user"
 AttackUserName="acceptance_user"
 AttackUserPassword=""
@@ -40,6 +42,13 @@ while [[ "$#" -gt 0 ]]; do
     esac
     shift
 done
+
+# 内部 Token 缺失时立即报错，避免所有请求都以 401 失败后难以定位原因
+if [ -z "$InternalToken" ]; then
+    echo "[ERROR] 缺少内部 Token。请设置环境变量 INTERNAL_TOKEN，或使用 --InternalToken 参数。" >&2
+    echo "        该值需与 kms-ops/.env 中的 INTERNAL_TOKEN 一致。" >&2
+    exit 1
+fi
 
 if [ -z "$CaseId" ]; then
     echo "CaseId is required"
@@ -129,6 +138,42 @@ invoke_http_request() {
     echo "$http_code|||$response_body"
 }
 
+# 从 Redis 读一个字符串键。
+#
+# 为什么要自己实现：本脚本跑在验收后端容器里，镜像里没有 redis-cli；
+# 而登录需要图形验证码的答案（服务端存在 `captcha_codes:<uuid>`），
+# 所以用 bash 的 /dev/tcp 直接发一条 RESP `GET` —— 容器与 redis 同在 kms_net。
+#
+# ⚠️ 必须剥掉外层引号：服务端用 Spring 的 RedisTemplate（JSON 序列化）写入，
+#    字符串 `18` 在 Redis 里是 `"18"`。直接拿 `"18"` 去提交，服务端判「验证码错误」，
+#    现象像是"答案取错了"，其实只是少剥了一层引号。
+redis_get() {
+    local key="$1"
+    local host="${REDIS_HOST:-redis}"
+    local port="${REDIS_PORT:-6379}"
+    local line value len
+
+    exec 3<>"/dev/tcp/${host}/${port}" 2>/dev/null || return 1
+    printf '*2\r\n$3\r\nGET\r\n$%d\r\n%s\r\n' "${#key}" "$key" >&3
+    IFS= read -r line <&3 || { exec 3<&-; return 1; }
+    case "$line" in
+        \$*) ;;
+        *) exec 3<&-; return 1 ;;
+    esac
+    len="${line#\$}"
+    len="${len%$'\r'}"
+    if ! [[ "$len" =~ ^[0-9]+$ ]] || [ "$len" -le 0 ]; then
+        exec 3<&-
+        return 1
+    fi
+    IFS= read -r value <&3 || { exec 3<&-; return 1; }
+    exec 3<&-
+    value="${value%$'\r'}"
+    value="${value#\"}"
+    value="${value%\"}"
+    printf '%s' "$value"
+}
+
 get_auth_token() {
     local base_url="$1"
     local username="$2"
@@ -150,14 +195,30 @@ get_auth_token() {
     
     local captcha_enabled
     captcha_enabled=$(echo "$body" | jq -r '.captchaEnabled // false')
+
+    # 验证码：本脚本自己解不了图形题，但服务端把答案写在 Redis 的
+    # `captcha_codes:<uuid>` 里（见 CaptchaController），所以直接取答案。
+    #
+    # 为什么不用 redis-cli：本脚本跑在验收后端容器里，镜像里没有 redis-cli；
+    # 用 bash 的 /dev/tcp 直接发一条 RESP GET 即可（容器与 redis 同在 kms_net）。
+    #
+    # 注意：服务端用 Spring 的 RedisTemplate（JSON 序列化）写入，
+    # 字符串 `18` 在 Redis 里是 `"18"` —— **必须剥掉外层引号**，
+    # 否则服务端判「验证码错误」，看起来像答案取错了。
+    local captcha_uuid="" captcha_code=""
     if [ "$captcha_enabled" = "true" ]; then
-        echo "$trace_name requires captcha disabled" >&2
-        exit 1
+        captcha_uuid=$(echo "$body" | jq -r '.uuid // ""')
+        captcha_code=$(redis_get "captcha_codes:${captcha_uuid}") || captcha_code=""
+        if [ -z "$captcha_uuid" ] || [ -z "$captcha_code" ]; then
+            echo "$trace_name 取验证码失败（uuid='${captcha_uuid}'）" >&2
+            exit 1
+        fi
     fi
 
     local login_url="${base_url}/login"
     local payload
-    payload=$(jq -n --arg u "$username" --arg p "$password" '{username: $u, password: $p, code: "", uuid: ""}')
+    payload=$(jq -n --arg u "$username" --arg p "$password" --arg c "$captcha_code" --arg i "$captcha_uuid" \
+        '{username: $u, password: $p, code: $c, uuid: $i}')
     
     res=$(invoke_http_request "POST" "$login_url" "null" "$payload")
     code="${res%%|||*}"
@@ -235,7 +296,7 @@ get_owned_lifecycle_key_id() {
 run_algo_tamper() {
     local url="${GenerateGoBaseUrl}/generate/request/ENROLL_KEY"
     local headers
-    headers=$(jq -n --arg t "$InternalToken" '{"X-Internal-Token": $t}')
+    headers=$(jq -n --arg t "$InternalToken" --arg u "$AcceptanceUser" '{"X-Internal-Token": $t, "X-Kms-User": $u}')
 
     local not_on_curve_ua="${ValidUa:0:128}00"
     local short_ua="${ValidUa:0:64}"
@@ -275,19 +336,37 @@ run_algo_tamper() {
         ((accepted++))
     fi
 
+    # Test 4: 缺失 X-Kms-User 内部身份头时必须拒绝
+    # 身份改由 Java 验证后经内部头传递，Go 侧不得回退信任请求体中的 user 字段。
+    local tmp_body
+    tmp_body=$(mktemp)
+    local no_user_code
+    no_user_code=$(curl -s -o "$tmp_body" -w "%{http_code}" \
+        -X POST "$url" \
+        -H "Content-Type: application/json" \
+        -H "X-Internal-Token: ${InternalToken}" \
+        -d "$payload" 2>/dev/null)
+    rm -f "$tmp_body"
+    add_trace "algo tamper missing-identity-header" "POST" "$url" "$no_user_code" "tamper" "missing X-Kms-User" ""
+    if [ "$no_user_code" = "401" ]; then
+        : # 已正确拒绝
+    else
+        ((accepted++))
+    fi
+
     if [ "$accepted" -gt 0 ]; then
         res_verdict="vulnerable"
         res_passed=false
-        res_summary="篡改后的公钥参数（曲线、长度或前缀）未被完全拦截。"
+        res_summary="篡改后的公钥参数（曲线、长度或前缀）未被完全拦截，或缺少内部身份头的请求未被拒绝。"
     else
-        res_summary="所有被篡改的算法参数都已被成功拦截。"
+        res_summary="所有被篡改的算法参数都已被成功拦截，且缺少内部身份头的请求被正确拒绝（401）。"
     fi
 }
 
 run_algo_weak_param() {
     local url="${GenerateGoBaseUrl}/generate/request/ENROLL_KEY"
     local headers
-    headers=$(jq -n --arg t "$InternalToken" '{"X-Internal-Token": $t}')
+    headers=$(jq -n --arg t "$InternalToken" --arg u "$AcceptanceUser" '{"X-Internal-Token": $t, "X-Kms-User": $u}')
     
     local accepted=0
 
@@ -335,7 +414,7 @@ run_algo_weak_param() {
 run_algo_malformed() {
     local url="${GenerateGoBaseUrl}/generate/request/ENROLL_KEY"
     local headers
-    headers=$(jq -n --arg t "$InternalToken" '{"X-Internal-Token": $t}')
+    headers=$(jq -n --arg t "$InternalToken" --arg u "$AcceptanceUser" '{"X-Internal-Token": $t, "X-Kms-User": $u}')
     
     local non_hex_ua="04abXXzz"
     for i in {1..122}; do non_hex_ua="${non_hex_ua}A"; done

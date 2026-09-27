@@ -8,9 +8,9 @@ import com.ruoyi.common.core.page.TableDataInfo;
 import com.ruoyi.common.utils.SecurityUtils;
 import com.ruoyi.generate.domain.GenerateUser;
 import com.ruoyi.generate.domain.Keymanage;
-import com.ruoyi.generate.service.IPermissionRequestService;
 import com.ruoyi.generate.service.GenerateKeyService;
 import com.ruoyi.generate.service.GenerateUserService;
+import com.ruoyi.generate.service.KeyValueSanitizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,6 +28,15 @@ import java.util.Map;
 /**
  * 生成记录查询控制器
  * 提供密钥生成结果的查询接口
+ *
+ * <p>注意：原先的 {@code GET /generate/key/public-list}（公共密钥列表）已按 D1 整体删除。
+ * 它允许一个用户读到其他用户的公钥集合，与「密钥不外泄」的目标冲突；
+ * 其配套的整套权限申请子系统（权限项 {@code PUBLIC_KEY_LIST}）也已一并移除。
+ * 用户侧现在只能查询自己的密钥（见 {@link #list(Keymanage)}）。
+ *
+ * <p>替换它的是 {@link #publicAssets(Keymanage)}：管理端「公钥查询」页需要一个
+ * "查看全部资产"的入口（见计划 §6.2），但该入口**只对管理员开放**，
+ * 且返回的 `keyValue` 只保留公钥部分、绝不带出 `partialKey` 这类私钥材料。
  */
 @RestController
 @RequestMapping("/generate/key")
@@ -40,9 +49,6 @@ public class GenerateController extends BaseController {
 
     @Autowired
     private GenerateUserService generateUserService;
-
-    @Autowired
-    private IPermissionRequestService permissionRequestService;
 
     /**
      * 查询生成密钥列表
@@ -57,25 +63,32 @@ public class GenerateController extends BaseController {
         }
         startPage();
         List<Keymanage> list = generateKeyService.selectKeyList(query);
+        // 列表一律不带密钥材料：已核对全部现网页面，没有任何列表消费 keyValue。
+        // 需要材料的地方走的是创建/更新响应或详情接口（见 KeyValueSanitizer 的说明）。
+        KeyValueSanitizer.stripMaterial(list);
         return getDataTable(list);
     }
 
+    /**
+     * 管理端「公钥查询」：查看全部用户的**公钥**资产。
+     * GET /generate/key/public-assets
+     *
+     * <p>与已被 D1 删除的 {@code /public-list} 的区别：
+     * <ul>
+     *   <li>只对管理员开放（{@code role_level <= 0}），**不再是"申请即得"的临时权限**；</li>
+     *   <li>返回的 {@code keyValue} 只写公钥材料，私钥分片（SM2 的 {@code partialKey}、
+     *       SSCL 的 {@code SSCLEA}）与格算法的完整私钥一律不出库。</li>
+     * </ul>
+     */
     @PreAuthorize("isAuthenticated()")
-    @GetMapping("/public-list")
-    public TableDataInfo publicList(Keymanage query) {
-        GenerateUser currentUser = generateUserService.selectByUserId(getUserId());
-        boolean hasPermanentAccess = currentUser != null && currentUser.getRoleLevel() != null && currentUser.getRoleLevel() <= 1;
-        boolean hasTemporaryAccess = permissionRequestService.hasActivePermission(getUserId(), "PUBLIC_KEY_LIST");
-        if (!hasPermanentAccess && !hasTemporaryAccess) {
-            return getDataTable(new ArrayList<>());
-        }
-
-        query.setUserId(null);
+    @GetMapping("/public-assets")
+    public TableDataInfo publicAssets(Keymanage query) {
+        ensureRoleAdmin();
         startPage();
         List<Keymanage> list = generateKeyService.selectKeyList(query);
         List<Keymanage> sanitized = new ArrayList<>();
         for (Keymanage keymanage : list) {
-            String publicValue = extractPublicValue(keymanage);
+            String publicValue = KeyValueSanitizer.publicProjection(keymanage);
             if (publicValue == null || publicValue.trim().isEmpty()) {
                 continue;
             }
@@ -173,9 +186,13 @@ public class GenerateController extends BaseController {
         if (keymanage == null) {
             return AjaxResult.error(404, "密钥不存在");
         }
-        if (!isCurrentAdmin() && (keymanage.getUserId() == null || !keymanage.getUserId().equals(getUserId()))) {
+        boolean isOwner = keymanage.getUserId() != null && keymanage.getUserId().equals(getUserId());
+        if (!isCurrentAdmin() && !isOwner) {
             return AjaxResult.error("无权访问该密钥数据");
         }
+        // 管理员能看别人的密钥，但不该看到别人的密钥材料；
+        // 属主本人也只在 SM2/SSCL 下才需要 key_value（客户端要据此现算 d_A）。
+        KeyValueSanitizer.sanitizeDetail(keymanage, isOwner);
         return AjaxResult.success("查询成功", keymanage);
     }
 
@@ -209,6 +226,35 @@ public class GenerateController extends BaseController {
         if (!isCurrentAdmin()) {
             throw new IllegalArgumentException("仅管理员可执行该操作");
         }
+    }
+
+    /**
+     * 按「角色等级」判定管理员（Q2 / D13：role_level &lt;= 0）。
+     *
+     * <p>刻意不用 {@link #isCurrentAdmin()}：那个判据等价于 RuoYi 的 {@code userId == 1}，
+     * 只有超级管理员账号能满足。管理端合并后，进入管理控制台的判据已统一为
+     * {@code role_level <= 0}（D9），若这里仍用 userId==1，则 level=0 的普通管理员
+     * 能打开「公钥查询」页却拿不到数据，判据前后不一致。
+     */
+    private void ensureRoleAdmin() {
+        GenerateUser currentUser = generateUserService.selectByUserId(getUserId());
+        if (currentUser == null || currentUser.getRoleLevel() == null || currentUser.getRoleLevel() > 0) {
+            throw new IllegalArgumentException("仅管理员可执行该操作");
+        }
+    }
+
+    /**
+     * 取一条密钥的**公钥**材料，取不到则返回 null。
+     *
+     * <p>实现已收敛到 {@link KeyValueSanitizer#publicProjection}，避免"公钥投影"的规则
+     * 在多个类里各写一份、日后改一处漏一处（本方法原先就是第二份拷贝）。
+     * 规则与安全要点见该类的注释。
+     *
+     * @deprecated 直接用 {@code KeyValueSanitizer.publicProjection(keymanage)}
+     */
+    @Deprecated
+    private String extractPublicValue(Keymanage keymanage) {
+        return KeyValueSanitizer.publicProjection(keymanage);
     }
 
     private Map<String, Object> buildRecentSeries(List<String> labels, List<Integer> sm2Series, List<Integer> ssclSeries) {
@@ -269,26 +315,5 @@ public class GenerateController extends BaseController {
 
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
-    }
-
-    private String extractPublicValue(Keymanage keymanage) {
-        if (keymanage == null || keymanage.getKeyValue() == null) {
-            return null;
-        }
-        if (!"无证书非对称加密".equals(keymanage.getEncrytType())) {
-            return null;
-        }
-        try {
-            JSONObject payload = JSON.parseObject(keymanage.getKeyValue());
-            if ("SM2".equals(keymanage.getEncrytName())) {
-                return payload.getString("finalPublicKey");
-            }
-            if ("SSCL".equals(keymanage.getEncrytName())) {
-                return payload.getString("SSCLKey");
-            }
-        } catch (Exception ex) {
-            log.warn("解析公共密钥失败: keyId={}", keymanage.getKeyId(), ex);
-        }
-        return null;
     }
 }

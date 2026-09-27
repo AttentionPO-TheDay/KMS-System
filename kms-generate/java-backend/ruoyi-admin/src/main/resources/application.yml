@@ -52,7 +52,9 @@ spring:
       max-request-size: 20MB
   devtools:
     restart:
-      enabled: true
+      # 生产配置中不得开启热重启：会导致类加载器泄漏与不可预期的重启。
+      # 如需本地热重载，请使用 spring-boot-devtools 的独立本地 profile。
+      enabled: false
   redis:
     host: ${REDIS_HOST:redis}
     port: ${REDIS_PORT:6379}
@@ -69,7 +71,10 @@ spring:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:9092}
     consumer:
       group-id: kms-generate-consumer-group
-      enable-auto-commit: true
+      # 关闭自动提交：原 auto-commit 会在消息被消费后（而非处理成功后）提交位点，
+      # 入库/发链失败的消息也会被确认，造成静默丢失。
+      # 配合下方的 listener ack-mode: BATCH，改为整批处理完成后提交。
+      enable-auto-commit: false
       auto-commit-interval: 1000
       max-poll-records: 500
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
@@ -77,12 +82,20 @@ spring:
     listener:
       type: batch
       concurrency: 6
+      # BATCH：整批处理完成后才提交位点，避免未处理成功的消息被确认。
+      # 选用 BATCH 而非 MANUAL_IMMEDIATE 的原因：现有监听方法签名接收
+      # List<ConsumerRecord> 且未注入 Acknowledgment，MANUAL 模式会导致启动失败。
+      ack-mode: BATCH
 
 
 # token配置
 token:
   header: Authorization
-  secret: abcdefghijklmnopqrstuvwxyz
+  # JWT 签名密钥，必须由环境变量 KMS_TOKEN_SECRET 注入，无默认值。
+  # 三个后端（generate/updatedel/distribute）必须使用同一值：
+  # 它们共用 Redis 与登录态以便跨服务调用（如 AUTO_UPDATE 权限校验）。
+  # 历史上该值硬编码为 "abcdefghijklmnopqrstuvwxyz"，属公开值，可被用于伪造管理员 Token。
+  secret: ${KMS_TOKEN_SECRET}
   expireTime: 30
 
 # MyBatis配置
@@ -121,5 +134,6 @@ kms:
   # Go 高性能生成服务配置
   go-backend:
     url: ${GO_BACKEND_URL:http://localhost:8081}
-    # 内部鉴权 Token，必须与 Go 端 INTERNAL_TOKEN 环境变量一致
-    internal-token: ${INTERNAL_TOKEN:kms-generate-internal-secret-2026}
+    # 内部鉴权 Token，必须与 Go 端 INTERNAL_TOKEN 环境变量一致。
+    # 必须由环境变量注入，无默认值（历史默认为公开值，泄露后可触达生成/更新/回收）。
+    internal-token: ${INTERNAL_TOKEN}

@@ -1,0 +1,162 @@
+// ============================================================================
+// KMS 共享设计令牌（唯一真源）
+// ----------------------------------------------------------------------------
+// 5 个前端（kms-user / kms-generate / kms-updatedel / kms-acceptance /
+// kms-distribute web）统一引用本文件，避免各自硬编码颜色再次漂移。
+//
+// 命名约定：
+//   --kms-<类别>-<语义>[-<层级>]
+//   语义层不出现 dark / light 字样，便于将来引入其他主题。
+//
+// 使用方式：
+//   1. 在应用 vite.config.js 加 alias：'@tokens' -> '<repo>/design-tokens'
+//   2. 入口 SCSS：@import '@tokens/tokens'; @import '@tokens/base';
+//   3. 需要 Element Plus 适配时再 @import '@tokens/element-light';
+//
+// 修改颜色只需改本文件，5 个应用同步生效。
+// ============================================================================
+
+:root {
+  // ---------- 品牌主色 ----------
+  // 用途区分（务必按用途取用，否则会踩对比度问题）：
+  //   --kms-brand       图标、装饰、渐变等非文字用途（明亮）
+  //   --kms-brand-fill  按钮等「有白字压在上面」的填充底色
+  //                     白字压 #1677ff 对比度仅 4.1，压 #0e5fd8 为 5.76（达 AA）
+  //   --kms-brand-text  链接与文字（白底 5.76 / 页面底 5.37）
+  --kms-brand: #1677ff;
+  --kms-brand-fill: #0e5fd8;
+  // 填充态的悬停/按下：必须比 fill 更深，否则白字对比度会掉。
+  // （原用 --kms-brand-hover #4096ff，白字压其上仅 2.99，不达 AA）
+  --kms-brand-fill-hover: #0d55c4;
+  --kms-brand-text: #0e5fd8;
+  --kms-brand-hover: #4096ff;
+  --kms-brand-active: #0958d9;
+  --kms-brand-subtle: #e6f4ff;   // 浅色底，用于选中态背景
+  --kms-brand-border: #91caff;
+
+  // ---------- 表面（背景层次）----------
+  --kms-surface-page: #f5f7fa;   // 页面底
+  --kms-surface-1: #ffffff;      // 主卡片
+  --kms-surface-2: #fafbfc;      // 次级区块 / 表头
+  --kms-surface-3: #f0f2f5;      // 悬停 / 嵌套
+  --kms-surface-inverse: #1f2329; // 反色块（如深色提示条）
+  --kms-surface-overlay: #ffffff; // 弹层
+
+  // ---------- 文本 ----------
+  --kms-text-primary: #1f2329;
+  --kms-text-secondary: #646a73;
+  // 三级文本：原值 #8f959e 在页面底(#f5f7fa)上对比度仅 2.81，不达 WCAG AA。
+  // 调整为 #6b7178（页面底 4.59 / 白底 5.68）。若需更淡仅用于装饰性文字，
+  // 请改用 --kms-text-disabled 并确保不承载信息。
+  --kms-text-tertiary: #6b7178;
+  // 占位符专用：承载真实提示信息（「请输入密钥名称」「全部」），必须可读。
+  // 不能复用 --kms-text-disabled(#bbbfc4)：其对白底仅 1.85:1，
+  // 会让所有输入框、下拉框的提示文字近乎不可见。
+  // 取值与 tertiary 相同：白卡片 4.93 / 页面底 4.59，两种背景均达 WCAG AA。
+  --kms-text-placeholder: #6b7178;
+  --kms-text-disabled: #bbbfc4;      // 仅用于真正不可用的控件，不承载信息
+  --kms-text-inverse: #ffffff;
+  --kms-text-on-brand: #ffffff;
+
+  // ---------- 边框与分割线 ----------
+  --kms-border: #e5e7eb;
+  --kms-border-strong: #d0d5dd;
+  --kms-border-subtle: #f0f2f5;
+
+  // ---------- 状态色 ----------
+  // 每族三个用途，务必区分使用：
+  //   --kms-<state>-subtle  浅色底（背景）
+  //   --kms-<state>-border  浅色底上的描边
+  //   --kms-<state>         填充/图标/大面积用色（明亮）
+  //   --kms-<state>-strong  **该状态色作为「浅底上的文字」时使用**
+  // 说明：明亮状态色直接当文字压在各自浅底上对比度不足
+  // （实测 success 2.63 / warning 2.41 / danger 3.25，均低于 WCAG AA 的 4.5），
+  // 因此文字一律使用 -strong 变体（实测 5.0+）。这与 Element / Ant Design
+  // 分别维护「主色」与「深色文字色」的做法一致。
+  --kms-success: #00b42a;
+  --kms-success-strong: #007d1e;
+  --kms-success-subtle: #e8ffea;
+  --kms-success-border: #aff0b5;
+
+  --kms-warning: #ff7d00;
+  --kms-warning-strong: #a34a00;
+  --kms-warning-subtle: #fff7e8;
+  --kms-warning-border: #ffcf8b;
+
+  --kms-danger: #f53f3f;
+  --kms-danger-strong: #a81212;
+  --kms-danger-subtle: #ffece8;
+  --kms-danger-border: #fdcdc5;
+
+  --kms-info: #1677ff;
+  --kms-info-strong: #0e5fd8;
+  --kms-info-subtle: #e8f3ff;
+  --kms-info-border: #bedaff;
+
+  // ---------- 圆角 ----------
+  --kms-radius-sm: 4px;
+  --kms-radius: 8px;
+  --kms-radius-lg: 12px;
+  --kms-radius-pill: 999px;
+
+  // ---------- 间距 ----------
+  --kms-space-1: 4px;
+  --kms-space-2: 8px;
+  --kms-space-3: 12px;
+  --kms-space-4: 16px;
+  --kms-space-5: 20px;
+  --kms-space-6: 24px;
+  --kms-space-8: 32px;
+  --kms-space-10: 40px;
+
+  // ---------- 阴影（浅色下要克制，避免"浮起来"）----------
+  --kms-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --kms-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  --kms-shadow-md: 0 4px 16px rgba(0, 0, 0, 0.08);
+  --kms-shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.10);
+
+  // ---------- 字体 ----------
+  // 自托管 Inter(拉丁) + Noto Sans SC(中文)，声明见 fonts.scss。
+  // 末尾保留系统字体作为兜底（字体文件缺失/离线时仍可正常显示）。
+  // 注意：必须把 'Inter Variable' 放在中文之前，拉丁字符才会用 Inter；
+  // 中文由 unicode-range 自动落到 Noto Sans SC。
+  --kms-font-sans: 'Inter Variable', 'Noto Sans SC Variable', -apple-system,
+    BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB',
+    'Helvetica Neue', Arial, sans-serif;
+  --kms-font-mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, 'Liberation Mono',
+    Menlo, monospace;
+
+  // 字号阶梯（1.2 比例，数据密集型后台偏紧凑）
+  --kms-font-size-xs: 12px;
+  --kms-font-size-sm: 13px;
+  --kms-font-size-base: 14px;
+  --kms-font-size-md: 15px;
+  --kms-font-size-lg: 17px;
+  --kms-font-size-xl: 20px;
+  --kms-font-size-xxl: 26px;
+
+  // 行高：中文比拉丁需要更大行距，14px 正文配 1.6 更易读
+  --kms-line-height: 1.6;
+  --kms-line-height-tight: 1.35;   // 标题、单行数据
+  --kms-line-height-loose: 1.75;   // 长段落、说明文字
+
+  // 字距：Inter 略收紧更紧凑；中文不需要额外字距
+  --kms-letter-spacing: -0.006em;
+  --kms-letter-spacing-tight: -0.015em;  // 大标题
+  --kms-letter-spacing-none: 0;
+
+  // 字重（Inter/Noto 均为变量字体，支持完整字重轴）
+  --kms-font-weight-normal: 400;
+  --kms-font-weight-medium: 500;
+  --kms-font-weight-semibold: 600;
+  --kms-font-weight-bold: 700;
+
+  // ---------- 布局尺寸 ----------
+  --kms-sidebar-width: 210px;
+  --kms-navbar-height: 56px;
+  --kms-tags-height: 34px;
+
+  // ---------- 动效 ----------
+  --kms-transition-fast: 0.15s ease;
+  --kms-transition: 0.25s ease;
+}

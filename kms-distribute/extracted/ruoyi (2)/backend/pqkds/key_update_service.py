@@ -6,7 +6,26 @@ from django.db import transaction
 from .models import Node
 from .blockchain_service import BlockchainService
 from .certificateless_falcon_v2 import CertificatelessFalconManagerV2
+from .sm4_crypto import PayloadCipher
 logger = logging.getLogger(__name__)
+
+
+def _decrypt_partial_key(envelope: Dict[str, Any], ciphertext: bytes,
+                         nonce_tag: bytes, shared_secret: bytes) -> bytes:
+    """解密节点的「部分私钥」信封，按信封标记分派 SM4 / 历史 AES-256。
+
+    这个信封由 `real_crypto_with_fallback` 的 KGC 路径写出：
+      * 新数据：`payload_algorithm = 'sm4'`，KEK = 共享秘密前 **16** 字节；
+      * 历史数据：**没有**该标记，KEK = 共享秘密前 **32** 字节、AES-256-GCM。
+
+    KEK 的长度是**代码决定的、无法从密文反推**，所以必须看标记 ——
+    这也是本函数存在的理由（原来两个调用点都硬编码成 32 字节 + AES）。
+    """
+    algorithm = PayloadCipher.algorithm_from_envelope(envelope)
+    kek = PayloadCipher.kek_from_shared_secret(algorithm, shared_secret)
+    return PayloadCipher.decrypt_with(algorithm, ciphertext, kek, nonce_tag)
+
+
 class KeyUpdateService:
     def __init__(self, node_id: str):
         self.node_id = node_id
@@ -185,13 +204,15 @@ class KeyUpdateService:
             kyber_ciphertext = base64.b64decode(partial_key_data['kyber_ciphertext'])
             encrypted_partial_key = base64.b64decode(partial_key_data['encrypted_partial_key'])
             nonce_tag = base64.b64decode(partial_key_data['nonce_tag'])
-            from .real_crypto_with_fallback import RealKyberKEM, RealAESCipher, RealFalconSignature
+            from .real_crypto_with_fallback import RealKyberKEM, RealFalconSignature
             kyber_security_level = int(node.kyber_security_level) if node.kyber_security_level else 512
             kyber_kem = RealKyberKEM(kyber_security_level)
             kyber_private_key = base64.b64decode(node.kyber_private_key)
             kyber_shared_secret = kyber_kem.decaps(kyber_ciphertext, kyber_private_key)
-            aes_cipher = RealAESCipher()
-            partial_key_bytes = aes_cipher.decrypt(encrypted_partial_key, kyber_shared_secret, nonce_tag)
+            # 载荷层按信封标记分派：新数据 SM4（KEK 16 字节），历史数据 AES-256（KEK 32 字节）
+            partial_key_bytes = _decrypt_partial_key(
+                partial_key_data, encrypted_partial_key, nonce_tag, kyber_shared_secret
+            )
             falcon_signature = RealFalconSignature(security_level, force_dll=True)
             falcon_public_key, falcon_private_key = falcon_signature.keygen()
             logger.info(f" Falcon V1密钥对生成成功")
@@ -238,7 +259,7 @@ class KeyUpdateService:
             kyber_ciphertext = base64.b64decode(partial_key_data['kyber_ciphertext'])
             encrypted_partial_key = base64.b64decode(partial_key_data['encrypted_partial_key'])
             nonce_tag = base64.b64decode(partial_key_data['nonce_tag'])
-            from .real_crypto_with_fallback import RealKyberKEM, RealAESCipher
+            from .real_crypto_with_fallback import RealKyberKEM
             if not node.kyber_private_key:
                 return {
                     'success': False,
@@ -254,13 +275,15 @@ class KeyUpdateService:
                     'success': False,
                     'message': f'Kyber解密失败: {str(e)}'
                 }
-            aes_cipher = RealAESCipher()
+            # 载荷层按信封标记分派：新数据 SM4（KEK 16 字节），历史数据 AES-256（KEK 32 字节）
             try:
-                partial_key_bytes = aes_cipher.decrypt(encrypted_partial_key, kyber_shared_secret, nonce_tag)
+                partial_key_bytes = _decrypt_partial_key(
+                    partial_key_data, encrypted_partial_key, nonce_tag, kyber_shared_secret
+                )
             except Exception as e:
                 return {
                     'success': False,
-                    'message': f'AES解密部分私钥失败: {str(e)}'
+                    'message': f'部分私钥解密失败: {str(e)}'
                 }
             try:
                 falcon_manager = CertificatelessFalconManagerV2(security_level)

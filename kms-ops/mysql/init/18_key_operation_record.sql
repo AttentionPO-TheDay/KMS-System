@@ -27,6 +27,7 @@ CREATE TABLE key_operation_record (
     commitment       VARCHAR(128) DEFAULT NULL COMMENT 'update commitment',
     consistency_hash VARCHAR(128) DEFAULT NULL COMMENT 'consistency hash',
     batch_root       VARCHAR(128) DEFAULT NULL COMMENT 'batch root hash',
+    proof_path       VARCHAR(2000) DEFAULT NULL COMMENT 'Merkle proof path: R:<hash>|L:<hash>|ROOT:<hash>',
     verify_status    CHAR(1)      DEFAULT NULL COMMENT 'verify status 0 pending 1 success 2 failed',
     verify_message   VARCHAR(500) DEFAULT NULL COMMENT 'verify message',
     result_message   VARCHAR(500) DEFAULT NULL COMMENT 'result message',

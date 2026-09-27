@@ -71,8 +71,8 @@ spring:
   # 服务模块
   devtools:
     restart:
-      # 热部署开关
-      enabled: true
+      # 热部署开关：生产配置中必须关闭（类加载器泄漏 + 不可预期重启）
+      enabled: false
   # redis 配置
   redis:
     # 地址
@@ -100,7 +100,8 @@ spring:
     consumer:
       group-id: kms-distribute-consumer-group
       auto-offset-reset: earliest
-      enable-auto-commit: true
+      # 关闭自动提交：避免未处理成功的分发事件被确认后静默丢失
+      enable-auto-commit: false
       auto-commit-interval: 1000
       max-poll-records: 500
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
@@ -108,6 +109,8 @@ spring:
     listener:
       # 开启批量监听模式！！！关键！！！
       type: batch
+      # 整批处理完成后提交位点（配合 enable-auto-commit: false）
+      ack-mode: BATCH
       # 多少并发线程去消费（根据你的 partition 数量决定，通常 3-6 个）
       concurrency: 6
 
@@ -116,8 +119,9 @@ spring:
 token:
   # 令牌自定义标识
   header: Authorization
-  # 令牌密钥
-  secret: abcdefghijklmnopqrstuvwxyz
+  # 令牌密钥：必须由环境变量 KMS_TOKEN_SECRET 注入，无默认值。
+  # 三后端需一致；历史硬编码值 "abcdefghijklmnopqrstuvwxyz" 为公开值，可伪造管理员 Token。
+  secret: ${KMS_TOKEN_SECRET}
   # 令牌有效期（默认30分钟）
   expireTime: 30
 

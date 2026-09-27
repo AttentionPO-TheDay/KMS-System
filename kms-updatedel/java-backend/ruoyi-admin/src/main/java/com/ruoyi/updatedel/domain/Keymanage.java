@@ -133,4 +133,50 @@ public class Keymanage {
     @JsonProperty("verify_message")
     @JsonAlias("verifyMessage")
     private String verifyMessage;
+
+    /**
+     * 本记录的密钥材料由哪一版 KGC 主私钥（ms）签发，例如 {@code ms_v1} / {@code ms_v2}。
+     *
+     * <p>用于**按版本复算历史 P_A**：轮换 ms 后，用新 ms 算出来的 P_A 与链上旧存证
+     * 必然不一致；只有按记录自己那一版去取 ms，历史记录才保持可验证。
+     * 详见 {@link com.ruoyi.common.crypto.KgcMasterSecret}。
+     *
+     * <p>为空表示早期记录 —— 它们都是 {@code ms_v1} 签发的。
+     */
+    @JsonProperty("ms_key_id")
+    @JsonAlias("msKeyId")
+    private String msKeyId;
+
+    /**
+     * 算法参数版本。与 {@link #msKeyId} 正交：同一个 ms 下，算法实现本身也可能换代。
+     *
+     * <p>当前取值：
+     * <ul>
+     *   <li>{@code v0_random_sscl_domain} —— 早期版本，SSCL 域参数（多项式与求值点）
+     *       是每进程随机生成的，因此**不同进程算出的域参数互不相同**，
+     *       那些密钥在客户端插值不出来，已标记为不可用于解密；</li>
+     *   <li>{@code v1_derived_sscl_domain} —— 域参数改为从 ms 确定性派生，
+     *       可跨进程、跨实现复现。</li>
+     * </ul>
+     */
+    @JsonProperty("algorithm_version")
+    @JsonAlias("algorithmVersion")
+    private String algorithmVersion;
+
+    /**
+     * 密钥材料是否仍**可用于解密**。
+     *
+     * <p>取值：
+     * <ul>
+     *   <li>{@code active} —— 正常可用；</li>
+     *   <li>{@code legacy_unusable} —— 早期密钥：用户侧本地份额 {@code u} 从未持久化，
+     *       若用户当年也没有自己保存 {@code d_A}，这把密钥从解密角度已经不可用。
+     *       **这不是故障，而是密钥隔离设计生效的表现** ——
+     *       服务端能自己恢复 {@code d_A} 才说明隔离失效了。</li>
+     * </ul>
+     * P3 的端到端测试必须排除 {@code legacy_unusable} 的记录，只用新登记的密钥。
+     */
+    @JsonProperty("key_material_state")
+    @JsonAlias("keyMaterialState")
+    private String keyMaterialState;
 }

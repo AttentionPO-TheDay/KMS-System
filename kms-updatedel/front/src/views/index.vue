@@ -1,8 +1,8 @@
 <template>
   <div class="dashboard-container">
     <div class="page-title">
-      <h1>密钥更新与回收系统仪表盘</h1>
-      <p class="subtitle">实时监控手动更新、自动更新、回收结果与用户待接收状态</p>
+      <h1>KMS 管理控制台</h1>
+      <p class="subtitle">密钥生成、更新、回收与分发全流程运行概览</p>
     </div>
 
     <!-- 统计卡片区 -->
@@ -46,24 +46,30 @@
     </el-row>
 
     <!-- 底部区域 -->
+    <!--
+      跳转路径一律写「路由内路径」，不要带 /updatedel 前缀。
+      router 已用 createWebHistory(import.meta.env.BASE_URL) 把 /updatedel/ 作为 base，
+      push 时会自动拼接；再手写前缀会变成 /updatedel/updatedel/xxx，
+      命中 catch-all 落到 404 页。这些路径必须与 sys_menu 下发的 path 一致。
+    -->
     <el-row :gutter="20" class="action-section" style="margin-top: 20px;">
       <el-col :span="24">
         <div class="glass-card">
           <div class="card-header">更新与回收管理操作</div>
           <div class="action-grid">
-            <div class="action-btn primary" @click="$router.push('/updatedel/keyupdate')">
+            <div class="action-btn primary" @click="$router.push('/key/keyupdate')">
               <el-icon><Refresh /></el-icon>
               <div class="btn-text">密钥更新</div>
             </div>
-            <div class="action-btn success" @click="$router.push('/updatedel/keyautoupdate')">
+            <div class="action-btn success" @click="$router.push('/key/keyautoupdate')">
               <el-icon><Timer /></el-icon>
               <div class="btn-text">自动更新配置</div>
             </div>
-            <div class="action-btn warning" @click="$router.push('/permission/request/index')">
+            <div class="action-btn warning" @click="$router.push('/audit/permission/request')">
               <el-icon><Tickets /></el-icon>
               <div class="btn-text">系统权限审批</div>
             </div>
-            <div class="action-btn danger" @click="$router.push('/updatedel/keydelete')">
+            <div class="action-btn danger" @click="$router.push('/key/keydelete')">
               <el-icon><Delete /></el-icon>
               <div class="btn-text">临时/永久回收</div>
             </div>
@@ -79,6 +85,29 @@ import { ref, reactive, onMounted, onUnmounted, markRaw } from 'vue'
 import { Refresh, Delete, Timer, Bell, Top, Bottom, Tickets } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import { getDashboardSummary } from '@/api/lifecycle/lifecycle'
+
+// ---------------------------------------------------------------------------
+// ECharts 配色（必须使用字面量）
+// ---------------------------------------------------------------------------
+// ECharts 使用 canvas 渲染，无法解析 CSS 自定义属性（写 var(--kms-*) 会渲染为黑色），
+// 因此图表配色在此显式声明，取值与 design-tokens/tokens.scss 保持一致，修改令牌时需同步。
+// 注意：图表属非文字用途，故 brand 取 --kms-brand (#1677ff)，
+//       而非承载白字的 --kms-brand-fill (#0e5fd8)。
+// 此前本文件缺失该定义，导致看板初始化抛 ReferenceError: CHART_COLORS is not defined，
+// 被 initData 的 catch 吞掉后仅打印「获取统计数据失败」，表现为所有图表空白。
+const CHART_COLORS = {
+  brand: '#1677ff',
+  success: '#00b42a',
+  warning: '#ff7d00',
+  danger: '#f53f3f',
+  neutral: '#8a919f',
+  border: '#e5e7eb',
+  borderSubtle: '#f0f2f5',
+  surface: '#ffffff',
+  surfaceOverlay: '#ffffff',
+  textPrimary: '#1f2329',
+  textSecondary: '#646a73'
+}
 
 const lineChartRef = ref(null)
 const pieChartRef = ref(null)
@@ -119,7 +148,7 @@ const initData = async () => {
     chartState.distribution = Object.entries(summary.operationDistribution || {}).map(([name, value], index) => ({
       name,
       value,
-      itemStyle: { color: ['#0099ff', '#00e5ff', '#e6a23c'][index % 3] }
+      itemStyle: { color: [CHART_COLORS.brand, CHART_COLORS.brand, CHART_COLORS.warning][index % 3] }
     }))
 
     initCharts()
@@ -129,14 +158,14 @@ const initData = async () => {
 }
 
 const initCharts = () => {
-  const textColor = 'rgba(255, 255, 255, 0.7)'
-  const splitLineColor = 'rgba(255, 255, 255, 0.1)'
+  const textColor = CHART_COLORS.textSecondary
+  const splitLineColor = CHART_COLORS.border
 
   if (!lineChart && lineChartRef.value) {
     lineChart = echarts.init(lineChartRef.value)
   }
   lineChart.setOption({
-    tooltip: { trigger: 'axis', backgroundColor: 'rgba(15,23,30,0.9)', borderColor: '#0099ff', textStyle: { color: '#fff' } },
+    tooltip: { trigger: 'axis', backgroundColor: CHART_COLORS.surfaceOverlay, borderColor: CHART_COLORS.brand, textStyle: { color: CHART_COLORS.textPrimary } },
     legend: { data: ['手动更新', '自动更新', '密钥回收'], textStyle: { color: textColor } },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
     xAxis: { 
@@ -153,17 +182,17 @@ const initCharts = () => {
     series: [
       {
         name: '手动更新', type: 'line', smooth: true,
-         itemStyle: { color: '#0099ff' },
-         data: chartState.manualUpdate
+        itemStyle: { color: CHART_COLORS.brand },
+        data: chartState.manualUpdate
       },
       {
         name: '自动更新', type: 'line', smooth: true,
-        itemStyle: { color: '#00e5ff' },
+        itemStyle: { color: CHART_COLORS.brand },
         data: chartState.autoUpdate
       },
       {
         name: '密钥回收', type: 'line', smooth: true,
-        itemStyle: { color: '#e6a23c' },
+        itemStyle: { color: CHART_COLORS.warning },
         data: chartState.revoke
       }
     ]
@@ -173,7 +202,7 @@ const initCharts = () => {
     pieChart = echarts.init(pieChartRef.value)
   }
   pieChart.setOption({
-    tooltip: { trigger: 'item', backgroundColor: 'rgba(15,23,30,0.9)', borderColor: '#e6a23c', textStyle: { color: '#fff' } },
+    tooltip: { trigger: 'item', backgroundColor: CHART_COLORS.surfaceOverlay, borderColor: CHART_COLORS.warning, textStyle: { color: CHART_COLORS.textPrimary } },
     legend: { bottom: '0%', left: 'center', textStyle: { color: textColor } },
     series: [
       {
@@ -181,14 +210,14 @@ const initCharts = () => {
         type: 'pie',
         radius: ['45%', '70%'],
         avoidLabelOverlap: false,
-        itemStyle: { borderRadius: 10, borderColor: 'rgba(0,0,0,0.5)', borderWidth: 2 },
+        itemStyle: { borderRadius: 10, borderColor: CHART_COLORS.border, borderWidth: 2 },
         label: { show: false, position: 'center' },
         emphasis: { label: { show: true, fontSize: 20, fontWeight: 'bold' } },
-         labelLine: { show: false },
-         data: chartState.distribution
-       }
-     ]
-   })
+        labelLine: { show: false },
+        data: chartState.distribution
+      }
+    ]
+  })
 }
 
 const resizeHandler = () => {
@@ -214,22 +243,22 @@ onUnmounted(() => {
 .page-title { margin-bottom: 30px; }
 .page-title h1 {
   font-size: 28px;
-  color: #fff;
+  color: var(--kms-text-primary);
   margin: 0 0 8px 0;
   font-weight: 600;
   letter-spacing: 1px;
 }
 .page-title .subtitle {
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--kms-text-secondary);
   margin: 0;
   font-size: 14px;
 }
 
 /* 统计卡片样式 */
 .stat-card {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--kms-surface-1);
   backdrop-filter: blur(24px);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--kms-border);
   border-radius: 12px;
   padding: 24px;
   display: flex;
@@ -240,8 +269,8 @@ onUnmounted(() => {
 }
 .stat-card:hover {
   transform: translateY(-5px);
-  border-color: rgba(255, 255, 255, 0.1);
-  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+  border-color: var(--kms-border);
+  box-shadow: 0 10px 30px -10px var(--kms-border-strong);
 }
 
 .stat-icon-wrapper {
@@ -267,27 +296,27 @@ onUnmounted(() => {
   z-index: -1;
 }
 
-.stat-icon-wrapper.blue { color: #0099ff; background: rgba(0, 153, 255, 0.1); }
-.stat-icon-wrapper.blue .glow { background: #0099ff; }
+.stat-icon-wrapper.blue { color: var(--kms-brand-text); background: var(--kms-brand-subtle); }
+.stat-icon-wrapper.blue .glow { background: var(--kms-brand-fill); }
 
-.stat-icon-wrapper.green { color: #00e5ff; background: rgba(0, 229, 255, 0.1); }
-.stat-icon-wrapper.green .glow { background: #00e5ff; }
+.stat-icon-wrapper.green { color: var(--kms-brand-text); background: var(--kms-brand-subtle); }
+.stat-icon-wrapper.green .glow { background: var(--kms-brand-fill); }
 
-.stat-icon-wrapper.orange { color: #e6a23c; background: rgba(230, 162, 60, 0.1); }
-.stat-icon-wrapper.orange .glow { background: #e6a23c; }
+.stat-icon-wrapper.orange { color: var(--kms-warning-strong); background: var(--kms-warning-subtle); }
+.stat-icon-wrapper.orange .glow { background: var(--kms-warning); }
 
-.stat-icon-wrapper.purple { color: #9c27b0; background: rgba(156, 39, 176, 0.1); }
-.stat-icon-wrapper.purple .glow { background: #9c27b0; }
+.stat-icon-wrapper.purple { color: var(--kms-brand-hover); background: var(--kms-brand-subtle); }
+.stat-icon-wrapper.purple .glow { background: var(--kms-brand-hover); }
 
 .stat-content { flex: 1; }
 .stat-note {
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--kms-text-secondary);
   font-size: 12px;
   margin-top: 4px;
 }
 .stat-title {
   font-size: 14px;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--kms-text-secondary);
   margin-bottom: 8px;
 }
 .stat-value {
@@ -298,12 +327,12 @@ onUnmounted(() => {
 .stat-value .num {
   font-size: 28px;
   font-weight: bold;
-  color: #fff;
+  color: var(--kms-text-primary);
   font-family: 'Inter', sans-serif;
 }
 .stat-value .unit {
   font-size: 16px;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--kms-text-secondary);
 }
 .stat-trend {
   display: flex;
@@ -312,14 +341,14 @@ onUnmounted(() => {
   margin-top: 8px;
   gap: 4px;
 }
-.stat-trend.up { color: #67c23a; }
-.stat-trend.down { color: #f56c6c; }
+.stat-trend.up { color: var(--kms-success-strong); }
+.stat-trend.down { color: var(--kms-danger-strong); }
 
 /* 玻璃面板通用样式 */
 .glass-card {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--kms-surface-1);
   backdrop-filter: blur(24px);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--kms-border);
   border-radius: 12px;
   padding: 20px;
   height: 100%;
@@ -327,7 +356,7 @@ onUnmounted(() => {
 .card-header {
   font-size: 16px;
   font-weight: 600;
-  color: #fff;
+  color: var(--kms-text-primary);
   margin-bottom: 20px;
   display: flex;
   align-items: center;
@@ -337,7 +366,7 @@ onUnmounted(() => {
   display: inline-block;
   width: 4px;
   height: 16px;
-  background: #e6a23c;
+  background: var(--kms-warning);
   border-radius: 2px;
   margin-right: 10px;
 }
@@ -358,8 +387,8 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: var(--kms-surface-1);
+  border: 1px solid var(--kms-border);
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.3s;
@@ -372,26 +401,26 @@ onUnmounted(() => {
 .action-btn .btn-text {
   font-size: 14px;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--kms-text-primary);
 }
 .action-btn:hover {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.1);
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+  background: var(--kms-surface-3);
+  border-color: var(--kms-border);
+  box-shadow: 0 4px 15px var(--kms-shadow);
 }
 .action-btn:hover .el-icon {
   transform: scale(1.1);
 }
 
-.action-btn.primary:hover { border-color: rgba(0, 153, 255, 0.5); }
-.action-btn.primary .el-icon { color: #0099ff; }
+.action-btn.primary:hover { border-color: var(--kms-brand-border); }
+.action-btn.primary .el-icon { color: var(--kms-brand-text); }
 
-.action-btn.success:hover { border-color: rgba(0, 229, 255, 0.5); }
-.action-btn.success .el-icon { color: #00e5ff; }
+.action-btn.success:hover { border-color: var(--kms-brand-border); }
+.action-btn.success .el-icon { color: var(--kms-brand-text); }
 
-.action-btn.warning:hover { border-color: rgba(230, 162, 60, 0.5); }
-.action-btn.warning .el-icon { color: #e6a23c; }
+.action-btn.warning:hover { border-color: var(--kms-warning-border); }
+.action-btn.warning .el-icon { color: var(--kms-warning-strong); }
 
-.action-btn.danger:hover { border-color: rgba(245, 108, 108, 0.5); }
-.action-btn.danger .el-icon { color: #f56c6c; }
+.action-btn.danger:hover { border-color: var(--kms-danger-border); }
+.action-btn.danger .el-icon { color: var(--kms-danger-strong); }
 </style>

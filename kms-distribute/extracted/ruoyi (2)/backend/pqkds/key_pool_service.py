@@ -23,6 +23,15 @@ from django.db import transaction, models
 from .models import Node, SessionKey, PreDistributedKey
 from .crypto_utils import KyberCrypto, AESCrypto
 
+# 载荷层已切到国密 SM4（决策 D3）。这里显式导入算法标记与 SM4 实现，
+# 并在写出的信封里带上 `payload_algorithm`，供读取端区分新老数据。
+from .sm4_crypto import (
+    GCM_IV_BYTES,
+    PAYLOAD_ALGORITHM_SM4,
+    PayloadCipher,
+    SM4Crypto,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -111,25 +120,29 @@ class KeyPoolService:
         for i in range(count):
             t0 = time.perf_counter()
             try:
-                # Step 1: 随机 AES 密钥
-                aes_key = os.urandom(32)
-                key_hash = hashlib.sha256(aes_key).hexdigest()
+                # Step 1: 随机载荷密钥 —— D3 后是 SM4 的 16 字节（原为 AES-256 的 32 字节）
+                payload_key = PayloadCipher.generate_key()
+                key_hash = hashlib.sha256(payload_key).hexdigest()
 
                 # Step 2: Kyber encaps
                 kem_ct, shared_secret = kyber.encrypt(receiver_pk)
 
-                # Step 3: AES-GCM 加密
-                from Crypto.Cipher import AES as AES_Cipher
-                aes_kem_key = shared_secret[:32]
-                cipher = AES_Cipher.new(aes_kem_key, AES_Cipher.MODE_GCM)
-                encrypted_aes_key, tag = cipher.encrypt_and_digest(aes_key)
+                # Step 3: 用 KEM 共享秘密派生的 16 字节 KEK 做 SM4-GCM 封装
+                kek = PayloadCipher.kek_from_shared_secret(PAYLOAD_ALGORITHM_SM4, shared_secret)
+                encrypted_payload, nonce_tag = SM4Crypto.encrypt(payload_key, kek)
+                nonce, tag = nonce_tag[:GCM_IV_BYTES], nonce_tag[GCM_IV_BYTES:]
 
                 encrypted_data = json.dumps({
                     'kem_ciphertext': base64.b64encode(kem_ct).decode(),
-                    'encrypted_aes_key': base64.b64encode(encrypted_aes_key).decode(),
-                    'nonce': base64.b64encode(cipher.nonce).decode(),
+                    # 字段名沿用历史的 `encrypted_aes_key`：读取端（views.py）按这个名字取值，
+                    # 改成新名字会让存量行读不出来。它的含义已由 `payload_algorithm` 标注。
+                    'encrypted_aes_key': base64.b64encode(encrypted_payload).decode(),
+                    'nonce': base64.b64encode(nonce).decode(),
                     'tag': base64.b64encode(tag).decode(),
                     'variant': variant,
+                    # 显式标记算法：读取端据此决定 KEK 取 16 还是 32 字节、
+                    # 以及用 SM4 还是旧 AES 解密。缺这个字段的行 = 历史 AES-256 行。
+                    'payload_algorithm': PAYLOAD_ALGORITHM_SM4,
                 })
 
                 t1 = time.perf_counter()
@@ -222,14 +235,14 @@ class KeyPoolService:
         for i in range(count):
             t0 = time.perf_counter()
             try:
-                # Step 1: 随机 AES 密钥
-                aes_key = os.urandom(32)
-                key_hash = hashlib.sha256(aes_key).hexdigest()
+                # Step 1: 随机载荷密钥 —— D3 后是 SM4 的 16 字节
+                payload_key = PayloadCipher.generate_key()
+                key_hash = hashlib.sha256(payload_key).hexdigest()
 
-                # Step 2: Falcon 格密码加密
+                # Step 2: Falcon 格密码加密（把载荷密钥交给格封装层）
                 enc_result = falcon_enc.encrypt_aes_key_with_falcon(
                     recipient_id=node2_id,
-                    aes_key=aes_key,
+                    aes_key=payload_key,
                     recipient_public_key_b64=node2.falcon_public_key
                 )
 
@@ -241,6 +254,7 @@ class KeyPoolService:
                     'ciphertext': enc_result['ciphertext'],
                     'algorithm': enc_result.get('algorithm', f'CertificatelessFalcon-{target_security}'),
                     'security_level': target_security,
+                    'payload_algorithm': PAYLOAD_ALGORITHM_SM4,
                 })
 
                 t1 = time.perf_counter()
@@ -526,27 +540,27 @@ class KeyPoolService:
         db_records = []
         latencies = []
 
-        from Crypto.Cipher import AES as AES_Cipher
-
         for i in range(count):
             t0 = time.perf_counter()
             try:
-                # Step 1: 生成随机 AES 会话密钥
-                aes_key = os.urandom(32)
-                key_hash = hashlib.sha256(aes_key).hexdigest()
+                # Step 1: 生成随机载荷会话密钥 —— D3 后是 SM4 的 16 字节
+                payload_key = PayloadCipher.generate_key()
+                key_hash = hashlib.sha256(payload_key).hexdigest()
 
-                # Step 2: 用发送方的 Kyber 公钥加密
+                # Step 2: 用发送方的 Kyber 公钥封装（KEK 由 KEM 共享秘密派生，16 字节供 SM4 使用）
                 kem_ct, ss = kyber.encrypt(sender_pk)
-                cipher = AES_Cipher.new(ss[:32], AES_Cipher.MODE_GCM)
-                enc_key, tag = cipher.encrypt_and_digest(aes_key)
+                kek = PayloadCipher.kek_from_shared_secret(PAYLOAD_ALGORITHM_SM4, ss)
+                enc_key, nonce_tag = SM4Crypto.encrypt(payload_key, kek)
+                nonce, tag = nonce_tag[:GCM_IV_BYTES], nonce_tag[GCM_IV_BYTES:]
 
                 encrypted_keys.append({
                     'index': i,
                     'kem_ciphertext': base64.b64encode(kem_ct).decode(),
                     'encrypted_key': base64.b64encode(enc_key).decode(),
-                    'nonce': base64.b64encode(cipher.nonce).decode(),
+                    'nonce': base64.b64encode(nonce).decode(),
                     'tag': base64.b64encode(tag).decode(),
                     'key_hash': key_hash,
+                    'payload_algorithm': PAYLOAD_ALGORITHM_SM4,
                 })
 
                 t1 = time.perf_counter()

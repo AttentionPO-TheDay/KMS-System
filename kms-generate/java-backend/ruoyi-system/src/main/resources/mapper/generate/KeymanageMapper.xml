@@ -23,12 +23,17 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         <result property="version" column="version"/>
         <result property="uA" column="ua"/>
         <result property="keyDomain" column="key_domain"/>
+        <!-- 版本化字段：按记录自己那一版复算 P_A，以及标记材料是否仍可用于解密 -->
+        <result property="msKeyId" column="ms_key_id"/>
+        <result property="algorithmVersion" column="algorithm_version"/>
+        <result property="keyMaterialState" column="key_material_state"/>
     </resultMap>
 
     <sql id="selectkeymanageVo">
         select key_id, user_id, user_name, encryt_type, encryt_name, key_name, key_use,
                key_value, cre_time, upd_time, auto_update, status, chain_hash, block_height,
-               chain_status, version, ua, key_domain
+               chain_status, version, ua, key_domain,
+               ms_key_id, algorithm_version, key_material_state
         from keymanage
     </sql>
 
@@ -72,6 +77,11 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="version != null">version,</if>
             <if test="uA != null and uA != ''">ua,</if>
             <if test="keyDomain != null and keyDomain != ''">key_domain,</if>
+            <!-- 版本化字段：必须在这里也写出来，否则实体的值会被静默丢弃
+                 （列有默认值，插入成功但数据是错的 —— 最难查的一类问题） -->
+            <if test="msKeyId != null and msKeyId != ''">ms_key_id,</if>
+            <if test="algorithmVersion != null and algorithmVersion != ''">algorithm_version,</if>
+            <if test="keyMaterialState != null and keyMaterialState != ''">key_material_state,</if>
         </trim>
         <trim prefix="values (" suffix=")" suffixOverrides=",">
             <if test="userId != null">#{userId},</if>
@@ -91,6 +101,9 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="version != null">#{version},</if>
             <if test="uA != null and uA != ''">#{uA},</if>
             <if test="keyDomain != null and keyDomain != ''">#{keyDomain},</if>
+            <if test="msKeyId != null and msKeyId != ''">#{msKeyId},</if>
+            <if test="algorithmVersion != null and algorithmVersion != ''">#{algorithmVersion},</if>
+            <if test="keyMaterialState != null and keyMaterialState != ''">#{keyMaterialState},</if>
         </trim>
     </insert>
 
@@ -98,7 +111,8 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         INSERT INTO keymanage (
             user_id, user_name, encryt_type, encryt_name, key_name, key_use,
             key_value, cre_time, upd_time, auto_update, status,
-            chain_hash, block_height, chain_status, version, ua, key_domain
+            chain_hash, block_height, chain_status, version, ua, key_domain,
+            ms_key_id, algorithm_version, key_material_state
         ) VALUES
         <foreach collection="list" item="item" index="index" separator=",">
             (
@@ -127,7 +141,13 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
                     <otherwise>1</otherwise>
                 </choose>,
                 #{item.uA},
-                #{item.keyDomain}
+                #{item.keyDomain},
+                #{item.msKeyId},
+                #{item.algorithmVersion},
+                <choose>
+                    <when test="item.keyMaterialState != null">#{item.keyMaterialState}</when>
+                    <otherwise>'active'</otherwise>
+                </choose>
             )
         </foreach>
     </insert>
@@ -151,6 +171,9 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="version != null">version = #{version},</if>
             <if test="uA != null and uA != ''">ua = #{uA},</if>
             <if test="keyDomain != null and keyDomain != ''">key_domain = #{keyDomain},</if>
+            <if test="msKeyId != null and msKeyId != ''">ms_key_id = #{msKeyId},</if>
+            <if test="algorithmVersion != null and algorithmVersion != ''">algorithm_version = #{algorithmVersion},</if>
+            <if test="keyMaterialState != null and keyMaterialState != ''">key_material_state = #{keyMaterialState},</if>
         </trim>
         where key_id = #{keyId}
     </update>

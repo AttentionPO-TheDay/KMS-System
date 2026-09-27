@@ -76,6 +76,8 @@ import { getCodeImg } from "@/api/login";
 import Cookies from "js-cookie";
 import { encrypt, decrypt } from "@/utils/jsencrypt";
 import useUserStore from '@/store/modules/user'
+import { adminConsoleUrl } from '@/config/app-bases'
+import { isAdminLevel } from '@/utils/role'
 
 const userStore = useUserStore()
 const route = useRoute();
@@ -113,37 +115,48 @@ watch(route, (newRoute) => {
 }, { immediate: true });
 
 function handleLogin() {
-  proxy.$refs.loginRef.validate(valid => {
-    if (valid) {
-      loading.value = true;
-      // 勾选了需要记住密码设置在 cookie 中设置记住用户名和密码
-      if (loginForm.value.rememberMe) {
-        Cookies.set("username", loginForm.value.username, { expires: 30 });
-        Cookies.set("password", encrypt(loginForm.value.password), { expires: 30 });
-        Cookies.set("rememberMe", loginForm.value.rememberMe, { expires: 30 });
-      } else {
-        // 否则移除
-        Cookies.remove("username");
-        Cookies.remove("password");
-        Cookies.remove("rememberMe");
-      }
+  proxy.$refs.loginRef.validate(async (valid) => {
+    if (!valid) {
+      return;
+    }
+    loading.value = true;
+    // 勾选了需要记住密码设置在 cookie 中设置记住用户名和密码
+    if (loginForm.value.rememberMe) {
+      Cookies.set("username", loginForm.value.username, { expires: 30 });
+      Cookies.set("password", encrypt(loginForm.value.password), { expires: 30 });
+      Cookies.set("rememberMe", loginForm.value.rememberMe, { expires: 30 });
+    } else {
+      // 否则移除
+      Cookies.remove("username");
+      Cookies.remove("password");
+      Cookies.remove("rememberMe");
+    }
+    try {
       // 调用action的登录方法
-      userStore.login(loginForm.value).then(() => {
-        const query = route.query;
-        const otherQueryParams = Object.keys(query).reduce((acc, cur) => {
-          if (cur !== "redirect") {
-            acc[cur] = query[cur];
-          }
-          return acc;
-        }, {});
-        router.push({ path: redirect.value || "/", query: otherQueryParams });
-      }).catch(() => {
-        loading.value = false;
-        // 重新获取验证码
-        if (captchaEnabled.value) {
-          getCode();
+      await userStore.login(loginForm.value);
+      // 分流依据是 roleLevel，而 login 接口只回 token，角色信息在 getInfo 里，
+      // 因此登录后必须再拉一次用户信息。失败即视为登录未完成。
+      await userStore.getInfo();
+      if (isAdminLevel(userStore.roleLevel)) {
+        // 管理员 → 管理控制台。它是独立前端应用（同源不同 base），
+        // 只能用整页跳转；两个应用共用同一个 Admin-Token Cookie，故不会二次登录。
+        window.location.replace(adminConsoleUrl());
+        return;
+      }
+      const query = route.query;
+      const otherQueryParams = Object.keys(query).reduce((acc, cur) => {
+        if (cur !== "redirect") {
+          acc[cur] = query[cur];
         }
-      });
+        return acc;
+      }, {});
+      router.push({ path: redirect.value || "/", query: otherQueryParams });
+    } catch {
+      loading.value = false;
+      // 重新获取验证码
+      if (captchaEnabled.value) {
+        getCode();
+      }
     }
   });
 }
@@ -180,18 +193,39 @@ getCookie();
   justify-content: center;
   align-items: center;
   height: 100%;
+  position: relative;
   background-image: url("../assets/images/login-background.jpg");
   background-size: cover;
+  background-position: center;
 }
+
+/* 背景为亮色调实景照，加一层压暗叠加以保证标题/页脚文字对比度 */
+.login::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.35);
+  pointer-events: none;
+}
+
+.login > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* 标题位于白色登录卡片内部，故用深色文字（此前误设为反色白字） */
 .title {
   margin: 0px auto 30px auto;
   text-align: center;
-  color: #ffffff;
+  color: var(--kms-text-primary);
+  font-weight: 600;
 }
 
 .login-form {
-  border-radius: 6px;
-  background: rgba(10, 15, 25, 0.85); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border: 1px solid rgba(0, 153, 255, 0.3); box-shadow: 0 15px 35px rgba(0, 0, 0, 0.6);
+  border-radius: var(--kms-radius-lg);
+  background: var(--kms-surface-1);
+  border: 1px solid var(--kms-border);
+  box-shadow: var(--kms-shadow-lg);
   width: 400px;
   padding: 25px 25px 5px 25px;
   .el-input {
@@ -209,7 +243,7 @@ getCookie();
 .login-tip {
   font-size: 13px;
   text-align: center;
-  color: #bfbfbf;
+  color: var(--kms-text-secondary);
 }
 .login-code {
   width: 33%;
@@ -227,8 +261,9 @@ getCookie();
   bottom: 0;
   width: 100%;
   text-align: center;
-  color: #fff;
-  font-family: Arial;
+  color: var(--kms-text-inverse);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  font-family: var(--kms-font-sans);
   font-size: 12px;
   letter-spacing: 1px;
 }

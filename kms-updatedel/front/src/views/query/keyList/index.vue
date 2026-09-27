@@ -1,9 +1,6 @@
 <template>
   <div class="app-container">
-    <el-alert v-if="pageMode === 'mine'" title="当前页面默认聚焦当前登录用户的密钥记录，用于统一查看个人密钥。" type="info" :closable="false" class="mb16" />
-    <el-alert v-else-if="pageMode === 'chain'" title="当前页面聚焦链上状态与凭证查看，适合作为统一的区块链查看入口。" type="success" :closable="false" class="mb16" />
-
-    <el-form :model="queryParams" ref="queryRef" :inline="true" v-show="showSearch" label-width="68px">
+<el-form :model="queryParams" ref="queryRef" :inline="true" v-show="showSearch" label-width="68px">
       <el-form-item label="用户名" prop="userName">
         <el-input v-model="queryParams.userName" placeholder="请输入用户名" clearable @keyup.enter="handleQuery" />
       </el-form-item>
@@ -84,13 +81,7 @@
           </div>
         </el-descriptions-item>
         <el-descriptions-item label="存证说明" :span="2">
-          <el-alert
-            title="该记录已纳入公共查询总表的存证详情视图，可直接查看业务字段与链上凭证的对应关系。"
-            type="success"
-            :closable="false"
-            show-icon
-          />
-        </el-descriptions-item>
+</el-descriptions-item>
       </el-descriptions>
       <template #footer>
         <el-button @click="evidenceOpen = false">关 闭</el-button>

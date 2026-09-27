@@ -4,11 +4,21 @@ import Cookies from 'js-cookie'
 
 import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
-import 'element-plus/theme-chalk/dark/css-vars.css'
+// 不再引入 element-plus 的暗色变量：站点已统一为浅色企业级风格，
+// 引入 dark/css-vars.css 会在 <html class="dark"> 时反压回暗色。
 import locale from 'element-plus/es/locale/lang/zh-cn'
 
+// 顺序说明：index.scss 末尾已 @import kms-official-theme.scss（令牌与组件适配），
+// 此处不再重复引入，避免令牌被加载两次。
 import '@/assets/styles/index.scss' // global css
-import '@/assets/styles/kms-official-theme.scss'
+
+// 页面级工具类（.page / .panel / .card / .summary-card / .badge / .status-* /
+// .detail-grid / .form-grid / .muted / .mb12 / .mb16 等）。
+//
+// 重要：本文件此前**从未被引入**，属于死文件——因此各页面用来做卡片容器与
+// 栅格布局的这些类全部没有样式，界面呈现为「没有卡片、没有间距」的裸排版。
+// 现正式引入；放在 index.scss 之后，以便页面类在需要时覆盖 Element 的默认表现。
+import '@/styles.css'
 
 import App from './App'
 import store from './store'

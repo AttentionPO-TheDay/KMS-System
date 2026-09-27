@@ -24,6 +24,7 @@
 
 <script setup name="BusinessUsers">
 import { listBusinessUsers } from '@/api/query/keyQuery'
+import { isAdminLevel, roleLevelText } from '@/utils/role'
 
 const { proxy } = getCurrentInstance()
 const loading = ref(true)
@@ -55,12 +56,13 @@ function resetQuery() {
   proxy.resetForm('queryRef')
 }
 
+// Q2 / D13：角色只剩 0=管理员、2=普通用户，统一走共享判据
 function roleText(roleLevel) {
-  return ({ 0: '管理员', 1: '中级用户', 2: '普通用户' })[roleLevel] || '普通用户'
+  return roleLevelText(roleLevel)
 }
 
 function roleTagType(roleLevel) {
-  return ({ 0: 'danger', 1: 'warning', 2: 'info' })[roleLevel] || 'info'
+  return isAdminLevel(roleLevel) ? 'danger' : 'info'
 }
 
 getList()

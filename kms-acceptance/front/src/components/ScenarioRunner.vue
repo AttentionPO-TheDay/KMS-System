@@ -1,5 +1,5 @@
 <template>
-  <div class="runner-wrapper glass-panel">
+  <div class="runner-wrapper">
     <div class="panel-header">
       <h2>压测控制台</h2>
       <div class="status-indicator" :class="health?.wrkAvailable ? 'healthy' : 'error'">
@@ -68,7 +68,7 @@
           </button>
           <button class="btn-ghost" @click="loadRuns">同步系统日志</button>
         </div>
-        <p v-if="error" class="error-msg">⚠️ {{ error }}</p>
+        <p v-if="error" class="error-msg">{{ error }}</p>
       </div>
     </div>
   </div>
@@ -153,7 +153,7 @@ async function doRun() {
   margin-top: 24px;
 }
 .error-msg {
-  color: #ff4d4f;
+  color: var(--kms-danger-strong);
   margin-top: 12px;
   font-size: 14px;
 }

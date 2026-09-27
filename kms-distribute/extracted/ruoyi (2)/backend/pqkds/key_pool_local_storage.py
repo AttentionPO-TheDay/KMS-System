@@ -25,6 +25,22 @@
     ...
   ]
 }
+
+载荷算法与 key_hex 长度（决策 D3）
+---------------------------------
+对称载荷层已从 **AES-256 换成国密 SM4**，因此 `key_hex` 的长度也变了：
+
+===========================  ==================  ==========================
+算法                          key_hex 长度        说明
+===========================  ==================  ==========================
+SM4（新写入）                 **32** 字符（16B）  2026-09 之后生成的池
+AES-256（历史）               **64** 字符（32B）  更早生成的池，仍须可读可用
+===========================  ==================  ==========================
+
+**读取时两种长度都要接受**（计划 P2 的硬性验证项之一：旧池仍可读取与使用）。
+本模块不按长度猜算法 —— 那是加解密层的事（`sm4_crypto.PayloadCipher` 按长度分派）。
+这里只负责**校验长度合法**，让"文件被截断/写坏"这类问题在取用点就带着
+pool_id 与 index 报出来，而不是等到解密时才以一句难以定位的密码学错误收场。
 """
 import os
 import json
@@ -45,6 +61,43 @@ def _get_node_dir(node_id: str) -> Path:
     d = _STORAGE_ROOT / node_id
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+#: 合法的载荷密钥长度（字节）：16 = SM4（新），32 = 历史 AES-256
+_ACCEPTED_KEY_BYTES = (16, 32)
+
+
+def payload_key_of(key_entry: Dict[str, Any], context: str = "") -> bytes:
+    """把一条本地池记录的 `key_hex` 解成字节，并校验长度。
+
+    两种长度都接受：
+      * **16 字节** → SM4（2026-09 之后生成的池）
+      * **32 字节** → AES-256（历史池，仍须可用）
+
+    校验放在这里而不是等到解密：一旦文件被截断或写坏，我们希望错误信息里
+    带着"哪个池、第几条"，而不是让调用方在几百行之外收到一句密码学异常。
+    """
+    raw = (key_entry or {}).get('key_hex') or ''
+    where = context or f"index={key_entry.get('index') if key_entry else '?'}"
+    if not raw:
+        raise ValueError(f"本地密钥池记录缺少 key_hex（{where}）")
+    try:
+        data = bytes.fromhex(raw)
+    except ValueError as exc:
+        raise ValueError(f"本地密钥池 key_hex 不是合法十六进制（{where}）: {exc}") from exc
+    if len(data) not in _ACCEPTED_KEY_BYTES:
+        raise ValueError(
+            f"本地密钥池 key_hex 长度非法（{where}）：解出 {len(data)} 字节，"
+            f"应为 16（SM4）或 32（历史 AES-256）。"
+            f"若是文件被截断，请重新分发该池。"
+        )
+    return data
+
+
+def key_algorithm_of(key_entry: Dict[str, Any]) -> str:
+    """该条记录对应的载荷算法（按长度判断，用于日志与排查）。"""
+    length = len(payload_key_of(key_entry))
+    return 'sm4' if length == 16 else 'aes_256'
 
 
 def save_pool_to_local(
@@ -143,6 +196,14 @@ def consume_key_from_local(
             if key_entry.get('used'):
                 continue
 
+            # 取用前校验 key_hex 长度（16=SM4 / 32=历史 AES-256）。
+            # 写坏的条目直接跳过并告警，不要让它在解密阶段变成难以定位的错误。
+            try:
+                payload_key_of(key_entry, context=f"{pool_data.get('pool_id')}#{key_entry.get('index')}")
+            except ValueError as exc:
+                logger.warning(f"[LocalPool] 跳过损坏的密钥条目: {exc}")
+                continue
+
             # 标记为已使用并写回文件
             key_entry['used'] = True
             key_entry['used_at'] = datetime.utcnow().isoformat()
@@ -151,7 +212,8 @@ def consume_key_from_local(
 
             logger.info(
                 f"[LocalPool] 节点 {node_id} 取用密钥: "
-                f"pool={pool_data['pool_id']}#{key_entry['index']}"
+                f"pool={pool_data['pool_id']}#{key_entry['index']} "
+                f"({key_algorithm_of(key_entry)})"
             )
             return {
                 'pool_id': pool_data['pool_id'],

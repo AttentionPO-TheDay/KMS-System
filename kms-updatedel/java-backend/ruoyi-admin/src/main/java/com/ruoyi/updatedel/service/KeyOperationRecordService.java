@@ -144,6 +144,12 @@ public class KeyOperationRecordService {
             expectedCount = records.size();
         }
 
+        // 按 node_index 排序，保证叶子顺序稳定 → 根可复现
+        records.sort((left, right) -> Integer.compare(
+            left.getNodeIndex() == null ? 0 : left.getNodeIndex(),
+            right.getNodeIndex() == null ? 0 : right.getNodeIndex()
+        ));
+
         Map<Integer, KeyOperationRecord> byIndex = new LinkedHashMap<>();
         boolean duplicateIndex = false;
         for (KeyOperationRecord record : records) {
@@ -154,29 +160,65 @@ public class KeyOperationRecordService {
             byIndex.put(nodeIndex, record);
         }
 
-        String verifyStatus = "0";
-        String verifyMessage = "waiting for leaf commitments " + records.size() + "/" + expectedCount;
-        if (duplicateIndex) {
-            verifyStatus = "2";
-            verifyMessage = "duplicate node index";
-        } else if (records.size() >= expectedCount && hasFullIndexRange(byIndex, expectedCount)) {
-            verifyStatus = "1";
-            verifyMessage = "tree proof verified";
+        // 叶子值：优先 consistencyHash，其次 commitment。
+        // 与早前实现相比，这里不再做「拼接后再哈希」，而是交给 MerkleTree。
+        List<String> leafValues = new ArrayList<>(records.size());
+        for (KeyOperationRecord record : records) {
+            leafValues.add(valueOrDefault(record.getConsistencyHash(), record.getCommitment()));
+        }
+        MerkleTree tree = new MerkleTree(leafValues);
+        String batchRoot = tree.getRoot();
+
+        // 逐条写入 Merkle 证明路径，使每条记录可被独立验证
+        for (int i = 0; i < records.size(); i++) {
+            List<String> proof = tree.getProof(i);
+            keyOperationRecordMapper.updateProofPath(records.get(i).getRecordId(), String.join("|", proof));
         }
 
-        records.sort((left, right) -> Integer.compare(
-            left.getNodeIndex() == null ? 0 : left.getNodeIndex(),
-            right.getNodeIndex() == null ? 0 : right.getNodeIndex()
-        ));
-        StringBuilder rootBuilder = new StringBuilder();
-        for (KeyOperationRecord record : records) {
-            if (rootBuilder.length() > 0) {
-                rootBuilder.append('|');
-            }
-            rootBuilder.append(valueOrDefault(record.getConsistencyHash(), record.getCommitment()));
+        String verifyStatus;
+        String verifyMessage;
+        if (duplicateIndex) {
+            verifyStatus = "2";
+            verifyMessage = "node index duplicated";
+        } else if (records.size() < expectedCount || !hasFullIndexRange(byIndex, expectedCount)) {
+            verifyStatus = "0";
+            verifyMessage = "waiting for leaf commitments " + records.size() + "/" + expectedCount;
+        } else if (!verifyAllLeaves(tree, leafValues, records)) {
+            // 自检：用生成的证明路径反算根，必须与 batchRoot 一致
+            verifyStatus = "2";
+            verifyMessage = "merkle self-check failed";
+        } else {
+            verifyStatus = "1";
+            verifyMessage = "merkle proof verified (leaves=" + records.size() + ", root=" + shortHash(batchRoot) + ")";
         }
-        String batchRoot = sha256(rootBuilder.toString());
+
         keyOperationRecordMapper.updateBatchProof(batchId, actionType, batchRoot, verifyStatus, verifyMessage);
+    }
+
+    /**
+     * 用每条记录各自的证明路径独立重算 Merkle 根并比对，作为写入前的自检。
+     * <p>
+     * 这一步是「证明可用」的保证：若证明路径与根不匹配，说明数据不一致或实现有误，
+     * 此时不应把 verify_status 置为成功。复用同一棵树，避免重复构造。
+     */
+    private boolean verifyAllLeaves(MerkleTree tree, List<String> leafValues, List<KeyOperationRecord> records) {
+        String batchRoot = tree.getRoot();
+        for (int i = 0; i < leafValues.size(); i++) {
+            List<String> proof = tree.getProof(i);
+            if (!MerkleTree.verify(leafValues.get(i), proof, batchRoot)) {
+                log.warn("Merkle 自检失败: recordId={}, batchRoot={}",
+                    i < records.size() ? records.get(i).getRecordId() : null, batchRoot);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private String shortHash(String hash) {
+        if (hash == null) {
+            return "";
+        }
+        return hash.length() <= 16 ? hash : hash.substring(0, 16) + "...";
     }
 
     private void sleepBeforeRetry(int attempt) {

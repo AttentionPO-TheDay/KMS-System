@@ -23,10 +23,13 @@
 
 ## 开发配置
 
-1. Vite 开发端口：`81`
+1. Vite 开发端口：`83`
+   （此前为 `81`，与 `kms-user`、`kms-generate` 冲突导致三者无法同时启动；
+   现分配为 kms-user 81 / kms-generate 82 / kms-updatedel 83 / kms-acceptance 5176）
 2. 开发环境 `VITE_APP_BASE_API='/lifecycle-api'`
 3. 当前 `vite.config.js` 内置 `/lifecycle-api -> http://localhost:9082` 代理
 4. 当前 `vite.config.js` 也内置 `/generate-api -> http://localhost:9081` 代理，用于只读查询和生成侧数据访问
+5. `vite.config.js` 内含 `@tokens` 别名，指向仓库根目录 `design-tokens/`（共享设计令牌）
 
 ## 说明
 

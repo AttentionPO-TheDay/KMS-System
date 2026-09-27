@@ -19,16 +19,17 @@
         </template>
       </el-dropdown>
     </div>
-    
-    <el-row :gutter="10" class="mb8">
-      <el-col :span="1.5">
-        <el-button type="primary" plain icon="Plus" @click="handleAdd" style="padding: 6px 12px; margin-top: 15px;">密钥生成</el-button>
-      </el-col>
-      <el-col :span="1.5">
-        <el-button type="info" plain icon="View" @click="handleViewPublicKeys" style="padding: 6px 12px; margin-top: 15px;">查看公共密钥列表</el-button>
-      </el-col>
-    </el-row>
 
+    <!--
+      本页是「用户密钥池」的只读资产视图。
+      按 D1 删除「查看公共密钥列表」按钮、公共密钥 Tab 与「申请查看公共密钥列表」弹窗 ——
+      用户侧公钥列表接口已随 D1 整体删除（它让任何被授权的用户都能读到别人的公钥集合），
+      继续保留入口只会拿到 404；公钥资产现只经 /generate/key/public-assets（仅管理员）暴露。
+      该弹窗申请的是生成域权限，按 D2 / 系统归属，生成域不再受理任何权限申请
+      （后端整套生成域权限申请接口已经下线），因此这里不做任何替代实现。
+      按「管理员不生成密钥」的原则删除「密钥生成」按钮与表单弹窗：
+      保留「更新」——管理端需要的是无证书密钥的更新与回收，不是生成。
+    -->
     <el-tabs v-model="activeTab" class="user-tabs" style="margin-top: 20px;">
       <el-tab-pane label="我的密钥" name="mykeys">
         <el-table v-loading="loading" :data="keymanageList" @selection-change="handleSelectionChange">
@@ -56,60 +57,7 @@
         </el-table>
         <pagination v-show="total>0" :total="total" v-model:page="queryParams.pageNum" v-model:limit="queryParams.pageSize" @pagination="getList" />
       </el-tab-pane>
-
-      <el-tab-pane label="公共密钥" name="publickeys" v-if="userStore.roleLevel <= 1">
-        <el-form :inline="true" style="margin-bottom: 15px;">
-          <el-form-item label="用户名">
-            <el-input v-model="publicKeysQuery.userName" placeholder="请输入用户名" clearable style="width: 200px;" />
-          </el-form-item>
-          <el-form-item>
-            <el-button type="primary" icon="Search" @click="loadPublicKeys">搜索</el-button>
-          </el-form-item>
-        </el-form>
-        <el-table v-loading="publicKeysLoading" :data="publicKeysList">
-          <el-table-column label="密钥ID" align="center" prop="keyId" width="80" />
-          <el-table-column label="用户名" align="center" prop="userName" width="120" />
-          <el-table-column label="加密类型" align="center" prop="encrytType" width="120" />
-          <el-table-column label="加密算法" align="center" prop="encrytName" width="120" />
-          <el-table-column label="密钥名称" align="center" prop="keyName" width="150" />
-          <el-table-column label="公钥值" align="center" prop="keyValue" :show-overflow-tooltip="true" min-width="200" />
-          <el-table-column label="创建时间" align="center" prop="creTime" width="160">
-            <template #default="scope"><span>{{ parseTime(scope.row.creTime) }}</span></template>
-          </el-table-column>
-        </el-table>
-        <pagination v-show="publicKeysTotal > 0" :total="publicKeysTotal" v-model:page="publicKeysQuery.pageNum" v-model:limit="publicKeysQuery.pageSize" @pagination="loadPublicKeys" />
-      </el-tab-pane>
     </el-tabs>
-
-    <el-dialog :title="title" v-model="open" width="500px" append-to-body>
-      <el-form ref="keymanageRef" :model="form" :rules="rules" label-width="120px">
-        <el-form-item label="加密算法类型" prop="encrytType">
-          <el-select v-model="form.encrytType" placeholder="请选择加密算法类型" @change="handleEncrytTypeChange">
-            <el-option label="无证书非对称加密" value="无证书非对称加密" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="加密算法名称" prop="encrytName">
-          <el-select v-model="form.encrytName" placeholder="请选择加密算法名称">
-            <el-option v-for="option in encrytNameOptions" :key="option.value" :label="option.label" :value="option.value" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="密钥名称" prop="keyName">
-          <el-input v-model="form.keyName" placeholder="请输入密钥名称" />
-        </el-form-item>
-        <el-form-item label="密钥用途" prop="keyUse">
-          <el-input v-model="form.keyUse" placeholder="请输入密钥用途" />
-        </el-form-item>
-        <el-form-item label="密钥所属域(SSCL)" prop="keyDomain">
-          <el-input v-model="form.keyDomain" placeholder="请输入密钥所属域" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <div class="dialog-footer">
-          <el-button type="primary" @click="submitForm">确 定</el-button>
-          <el-button @click="cancel">取 消</el-button>
-        </div>
-      </template>
-    </el-dialog>
 
     <el-dialog title="本地最终密钥结果 (请妥善保存)" v-model="resultOpen" width="760px" append-to-body destroy-on-close>
       <el-alert title="请立即复制并妥善保存您的私钥。此页面刷新后结果将无法找回！" type="warning" show-icon style="margin-bottom: 20px;" />
@@ -140,37 +88,11 @@
         <el-button @click="resultOpen = false">关 闭</el-button>
       </template>
     </el-dialog>
-
-    <el-dialog title="申请查看公共密钥列表" v-model="permissionDialogOpen" width="520px" append-to-body>
-      <el-form label-width="88px">
-        <el-form-item label="当前等级">
-          <el-tag type="info">{{ roleLevelText(userStore.roleLevel) }}</el-tag>
-        </el-form-item>
-        <el-form-item label="目标权限">
-          <el-tag type="warning">中级用户</el-tag>
-        </el-form-item>
-        <el-form-item label="申请理由" required>
-          <el-input
-            v-model="permissionReason"
-            type="textarea"
-            :rows="4"
-            maxlength="200"
-            show-word-limit
-            placeholder="请输入申请理由，至少 4 个字"
-          />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="permissionDialogOpen = false">取 消</el-button>
-        <el-button type="primary" :loading="permissionSubmitting" @click="submitPermissionApply">提 交</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
 <script setup name="UserKeys">
-import { listKeymanage, listPublicKeys, addKeymanage, updateKeymanage, getComParam } from "@/api/generate/keymanage"
-import { submitPermissionRequest } from '@/api/permission/permission'
+import { listKeymanage, updateKeymanage, getComParam } from "@/api/generate/keymanage"
 import { getUserProfile } from "@/api/system/user"
 import { SM2 } from 'gm-crypto'
 import { BigInteger } from "jsbn"
@@ -183,43 +105,25 @@ const { proxy } = getCurrentInstance()
 const userStore = useUserStore()
 
 const keymanageList = ref([])
-const open = ref(false)
 const loading = ref(true)
 const total = ref(0)
-const title = ref("")
 const activeTab = ref('mykeys')
 
 const resultOpen = ref(false)
 const localResult = ref({})
 
-const permissionDialogOpen = ref(false)
-const permissionReason = ref('')
-const permissionSubmitting = ref(false)
-
-const publicKeysList = ref([])
-const publicKeysLoading = ref(false)
-const publicKeysTotal = ref(0)
-const publicKeysQuery = ref({ pageNum: 1, pageSize: 10, userName: null })
-
 const sm2 = new EC('p256')
 
 const data = reactive({
   form: {},
-  encrytNameOptions: [],
   queryParams: {
     pageNum: 1, pageSize: 10, userId: null, userName: null, encrytType: null,
     encrytName: null, keyName: null, keyUse: null, keyValue: null,
     creTime: null, updTime: null, autoUpdate: null, status: null, uA: null
-  },
-  rules: {
-    encrytType: [{ required: true, message: "加密算法类型不能为空", trigger: "change" }],
-    encrytName: [{ required: true, message: "加密算法名称不能为空", trigger: "blur" }],
-    keyName: [{ required: true, message: "密钥名称不能为空", trigger: "blur" }],
-    keyUse: [{ required: true, message: "密钥用途不能为空", trigger: "blur" }]
   }
 })
 
-const { queryParams, encrytNameOptions, form, rules } = toRefs(data)
+const { queryParams, form } = toRefs(data)
 
 let userId, userName
 
@@ -244,47 +148,7 @@ function getList() {
   })
 }
 
-function cancel() { open.value = false; reset() }
-
-function reset() {
-  form.value = {
-    keyId: null, userId: queryParams.value.userId, userName: queryParams.value.userName,
-    encrytType: '无证书非对称加密', encrytName: null, keyName: null, keyUse: null, keyValue: null,
-    creTime: null, updTime: null, autoUpdate: 'false', status: 'Valid', uA: 'null', keyDomain: 'A'
-  }
-  proxy.resetForm("keymanageRef")
-  handleEncrytTypeChange('无证书非对称加密')
-}
-
 function handleSelectionChange(selection) {}
-
-function handleAdd() { reset(); open.value = true; title.value = "添加密钥管理" }
-
-function submitForm() {
-  proxy.$refs["keymanageRef"].validate(valid => {
-    if (valid) {
-      form.value.uA = publicKey
-      
-      if (form.value.keyId != null) {
-        updateKeymanage(form.value).then(async response => {
-          proxy.$modal.msgSuccess("更新请求已发出")
-          open.value = false
-          await handleSubmittedSnapshot(response.data || form.value)
-          scheduleRefresh()
-        })
-      } else {
-        addKeymanage(form.value).then(async response => {
-          proxy.$modal.msgSuccess("生成请求已发出")
-          open.value = false
-          await handleSubmittedSnapshot(response.data || form.value)
-          scheduleRefresh()
-        }).catch(error => {
-          if (error?.message) { proxy.$modal.msgError(error.message) }
-        })
-      }
-    }
-  })
-}
 
 async function handleSubmittedSnapshot(snapshot) {
   const localItem = Object.assign({}, snapshot)
@@ -457,54 +321,6 @@ function copyLocalKeyResult() {
   }).catch(() => {
     proxy.$modal.msgError('复制失败，请手动复制')
   })
-}
-
-function handleEncrytTypeChange(value) {
-  if (value === '无证书非对称加密') {
-    encrytNameOptions.value = [{ label: 'SM2', value: 'SM2' }, { label: 'SSCL', value: 'SSCL' }]
-  } else {
-    encrytNameOptions.value = []
-  }
-  form.value.encrytName = ''
-}
-
-function handleViewPublicKeys() {
-  if (userStore.roleLevel > 1) {
-    permissionReason.value = ''
-    permissionDialogOpen.value = true
-  } else {
-    activeTab.value = 'publickeys'
-    loadPublicKeys()
-  }
-}
-
-function loadPublicKeys() {
-  publicKeysLoading.value = true
-  listPublicKeys(publicKeysQuery.value).then(response => {
-    publicKeysList.value = response.rows
-    publicKeysTotal.value = response.total
-    publicKeysLoading.value = false
-  })
-}
-
-function submitPermissionApply() {
-  const reason = permissionReason.value.trim()
-  if (reason.length < 4) {
-    proxy.$modal.msgWarning('申请理由至少 4 个字')
-    return
-  }
-  permissionSubmitting.value = true
-  submitPermissionRequest({
-    userId, userName, originalLevel: userStore.roleLevel,
-    requestLevel: 1, requestReason: reason, isTemp: 1
-  }).then(() => {
-    proxy.$modal.msgSuccess('权限申请已提交，请等待生成域管理员审批')
-    permissionDialogOpen.value = false
-  }).finally(() => { permissionSubmitting.value = false })
-}
-
-function roleLevelText(level) {
-  return { 0: '管理员', 1: '中级用户', 2: '普通用户' }[level] || '未知'
 }
 
 function getUser() {

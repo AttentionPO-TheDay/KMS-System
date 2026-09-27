@@ -57,7 +57,18 @@ public class keymanageServiceImpl implements IKeymanageService
         if (key == null) return null;
         result.setBaseInfo(key);
 
-        String distSql = "SELECT distribute_time, user_name, distribute_type, distribute_status FROM key_distribute_record WHERE key_id = ? ORDER BY distribute_time DESC";
+        // P5：`key_distribute_record` 已删除，分发足迹改读新链路的批次表。
+        // 这是同一个查询在 legacy 模块里的副本（与 kms-updatedel 的
+        // LifecycleService.getAssociationAnalysis 同源），一并迁移，
+        // 以免留下指向已删表的死代码 —— 那种代码要等到下次有人启用 legacy 模块才会炸。
+        String distSql = "SELECT b.create_datetime AS distribute_time, " +
+                         "COALESCE(u.user_name, CONCAT('用户', b.user_id)) AS user_name, " +
+                         "b.wrapping_algorithm AS distribute_type, " +
+                         "b.status AS distribute_status " +
+                         "FROM falcon_kds.dvadmin_pqkds_distribution_batches b " +
+                         "LEFT JOIN sys_user u ON u.user_id = b.user_id " +
+                         "WHERE b.source_key_id = ? " +
+                         "ORDER BY b.create_datetime DESC";
         List<Map<String, Object>> distRecords = jdbcTemplate.queryForList(distSql, keyId);
         result.setDistributeFootprints(distRecords);
 

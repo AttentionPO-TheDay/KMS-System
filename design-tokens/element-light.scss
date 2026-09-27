@@ -1,0 +1,215 @@
+// ============================================================================
+// Element Plus 浅色主题适配层
+// ----------------------------------------------------------------------------
+// 设计原则：优先覆盖 Element 官方 CSS 变量，而不是用 !important 硬压组件样式。
+// 被替换掉的旧实现（assets/styles/kms-official-theme.scss）共 58 处 !important，
+// 那种写法在浅色下会互相打架且无法维护。
+//
+// 仅当变量无法覆盖（少数结构性样式）时才写选择器，并保持最小范围。
+// ============================================================================
+
+// 选择器用 `html:root` 而非 `:root`，这是刻意为之：
+//   Element 官方 CSS 也在 `:root` 上定义这些变量，优先级同为 (0,1,0)，
+//   于是谁生效完全取决于打包后的先后顺序（Vite 会重排 CSS），不可靠。
+//   `html:root` 为 (0,2,0)，可确定性压过 Element 的 `:root`，
+//   不依赖引入顺序，也不需要用 !important。
+html:root {
+  // ---------- 主色梯度 ----------
+  // Element 主色用「填充色」而非明亮品牌色：
+  // el-button--primary 是白字压主色，#1677ff 对比度仅 4.1，不达 WCAG AA。
+  --el-color-primary: var(--kms-brand-fill);
+  --el-color-primary-light-3: #69b1ff;
+  --el-color-primary-light-5: #91caff;
+  --el-color-primary-light-7: #bae0ff;
+  --el-color-primary-light-8: #d6e8ff;
+  --el-color-primary-light-9: var(--kms-brand-subtle);
+  --el-color-primary-dark-2: var(--kms-brand-active);
+
+  --el-color-success: var(--kms-success);
+  --el-color-success-light-9: var(--kms-success-subtle);
+  --el-color-warning: var(--kms-warning);
+  --el-color-warning-light-9: var(--kms-warning-subtle);
+  --el-color-danger: var(--kms-danger);
+  --el-color-danger-light-9: var(--kms-danger-subtle);
+  --el-color-error: var(--kms-danger);
+  --el-color-error-light-9: var(--kms-danger-subtle);
+  --el-color-info: var(--kms-text-secondary);
+  --el-color-info-light-9: var(--kms-surface-3);
+
+  // ---------- 背景 ----------
+  --el-bg-color: var(--kms-surface-1);
+  --el-bg-color-page: var(--kms-surface-page);
+  --el-bg-color-overlay: var(--kms-surface-overlay);
+  --el-fill-color-blank: var(--kms-surface-1);
+  --el-fill-color: var(--kms-surface-2);
+  --el-fill-color-light: var(--kms-surface-3);
+  --el-fill-color-lighter: var(--kms-surface-2);
+  --el-fill-color-extra-light: var(--kms-surface-2);
+
+  // ---------- 控件宽度（修复下拉框塌缩）----------
+  // Element Plus 的 `.el-select` 内部写的是 `width: var(--el-select-width)`，
+  // 但它自己在任何地方都没有定义这个变量（`.el-input` 则定义了
+  // `--el-input-width: 100%` 所以输入框正常）。这里补上，避免 `width`
+  // 成为无效声明。
+  --el-select-width: 100%;
+
+  // ---------- 文本 ----------
+  --el-text-color-primary: var(--kms-text-primary);
+  --el-text-color-regular: var(--kms-text-secondary);
+  --el-text-color-secondary: var(--kms-text-tertiary);
+  // 占位符承载真实信息（「请输入密钥名称」「全部」「10条/页」），必须可读。
+  // 此前误映射为 --kms-text-disabled(#bbbfc4)，对白底仅 1.85:1，
+  // 导致所有输入框/下拉框的提示文字近乎不可见。
+  --el-text-color-placeholder: var(--kms-text-placeholder);
+  --el-text-color-disabled: var(--kms-text-disabled);
+
+  // ---------- 边框 ----------
+  --el-border-color: var(--kms-border-strong);
+  --el-border-color-light: var(--kms-border);
+  --el-border-color-lighter: var(--kms-border-subtle);
+  --el-border-color-extra-light: var(--kms-border-subtle);
+  --el-border-color-hover: var(--kms-brand-border);
+
+  // ---------- 圆角与阴影 ----------
+  --el-border-radius-base: var(--kms-radius);
+  --el-border-radius-small: var(--kms-radius-sm);
+  --el-box-shadow: var(--kms-shadow);
+  --el-box-shadow-light: var(--kms-shadow-sm);
+  --el-box-shadow-lighter: var(--kms-shadow-sm);
+
+  // ---------- 表格 ----------
+  --el-table-border-color: var(--kms-border);
+  --el-table-header-bg-color: var(--kms-surface-2);
+  --el-table-header-text-color: var(--kms-text-primary);
+  --el-table-text-color: var(--kms-text-primary);
+  --el-table-row-hover-bg-color: var(--kms-brand-subtle);
+  --el-table-bg-color: var(--kms-surface-1);
+  --el-table-tr-bg-color: var(--kms-surface-1);
+
+  // ---------- 菜单 ----------
+  --el-menu-bg-color: var(--kms-surface-1);
+  --el-menu-text-color: var(--kms-text-secondary);
+  --el-menu-active-color: var(--kms-brand);
+  --el-menu-hover-bg-color: var(--kms-surface-3);
+}
+
+// ---------- 结构性适配（变量无法覆盖的部分，保持最小范围）----------
+
+// 卡片/弹层：浅色下用细边框 + 轻阴影，不使用毛玻璃
+.el-card {
+  border-color: var(--kms-border);
+  box-shadow: var(--kms-shadow-sm) !important; // Element 默认阴影较重，需覆盖
+
+  .el-card__header {
+    border-bottom-color: var(--kms-border);
+    font-weight: 600;
+  }
+}
+
+// 菜单选中态：左侧主色指示条
+.el-menu-item.is-active {
+  position: relative;
+  background-color: var(--kms-brand-subtle);
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 3px;
+    background: var(--kms-brand);
+  }
+}
+
+// 表格表头字重
+.el-table th.el-table__cell {
+  font-weight: 600;
+}
+
+// 分页选中态
+.el-pagination.is-background .el-pager li.is-active {
+  background-color: var(--kms-brand);
+  color: var(--kms-text-on-brand);
+}
+
+// 标签页
+.el-tabs__item.is-active {
+  font-weight: 600;
+}
+
+// 对话框/抽屉圆角统一
+.el-dialog,
+.el-drawer {
+  border-radius: var(--kms-radius-lg);
+
+  .el-dialog__header,
+  .el-drawer__header {
+    margin-right: 0;
+    padding-bottom: var(--kms-space-3);
+    border-bottom: 1px solid var(--kms-border);
+  }
+}
+
+// 主按钮：浅色下用实心主色，避免旧实现的半透明发光
+// 主按钮：填充与悬停都用「深色填充族」，保证白字对比度达标。
+// 注意不能使用 --kms-brand-hover(#4096ff)：白字压其上仅 2.99。
+.el-button--primary {
+  --el-button-bg-color: var(--kms-brand-fill);
+  --el-button-border-color: var(--kms-brand-fill);
+  --el-button-hover-bg-color: var(--kms-brand-fill-hover);
+  --el-button-hover-border-color: var(--kms-brand-fill-hover);
+  --el-button-active-bg-color: var(--kms-brand-active);
+  --el-button-active-border-color: var(--kms-brand-active);
+  --el-button-text-color: var(--kms-text-on-brand);
+}
+
+// 输入框聚焦：去掉旧实现的 inset 阴影 hack
+.el-input__wrapper.is-focus,
+.el-textarea__inner:focus {
+  box-shadow: 0 0 0 1px var(--kms-brand) inset;
+}
+
+/* ============================================================================
+ * 下拉框宽度修复（关键）
+ * ----------------------------------------------------------------------------
+ * 问题：在 `el-form--inline`（按内容收缩的 inline-flex 容器）里，
+ *   .el-form-item__content 是 `flex: 1 1 0%; min-width: 0`，宽度不确定；
+ *   .el-select           是 `width: var(--el-select-width)`（100%）；
+ *   .el-select__wrapper  是 flex 容器但没有宽度，宽度取决于其内容；
+ *   而其内容 `.el-select__selection` 是 `flex: 1 1 0%`（基准 0）。
+ * 于是形成循环依赖，浏览器退回「内在尺寸」求解，
+ * 结果整个下拉只剩箭头图标的宽度 —— 实测 44px，
+ * 占位符与选中值的 rect 宽度都是 0，表现为「下拉框什么都不显示、选了也看不到」。
+ * `.el-input` 之所以正常，是因为它自身在 flex 项上占满可用空间。
+ *
+ * 修复：给宿主 .el-select__wrapper 一个可确定求解的宽度（100% 的父级 +
+ * 最小宽度兜底），打破循环依赖。不改 .el-select 原有的 `width` 语义，
+ * 因此页面里显式写 style="width:XXXpx" 的下拉框不受影响。
+ * ========================================================================== */
+.el-select {
+  min-width: 120px;   // 兜底：即便父级宽度不确定，也不会塌缩到只剩图标
+}
+
+.el-select > .el-select__wrapper {
+  width: 100%;
+}
+
+// 滚动条：浅色下改为细灰条
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--kms-border-strong);
+  border-radius: var(--kms-radius-pill);
+
+  &:hover {
+    background: var(--kms-text-disabled);
+  }
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}

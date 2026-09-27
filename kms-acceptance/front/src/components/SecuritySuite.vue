@@ -1,16 +1,16 @@
 <template>
-  <div class="security-wrapper glass-panel">
+  <div class="security-wrapper">
     <div class="panel-header">
       <div>
         <h2>全维漏洞防护安全靶场</h2>
         <p class="subtitle">针对 3 类常见生成攻击与 5 类高频更新攻击进行真实业务层入侵防御探测。</p>
       </div>
       <span class="badge" :class="health?.securityAvailable ? 'ok' : 'warn'">
-        {{ health?.securityAvailable ? '🛡️ 安全引擎已就绪' : '安全引擎未就绪' }}
+        {{ health?.securityAvailable ? '安全引擎已就绪' : '安全引擎未就绪' }}
       </span>
     </div>
 
-    <p v-if="error" class="error-msg">⚠️ {{ error }}</p>
+    <p v-if="error" class="error-msg">{{ error }}</p>
     <p v-else-if="health && !health.securityAvailable" class="warn-msg">当前仅检测到安全引擎未就绪；你仍可点击执行，由后端返回真实失败原因。</p>
 
     <div class="suite-grid">
@@ -31,9 +31,9 @@
             </div>
             <div class="attack-meta">
               <span class="tag">{{ item.mode }}</span>
-              <span><strong>🎯 目标：</strong> {{ item.target }}</span>
+              <span><strong>目标：</strong> {{ item.target }}</span>
             </div>
-            <p class="expected"><strong>💡 预期：</strong> {{ item.expected }}</p>
+            <p class="expected"><strong>预期：</strong> {{ item.expected }}</p>
             
             <ul class="steps">
               <li v-for="step in item.steps" :key="step">{{ step }}</li>
@@ -49,7 +49,7 @@
 
             <!-- Result Box -->
             <div v-if="item.caseId && displayedRun(item.caseId)" class="attack-result" :class="verdictClass(item.caseId)">
-              <div class="result-header">🔍 本次执行结论</div>
+              <div class="result-header">本次执行结论</div>
               <p><strong>结论：</strong> {{ displayedRun(item.caseId).summary }}</p>
               <p v-if="displayedRun(item.caseId).error"><strong>异常：</strong> {{ displayedRun(item.caseId).error }}</p>
               <details v-if="displayedRun(item.caseId).requests?.length" class="raw-output">
@@ -115,7 +115,7 @@ async function doSecurityRun(caseId) {
 
 <style scoped>
 .security-wrapper { grid-column: 1 / -1; }
-.subtitle { color: #8b9eb3; margin-top: 8px; font-size: 14px; }
+.subtitle { color: var(--kms-text-tertiary); margin-top: 8px; font-size: 14px; }
 
 .suite-grid {
   display: grid;
@@ -131,18 +131,18 @@ async function doSecurityRun(caseId) {
   align-items: center;
   margin-bottom: 12px;
 }
-.suite-header h3 { margin: 0; font-size: 16px; color: #fff; }
+.suite-header h3 { margin: 0; font-size: 16px; color: var(--kms-text-primary); }
 .suite-count { font-size: 11px; font-weight: bold; }
-.suite-summary { font-size: 13px; color: #94a3b8; margin-bottom: 20px; min-height: 40px; }
+.suite-summary { font-size: 13px; color: var(--kms-text-secondary); margin-bottom: 20px; min-height: 40px; }
 
-.accent-red { background: linear-gradient(90deg, rgba(220, 38, 38, 0.4), transparent); border-left: 3px solid #ef4444; }
-.accent-orange { background: linear-gradient(90deg, rgba(234, 88, 12, 0.4), transparent); border-left: 3px solid #f97316; }
+.accent-red { background: var(--kms-danger-subtle); border-left: 3px solid var(--kms-danger); }
+.accent-orange { background: var(--kms-warning-subtle); border-left: 3px solid var(--kms-warning); }
 
 .attack-list { display: flex; flex-direction: column; gap: 16px; }
 .attack-card {
   padding: 16px;
   border-radius: 8px;
-  background: rgba(255,255,255,0.03);
+  background: var(--kms-surface-2);
 }
 .attack-head {
   display: flex;
@@ -150,12 +150,12 @@ async function doSecurityRun(caseId) {
   align-items: center;
   margin-bottom: 12px;
 }
-.attack-head h4 { margin: 0; font-size: 15px; color: #e2e8f0; }
-.attack-meta { font-size: 12px; color: #94a3b8; margin-bottom: 12px; display: flex; flex-direction: column; gap: 6px; }
-.tag { display: inline-block; background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px; font-size: 11px; color:#cbd5e1; width: fit-content; }
-.expected { font-size: 12px; color: #bae6fd; background: rgba(2, 132, 199, 0.2); padding: 8px; border-radius: 6px; margin-bottom: 12px; border-left: 2px solid #0ea5e9;}
+.attack-head h4 { margin: 0; font-size: 15px; color: var(--kms-text-primary); }
+.attack-meta { font-size: 12px; color: var(--kms-text-secondary); margin-bottom: 12px; display: flex; flex-direction: column; gap: 6px; }
+.tag { display: inline-block; background: var(--kms-border); padding: 2px 6px; border-radius: 4px; font-size: 11px; color:var(--kms-text-secondary); width: fit-content; }
+.expected { font-size: 12px; color: var(--kms-text-secondary); background: var(--kms-info-subtle); padding: 8px; border-radius: 6px; margin-bottom: 12px; border-left: 2px solid var(--kms-brand);}
 
-.steps { padding-left: 20px; font-size: 12px; color: #cbd5e1; margin-bottom: 16px; line-height: 1.5;}
+.steps { padding-left: 20px; font-size: 12px; color: var(--kms-text-secondary); margin-bottom: 16px; line-height: 1.5;}
 .steps li { margin-bottom: 4px; }
 
 .attack-actions { margin-top: 16px; text-align: right; }
@@ -165,27 +165,27 @@ async function doSecurityRun(caseId) {
   margin-top: 16px;
   padding: 12px;
   border-radius: 6px;
-  background: rgba(0,0,0,0.4);
+  background: var(--kms-surface-3);
   font-size: 12px;
 }
-.attack-result p { margin: 0 0 6px 0; color: #cbd5e1; }
-.attack-result.ok { border-top: 2px solid #10b981; }
-.attack-result.accent-orange { border-top: 2px solid #f97316; }
+.attack-result p { margin: 0 0 6px 0; color: var(--kms-text-secondary); }
+.attack-result.ok { border-top: 2px solid var(--kms-success); }
+.attack-result.accent-orange { border-top: 2px solid var(--kms-warning); }
 
 .result-header { font-weight: bold; margin-bottom: 8px; letter-spacing: 1px; }
-.raw-output summary { color: #4facfe; cursor: pointer; margin-top: 8px;}
+.raw-output summary { color: var(--kms-brand-text); cursor: pointer; margin-top: 8px;}
 .raw-output pre {
-  background: #000; padding: 12px; color: #a1a1aa; border-radius: 4px; overflow-x: auto; font-family: monospace; font-size: 11px; margin-top: 8px;
+  background: var(--kms-text-primary); padding: 12px; color: var(--kms-text-secondary); border-radius: 4px; overflow-x: auto; font-family: monospace; font-size: 11px; margin-top: 8px;
 }
 
 .error-msg {
-  color: #ff6b6b;
+  color: var(--kms-danger-strong);
   margin: 16px 0;
   font-size: 13px;
 }
 
 .warn-msg {
-  color: #fbbf24;
+  color: var(--kms-warning-strong);
   margin: 16px 0;
   font-size: 13px;
 }

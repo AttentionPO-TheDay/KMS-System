@@ -18,14 +18,19 @@ export default defineConfig(({ mode, command }) => {
         // 设置路径
         '~': path.resolve(__dirname, './'),
         // 设置别名
-        '@': path.resolve(__dirname, './src')
+        '@': path.resolve(__dirname, './src'),
+        // 共享设计令牌包（仓库根目录 design-tokens/），5 个前端统一引用
+        '@tokens': path.resolve(__dirname, '../../design-tokens')
       },
       // https://cn.vitejs.dev/config/#resolve-extensions
       extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json', '.vue']
     },
     // vite 相关配置
     server: {
-      port: 81,
+      // 端口分配（避免与其它前端 dev server 冲突，可同时启动联调）：
+      //   kms-user 81 / kms-generate 82 / kms-updatedel 83 / kms-acceptance 5176
+      // 历史上 kms-user、kms-generate、kms-updatedel 三者均使用 81，无法同时运行。
+      port: 82,
       host: true,
       open: true,
       proxy: {

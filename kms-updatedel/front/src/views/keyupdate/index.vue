@@ -124,9 +124,14 @@
         <el-form-item label="所属域" prop="keyDomain" v-if="isSsclKey(form)">
           <el-input v-model="form.keyDomain" placeholder="SSCL 更新时可调整所属域" />
         </el-form-item>
-        <el-form-item label="自动更新">
-          <el-switch v-model="form.autoUpdateEnabled" inline-prompt active-text="开" inactive-text="关" />
-        </el-form-item>
+        <!--
+          这里原来有一个「自动更新」开关，已移除（2026-09-24）：
+          1. 菜单里已有独立的「密钥自动更新」页，这是重复入口；
+          2. 它会让更新请求带上 autoUpdate（哪怕值与库里相同），
+             后端据此判定为"要改自动更新"，于是只想改密钥名称的更新
+             被拒，报错却是"当前用户没有自动更新操作权限"（用户截图）。
+          现在更新只提交元数据；要改自动更新请到「密钥自动更新」页。
+        -->
       </el-form>
       <template #footer>
         <div class="dialog-footer">
@@ -251,7 +256,6 @@ function reset() {
     keyName: '',
     keyUse: '',
     keyDomain: '',
-    autoUpdateEnabled: false,
     batchMode: false,
     status: ''
   }
@@ -296,7 +300,7 @@ function openUpdateDialog(row) {
       keyName: current.keyName,
       keyUse: current.keyUse,
       keyDomain: current.keyDomain,
-      autoUpdateEnabled: isAutoUpdateEnabled(current.autoUpdate),
+      // 不再读 autoUpdateEnabled：更新弹窗只管元数据（见模板里的说明）
       batchMode: false,
       status: current.status
     }
@@ -348,8 +352,10 @@ async function handleBatchUpdate() {
         keyId: current.keyId,
         keyName: current.keyName,
         keyUse: current.keyUse,
-        keyDomain: isSsclKey(current) ? blankToNull(current.keyDomain) : null,
-        autoUpdate: isAutoUpdateEnabled(current.autoUpdate) ? '1' : '0'
+        keyDomain: isSsclKey(current) ? blankToNull(current.keyDomain) : null
+        // 不带 autoUpdate：批量更新只改元数据。
+        // 带上它（哪怕值与库里相同）会被后端判成「要改自动更新」而拒绝，
+        // 报错还是「没有自动更新操作权限」，与用户在做的事对不上。
       })
     }
     proxy.$modal.msgSuccess('批量更新已提交，结果将推送给用户端接收')
@@ -366,8 +372,8 @@ function submitForm() {
       keyId: form.value.keyId,
       keyName: blankToNull(form.value.keyName),
       keyUse: blankToNull(form.value.keyUse),
-      keyDomain: isSsclKey(form.value) ? blankToNull(form.value.keyDomain) : null,
-      autoUpdate: form.value.autoUpdateEnabled ? '1' : '0'
+      keyDomain: isSsclKey(form.value) ? blankToNull(form.value.keyDomain) : null
+      // 不带 autoUpdate：自动更新改由「密钥自动更新」页负责
       }).then(() => {
         proxy.$modal.msgSuccess("更新成功，结果已推送到用户端")
         open.value = false

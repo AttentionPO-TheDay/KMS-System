@@ -4,11 +4,12 @@ import Cookies from 'js-cookie'
 
 import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
-import 'element-plus/theme-chalk/dark/css-vars.css'
+// 不再引入 element-plus 的暗色变量：站点已统一为浅色企业级风格，
+// 引入 dark/css-vars.css 会在 <html class="dark"> 时反压回暗色。
 import locale from 'element-plus/es/locale/lang/zh-cn'
 
+// index.scss 末尾已 @import kms-official-theme.scss（令牌与组件适配），此处不重复引入。
 import '@/assets/styles/index.scss' // global css
-import '@/assets/styles/kms-official-theme.scss'
 
 import App from './App'
 import store from './store'

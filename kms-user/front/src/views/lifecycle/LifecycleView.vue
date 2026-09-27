@@ -3,37 +3,24 @@
 
     <article class="panel">
       <div class="panel-head header-actions">
-        <div>
-          <h3>当前用户</h3>
+        <div class="identity-line">
+          <strong>{{ profile.userName || '未登录' }}</strong>
+          <el-tag size="small" type="info">{{ roleText(profile.roleLevel) }}</el-tag>
         </div>
         <el-button @click="reloadCurrentTab">刷新当前页</el-button>
-      </div>
-      <div class="form-grid profile-grid">
-        <label>
-          <span>用户 ID</span>
-          <input :value="profile.userId" type="text" disabled />
-        </label>
-        <label>
-          <span>用户名</span>
-          <input :value="profile.userName" type="text" disabled />
-        </label>
-        <label>
-          <span>当前等级</span>
-          <input :value="roleText(profile.roleLevel)" type="text" disabled />
-        </label>
       </div>
     </article>
 
     <div class="lifecycle-dashboard">
       <nav class="inner-sidenav">
         <div class="nav-item" :class="{ active: activeTab === 'mykeys' }" @click="activeTab = 'mykeys'">
-          <span class="icon">🔑</span> 我的密钥库
+          <el-icon class="icon"><Key /></el-icon> 我的密钥库
         </div>
         <div class="nav-item" :class="{ active: activeTab === 'autoupdate' }" @click="activeTab = 'autoupdate'">
-          <span class="icon">⚡</span> 自动更新配置
+          <el-icon class="icon"><Lightning /></el-icon> 自动更新配置
         </div>
         <div class="nav-item" :class="{ active: activeTab === 'results' }" @click="activeTab = 'results'">
-          <span class="icon">📥</span> 操作结果回执
+          <el-icon class="icon"><Download /></el-icon> 操作结果回执
         </div>
       </nav>
 
@@ -50,7 +37,7 @@
         </transition>
 
         <div v-show="activeTab === 'mykeys'" class="tab-pane relative-pane">
-          <article class="panel glass-panel">
+          <article class="panel">
           <el-form :model="myKeyQuery" inline label-width="88px" class="query-form">
             <el-form-item label="密钥名称">
               <el-input v-model="myKeyQuery.keyName" placeholder="请输入密钥名称" clearable @keyup.enter="searchMyKeys" />
@@ -72,6 +59,15 @@
             <el-table-column label="用户名" align="center" prop="userName" width="120" />
             <el-table-column label="算法类型" align="center" prop="encrytType" min-width="140" />
             <el-table-column label="算法名称" align="center" prop="encrytName" width="120" />
+            <!-- 版本列（2026-09-24 新增）：轮换会让版本 +1，列表里能直接看出哪把密钥
+                 被轮换过；更迭过程（哪一版由手动/自动、对应哪笔链上交易）见「详情 → 版本更迭」。 -->
+            <el-table-column label="版本" align="center" width="80">
+              <template #default="scope">
+                <el-tag size="small" :type="Number(scope.row.version || 1) > 1 ? 'warning' : 'info'">
+                  v{{ scope.row.version ?? 1 }}
+                </el-tag>
+              </template>
+            </el-table-column>
             <el-table-column label="密钥名称" align="center" prop="keyName" min-width="150" />
             <el-table-column label="密钥用途" align="center" prop="keyUse" min-width="150" show-overflow-tooltip />
             <el-table-column label="自动更新" align="center" width="110">
@@ -117,18 +113,35 @@
         </div>
 
         <div v-show="activeTab === 'autoupdate'" class="tab-pane relative-pane">
+          <!-- D2：原独立的「权限管理」页已删除，申请入口收敛到本页。
+               权限不足时不再把人送去另一个页面，直接在本页弹窗提交。 -->
+          <div class="permission-bar">
+            <div class="permission-bar-text">
+              <strong>自动更新权限</strong>
+</div>
+            <div class="permission-bar-actions">
+              <el-tag size="small" :type="canManageAutoUpdate ? 'success' : 'info'" effect="light">
+                {{ canManageAutoUpdate ? (showAutoUpdateRollback ? '已具备（临时权限）' : '已具备') : '未具备' }}
+              </el-tag>
+              <el-button
+                type="primary"
+                :disabled="canManageAutoUpdate"
+                @click="openPermissionDialog"
+              >
+                {{ canManageAutoUpdate ? '无需申请' : '申请自动更新权限' }}
+              </el-button>
+              <el-button v-if="showAutoUpdateRollback" @click="handleRollback">回退权限</el-button>
+            </div>
+          </div>
+
           <el-alert
             v-if="!canManageAutoUpdate"
-            title="当前账号没有生命周期域自动更新配置的权限，请先到权限管理页申请临时权限。"
+            title="当前账号没有生命周期域自动更新配置的权限，请点击上方「申请自动更新权限」提交申请。"
             type="warning"
             :closable="false"
             show-icon
             class="mb12"
-          >
-            <template #default>
-              <el-button type="primary" link @click="router.push('/permissions/index')">前往申请权限</el-button>
-            </template>
-          </el-alert>
+          />
 
           <el-alert
             v-if="showAutoUpdateRollback"
@@ -143,16 +156,42 @@
             </template>
           </el-alert>
 
-          <article class="panel glass-panel">
+          <article class="panel">
+          <!-- 权限不足时把筛选控件本身也置灰并给出原因，
+               避免出现「控件可用但按钮禁用」的困惑（此前只有上方一条 alert，
+               用户滚动后看不到原因，会误以为功能损坏）。 -->
           <el-form :model="autoUpdateQuery" inline label-width="88px" class="query-form">
             <el-form-item label="密钥名称">
-              <el-input v-model="autoUpdateQuery.keyName" placeholder="请输入密钥名称" clearable @keyup.enter="searchAutoUpdate" />
+              <el-tooltip
+                :disabled="canManageAutoUpdate"
+                content="需要「密钥自动更新」权限，请点击上方「申请自动更新权限」"
+                placement="top"
+              >
+                <el-input
+                  v-model="autoUpdateQuery.keyName"
+                  placeholder="请输入密钥名称"
+                  clearable
+                  :disabled="!canManageAutoUpdate"
+                  @keyup.enter="searchAutoUpdate"
+                />
+              </el-tooltip>
             </el-form-item>
             <el-form-item label="自动更新">
-              <el-select v-model="autoUpdateQuery.autoUpdate" placeholder="全部" clearable>
-                <el-option label="已开启" value="1" />
-                <el-option label="已关闭" value="0" />
-              </el-select>
+              <el-tooltip
+                :disabled="canManageAutoUpdate"
+                content="需要「密钥自动更新」权限，请点击上方「申请自动更新权限」"
+                placement="top"
+              >
+                <el-select
+                  v-model="autoUpdateQuery.autoUpdate"
+                  placeholder="全部"
+                  clearable
+                  :disabled="!canManageAutoUpdate"
+                >
+                  <el-option label="已开启" value="1" />
+                  <el-option label="已关闭" value="0" />
+                </el-select>
+              </el-tooltip>
             </el-form-item>
             <el-form-item>
               <el-button type="primary" :disabled="!canManageAutoUpdate" @click="searchAutoUpdate">搜索</el-button>
@@ -203,7 +242,7 @@
         </div>
 
         <div v-show="activeTab === 'results'" class="tab-pane relative-pane">
-          <article class="panel glass-panel">
+          <article class="panel">
             <el-form :model="resultQuery" inline label-width="88px" class="query-form">
               <el-form-item label="操作类型">
                 <el-select v-model="resultQuery.actionType" placeholder="全部" clearable>
@@ -292,9 +331,53 @@
         <el-form-item label="所属域" prop="keyDomain">
           <el-input v-model="updateForm.keyDomain" maxlength="64" clearable />
         </el-form-item>
-        <el-form-item label="自动更新">
-          <el-switch v-model="updateForm.autoUpdateEnabled" />
+        <!--
+          手动密钥轮换（2026-09-24 新增）。
+          后端是按"请求里有没有新的 uA"分流的：
+            * 不带 uA → updateMetadata：只改 名称/用途/所属域，**版本不变、不写链**；
+            * 带  uA → rotateKey：重新签发部分私钥、**版本 +1**、链上写 rotateKey。
+          在此之前界面上没有任何入口能带新 uA，于是"密钥更新"永远只改元数据 ——
+          用户以为换了密钥，其实密钥材料一个字都没动，链上也没有新记录。
+          这里补上入口，并把"版本更迭"直接写在弹窗里，提交前就能看到。
+        -->
+        <el-form-item label="密钥轮换">
+          <div class="rotation-box">
+            <el-button size="small" :disabled="updateSubmitting" @click="regenerateRotationMaterial">
+              重新生成本地密钥材料
+            </el-button>
+            <span class="rotation-hint">版本 {{ versionBefore }} → {{ versionAfter }}</span>
+            <div v-if="rotationMaterial.publicKey" class="rotation-ready">
+              <el-tag size="small" type="warning">新本地材料已生成</el-tag>
+              <span class="mono">{{ shortUa(rotationMaterial.publicKey) }}</span>
+              <span class="muted">{{ rotationMaterial.generatedAt }}</span>
+            </div>
+            <!--
+              新材料必须**当场能看到、能复制**：轮换时浏览器新生成的那把本地私钥
+              是合成最终私钥的一半，关掉弹窗或刷新就没了，而轮换后的版本只有配合它才可用。
+              私钥默认打码（截图/投屏不泄露），需要时点「显示」。
+            -->
+            <div v-if="rotationMaterial.publicKey" class="rotation-material">
+              <div class="mat-row">
+                <span class="mat-label">本地部分私钥</span>
+                <span class="mono mat-value">{{ showRotationPrivate ? rotationMaterial.privateKey : maskedRotationPrivate }}</span>
+                <el-button link type="primary" size="small" @click="showRotationPrivate = !showRotationPrivate">
+                  {{ showRotationPrivate ? '隐藏' : '显示' }}
+                </el-button>
+                <el-button link type="primary" size="small" @click="copyRotationMaterial">复制新材料</el-button>
+              </div>
+            </div>
+          </div>
         </el-form-item>
+        <!--
+          这里原来有一个「自动更新」开关，已移除（2026-09-24 用户反馈）：
+          1. 本页已经有**独立的**「自动更新配置」区域（上方 autoUpdateKeys 那张表，
+             带专门的开关与筛选），这里的开关是重复入口；
+          2. 它会污染更新请求 —— 提交时把开关的当前值一并带上（恒非空），
+             而后端把"请求里出现 autoUpdate"当成"要改自动更新"，
+             于是**只想改密钥名称**的用户会被拦下，报错是
+             "当前用户没有自动更新操作权限"，与他在做的事完全对不上。
+          现在更新只提交元数据字段；要改自动更新请用上方那个专门的入口。
+        -->
       </el-form>
       <template #footer>
         <el-button @click="updateDialogOpen = false">取消</el-button>
@@ -320,6 +403,74 @@
         <p><strong>创建时间：</strong>{{ selectedKey.creTime || '-' }}</p>
         <p><strong>更新时间：</strong>{{ selectedKey.updTime || '-' }}</p>
       </div>
+
+      <!--
+        版本更迭轨迹（2026-09-24 新增）。
+        数据来自 key_operation_record：每次轮换都会落一条记录，带 key_version /
+        action_source（MANUAL·AUTO）/ chain_hash / block_height。
+        详情里的"版本"只说明**当前**是第几版，看不出更迭过程；这里把历次版本列出来，
+        评审要的"版本更迭"才算能自证。
+      -->
+      <div v-if="selectedKey" class="version-history">
+        <h4>版本更迭</h4>
+        <el-table
+          :data="versionHistory"
+          size="small"
+          :empty-text="versionHistoryLoading ? '加载中…' : '暂无轮换记录（仅更新元数据不会产生版本更迭）'"
+        >
+          <el-table-column label="版本" width="64" align="center">
+            <template #default="scope">v{{ scope.row.keyVersion ?? '-' }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="76" align="center">
+            <template #default="scope">{{ actionTypeText(scope.row.actionType) }}</template>
+          </el-table-column>
+          <el-table-column label="来源" width="64" align="center">
+            <template #default="scope">{{ actionSourceText(scope.row.actionSource) }}</template>
+          </el-table-column>
+          <el-table-column label="结果" width="80" align="center">
+            <template #default="scope">{{ resultStatusText(scope.row.resultStatus) }}</template>
+          </el-table-column>
+          <el-table-column label="操作时间" width="160">
+            <template #default="scope">{{ formatActionTime(scope.row.actionTime) }}</template>
+          </el-table-column>
+          <el-table-column label="交易哈希" min-width="140">
+            <template #default="scope">
+              <span class="mono">{{ scope.row.chainHash || '-' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="区块高度" width="86" align="center">
+            <template #default="scope">{{ scope.row.blockHeight ?? '-' }}</template>
+          </el-table-column>
+        </el-table>
+      </div>
+    </el-dialog>
+
+    <!-- 申请「密钥自动更新」权限（D2：由原「权限管理」页迁移而来）。
+         只保留 AUTO_UPDATE 一项 —— PUBLIC_KEY_LIST 已按 D1 整体删除。 -->
+    <el-dialog v-model="permissionDialogOpen" title="申请自动更新权限" width="520px" append-to-body>
+      <p class="muted">
+        开启后可为密钥配置托管自动更新。审批通过后权限为<strong>临时授权</strong>，
+        完成配置后请及时回退。
+      </p>
+      <el-form label-position="top">
+        <el-form-item label="申请理由" required>
+          <el-input
+            v-model="permissionReason"
+            type="textarea"
+            :rows="3"
+            maxlength="200"
+            show-word-limit
+            placeholder="请简述开启安全托管的原因，至少 4 个字符"
+          />
+        </el-form-item>
+      </el-form>
+      <p v-if="permissionError" class="error-text">{{ permissionError }}</p>
+      <template #footer>
+        <el-button @click="permissionDialogOpen = false">取消</el-button>
+        <el-button type="primary" :loading="permissionSubmitting" @click="submitPermission">
+          提交审批申请
+        </el-button>
+      </template>
     </el-dialog>
 
     <el-drawer v-model="analysisDrawerOpen" title="密钥防线全息扫描结果" size="65%">
@@ -367,7 +518,7 @@
             :key="index"
             :timestamp="op.action_time ? formatDateTime(op.action_time) : '-'"
             :type="op.action_type === 'REVOKE' ? 'danger' : 'primary'"
-            :color="op.result_status == '1' ? '#0bbd87' : '#e4e7ed'"
+            :color="op.result_status == '1' ? 'var(--kms-success)' : 'var(--kms-border-strong)'"
           >
             <strong>{{ actionTypeText(op.action_type) }}</strong> 
             操作来源: [{{ op.action_source }}]
@@ -384,7 +535,9 @@
 <script setup>
 import { computed, getCurrentInstance, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { getLatestApprovedTemporaryRequest, rollbackPermission } from '@/services/permission-api'
+// 统一使用 Element 图标，替代此前的 emoji
+import { Key, Lightning, Download } from '@element-plus/icons-vue'
+import { getLatestApprovedTemporaryRequest, rollbackPermission, submitPermissionRequest } from '@/services/permission-api'
 import {
   getLifecycleKey,
   getLifecycleKeyAnalysis,
@@ -397,8 +550,12 @@ import {
 } from '@/services/lifecycle-api'
 import { apiBases } from '@/config/api-bases'
 import useUserStore from '@/store/modules/user'
+import { isAdminLevel, roleLevelText } from '@/utils/role'
 import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
+// 手动轮换要重新生成本地密钥材料，用的是与「密钥生成」页同一套算法实现，
+// 保证两边产生的 uA 形态一致（否则后端曲线点校验会拒）。
+import { SM2 } from 'gm-crypto'
 
 const { proxy } = getCurrentInstance()
 const router = useRouter()
@@ -475,8 +632,100 @@ const updateForm = reactive({
   keyName: '',
   keyUse: '',
   keyDomain: '',
-  autoUpdateEnabled: false
+  // 仅用于显示"版本更迭：N → N+1"，不参与提交
+  version: null
+  // 不再有 autoUpdateEnabled：自动更新改由本页「自动更新配置」区域单独操作，
+  // 更新弹窗只负责元数据（见模板里的说明）。
 })
+
+// ---------------------------------------------------------------------------
+// 手动轮换（2026-09-24 新增）
+// ---------------------------------------------------------------------------
+// 为什么需要：后端按"请求里有没有新 uA"分流 —— 不带 uA 只改元数据（版本不变、
+// 不写链），带 uA 才走 rotateKey（版本 +1、重新上链）。而在此之前界面上没有任何
+// 地方能产生并提交新 uA，于是「密钥更新」永远只是改名字，"版本更迭"无从触发，
+// 更无从展示。这里补的正是那个缺失的入口。
+const rotationMaterial = reactive({
+  publicKey: '',
+  privateKey: '',
+  generatedAt: ''
+})
+
+function regenerateRotationMaterial() {
+  const { publicKey, privateKey } = SM2.generateKeyPair()
+  rotationMaterial.publicKey = publicKey
+  rotationMaterial.privateKey = privateKey
+  rotationMaterial.generatedAt = new Date().toLocaleString('zh-CN', { hour12: false })
+  ElMessage.success('已生成本地新密钥材料，提交后将触发密钥轮换')
+}
+
+function resetRotationMaterial() {
+  rotationMaterial.publicKey = ''
+  rotationMaterial.privateKey = ''
+  rotationMaterial.generatedAt = ''
+  showRotationPrivate.value = false
+}
+
+function shortUa(value) {
+  if (!value) {
+    return '-'
+  }
+  const text = String(value)
+  return text.length > 26 ? `${text.slice(0, 20)}…${text.slice(-6)}` : text
+}
+
+// 私钥默认打码：文档截图/投屏时不该把私钥带出去，需要核对时点「显示」。
+const showRotationPrivate = ref(false)
+const maskedRotationPrivate = computed(() => {
+  const key = rotationMaterial.privateKey
+  if (!key) {
+    return '-'
+  }
+  return `${key.slice(0, 12)}…${key.slice(-8)}`
+})
+
+async function copyRotationMaterial() {
+  const payload = [
+    `keyId: ${updateForm.keyId}`,
+    `算法: ${updateForm.encrytType} / ${updateForm.encrytName}`,
+    `生成时间: ${rotationMaterial.generatedAt}`,
+    `本地部分公钥 uA: ${rotationMaterial.publicKey}`,
+    `本地部分私钥: ${rotationMaterial.privateKey}`
+  ].join('\n')
+  try {
+    await navigator.clipboard.writeText(payload)
+    ElMessage.success('新材料已复制到剪贴板，请粘贴保存后再提交')
+  } catch {
+    // 非 HTTPS 或浏览器拒绝剪贴板权限时给出可操作的回退
+    ElMessage.warning('浏览器拒绝了剪贴板访问，请点「显示」后手工复制')
+    showRotationPrivate.value = true
+  }
+}
+
+const versionBefore = computed(() => updateForm.version ?? 1)
+const versionAfter = computed(() => Number(versionBefore.value || 1) + 1)
+
+// 版本更迭轨迹：来自 key_operation_record（每次轮换一条）
+const versionHistory = ref([])
+const versionHistoryLoading = ref(false)
+
+async function loadVersionHistory(keyId) {
+  versionHistory.value = []
+  if (!keyId) {
+    return
+  }
+  versionHistoryLoading.value = true
+  try {
+    const response = await listLifecycleOperationRecords({ keyId, pageNum: 1, pageSize: 20 })
+    const rows = response?.rows || response?.data?.rows || response?.data || []
+    versionHistory.value = Array.isArray(rows) ? rows : []
+  } catch (error) {
+    // 拿不到轨迹不该挡住详情本身，但要让用户知道是这个区块没数据
+    versionHistory.value = []
+  } finally {
+    versionHistoryLoading.value = false
+  }
+}
 const updateRules = {
   keyName: [{ required: true, message: '请输入密钥名称', trigger: 'blur' }],
   keyUse: [{ required: true, message: '请输入密钥用途', trigger: 'blur' }]
@@ -485,6 +734,11 @@ const updateRules = {
 const selectedKey = ref(null)
 const detailDialogOpen = ref(false)
 const approvedAutoUpdateRequestId = ref(null)
+// 「申请自动更新权限」弹窗状态（D2：由已删除的权限管理页迁移而来）
+const permissionDialogOpen = ref(false)
+const permissionSubmitting = ref(false)
+const permissionReason = ref('')
+const permissionError = ref('')
 const resultList = ref([])
 const resultLoading = ref(false)
 const resultTotal = ref(0)
@@ -496,7 +750,7 @@ const resultQuery = reactive({
   receiveStatus: ''
 })
 
-const hasPermanentAutoUpdateAccess = computed(() => Number(profile.roleLevel) <= 0)
+const hasPermanentAutoUpdateAccess = computed(() => isAdminLevel(profile.roleLevel))
 const hasTemporaryAutoUpdateAccess = computed(() => Boolean(approvedAutoUpdateRequestId.value))
 const canManageAutoUpdate = computed(() => hasPermanentAutoUpdateAccess.value || hasTemporaryAutoUpdateAccess.value)
 const showAutoUpdateRollback = computed(() => hasTemporaryAutoUpdateAccess.value)
@@ -607,6 +861,61 @@ async function loadAutoUpdateKeys() {
     autoUpdateTotal.value = 0
   } finally {
     autoUpdateLoading.value = false
+  }
+}
+
+/**
+ * 打开「申请自动更新权限」弹窗（D2）。
+ * 该入口由已删除的「权限管理」页迁移而来，原先还要选“生成域/状态域”两类，
+ * 现只剩 AUTO_UPDATE 一项，因此不再需要选择，直接弹窗填理由。
+ */
+function openPermissionDialog() {
+  if (canManageAutoUpdate.value) {
+    proxy.$modal.msgInfo('当前账号已具备自动更新权限，无需申请')
+    return
+  }
+  permissionReason.value = ''
+  permissionError.value = ''
+  permissionDialogOpen.value = true
+}
+
+async function submitPermission() {
+  permissionError.value = ''
+  if (!userStore.token) {
+    permissionError.value = '登录状态已失效，请重新登录后再提交。'
+    return
+  }
+  // 与后端 PermissionRequestServiceImpl 的校验保持一致（理由至少 4 字符），
+  // 前端先拦一次，避免无意义的往返。
+  const reason = permissionReason.value.trim()
+  if (reason.length < 4) {
+    permissionError.value = '申请理由至少 4 个字符。'
+    return
+  }
+  if (!profile.userId) {
+    await ensureProfile()
+  }
+  if (!profile.userId) {
+    permissionError.value = '当前登录用户信息不完整，请刷新资料后重试。'
+    return
+  }
+
+  permissionSubmitting.value = true
+  try {
+    await submitPermissionRequest('AUTO_UPDATE', {
+      userId: Number(profile.userId),
+      userName: profile.userName,
+      originalLevel: Number(profile.roleLevel),
+      requestReason: reason
+    })
+    proxy.$modal.msgSuccess('申请已提交，请等待管理员审批')
+    permissionDialogOpen.value = false
+    permissionReason.value = ''
+    await loadAutoUpdatePermissionState()
+  } catch (error) {
+    permissionError.value = error.message
+  } finally {
+    permissionSubmitting.value = false
   }
 }
 
@@ -722,7 +1031,10 @@ async function openUpdateDialog(row) {
     updateForm.keyName = record.keyName || ''
     updateForm.keyUse = record.keyUse || ''
     updateForm.keyDomain = record.keyDomain || ''
-    updateForm.autoUpdateEnabled = isAutoUpdateEnabled(record.autoUpdate)
+    // 每次打开都从库里取当前版本，并清掉上一次遗留的轮换材料 ——
+    // 否则"上一次点过重新生成、这次只想改名字"会意外触发轮换。
+    updateForm.version = record.version ?? 1
+    resetRotationMaterial()
     updateDialogOpen.value = true
   } catch (error) {
     errorMessage.value = error.message
@@ -742,16 +1054,31 @@ async function submitUpdate() {
 
   updateSubmitting.value = true
   errorMessage.value = ''
+  const rotating = Boolean(rotationMaterial.publicKey)
   try {
-    await updateLifecycleKey({
+    const response = await updateLifecycleKey({
       keyId: updateForm.keyId,
       keyName: normalizeText(updateForm.keyName),
       keyUse: normalizeText(updateForm.keyUse),
       keyDomain: normalizeText(updateForm.keyDomain),
-      autoUpdate: updateForm.autoUpdateEnabled ? '1' : '0'
+      // 只有在用户点了「重新生成本地密钥材料」时才带 uA：
+      // 带上它 → 后端 rotateKey（版本 +1、重新上链）；不带 → updateMetadata（版本不变）。
+      // 绝不能无条件带上库里的旧 uA —— 那会被判成"要轮换"，
+      // 于是"只改个名字"也会白白把版本 +1、在链上多写一笔。
+      ua: rotating ? rotationMaterial.publicKey : undefined
+      // 刻意**不传** autoUpdate：这是"只改元数据"的更新。
+      // 带上它（哪怕值与库里相同）曾让后端判定为"要改自动更新"并拒绝，
+      // 报错却是"没有自动更新操作权限" —— 请求与报错对不上，很难查。
     })
-    proxy.$modal.msgSuccess('密钥更新成功')
+    if (rotating) {
+      const nextVersion = response?.data?.version ?? versionAfter.value
+      proxy.$modal.msgSuccess(`密钥轮换成功，版本已更迭至 v${nextVersion}，正在上链存证`)
+      ElMessage.warning('本地材料已更换：请到「密钥生成」页重新导出并保存该密钥的密钥文件')
+    } else {
+      proxy.$modal.msgSuccess('密钥更新成功（仅元数据，版本不变）')
+    }
     updateDialogOpen.value = false
+    resetRotationMaterial()
     await loadMyKeys()
     if (activeTab.value === 'autoupdate') {
       await loadAutoUpdateKeys()
@@ -822,6 +1149,11 @@ async function showDetail(keyId) {
     const response = await getLifecycleKey(keyId)
     selectedKey.value = response.data || null
     detailDialogOpen.value = Boolean(selectedKey.value)
+    // 版本更迭轨迹单独取一次：详情接口只返回"当前版本"，
+    // 而"更迭过程"（v1 创建 → v2 轮换 → …）在操作记录表里。
+    if (detailDialogOpen.value) {
+      await loadVersionHistory(keyId)
+    }
   } catch (error) {
     errorMessage.value = error.message
   }
@@ -921,6 +1253,22 @@ function formatDateTime(value) {
   return value ? new Date(value).toLocaleString() : '-'
 }
 
+// 版本更迭轨迹里的操作时间：后端返回的是 ISO 串（2026-09-26T17:53:25.000+08:00），
+// 直接渲染出来带 T 和毫秒，与页面其它时间（2026-09-26 17:53:24）不一致，
+// 截图放进文档里很扎眼。这里统一成同样的 `YYYY-MM-DD HH:mm:ss`。
+function formatActionTime(value) {
+  if (!value) {
+    return '-'
+  }
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return String(value)
+  }
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
+    `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
 function statusText(status) {
   const normalized = status == null ? '' : String(status)
   return {
@@ -956,13 +1304,47 @@ function statusTagType(status) {
 }
 
 function roleText(level) {
-  return { 0: '管理员', 1: '中级用户', 2: '普通用户' }[level] || '未知'
+  return roleLevelText(level)
 }
 </script>
 
 <style scoped>
 .lifecycle-page {
   animation: fade-in 0.5s ease;
+}
+
+/* 权限条：D2 把「申请自动更新权限」入口放在页内，替代原先跳转到权限管理页 */
+.permission-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  background: var(--kms-surface-2);
+  border: 1px solid var(--kms-border);
+  border-radius: var(--kms-radius-md, 8px);
+}
+
+.permission-bar-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.permission-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.error-text {
+  color: var(--kms-danger-strong);
+  font-size: var(--kms-font-size-sm, 13px);
+  margin: 0;
 }
 
 .lifecycle-page .mb12 {
@@ -999,6 +1381,67 @@ function roleText(level) {
   gap: 16px 24px;
 }
 
+/* 手动轮换区块：按钮 + 说明 + 新材料状态 */
+.rotation-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.rotation-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #909399;
+}
+
+.rotation-ready {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* 新材料明细：私钥默认打码，可显示/复制 */
+.rotation-material {
+  width: 100%;
+}
+
+.mat-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mat-label {
+  font-size: 12px;
+  color: #606266;
+}
+
+.mat-value {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+/* 版本更迭轨迹 */
+.version-history {
+  margin-top: 18px;
+}
+
+.version-history h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+
 @media (max-width: 768px) {
   .profile-grid,
   .quick-actions {
@@ -1019,37 +1462,35 @@ function roleText(level) {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  background: rgba(255, 255, 255, 0.02);
-  backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 16px;
+  background: var(--kms-surface-1);
+  border: 1px solid var(--kms-border);
+  border-radius: var(--kms-radius);
   padding: 12px;
 }
 .inner-sidenav .nav-item {
   padding: 12px 16px;
-  border-radius: 10px;
+  border-radius: var(--kms-radius-sm);
   cursor: pointer;
-  color: rgba(255, 255, 255, 0.7);
-  transition: all 0.3s;
+  color: var(--kms-text-secondary);
+  transition: all var(--kms-transition);
   display: flex;
   align-items: center;
   gap: 12px;
   font-weight: 500;
 }
 .inner-sidenav .nav-item:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: #fff;
+  background: var(--kms-surface-3);
+  color: var(--kms-text-primary);
 }
 .inner-sidenav .nav-item.active {
-  background: rgba(0, 153, 255, 0.2);
-  color: #00e5ff;
-  border: 1px solid rgba(0, 153, 255, 0.3);
-  box-shadow: 0 4px 12px rgba(0, 153, 255, 0.1);
+  background: var(--kms-brand-subtle);
+  color: var(--kms-brand-text);
+  border: 1px solid var(--kms-brand-border);
 }
 .nav-link {
   margin-top: 16px;
   padding-top: 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  border-top: 1px solid var(--kms-border);
   text-align: center;
 }
 .inner-main-content {
@@ -1066,18 +1507,17 @@ function roleText(level) {
   left: 50%;
   transform: translateX(-50%);
   z-index: 100;
-  background: rgba(20, 25, 35, 0.85);
-  backdrop-filter: blur(20px);
-  border: 1px solid rgba(0, 229, 255, 0.3);
+  background: var(--kms-surface-overlay);
+  border: 1px solid var(--kms-border-strong);
   padding: 12px 24px;
-  border-radius: 30px;
+  border-radius: var(--kms-radius-pill);
   display: flex;
   align-items: center;
   gap: 20px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 16px rgba(0, 153, 255, 0.2);
+  box-shadow: var(--kms-shadow-md);
 }
 .selection-count {
-  color: #00e5ff;
+  color: var(--kms-brand-text);
   font-weight: bold;
 }
 .fab-actions {
@@ -1102,27 +1542,24 @@ function roleText(level) {
   }
 }
 
-/* Fix Element Plus table fixed column transparent background in dark mode */
-:deep(.el-table) .el-table-fixed-column--right {
-  background-color: #141923 !important;
+/* 表格右侧固定列背景：原实现为兼容暗色模式硬编码 #141923，
+   浅色下会形成深色竖条。改为跟随表面层次令牌。 */
+:deep(.el-table) .el-table-fixed-column--right,
+:deep(.el-table) .el-table__fixed-right::before,
+:deep(.el-table) .el-table__fixed::before {
+  background-color: var(--kms-surface-1);
 }
+
 :deep(.el-table) th.el-table-fixed-column--right {
-  background-color: #141923 !important;
+  background-color: var(--kms-surface-2);
 }
-:deep(.el-table) td.el-table-fixed-column--right {
-  background-color: #141923 !important;
-}
-:deep(.el-table__fixed-right::before),
-:deep(.el-table__fixed::before) {
-  background-color: #141923 !important;
-}
+
 :deep(.el-table--striped) .el-table__body tr.el-table__row--striped td.el-table-fixed-column--right {
-  background-color: #1a202d !important;
+  background-color: var(--kms-surface-2);
 }
-:deep(.el-table) .el-table__body tr:hover > td.el-table-fixed-column--right {
-  background-color: #1c2333 !important;
-}
+
+:deep(.el-table) .el-table__body tr:hover > td.el-table-fixed-column--right,
 :deep(.el-table) .el-table__body tr.hover-row > td.el-table-fixed-column--right {
-  background-color: #1c2333 !important;
+  background-color: var(--kms-brand-subtle);
 }
 </style>

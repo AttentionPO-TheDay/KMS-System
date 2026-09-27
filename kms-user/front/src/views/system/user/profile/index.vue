@@ -55,6 +55,7 @@ import userAvatar from "./userAvatar";
 import userInfo from "./userInfo";
 import resetPwd from "./resetPwd";
 import { getUserProfile } from "@/api/system/user";
+import { roleLevelText } from "@/utils/role";
 
 const activeTab = ref("userinfo");
 const state = reactive({
@@ -64,9 +65,8 @@ const state = reactive({
 });
 
 function getRoleName(level) {
-  if (level === 0) return "管理员";
-  if (level === 1) return "中级用户";
-  return "普通用户";
+  // Q2 / D13：角色只剩 0=管理员、2=普通用户
+  return roleLevelText(level);
 }
 
 function getUser() {

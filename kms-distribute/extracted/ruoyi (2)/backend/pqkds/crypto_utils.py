@@ -6,6 +6,11 @@ import numpy as np
 import logging
 from typing import Tuple, Optional, Dict
 from pathlib import Path
+
+# 载荷加解密已统一到 SM4（决策 D3），并保留对历史 AES-256 数据的读取能力。
+# 见 pqkds/sm4_crypto.py 与 backend/tests/test_sm4_crypto.py。
+from .sm4_crypto import InvalidTag, PayloadCipher
+
 logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent.parent
 FALCON_512_DLL = BASE_DIR / "falcon" / "falcon512.dll"
@@ -80,15 +85,24 @@ class FalconCrypto:
         ]
         self.dll.crypto_sign_open.restype = ctypes.c_int
     def _load_falcon_dll(self):
-        dll_paths = []
+        # 路径必须是**候选列表**，不能只试一个。
+        #
+        # 原先 variant==512 时只试 `FALCON_512_DLL`（= BASE_DIR/falcon/falcon512.dll），
+        # 而容器里真实的库在 **BASE_DIR/falcon/falcon512/falcon512.dll**（多一层目录），
+        # 于是 Falcon 在本项目里从来没加载成功过 ——
+        # 症状是"更新 Kyber 密钥"也会连带失败（那条路径顺带要用 Falcon）。
+        # 这里照 KyberCrypto._kyber_library_candidates 的写法改成候选列表。
         if self.variant == 1024:
             dll_paths = [
                 FALCON_1024_DLL_MAIN,
                 FALCON_1024_DLL_SUB,
-                BASE_DIR / "falcon" / "falcon512" / "falcon512.dll"
             ]
         else:
-            dll_paths = [self.dll_path]
+            dll_paths = [
+                FALCON_512_DLL,
+                BASE_DIR / "falcon" / "falcon512" / "falcon512.dll",
+                BASE_DIR / "falcon" / "falcon512" / "falcon512int" / "falcon512.dll",
+            ]
         for dll_path in dll_paths:
             if not os.path.exists(dll_path):
                 continue
@@ -225,24 +239,42 @@ class KyberCrypto:
             raise RuntimeError(f"Kyber decryption failed with code {result}")
         return bytes(ss)
 class AESCrypto:
+    """载荷加解密（历史类名保留，实现已切到 SM4）。
+
+    ⚠️ 类名是历史遗留：**新的载荷密钥是 SM4（16 字节），不再是 AES-256（32 字节）**（决策 D3）。
+    这里保留 `AESCrypto` 这个名字与 `generate_key` / `encrypt` / `decrypt` 三个静态方法的签名，
+    是为了让所有既有调用点（`CryptoUtils`、`kgc_service`、`key_update_service`、
+    `real_crypto_with_fallback` 等）不必逐个改写，同时**自动获得**两件事：
+
+      1. 新生成的密钥就是 SM4（16 字节）；
+      2. 读取历史数据时按**密钥长度**自动分派 —— 32 字节走旧的 AES-256-GCM，
+         16 字节走 SM4-GCM，因此 2026-09 之前写入的密钥池仍能解开。
+
+    分派逻辑与国标向量自测见 `pqkds/sm4_crypto.py` 与 `backend/tests/test_sm4_crypto.py`。
+    新代码请直接用 `sm4_crypto.PayloadCipher`（或 `SM4Crypto`），不要再依赖这个旧名字。
+    """
+
     @staticmethod
     def generate_key() -> bytes:
-        return secrets.token_bytes(32)
+        """生成一把载荷密钥 —— 现在是 SM4 的 16 字节（原为 AES-256 的 32 字节）。"""
+        return PayloadCipher.generate_key()
+
     @staticmethod
     def encrypt(data: bytes, key: bytes) -> Tuple[bytes, bytes]:
-        from Crypto.Cipher import AES
-        cipher = AES.new(key, AES.MODE_GCM)
-        ciphertext, tag = cipher.encrypt_and_digest(data)
-        nonce_tag = cipher.nonce + tag
-        return ciphertext, nonce_tag
+        """加密，返回 `(ciphertext, nonce_tag)`。
+
+        信封布局随算法而定：SM4 是 `iv(12)||tag(16)`，旧 AES 是 `nonce(16)||tag(16)`。
+        解密端按密钥长度即可判断，无需额外的版本字节。
+        """
+        return PayloadCipher.encrypt(data, key)
+
     @staticmethod
     def decrypt(ciphertext: bytes, key: bytes, nonce_tag: bytes) -> bytes:
-        from Crypto.Cipher import AES
-        nonce = nonce_tag[:16]
-        tag = nonce_tag[16:]
-        cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
-        data = cipher.decrypt_and_verify(ciphertext, tag)
-        return data
+        """解密并校验完整性；被篡改时抛 `InvalidTag`。
+
+        兼容历史数据：`key` 为 32 字节时自动走旧 AES-256-GCM 路径。
+        """
+        return PayloadCipher.decrypt(ciphertext, key, nonce_tag)
 class CryptoUtils:
     def __init__(self, falcon_variant=512, kyber_variant=512):
         from .real_crypto_with_fallback import RealFalconSignature, RealKyberKEM

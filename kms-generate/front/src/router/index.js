@@ -78,19 +78,10 @@ const constantRoutes = [
       }
     ]
   },
-  {
-    path: '/permission/request',
-    component: Layout,
-    hidden: false,
-    children: [
-      {
-        path: 'index',
-        component: () => import('@/views/permission/request/index.vue'),
-        name: 'GeneratePermissionRequest',
-        meta: { title: '系统权限审批', icon: 'edit' }
-      }
-    ]
-  },
+  // 按 D2 / 系统归属：生成域不再受理任何权限申请，后端整套生成域权限申请接口
+  // 已随 P1 下线（list / submit / approve / reject / rollback / {id} / delete 全部 404）。
+  // 原权限申请路由、页面与接口封装模块（api/permission/）一并删除，
+  // 权限申请与审批只保留在生命周期域，不在此处重建任何替代入口。
   {
     path: '/generate/keygenerate',
     component: Layout,

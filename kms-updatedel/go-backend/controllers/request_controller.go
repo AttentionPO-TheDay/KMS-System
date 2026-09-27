@@ -8,6 +8,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 
+	"key-service-lifecycle/middleware"
 	"key-service-lifecycle/models"
 	"key-service-lifecycle/service"
 )
@@ -26,7 +27,8 @@ func NewRequestController(lc *service.KeyLifecycleService, idem *service.Idempot
 	}
 }
 
-// updateKeyRequest matches the unified parameter name keyId.
+// updateKeyRequest 说明：user 字段已不再用于身份判定（改由 X-Kms-User 内部头提供），
+// 保留仅为兼容既有压测/脚本请求体。
 type updateKeyRequest struct {
 	KeyId      int64  `json:"keyId"`
 	User       string `json:"user"`
@@ -74,14 +76,21 @@ func (c *RequestController) UpdateKey(ctx *fiber.Ctx) error {
 			"参数解析失败: "+err.Error(), traceId)
 	}
 
-	if req.KeyId == 0 || req.User == "" {
+	if req.KeyId == 0 {
 		return c.failResponse(ctx, fiber.StatusBadRequest, models.StatusInvalidParam,
-			"必填参数缺失(keyId/user)", traceId)
+			"必填参数缺失(keyId)", traceId)
+	}
+
+	// 身份只取自 Java 验证过的内部头；请求体中的 user 不再被信任。
+	verifiedUser, ok := middleware.VerifiedUser(ctx)
+	if !ok {
+		return c.failResponse(ctx, fiber.StatusUnauthorized, models.StatusAuthFailed,
+			"缺少已认证身份("+middleware.VerifiedUserHeader+")，拒绝受理", traceId)
 	}
 
 	idempotencyKey := ctx.Get("Idempotency-Key")
 	if idempotencyKey == "" {
-		idempotencyKey = fmt.Sprintf("UPDATE_KEY:%d:%s", req.KeyId, req.User)
+		idempotencyKey = fmt.Sprintf("UPDATE_KEY:%d:%s", req.KeyId, verifiedUser)
 	}
 	ok, err := c.idempService.CheckAndSetWithKey(idempotencyKey)
 	if err != nil {
@@ -95,7 +104,7 @@ func (c *RequestController) UpdateKey(ctx *fiber.Ctx) error {
 
 	keyInfo := &models.Keymanage{
 		KeyID:      req.KeyId,
-		UserName:   req.User,
+		UserName:   verifiedUser,
 		UA:         req.UA,
 		EncrytType: req.EncrytType,
 		EncrytName: req.EncrytName,
@@ -108,7 +117,7 @@ func (c *RequestController) UpdateKey(ctx *fiber.Ctx) error {
 	payload := service.NewKeyLifecyclePayload(
 		traceId,
 		service.ActionUpdateKey,
-		req.User,
+		verifiedUser,
 		req.Password,
 		req.KeyId,
 		keyInfo,
@@ -122,7 +131,7 @@ func (c *RequestController) UpdateKey(ctx *fiber.Ctx) error {
 
 	elapsed := time.Since(start)
 	fmt.Printf("[INFO][%s] UPDATE_KEY accepted keyId=%d user=%s elapsed=%v\n",
-		traceId, req.KeyId, req.User, elapsed)
+		traceId, req.KeyId, verifiedUser, elapsed)
 
 	return ctx.JSON(fiber.Map{
 		"code":      200,
@@ -146,9 +155,16 @@ func (c *RequestController) BatchUpdateKeys(ctx *fiber.Ctx) error {
 	}
 
 	keyIds := distinctKeyIDs(req.KeyIds)
-	if len(keyIds) == 0 || req.User == "" {
+	if len(keyIds) == 0 {
 		return c.failResponse(ctx, fiber.StatusBadRequest, models.StatusInvalidParam,
-			"必填参数缺失(keyIds/user)", traceId)
+			"必填参数缺失(keyIds)", traceId)
+	}
+
+	// 身份只取自 Java 验证过的内部头；请求体中的 user 不再被信任。
+	verifiedUser, ok := middleware.VerifiedUser(ctx)
+	if !ok {
+		return c.failResponse(ctx, fiber.StatusUnauthorized, models.StatusAuthFailed,
+			"缺少已认证身份("+middleware.VerifiedUserHeader+")，拒绝受理", traceId)
 	}
 
 	batchID := uuid.New().String()
@@ -161,7 +177,7 @@ func (c *RequestController) BatchUpdateKeys(ctx *fiber.Ctx) error {
 	accepted := 0
 	duplicates := 0
 	for index, keyID := range keyIds {
-		idempotencyKey := fmt.Sprintf("BATCH_UPDATE_KEYS:%d:%s", keyID, req.User)
+		idempotencyKey := fmt.Sprintf("BATCH_UPDATE_KEYS:%d:%s", keyID, verifiedUser)
 		if headerKey := ctx.Get("Idempotency-Key"); headerKey != "" {
 			idempotencyKey = fmt.Sprintf("%s:%d", headerKey, keyID)
 		}
@@ -179,7 +195,7 @@ func (c *RequestController) BatchUpdateKeys(ctx *fiber.Ctx) error {
 
 		keyInfo := &models.Keymanage{
 			KeyID:      keyID,
-			UserName:   req.User,
+			UserName:   verifiedUser,
 			UA:         req.UA,
 			EncrytType: req.EncrytType,
 			EncrytName: req.EncrytName,
@@ -192,7 +208,7 @@ func (c *RequestController) BatchUpdateKeys(ctx *fiber.Ctx) error {
 		payload := service.NewKeyLifecyclePayload(
 			traceId,
 			service.ActionUpdateKey,
-			req.User,
+			verifiedUser,
 			req.Password,
 			keyID,
 			keyInfo,
@@ -218,7 +234,7 @@ func (c *RequestController) BatchUpdateKeys(ctx *fiber.Ctx) error {
 
 	elapsed := time.Since(start)
 	fmt.Printf("[INFO][%s] BATCH_UPDATE_KEYS accepted batchId=%s total=%d accepted=%d duplicates=%d user=%s elapsed=%v\n",
-		traceId, batchID, len(keyIds), accepted, duplicates, req.User, elapsed)
+		traceId, batchID, len(keyIds), accepted, duplicates, verifiedUser, elapsed)
 
 	return ctx.JSON(fiber.Map{
 		"code":        200,
@@ -246,14 +262,21 @@ func (c *RequestController) RevokeKey(ctx *fiber.Ctx) error {
 			"参数解析失败: "+err.Error(), traceId)
 	}
 
-	if req.KeyId == 0 || req.User == "" {
+	if req.KeyId == 0 {
 		return c.failResponse(ctx, fiber.StatusBadRequest, models.StatusInvalidParam,
-			"必填参数缺失(keyId/user)", traceId)
+			"必填参数缺失(keyId)", traceId)
+	}
+
+	// 身份只取自 Java 验证过的内部头；请求体中的 user 不再被信任。
+	verifiedUser, ok := middleware.VerifiedUser(ctx)
+	if !ok {
+		return c.failResponse(ctx, fiber.StatusUnauthorized, models.StatusAuthFailed,
+			"缺少已认证身份("+middleware.VerifiedUserHeader+")，拒绝受理", traceId)
 	}
 
 	idempotencyKey := ctx.Get("Idempotency-Key")
 	if idempotencyKey == "" {
-		idempotencyKey = fmt.Sprintf("REVOKE_KEY:%d:%s", req.KeyId, req.User)
+		idempotencyKey = fmt.Sprintf("REVOKE_KEY:%d:%s", req.KeyId, verifiedUser)
 	}
 	ok, err := c.idempService.CheckAndSetWithKey(idempotencyKey)
 	if err != nil {
@@ -267,13 +290,13 @@ func (c *RequestController) RevokeKey(ctx *fiber.Ctx) error {
 
 	keyInfo := &models.Keymanage{
 		KeyID:    req.KeyId,
-		UserName: req.User,
+		UserName: verifiedUser,
 	}
 
 	payload := service.NewKeyLifecyclePayload(
 		traceId,
 		service.ActionRevokeKey,
-		req.User,
+		verifiedUser,
 		req.Password,
 		req.KeyId,
 		keyInfo,
@@ -286,7 +309,7 @@ func (c *RequestController) RevokeKey(ctx *fiber.Ctx) error {
 
 	elapsed := time.Since(start)
 	fmt.Printf("[INFO][%s] REVOKE_KEY accepted keyId=%d user=%s elapsed=%v\n",
-		traceId, req.KeyId, req.User, elapsed)
+		traceId, req.KeyId, verifiedUser, elapsed)
 
 	return ctx.JSON(fiber.Map{
 		"code":      200,

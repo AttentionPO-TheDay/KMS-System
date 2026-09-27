@@ -37,27 +37,23 @@ export function batchGetGenerateChainStatus(keyIds = []) {
   }).then((payload) => payload?.data || {})
 }
 
-export function listGenerateKeys(query = {}) {
+function buildQuerySuffix(query = {}) {
   const search = new URLSearchParams()
   Object.entries(query).forEach(([key, value]) => {
     if (value !== undefined && value !== null && String(value).trim() !== '') {
       search.set(key, String(value).trim())
     }
   })
-  const suffix = search.toString() ? `?${search.toString()}` : ''
-  return requestJson(apiBases.generateApi, `/generate/key/list${suffix}`)
+  return search.toString() ? `?${search.toString()}` : ''
 }
 
-export function listPublicGenerateKeys(query = {}) {
-  const search = new URLSearchParams()
-  Object.entries(query).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && String(value).trim() !== '') {
-      search.set(key, String(value).trim())
-    }
-  })
-  const suffix = search.toString() ? `?${search.toString()}` : ''
-  return requestJson(apiBases.generateApi, `/generate/key/public-list${suffix}`)
+export function listGenerateKeys(query = {}) {
+  return requestJson(apiBases.generateApi, `/generate/key/list${buildQuerySuffix(query)}`)
 }
+
+// listPublicGenerateKeys / `/generate/key/public-list` 已按 D1 删除：
+// 该接口是「查看公共密钥列表」功能的后端入口，会让一个用户读到其他用户的公钥集合。
+// 对应的权限项 PUBLIC_KEY_LIST 也一并从 permission-api.js 与生成域后端移除。
 
 export function getGenerateKey(keyId) {
   return requestJson(apiBases.generateApi, `/generate/key/${keyId}`)

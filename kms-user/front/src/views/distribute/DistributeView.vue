@@ -1,363 +1,384 @@
 <template>
   <section class="page">
-
-    <article class="panel">
-      <div class="panel-head">
-        <div>
-          <h3>当前查询范围</h3>
-          <p class="muted">普通用户仅可查看自己的分发记录，用户名条件不会跨用户生效。</p>
-        </div>
-      </div>
-      <div class="detail-grid scope-grid">
-        <p><strong>用户 ID：</strong>{{ profile.userId || '-' }}</p>
-        <p><strong>用户名：</strong>{{ profile.userName || '-' }}</p>
-      </div>
-    </article>
-
-    <div class="metric-grid mb16">
-      <div class="metric-card glass-panel">
-        <span class="metric-icon">📑</span>
-        <div class="metric-info">
-          <span class="label">符合当前筛选的总记录</span>
-          <strong class="value">{{ total }}</strong>
-        </div>
-      </div>
-      <div class="metric-card glass-panel">
-        <span class="metric-icon">🔍</span>
-        <div class="metric-info">
-          <span class="label">本页加载记录数</span>
-          <strong class="value">{{ records.length }}</strong>
-        </div>
-      </div>
-    </div>
-
-    <article class="panel glass-panel">
-      <el-form :model="filters" inline class="query-form mb16">
-        <el-form-item label="密钥名称">
-          <el-input v-model="filters.keyName" @keyup.enter="handleSearch" placeholder="按密钥名称筛选" clearable />
-        </el-form-item>
-        <el-form-item label="分发类型">
-          <el-select v-model="filters.distributeType" @change="handleSearch" clearable placeholder="全部">
-            <el-option label="初始分发" value="1" />
-            <el-option label="更新分发" value="2" />
-            <el-option label="回收后补发" value="3" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="分发状态">
-          <el-select v-model="filters.distributeStatus" @change="handleSearch" clearable placeholder="全部">
-            <el-option label="待分发" value="0" />
-            <el-option label="分发中" value="1" />
-            <el-option label="分发成功" value="2" />
-            <el-option label="分发失败" value="3" />
-          </el-select>
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="handleSearch">搜索</el-button>
-          <el-button @click="resetFilters">重置</el-button>
-          <el-button type="primary" plain @click="loadRecords">立即刷新</el-button>
-          <el-button :type="autoRefreshEnabled ? 'warning' : 'info'" plain @click="toggleAutoRefresh">
-            {{ autoRefreshEnabled ? '关闭自动刷新（10秒）' : '开启自动刷新（10秒）' }}
-          </el-button>
-          <el-button type="success" plain @click="handleExport">导出结果</el-button>
-        </el-form-item>
-      </el-form>
-      <p class="muted">导出文件：<code>key-distribute-record-时间戳.xlsx</code></p>
-      <p v-if="errorMessage" class="error-text">{{ errorMessage }}</p>
-      
-      <el-table :data="records" class="mt16" empty-text="暂无分发记录">
-        <el-table-column label="记录 ID" prop="recordId" width="90" />
-        <el-table-column label="密钥名称" prop="keyName" min-width="160" />
-        <el-table-column label="用户名" prop="userName" width="120" />
-        <el-table-column label="加密算法" prop="encrytName" width="120" />
-        <el-table-column label="分发类型" width="120">
-          <template #default="scope">{{ typeText(scope.row.distributeType) }}</template>
-        </el-table-column>
-        <el-table-column label="分发状态" width="120">
-          <template #default="scope">
-            <span class="style-badge" :class="`status-${scope.row.distributeStatus || '0'}`">
-              {{ statusText(scope.row.distributeStatus) }}
-            </span>
-          </template>
-        </el-table-column>
-        <el-table-column label="分发时间" prop="distributeTime" width="180" />
-        <el-table-column label="操作" width="100" fixed="right">
-          <template #default="scope">
-            <el-button link type="primary" @click="showDetail(scope.row.recordId)">详情</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-
-      <div v-show="total > 0" class="pagination">
-        <el-pagination
-          background
-          layout="total, prev, pager, next"
-          :total="total"
-          v-model:current-page="filters.pageNum"
-          :page-size="filters.pageSize"
-          @current-change="changePage"
-        />
-      </div>
-    </article>
-
-    <el-dialog :model-value="!!selectedRecord" title="记录详情" width="600px" append-to-body @update:model-value="(val) => { if(!val) selectedRecord = null }" destroy-on-close>
-      <div v-if="selectedRecord" class="detail-grid">
-        <p><strong>记录 ID：</strong>{{ selectedRecord.recordId }}</p>
-        <p><strong>密钥 ID：</strong>{{ selectedRecord.keyId }}</p>
-        <p><strong>用户名：</strong>{{ selectedRecord.userName || '-' }}</p>
-        <p><strong>密钥名称：</strong>{{ selectedRecord.keyName || '-' }}</p>
-        <p><strong>加密算法：</strong>{{ selectedRecord.encrytName || '-' }}</p>
-        <p><strong>分发类型：</strong>{{ typeText(selectedRecord.distributeType) }}</p>
-        <p><strong>分发状态：</strong>
-          <span class="style-badge" :class="`status-${selectedRecord.distributeStatus || '0'}`">
-            {{ statusText(selectedRecord.distributeStatus) }}
-          </span>
+    <header class="page-head">
+      <div>
+        <h2>密钥分发</h2>
+        <p class="page-desc">
+          选择接收节点与自己的非对称密钥，系统会为每个节点和你本人各生成一份对称密钥信封。
+          对称密钥由分发模块生成并保管，你手上只有用自己公钥封好的那一份 —— 有效期 24 小时。
         </p>
-        <p><strong>分发时间：</strong>{{ selectedRecord.distributeTime || '-' }}</p>
-        <p><strong>区块高度：</strong>{{ selectedRecord.blockHeight ?? '-' }}</p>
-        <p><strong>区块链 Hash：</strong>{{ selectedRecord.chainHash || '-' }}</p>
-        <p class="detail-span"><strong>备注：</strong>{{ selectedRecord.remark || '-' }}</p>
       </div>
-      <template #footer>
-        <el-button @click="selectedRecord = null">关闭</el-button>
-      </template>
-    </el-dialog>
+    </header>
+
+    <el-row :gutter="16">
+      <!-- ------------------------------------------------------------------
+           发起分发
+           ------------------------------------------------------------------ -->
+      <el-col :xs="24" :lg="14">
+        <el-card class="panel" shadow="never">
+          <template #header>
+            <div class="panel-head">
+              <span>发起分发</span>
+              <el-tag v-if="nodes.length" size="small" type="info" effect="plain">
+                可选节点 {{ nodes.length }} 个 · 单次上限 {{ maxSelectable }}
+              </el-tag>
+            </div>
+          </template>
+
+          <el-alert
+            v-if="!nodes.length && !nodesLoading"
+            title="你还没有被授权任何节点。请联系管理员在「节点鉴权」里为你授权后再分发。"
+            type="warning"
+            :closable="false"
+            show-icon
+            class="mb16"
+          />
+
+          <el-form label-width="110px" @submit.prevent>
+            <el-form-item label="接收节点">
+              <el-select
+                v-model="form.nodeIds"
+                multiple
+                filterable
+                collapse-tags
+                collapse-tags-tooltip
+                :multiple-limit="maxSelectable"
+                placeholder="选择要接收该对称密钥的节点"
+                class="full-width"
+              >
+                <el-option
+                  v-for="node in nodes"
+                  :key="node.nodeId"
+                  :label="`${node.nodeName}（${node.nodeCode}）`"
+                  :value="node.nodeId"
+                />
+              </el-select>
+            </el-form-item>
+
+            <!--
+              封装体系 → 节点腿算法（2026-09-26）。
+              抗量子不是"每次都必须"，而是与国密并列的一种选择：
+                * 抗量子 → 再选 Kyber 还是 Falcon（用**节点**的抗量子公钥封装）
+                * 国密   → 不额外选算法，节点腿**跟随你在下面选的那把源密钥**
+                           （SM2 源密钥 → 节点腿用国密 SM2；SSCL → 国密 SSCL）
+                           —— 也就是"用你自己生成的密钥"
+            -->
+            <el-form-item label="封装体系">
+              <el-radio-group v-model="form.cryptoFamily">
+                <el-radio-button label="pq">抗量子</el-radio-button>
+                <el-radio-button label="gm">国密</el-radio-button>
+              </el-radio-group>
+            </el-form-item>
+
+            <el-form-item v-if="form.cryptoFamily === 'pq'" label="抗量子算法">
+              <el-radio-group v-model="form.nodeWrappingAlgorithm">
+                <el-radio-button label="kyber_kem">Kyber</el-radio-button>
+                <el-radio-button label="falcon_lattice">Falcon</el-radio-button>
+              </el-radio-group>
+            </el-form-item>
+
+            <el-form-item label="节点封装算法">
+              <el-tag size="small" type="info">{{ effectiveNodeWrappingLabel }}</el-tag>
+            </el-form-item>
+
+            <el-form-item label="我的解封密钥">
+              <el-select
+                v-model="form.sourceKeyId"
+                filterable
+                placeholder="选择给你自己解封用的非对称密钥"
+                class="full-width"
+              >
+                <el-option
+                  v-for="key in usableKeys"
+                  :key="key.keyId"
+                  :label="`${key.keyName}（${key.encrytName}）`"
+                  :value="key.keyId"
+                />
+              </el-select>
+            </el-form-item>
+
+            <el-form-item label="每节点份数">
+              <el-input-number v-model="form.count" :min="1" :max="100" />
+            </el-form-item>
+
+            <el-form-item>
+              <el-button type="primary" :loading="submitting" :disabled="!canSubmit" @click="handleDistribute">
+                分发
+              </el-button>
+              <el-button @click="loadNodes">刷新节点</el-button>
+            </el-form-item>
+          </el-form>
+
+          <el-alert v-if="result" type="success" :closable="false" show-icon class="mt8">
+            <template #title>分发完成：批次 {{ result.batchId }}</template>
+            <div class="result-body">
+              <p>为你本人生成 <strong>{{ result.envelopeCount }}</strong> 份信封，有效期至 {{ formatTime(result.expiresAt) }}。</p>
+              <p>目标节点 {{ result.nodeCount }} 个（节点侧投递尚未接线，批次状态如实记为「部分成功」）。</p>
+</div>
+          </el-alert>
+
+          <el-alert v-if="errorMessage" type="error" :closable="false" show-icon class="mt8">
+            {{ errorMessage }}
+          </el-alert>
+        </el-card>
+      </el-col>
+
+      <!-- ------------------------------------------------------------------
+           批次历史
+           ------------------------------------------------------------------ -->
+      <el-col :xs="24" :lg="10">
+        <el-card class="panel" shadow="never">
+          <template #header>
+            <div class="panel-head">
+              <span>我的分发批次</span>
+              <el-button link type="primary" @click="loadBatches">刷新</el-button>
+            </div>
+          </template>
+
+          <el-table :data="batches" size="small" v-loading="batchesLoading" empty-text="还没有分发记录">
+            <el-table-column label="批次号" prop="batchId" min-width="170" show-overflow-tooltip />
+            <el-table-column label="算法" prop="wrappingAlgorithm" width="76" />
+            <el-table-column label="节点" width="64">
+              <template #default="scope">{{ scope.row.nodeSuccessCount }}/{{ scope.row.nodeCount }}</template>
+            </el-table-column>
+            <el-table-column label="状态" width="88">
+              <template #default="scope">
+                <el-tag size="small" :type="statusType(scope.row.status)">{{ statusText(scope.row.status) }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="时间" width="150">
+              <template #default="scope">{{ formatTime(scope.row.createdAt) }}</template>
+            </el-table-column>
+          </el-table>
+        </el-card>
+      </el-col>
+    </el-row>
   </section>
 </template>
 
 <script setup>
-import { computed, getCurrentInstance, onMounted, onUnmounted, reactive, ref } from 'vue'
-import { apiBases } from '@/config/api-bases'
-import { getDistributeRecord, listDistributeRecords } from '@/services/distribute-api'
-import useUserStore from '@/store/modules/user'
+/**
+ * 密钥分发页（P3 步骤 9）。
+ *
+ * 这里**原来是一个只读的记录查询页**（只能看历史分发记录 + Excel 导出），
+ * 现在重做成真正的分发操作页。
+ *
+ * 三件事由服务端保证，前端只做体验优化：
+ *   1. 节点列表只含**已授权给当前用户**的（D5）；
+ *   2. 可选密钥只列 SM2 / SSCL（D17）—— 真正的拦截在服务端，
+ *      前端过滤只是避免用户白跑一趟；
+ *   3. `user_id` 由服务端从令牌解析，本页**不传也不该传**。
+ */
+import { computed, onMounted, reactive, ref } from 'vue'
+import { ElMessage } from 'element-plus'
+import { listGenerateKeys } from '@/services/generate-api'
+import { distributeToUser, listDistributionBatches, listUserNodes } from '@/services/user-distribution-api'
 
-const { proxy } = getCurrentInstance()
-const userStore = useUserStore()
-const apiBase = apiBases.distributeApi
-const profile = reactive({
-  userId: '',
-  userName: ''
-})
-const filters = reactive({
-  pageNum: 1,
-  pageSize: 10,
-  keyName: '',
-  distributeType: '',
-  distributeStatus: ''
-})
-const records = ref([])
-const selectedRecord = ref(null)
+/** 用户腿允许的算法（D17）。与服务端白名单保持一致。 */
+const USER_LEG_ALGORITHMS = ['SM2', 'SSCL']
+
+const nodes = ref([])
+const nodesLoading = ref(false)
+const maxSelectable = ref(10)
+const keys = ref([])
+const batches = ref([])
+const batchesLoading = ref(false)
+const submitting = ref(false)
 const errorMessage = ref('')
-const total = ref(0)
-const totalPages = computed(() => Math.max(1, Math.ceil(total.value / filters.pageSize)))
-const autoRefreshEnabled = ref(false)
-const AUTO_REFRESH_INTERVAL = 10000
-let autoRefreshTimer = null
+const result = ref(null)
 
-onMounted(async () => {
-  if (userStore.token && (!userStore.id || !userStore.name)) {
-    try {
-      await userStore.getInfo()
-    } catch (error) {
-      errorMessage.value = error.message
-    }
-  }
-  profile.userId = userStore.id || ''
-  profile.userName = userStore.name || ''
-  loadRecords()
+const form = reactive({
+  nodeIds: [],
+  sourceKeyId: null,
+  count: 1,
+  cryptoFamily: 'pq',            // pq = 抗量子；gm = 国密
+  nodeWrappingAlgorithm: 'kyber_kem' // 仅抗量子体系下使用
 })
 
-onUnmounted(() => {
-  stopAutoRefresh()
+/**
+ * 本次分发**实际**用的节点腿算法。
+ *
+ * 国密体系下不额外选算法：节点腿跟随所选源密钥 —— 选了 SM2 密钥就用国密 SM2，
+ * 选了 SSCL 密钥就用国密 SSCL。这既符合"用你自己生成的密钥"的直觉，
+ * 也避免让用户在两个地方重复表达同一件事。
+ */
+const effectiveNodeWrapping = computed(() => {
+  if (form.cryptoFamily === 'pq') {
+    return form.nodeWrappingAlgorithm
+  }
+  const source = usableKeys.value.find((k) => k.keyId === form.sourceKeyId)
+  return String(source?.encrytName || '').toUpperCase() === 'SSCL' ? 'gm_sscl' : 'gm_sm2'
 })
 
-async function loadRecords() {
-  errorMessage.value = ''
-  selectedRecord.value = null
+const effectiveNodeWrappingLabel = computed(() => ({
+  kyber_kem: '抗量子 Kyber',
+  falcon_lattice: '抗量子 Falcon',
+  gm_sm2: '国密 SM2（跟随源密钥）',
+  gm_sscl: '国密 SSCL（跟随源密钥）'
+}[effectiveNodeWrapping.value] || effectiveNodeWrapping.value))
+
+/**
+ * 可用于分发的密钥，两个条件缺一不可：
+ *   1) 算法必须是 SM2 / SSCL（D17 的前端侧过滤，服务端另有强制）；
+ *   2) 状态必须是「有效」。
+ *
+ * 第 2 条是 2026-09-26 补的：此前只按算法过滤，于是**已回收的密钥照样列在
+ * 下拉里**，用户选它、点分发，才吃到一个 400（后端返回 KEY_REVOKED
+ * 「该密钥已被回收，不能作为分发目标」）。后端拦得住，但让用户去点一次
+ * 必然失败的提交，本身就是界面在骗人 —— 回收了还能拿来封装，也会让人
+ * 怀疑回收到底生效没有。
+ */
+const ACTIVE_STATUS = '0'
+const usableKeys = computed(() =>
+  keys.value.filter((key) => {
+    const algorithm = String(key.encrytName || '').toUpperCase()
+    const status = key.status == null ? '' : String(key.status)
+    return USER_LEG_ALGORITHMS.includes(algorithm) && status === ACTIVE_STATUS
+  })
+)
+
+const canSubmit = computed(() => form.nodeIds.length > 0 && Boolean(form.sourceKeyId) && !submitting.value)
+
+async function loadNodes() {
+  nodesLoading.value = true
   try {
-    const data = await listDistributeRecords(filters)
-    records.value = data.rows || []
-    total.value = data.total || 0
+    const data = await listUserNodes()
+    nodes.value = data?.nodes || []
+    maxSelectable.value = data?.maxSelectable || 10
+    // 授权可能被管理员收回：把已不在列表里的选择清掉，
+    // 否则提交时只会拿到一个"越权"错误，而用户看不出是自己选了个失效节点。
+    const allowed = new Set(nodes.value.map((n) => n.nodeId))
+    form.nodeIds = form.nodeIds.filter((id) => allowed.has(id))
   } catch (error) {
-    records.value = []
-    total.value = 0
-    errorMessage.value = error.message
+    errorMessage.value = `加载节点失败：${error.message}`
+  } finally {
+    nodesLoading.value = false
   }
 }
 
-function handleSearch() {
-  filters.pageNum = 1
-  loadRecords()
-}
-
-function resetFilters() {
-  filters.pageNum = 1
-  filters.pageSize = 10
-  filters.keyName = ''
-  filters.distributeType = ''
-  filters.distributeStatus = ''
-  loadRecords()
-}
-
-function handleExport() {
-  errorMessage.value = ''
+async function loadKeys() {
   try {
-    proxy.download('/distribute/record/export', buildExportParams(), `key-distribute-record-${Date.now()}.xlsx`, {
-      baseURL: apiBases.distributeApi
-    })
+    const data = await listGenerateKeys({ pageNum: 1, pageSize: 200 })
+    keys.value = data?.rows || []
   } catch (error) {
-    errorMessage.value = error.message || '导出失败'
+    errorMessage.value = `加载密钥列表失败：${error.message}`
   }
 }
 
-function changePage(pageNum) {
-  filters.pageNum = pageNum
-  loadRecords()
+async function loadBatches() {
+  batchesLoading.value = true
+  try {
+    const data = await listDistributionBatches({ limit: 50 })
+    batches.value = data?.items || []
+  } catch (error) {
+    errorMessage.value = `加载批次失败：${error.message}`
+  } finally {
+    batchesLoading.value = false
+  }
 }
 
-function toggleAutoRefresh() {
-  autoRefreshEnabled.value = !autoRefreshEnabled.value
-  if (autoRefreshEnabled.value) {
-    startAutoRefresh()
-    loadRecords()
+async function handleDistribute() {
+  if (!canSubmit.value) {
     return
   }
-  stopAutoRefresh()
-}
-
-function startAutoRefresh() {
-  stopAutoRefresh()
-  autoRefreshTimer = window.setInterval(() => {
-    loadRecords()
-  }, AUTO_REFRESH_INTERVAL)
-}
-
-function stopAutoRefresh() {
-  if (autoRefreshTimer !== null) {
-    window.clearInterval(autoRefreshTimer)
-    autoRefreshTimer = null
-  }
-}
-
-async function showDetail(recordId) {
+  submitting.value = true
   errorMessage.value = ''
+  result.value = null
   try {
-    const data = await getDistributeRecord(recordId)
-    selectedRecord.value = data.data || null
+    const data = await distributeToUser({
+      sourceKeyId: form.sourceKeyId,
+      nodeIds: form.nodeIds,
+      count: form.count,
+      // 节点腿封装算法由用户选（抗量子 Kyber / Falcon）
+      // 节点腿算法：抗量子体系下取用户选的那个；国密体系下跟随源密钥（见 effectiveNodeWrapping）
+      nodeWrappingAlgorithm: effectiveNodeWrapping.value
+    })
+    result.value = {
+      batchId: data?.batchId,
+      envelopeCount: data?.userEnvelopeCount || 0,
+      nodeCount: data?.nodeResults?.length || 0,
+      expiresAt: data?.expiresAt
+    }
+    ElMessage.success('分发完成')
+    await loadBatches()
   } catch (error) {
+    // 服务端的拒绝理由已经足够具体（越权节点 / 算法不允许 / 超过上限），
+    // 原样展示比前端再编一句更准确。
     errorMessage.value = error.message
+  } finally {
+    submitting.value = false
   }
-}
-
-function typeText(type) {
-  return { 1: '初始分发', 2: '更新分发', 3: '回收后补发', '1': '初始分发', '2': '更新分发', '3': '回收后补发' }[type] || '未知'
 }
 
 function statusText(status) {
-  return { 0: '待分发', 1: '分发中', 2: '分发成功', 3: '分发失败', '0': '待分发', '1': '分发中', '2': '分发成功', '3': '分发失败' }[status] || '未知'
+  return { success: '全部成功', partial: '部分成功', pending: '进行中', failed: '失败' }[status] || status || '-'
 }
 
-function buildExportParams() {
-  return {
-    keyName: normalizeFilter(filters.keyName),
-    distributeType: normalizeFilter(filters.distributeType),
-    distributeStatus: normalizeFilter(filters.distributeStatus)
+function statusType(status) {
+  return { success: 'success', partial: 'warning', pending: 'info', failed: 'danger' }[status] || 'info'
+}
+
+function formatTime(value) {
+  if (!value) {
+    return '-'
   }
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString('zh-CN', { hour12: false })
 }
 
-function normalizeFilter(value) {
-  const text = value == null ? '' : String(value).trim()
-  return text === '' ? undefined : text
-}
+onMounted(async () => {
+  await Promise.all([loadNodes(), loadKeys(), loadBatches()])
+})
 </script>
 
 <style scoped>
-.metric-grid {
-  display: flex;
-  gap: 20px;
-  margin-bottom: 24px;
+.page-head h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
 }
 
-.metric-card {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 24px;
-  background: rgba(255, 255, 255, 0.02);
-  backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 16px;
+.page-desc {
+  margin: 0 0 16px;
+  color: var(--kms-text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
-.metric-icon {
-  font-size: 32px;
-  background: linear-gradient(135deg, rgba(0, 229, 255, 0.3), rgba(0, 153, 255, 0.5));
-  width: 60px;
-  height: 60px;
-  border-radius: 50%;
+.panel {
+  border-radius: 10px;
+}
+
+.panel-head {
   display: flex;
   align-items: center;
-  justify-content: center;
-  box-shadow: 0 0 15px rgba(0, 229, 255, 0.4);
+  justify-content: space-between;
 }
 
-.metric-info {
-  display: flex;
-  flex-direction: column;
+.full-width {
+  width: 100%;
 }
 
-.metric-info .label {
-  font-size: 14px;
-  color: rgba(255, 255, 255, 0.6);
-  margin-bottom: 6px;
-}
-
-.metric-info .value {
-  font-size: 28px;
-  font-weight: 600;
-  color: #00e5ff;
-}
-
-.toolbar {
-  align-items: end;
-}
-
-.toolbar-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.pagination {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 12px;
-  margin-top: 24px;
-}
-
-.detail-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 16px 24px;
-}
-
-.style-badge {
-  padding: 4px 8px;
-  border-radius: 4px;
+.form-hint {
+  margin-top: 4px;
+  color: var(--kms-text-secondary);
   font-size: 12px;
-}
-.status-0 { background: rgba(255, 255, 255, 0.1); color: #fff; }
-.status-1 { background: rgba(0, 153, 255, 0.2); color: #00e5ff; }
-.status-2 { background: rgba(0, 255, 128, 0.2); color: #00ff80; }
-.status-3 { background: rgba(255, 80, 80, 0.2); color: #ff5050; }
-
-.detail-span {
-  grid-column: 1 / -1;
+  line-height: 1.6;
 }
 
-@media (max-width: 768px) {
-  .metric-grid {
-    flex-direction: column;
-  }
+.result-body p {
+  margin: 4px 0;
+  font-size: 13px;
+}
+
+.muted {
+  color: var(--kms-text-secondary);
+}
+
+.mb16 {
+  margin-bottom: 16px;
+}
+
+.mt8 {
+  margin-top: 8px;
 }
 </style>

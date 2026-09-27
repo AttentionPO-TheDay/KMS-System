@@ -112,14 +112,16 @@ public class SecurityConfig {
                 // 注解标记允许匿名访问的url
                 .authorizeHttpRequests((requests) -> {
                     permitAllUrl.getUrls().forEach(url -> requests.antMatchers(url).permitAll());
-                    // 对于登录login 注册register 验证码captchaImage 允许匿名访问
+                    // 对于登录login 注册register 验证码captchaImage 允许匿名访问。
+                    // /internal/** 保留匿名：其控制器自身校验 X-Internal-Token（必须由环境变量注入）。
                     requests.antMatchers("/login", "/register", "/captchaImage", "/internal/**").permitAll()
                             // 静态资源，可匿名访问
                             .antMatchers(HttpMethod.GET, "/", "/*.html", "/**/*.html", "/**/*.css", "/**/*.js",
                                     "/profile/**")
                             .permitAll()
-                            .antMatchers("/swagger-ui.html", "/swagger-resources/**", "/webjars/**", "/*/api-docs",
-                                    "/druid/**")
+                            // 注意：/druid/** 已移出匿名白名单。
+                            // 该控制台会暴露 SQL 与数据源信息，此前 permitAll 叠加默认口令后可被直接访问。
+                            .antMatchers("/swagger-ui.html", "/swagger-resources/**", "/webjars/**", "/*/api-docs")
                             .permitAll()
                             // 除上面外的所有请求全部需要鉴权认证
                             .anyRequest().authenticated();

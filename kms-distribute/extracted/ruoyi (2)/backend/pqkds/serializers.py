@@ -55,8 +55,64 @@ class NodeDetailSerializer(CustomModelSerializer):
             'organization', 'department', 'location',
             'node_type', 'hardware_spec', 'description', 'tags',
             'status', 'partial_key_received', 'last_active', 'create_datetime',
-            'kyber_public_key', 'falcon_public_key'
+            'kyber_public_key', 'falcon_public_key',
+            # 国密（SM2 / SSCL）与安全级别 —— 2026-09-26 补。
+            #
+            # 为什么必须补：节点管理页的「国密密钥」列与「密钥」弹窗都靠这些字段
+            # 判断"已就绪"，而这里原先**没有它们**，于是那一列永远显示"未生成"，
+            # 连带按钮文案不会变成"重新生成"、覆盖告警也不会弹。
+            'gm_public_key', 'sscl_public_key',
+            'kyber_security_level', 'falcon_security_level',
         ]
+
+
+class NodeListSerializer(CustomModelSerializer):
+    """**列表专用**序列化器 —— 不带两个公钥大字段。
+
+    为什么需要单独一个：`NodeDetailSerializer` 会把 `falcon_public_key` 一起返回，
+    而它实测 **7.8MB/节点**（`falcon_public_key` 约 7.8MB、`kyber_public_key` 约 1KB）。
+    节点管理页只为判断"是否已生成"，却因此拉走全部公钥：
+
+        实测（3 个节点）：/nodes/?limit=500 → 23.4MB、0.74s
+
+    节点数一多就会顶到 gunicorn 的 `timeout=120`，页面直接超时。
+
+    改法：列表只回**就绪布尔值**（`*_key_ready`），公钥本身仍由
+    `/nodes/{id}/keys/` 在打开「密钥」弹窗时按需取 —— 那时才真的要看内容。
+
+    前端 `views/nodes/index.vue` 只对这些字段做布尔判断，因此改回布尔值无需改前端逻辑。
+    """
+
+    kyber_key_ready = serializers.SerializerMethodField()
+    falcon_key_ready = serializers.SerializerMethodField()
+    gm_key_ready = serializers.SerializerMethodField()
+    sscl_key_ready = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Node
+        fields = [
+            'id', 'node_id', 'name', 'ip_address', 'port',
+            'phone', 'email', 'contact_person',
+            'organization', 'department', 'location',
+            'node_type', 'hardware_spec', 'description', 'tags',
+            'status', 'partial_key_received', 'last_active', 'create_datetime',
+            'kyber_security_level', 'falcon_security_level',
+            'kyber_key_ready', 'falcon_key_ready', 'gm_key_ready', 'sscl_key_ready',
+        ]
+
+    def get_kyber_key_ready(self, obj):
+        return bool(obj.kyber_public_key)
+
+    def get_falcon_key_ready(self, obj):
+        return bool(obj.falcon_public_key)
+
+    def get_gm_key_ready(self, obj):
+        return bool(obj.gm_public_key)
+
+    def get_sscl_key_ready(self, obj):
+        return bool(obj.sscl_public_key)
+
+
 class NodeUpdateSerializer(CustomModelSerializer):
     class Meta:
         model = Node

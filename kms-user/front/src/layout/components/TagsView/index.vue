@@ -289,13 +289,13 @@ function handleScroll() {
       }
 
       &.active {
-        background-color: #42b983;
-        color: #fff;
-        border-color: #42b983;
+        background-color: var(--kms-brand-fill);
+        color: var(--kms-text-on-brand);
+        border-color: var(--kms-brand);
 
         &::before {
           content: '';
-          background: #fff;
+          background: var(--kms-text-on-brand);
           display: inline-block;
           width: 8px;
           height: 8px;

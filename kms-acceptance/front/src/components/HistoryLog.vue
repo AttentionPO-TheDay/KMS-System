@@ -1,5 +1,5 @@
 <template>
-  <div class="history-wrapper glass-panel">
+  <div class="history-wrapper">
     <div class="panel-header">
       <h2>集群测试流水</h2>
       <span class="badge cyber-badge">{{ runs.length }} LOGS</span>
@@ -41,7 +41,7 @@
         </details>
       </article>
       <div v-if="runs.length === 0" class="empty-state">
-        <div class="empty-icon">📡</div>
+        <div class="empty-icon" aria-hidden="true"></div>
         <p>暂无压测流水，请在左侧发起压测任务</p>
       </div>
     </div>
@@ -73,18 +73,18 @@ function metricLabel(item) {
   padding-right: 8px;
 }
 .history-list::-webkit-scrollbar { width: 6px; }
-.history-list::-webkit-scrollbar-thumb { background: rgba(0, 242, 254, 0.2); border-radius: 4px; }
+.history-list::-webkit-scrollbar-thumb { background: var(--kms-brand-subtle); border-radius: 4px; }
 
 .history-item {
-  background: rgba(14, 25, 41, 0.6);
-  border: 1px solid rgba(0, 242, 254, 0.1);
+  background: var(--kms-surface-1);
+  border: 1px solid var(--kms-brand-subtle);
   border-radius: 12px;
   padding: 20px;
   transition: all 0.3s ease;
 }
 .history-item:hover {
-  border-color: rgba(0, 242, 254, 0.4);
-  box-shadow: 0 4px 20px rgba(0, 242, 254, 0.05);
+  border-color: var(--kms-brand-border);
+  box-shadow: 0 4px 20px var(--kms-brand-subtle);
   transform: translateY(-2px);
 }
 .history-top {
@@ -96,11 +96,11 @@ function metricLabel(item) {
 .history-top h3 {
   margin: 0 0 6px 0;
   font-size: 18px;
-  color: #fff;
+  color: var(--kms-text-primary);
 }
 .timestamp {
   font-size: 12px;
-  color: #64748b;
+  color: var(--kms-text-tertiary);
   font-family: monospace;
 }
 .history-metrics {
@@ -110,7 +110,7 @@ function metricLabel(item) {
   margin-bottom: 16px;
 }
 .metric-box {
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--kms-surface-2);
   padding: 12px 16px;
   border-radius: 8px;
   display: flex;
@@ -118,36 +118,36 @@ function metricLabel(item) {
 }
 .metric-box span {
   font-size: 11px;
-  color: #8b9eb3;
+  color: var(--kms-text-tertiary);
   text-transform: uppercase;
   margin-bottom: 6px;
 }
 .metric-box strong {
   font-family: 'JetBrains Mono', monospace;
   font-size: 20px;
-  color: #e2e8f0;
+  color: var(--kms-text-primary);
 }
 .metric-box small {
   margin-top: 4px;
   font-size: 10px;
-  color: #64748b;
+  color: var(--kms-text-tertiary);
 }
-.text-ok { color: #00f2fe !important; text-shadow: 0 0 10px rgba(0, 242, 254, 0.4); }
-.text-error { color: #ff4d4f !important; text-shadow: 0 0 10px rgba(255, 77, 79, 0.4); }
+.text-ok { color: var(--kms-brand-text) !important; text-shadow: 0 0 10px var(--kms-brand-border); }
+.text-error { color: var(--kms-danger-strong) !important; }
 
 .raw-output {
-  border-top: 1px dashed rgba(255, 255, 255, 0.1);
+  border-top: 1px dashed var(--kms-border);
   padding-top: 12px;
 }
 .raw-output summary {
-  color: #00f2fe;
+  color: var(--kms-brand-text);
   cursor: pointer;
   font-size: 13px;
   user-select: none;
 }
 pre {
-  background: #020617;
-  color: #94a3b8;
+  background: var(--kms-surface-1);
+  color: var(--kms-text-secondary);
   padding: 16px;
   border-radius: 8px;
   font-family: 'JetBrains Mono', monospace;

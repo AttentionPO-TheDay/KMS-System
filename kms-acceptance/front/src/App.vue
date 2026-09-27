@@ -6,10 +6,10 @@
         <span class="pulsing-dot"></span>
         <span class="brand-text">KMS ACCEPTANCE</span>
       </div>
-      <nav class="nav-links glass-panel">
-        <router-link to="/load-test" class="nav-item">📈 压测与回收</router-link>
-        <router-link to="/security" class="nav-item">🛡️ 安全演练</router-link>
-        <router-link to="/others" class="nav-item">⚛️ 机制测试(其他)</router-link>
+      <nav class="nav-links">
+        <router-link to="/load-test" class="nav-item">压测与回收</router-link>
+        <router-link to="/security" class="nav-item">安全演练</router-link>
+        <router-link to="/others" class="nav-item">机制测试（其他）</router-link>
       </nav>
     </header>
 
@@ -44,13 +44,15 @@ onMounted(async () => {
   position: relative;
   z-index: 1;
 }
+/* 装饰性光晕：原为暗色主题下的霓虹辉光。
+   浅色风格下改为极淡的径向渐变，避免形成生硬的纯色块。 */
 .glow-bg {
   position: fixed;
   top: -20vh;
   left: -10vw;
   width: 60vw;
   height: 60vh;
-  background: radial-gradient(circle, rgba(0,242,254,0.08) 0%, rgba(0,0,0,0) 70%);
+  background: radial-gradient(circle at 30% 30%, rgba(22, 119, 255, 0.06) 0%, rgba(22, 119, 255, 0) 70%);
   z-index: -1;
   pointer-events: none;
 }
@@ -71,14 +73,14 @@ onMounted(async () => {
 .pulsing-dot {
   width: 8px;
   height: 8px;
-  background-color: #00f2fe;
+  background-color: var(--kms-brand-fill);
   border-radius: 50%;
-  box-shadow: 0 0 10px #00f2fe, 0 0 20px #00f2fe;
+  box-shadow: 0 0 10px var(--kms-brand), 0 0 20px var(--kms-brand);
   animation: pulse 2s infinite;
 }
 
 .brand-text {
-  color: #00f2fe;
+  color: var(--kms-brand-text);
   letter-spacing: 0.2em;
   font-size: 13px;
   font-weight: 800;
@@ -92,7 +94,7 @@ onMounted(async () => {
 }
 
 .nav-item {
-  color: #94a3b8;
+  color: var(--kms-text-secondary);
   text-decoration: none;
   padding: 10px 24px;
   border-radius: 30px;
@@ -102,15 +104,15 @@ onMounted(async () => {
 }
 
 .nav-item:hover {
-  color: #e2e8f0;
-  background: rgba(255,255,255,0.05);
+  color: var(--kms-text-primary);
+  background: var(--kms-surface-3);
 }
 
 .router-link-active {
-  background: linear-gradient(135deg, rgba(0, 242, 254, 0.2) 0%, rgba(79, 172, 254, 0.1) 100%);
-  color: #00f2fe;
-  box-shadow: 0 4px 12px rgba(0, 242, 254, 0.1);
-  border: 1px solid rgba(0,242,254,0.3);
+  background: var(--kms-brand-subtle);
+  color: var(--kms-brand-text);
+  box-shadow: 0 4px 12px var(--kms-brand-subtle);
+  border: 1px solid var(--kms-brand-border);
 }
 
 .main-content {
@@ -132,8 +134,8 @@ onMounted(async () => {
 }
 
 @keyframes pulse {
-  0% { box-shadow: 0 0 0 0 rgba(0, 242, 254, 0.4); }
-  70% { box-shadow: 0 0 0 10px rgba(0, 242, 254, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(0, 242, 254, 0); }
+  0% { box-shadow: 0 0 0 0 var(--kms-brand-border); }
+  70% { box-shadow: 0 0 0 10px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
 }
 </style>

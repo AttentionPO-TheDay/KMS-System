@@ -170,7 +170,7 @@ const activeAlgo = ref('sm2')
   padding: 24px;
   background-color: transparent;
   min-height: calc(100vh - 84px);
-  color: #fff;
+  color: var(--kms-text-primary);
 }
 
 .page-title {
@@ -179,14 +179,14 @@ const activeAlgo = ref('sm2')
 
 .page-title h1 {
   font-size: 28px;
-  color: #fff;
+  color: var(--kms-text-primary);
   margin: 0 0 8px 0;
   font-weight: 600;
   letter-spacing: 1px;
 }
 
 .page-title .subtitle {
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--kms-text-tertiary);
   margin: 0;
   font-size: 14px;
 }
@@ -196,22 +196,22 @@ const activeAlgo = ref('sm2')
 }
 
 :deep(.el-radio-button__inner) {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.7);
+  background: var(--kms-surface-3);
+  border-color: var(--kms-border);
+  color: var(--kms-text-secondary);
 }
 
 :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
-  background-color: #0099ff;
-  border-color: #0099ff;
-  color: #fff;
-  box-shadow: -1px 0 0 0 #0099ff;
+  background-color: var(--kms-brand-fill);
+  border-color: var(--kms-brand);
+  color: var(--kms-text-primary);
+  box-shadow: -1px 0 0 0 var(--kms-brand);
 }
 
 .glass-card {
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--kms-surface-1);
   backdrop-filter: blur(24px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--kms-surface-3);
   border-radius: 12px;
   padding: 24px;
   margin-bottom: 24px;
@@ -219,8 +219,8 @@ const activeAlgo = ref('sm2')
 }
 
 .glass-card:hover {
-  border-color: rgba(255, 255, 255, 0.15);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  border-color: var(--kms-border-strong);
+  box-shadow: 0 8px 24px var(--kms-shadow);
 }
 
 .mode-card h3 {
@@ -230,7 +230,7 @@ const activeAlgo = ref('sm2')
   font-size: 18px;
   display: flex;
   align-items: center;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--kms-surface-3);
 }
 
 .mode-card h3.title-full::before {
@@ -238,7 +238,7 @@ const activeAlgo = ref('sm2')
   display: inline-block;
   width: 4px;
   height: 16px;
-  background: #f56c6c;
+  background: var(--kms-danger);
   border-radius: 2px;
   margin-right: 10px;
 }
@@ -248,14 +248,14 @@ const activeAlgo = ref('sm2')
   display: inline-block;
   width: 4px;
   height: 16px;
-  background: #67c23a;
+  background: var(--kms-success);
   border-radius: 2px;
   margin-right: 10px;
 }
 
 .mode-desc {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--kms-text-tertiary);
   margin-bottom: 20px;
 }
 
@@ -273,11 +273,11 @@ const activeAlgo = ref('sm2')
 .step-label {
   font-size: 13px;
   font-weight: bold;
-  color: #b1b3b8;
+  color: var(--kms-text-tertiary);
   margin-bottom: 8px;
   display: inline-block;
   padding: 2px 8px;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--kms-surface-3);
   border-radius: 4px;
   align-self: flex-start;
 }
@@ -286,15 +286,15 @@ const activeAlgo = ref('sm2')
   font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
   font-size: 14px;
   line-height: 1.8;
-  color: #d9ecff;
-  background: rgba(0, 0, 0, 0.2);
+  color: var(--kms-text-secondary);
+  background: var(--kms-shadow);
   padding: 12px 16px;
   border-radius: 6px;
-  border-left: 3px solid rgba(0, 153, 255, 0.4);
+  border-left: 3px solid var(--kms-brand-border);
 }
 
 .step-math i {
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--kms-text-tertiary);
   font-style: normal;
   font-size: 13px;
 }
@@ -302,31 +302,31 @@ const activeAlgo = ref('sm2')
 .dispatch-box {
   margin-top: 24px;
   padding: 14px;
-  background: rgba(245, 108, 108, 0.1);
-  border: 1px dashed rgba(245, 108, 108, 0.4);
+  background: var(--kms-danger-subtle);
+  border: 1px dashed var(--kms-danger-border);
   border-radius: 8px;
-  color: #f89898;
+  color: var(--kms-danger-strong);
   font-size: 15px;
   font-weight: 500;
   text-align: center;
 }
 
 .dispatch-box.light {
-  background: rgba(103, 194, 58, 0.1);
-  border-color: rgba(103, 194, 58, 0.4);
-  color: #b3e19d;
+  background: var(--kms-success-subtle);
+  border-color: var(--kms-success-border);
+  color: var(--kms-success-strong);
 }
 
 /* 回收部分 */
 .revoke-card {
   margin-top: 10px;
-  background: linear-gradient(135deg, rgba(20, 20, 25, 0.8), rgba(30, 25, 30, 0.8));
-  border: 1px solid rgba(245, 108, 108, 0.15);
+  background: linear-gradient(135deg, var(--kms-surface-1), var(--kms-surface-2));
+  border: 1px solid var(--kms-danger-border);
 }
 
 .revoke-title {
   margin-top: 0;
-  color: #f56c6c;
+  color: var(--kms-danger-strong);
   font-size: 18px;
   margin-bottom: 20px;
   display: flex;
@@ -338,7 +338,7 @@ const activeAlgo = ref('sm2')
   display: inline-block;
   width: 4px;
   height: 16px;
-  background: #f56c6c;
+  background: var(--kms-danger);
   border-radius: 2px;
   margin-right: 10px;
 }
@@ -369,13 +369,13 @@ const activeAlgo = ref('sm2')
 
 .r-text strong {
   font-size: 15px;
-  color: #e0e0e0;
+  color: var(--kms-text-primary);
   margin-bottom: 6px;
 }
 
 .r-text span {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--kms-text-tertiary);
   line-height: 1.5;
 }
 
@@ -383,6 +383,6 @@ const activeAlgo = ref('sm2')
   flex: 0 0 40px;
   justify-content: center;
   font-size: 24px;
-  color: rgba(255, 255, 255, 0.2);
+  color: var(--kms-border);
 }
 </style>

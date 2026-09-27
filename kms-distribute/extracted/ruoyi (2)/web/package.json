@@ -15,6 +15,7 @@
 		"@fast-crud/ui-element": "^1.19.2",
 		"@fast-crud/ui-interface": "^1.19.2",
 		"@iconify/vue": "^5.0.0",
+		"@vxe-ui/core": "^4.4.24",
 		"@vitejs/plugin-vue-jsx": "^3.0.0",
 		"@wangeditor/editor": "^5.1.23",
 		"@wangeditor/editor-for-vue": "^5.1.12",

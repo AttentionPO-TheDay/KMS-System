@@ -81,20 +81,41 @@ export const constantRoutes = [
         path: 'index',
         name: 'Distribute',
         component: () => import('@/views/distribute/DistributeView.vue'),
-        meta: { title: '分发下载', icon: 'download' }
+        // 改名为「密钥分发」：它已经从"只读记录页"变成真正的分发操作页（P3 步骤 9）
+        meta: { title: '密钥分发', icon: 'download' }
       }
     ]
   },
   {
-    path: '/permissions',
+    // 对称密钥查看（P3 步骤 9）：分发给我本人的信封。
+    // 服务端只存密文，明文对称密钥由分发模块持有，用户只能用自己的密钥文件解开。
+    path: '/symmetric-keys',
     component: Layout,
     hidden: false,
     children: [
       {
         path: 'index',
-        name: 'Permissions',
-        component: () => import('@/views/permissions/PermissionView.vue'),
-        meta: { title: '权限管理', icon: 'lock' }
+        name: 'SymmetricKeys',
+        component: () => import('@/views/distribute/SymmetricKeysView.vue'),
+        // 图标用 lock：原先写的 'key' 在本前端的图标集里**不存在**
+        // （src/assets/icons/svg 下没有 key.svg），于是这一项在侧边栏里没有图标。
+        // 注意别再用未登记的图标名 —— 缺图标不报错，只是"那个位置空着"，很难发现。
+        meta: { title: '对称密钥查看', icon: 'lock' }
+      }
+    ]
+  },
+  {
+    // 我的操作日志：密钥操作记录 + 系统操作日志 + 登录日志，全部由服务端
+    // 按令牌中的 user_id 强制过滤，前端不传用户号（见 D14 / Q8）。
+    path: '/my-logs',
+    component: Layout,
+    hidden: false,
+    children: [
+      {
+        path: 'index',
+        name: 'MyLogs',
+        component: () => import('@/views/logs/MyLogsView.vue'),
+        meta: { title: '我的操作日志', icon: 'log' }
       }
     ]
   },

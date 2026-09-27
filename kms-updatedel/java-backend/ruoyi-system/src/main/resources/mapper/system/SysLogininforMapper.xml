@@ -33,6 +33,14 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
 			<if test="userName != null and userName != ''">
 				AND user_name like concat('%', #{userName}, '%')
 			</if>
+			<!--
+			  精确匹配登录名。理由同 SysOperLogMapper：userName 走 LIKE，
+			  "yx" 会连 "yx2" 的登录记录一起返回。用户侧「我的操作日志」用本条件，
+			  值由服务端从令牌取，前端不可传。
+			-->
+			<if test="params.userNameExact != null and params.userNameExact != ''">
+				AND user_name = #{params.userNameExact}
+			</if>
 			<if test="params.beginTime != null and params.beginTime != ''"><!-- 开始时间检索 -->
 				AND login_time &gt;= #{params.beginTime}
 			</if>

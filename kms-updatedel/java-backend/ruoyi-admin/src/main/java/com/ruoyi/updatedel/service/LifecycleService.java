@@ -6,6 +6,8 @@ import com.ruoyi.updatedel.domain.ChainSyncEvent;
 import com.ruoyi.updatedel.domain.KeyStatus;
 import com.ruoyi.updatedel.domain.Keymanage;
 import com.ruoyi.updatedel.mapper.KeymanageMapper;
+import com.ruoyi.common.crypto.KgcMasterSecret;
+import com.ruoyi.common.crypto.KeyMaterialEpoch;
 import com.ruoyi.updatedel.service.generator.EccKeyGenerator;
 import com.ruoyi.updatedel.service.generator.SsclKeyGenerator;
 import java.nio.charset.StandardCharsets;
@@ -19,8 +21,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-import javax.crypto.KeyGenerator;
-import javax.crypto.SecretKey;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -97,9 +97,35 @@ public class LifecycleService {
         key.setChainStatus("0");
         key.setAutoUpdate(normalizeAutoUpdate(key.getAutoUpdate()));
         key.setKeyValue(generateKeyValue(key));
+        // 材料是刚生成的 → 打上当前 ms 版本与算法版本，并标记为可用于解密
+        stampMaterialEpoch(key);
         keymanageMapper.insertkeymanage(key);
         log.info("createKey 成功: keyId={}, encrytName={}", key.getKeyId(), key.getEncrytName());
         return key;
+    }
+
+    /**
+     * 给一条**新签发或刚重新生成材料**的记录打上版本标记。
+     *
+     * <p>三件事一起做，缺一不可：
+     * <ol>
+     *   <li>{@code msKeyId} —— 用当前启用版本的 ms 签发，日后按它复算 P_A；</li>
+     *   <li>{@code algorithmVersion} —— 当前算法参数版本（SSCL 域参数已改为确定性派生）；</li>
+     *   <li>{@code keyMaterialState = active} —— 材料是新的，用户会拿到与之配套的
+     *       {@code d_a}，因此可用于解密（与历史那批 {@code legacy_unusable} 区分开）。</li>
+     * </ol>
+     * 只在字段为空时写入，避免覆盖调用方显式指定的值（例如导入历史记录时）。
+     */
+    private void stampMaterialEpoch(Keymanage key) {
+        if (isBlank(key.getMsKeyId())) {
+            key.setMsKeyId(KgcMasterSecret.activeId());
+        }
+        if (isBlank(key.getAlgorithmVersion())) {
+            key.setAlgorithmVersion(KeyMaterialEpoch.ALGORITHM_V1_DERIVED);
+        }
+        if (isBlank(key.getKeyMaterialState())) {
+            key.setKeyMaterialState(KeyMaterialEpoch.STATE_ACTIVE);
+        }
     }
 
     public Optional<Keymanage> findById(Long keyId) {
@@ -111,8 +137,25 @@ public class LifecycleService {
         Keymanage key = requireExistingKey(keyId);
         result.setBaseInfo(key);
 
-        String distSql = "SELECT distribute_time, user_name, distribute_type, distribute_status " +
-                         "FROM key_distribute_record WHERE key_id = ? ORDER BY distribute_time DESC";
+        // 分发足迹改读**新链路**的批次表（P5 第 1 步：先迁移消费方，再删旧表）。
+        //
+        // 旧链路 `kms.key_distribute_record` 是被 P5 删除的对象，但它同时是这个
+        // "密钥关联分析"里分发足迹的数据源 —— **先删就会让这里立刻报错**，
+        // 这正是计划强调"顺序很重要"的原因。
+        //
+        // 新表在 `falcon_kds` 库（分发模块所有）。同实例跨库查询在这里是可接受的：
+        // 两库一直同实例部署，且 `source_key_id` 本就是逻辑引用 `kms.keymanage.key_id`。
+        //
+        // 字段名沿用旧的（distribute_time / user_name / distribute_type / distribute_status），
+        // 这样 DTO 与前端都不用改 —— 消费方迁移应当对上层透明。
+        String distSql = "SELECT b.create_datetime AS distribute_time, " +
+                         "COALESCE(u.user_name, CONCAT('用户', b.user_id)) AS user_name, " +
+                         "b.wrapping_algorithm AS distribute_type, " +
+                         "b.status AS distribute_status " +
+                         "FROM falcon_kds.dvadmin_pqkds_distribution_batches b " +
+                         "LEFT JOIN sys_user u ON u.user_id = b.user_id " +
+                         "WHERE b.source_key_id = ? " +
+                         "ORDER BY b.create_datetime DESC";
         List<Map<String, Object>> distRecords = jdbcTemplate.queryForList(distSql, keyId);
         result.setDistributeFootprints(distRecords);
 
@@ -122,6 +165,66 @@ public class LifecycleService {
         result.setOperationTrails(opRecords);
 
         return result;
+    }
+
+    /**
+     * 判断本次请求是否要求重新生成密钥材料（真正的轮换）。
+     * <p>
+     * 判据：调用方是否提供了新的用户部分公钥 {@code ua}。
+     * <p>
+     * 背景：前端「更新」只提交元数据（keyName / keyUse / keyDomain / autoUpdate），
+     * 不携带 ua。而此前的控制器逻辑一旦发现 keyName 等字段非空，
+     * 就会跳过「仅自动更新」分支、走进完整轮换，导致：
+     *   1. 元数据实际上没有被更新；
+     *   2. 服务端用自己生成的随机 w 重新计算部分密钥，而客户端持有的是另一个本地私钥分量，
+     *      结果返回的新密钥材料客户端无法合成出可用私钥（更新后密钥不可用）；
+     *   3. version 每次自增，但用户拿不到对应的新私钥。
+     * <p>
+     * 因此这里按「是否提供新 ua」显式分流：
+     * 提供新 ua → 真轮换；未提供 → 仅更新元数据，version 保持不变。
+     */
+    public boolean requiresRotation(Keymanage request) {
+        if (request == null) {
+            return false;
+        }
+        String ua = request.getUa();
+        return ua != null && !ua.trim().isEmpty();
+    }
+
+    /**
+     * 仅更新密钥元数据，<b>不</b>重新生成密钥材料、<b>不</b>改变 version。
+     * <p>
+     * 允许更新的字段：key_name / key_use / key_domain / auto_update。
+     * 加密相关字段（ua / encrytType / encrytName / keyValue）为保证密钥一致性不予修改，
+     * 如需更换密钥材料请走 {@link #rotateKey} 并携带新的 ua。
+     *
+     * @param request 至少要包含 keyId
+     * @return 更新后的密钥
+     */
+    @Transactional
+    public Keymanage updateMetadata(Keymanage request) {
+        Keymanage current = requireExistingKey(request.getKeyId());
+        if (KeyStatus.REVOKED.getCode().equals(current.getStatus())) {
+            throw new IllegalStateException("该密钥已被回收，无法修改");
+        }
+
+        Keymanage patch = new Keymanage();
+        patch.setKeyId(current.getKeyId());
+        patch.setKeyName(valueOrDefault(request.getKeyName(), current.getKeyName()));
+        patch.setKeyUse(valueOrDefault(request.getKeyUse(), current.getKeyUse()));
+        patch.setKeyDomain(valueOrDefault(request.getKeyDomain(), current.getKeyDomain()));
+        patch.setAutoUpdate(normalizeAutoUpdate(valueOrDefault(request.getAutoUpdate(), current.getAutoUpdate())));
+        patch.setUpdTime(now());
+
+        // 加密相关字段保持原值，避免被请求体中的空值或错误值覆盖
+        patch.setEncrytType(current.getEncrytType());
+        patch.setEncrytName(current.getEncrytName());
+        patch.setUserName(current.getUserName());
+        patch.setVersion(current.getVersion());
+
+        keymanageMapper.updatekeymanage(patch);
+        log.info("updateMetadata 完成: keyId={}, version 保持 {}", current.getKeyId(), current.getVersion());
+        return requireExistingKey(current.getKeyId());
     }
 
     @Transactional
@@ -146,6 +249,12 @@ public class LifecycleService {
         next.setChainStatus("0");
         next.setUpdTime(now());
         next.setKeyValue(generateKeyValue(next));
+        // 轮换会**重新生成密钥材料**，所以版本标记必须**强制覆盖**（不能沿用旧值）：
+        // 新材料的 P_A 是用当前启用版本的 ms 算的，且用户会拿到配套的新 d_a，
+        // 因此它重新变为"可用于解密"。
+        next.setMsKeyId(KgcMasterSecret.activeId());
+        next.setAlgorithmVersion(KeyMaterialEpoch.ALGORITHM_V1_DERIVED);
+        next.setKeyMaterialState(KeyMaterialEpoch.STATE_ACTIVE);
         String normalizedActionSource = normalizeActionSource(actionSource);
         applyUpdateProofMetadata(next, request, current, normalizedActionSource);
 
@@ -291,11 +400,15 @@ public class LifecycleService {
         String encrytType = key.getEncrytType() == null ? "" : key.getEncrytType().trim();
         String encrytName = key.getEncrytName() == null ? "" : key.getEncrytName().trim().toUpperCase();
 
-        // AES symmetric encryption
-        if ((encrytType.contains("对称") || "AES".equals(encrytName)) && "AES".equals(encrytName)) {
-            log.info("generateKeyValue: AES 密钥生成, keyId={}", key.getKeyId());
-            return generateAesKey();
-        }
+        // AES 分支已按 D12 删除。
+        // 它原本会为 encryt_name='AES' 的密钥现生成一把 AES-256 密钥并**明文写进 key_value**。
+        // 删除的理由：
+        //   1. 架构上「对称密钥完全归分发模块，且统一用 SM4」，主 KMS 不该再养一套对称密钥生成；
+        //   2. 界面上根本走不到它 —— 没有任何前端页面能产生 AES 密钥；
+        //   3. 运行库里只有 1 行演示数据能触达它（key_id=1，key_value 就是明文 's3cr3tK3y'），
+        //      该行已由 22_*.sql 清理。
+        // 现在 AES 会落到下面的兜底分支显式失败，而不是静默产生明文对称密钥。
+
         // SM2 certificateless asymmetric encryption
         if ((encrytType.contains("非对称") || "SM2".equals(encrytName)) && "SM2".equals(encrytName)) {
             log.info("generateKeyValue: SM2 密钥生成, keyId={}, ua={}", key.getKeyId(),
@@ -313,29 +426,25 @@ public class LifecycleService {
             }
             return ssclKeyGenerator.generate(key.getUserName(), key.getUa(), key.getKeyDomain());
         }
-        // Fallback — unrecognized algorithm, log warning
-        log.warn("generateKeyValue: 未匹配到算法类型, keyId={}, encrytType='{}', encrytName='{}', 将返回旧密钥值",
-            key.getKeyId(), key.getEncrytType(), key.getEncrytName());
-        return key.getKeyValue();
+        // 未识别算法：此前会静默返回旧密钥值，但调用方已把 version+1 落库，
+        // 结果是「版本号变了、密钥材料没变」，数据库与实际密钥不再一致且无任何报错。
+        // 现改为显式失败，避免产生不一致数据（例如 PQ 类算法不在此处支持）。
+        throw new IllegalStateException(String.format(
+            "该算法不支持在生命周期侧重新生成密钥材料，拒绝更新以避免版本与密钥不一致: keyId=%s, encrytType='%s', encrytName='%s'",
+            key.getKeyId(), key.getEncrytType(), key.getEncrytName()));
     }
 
-    private String generateAesKey() {
-        try {
-            KeyGenerator keyGenerator = KeyGenerator.getInstance("AES");
-            keyGenerator.init(256);
-            SecretKey secretKey = keyGenerator.generateKey();
-            byte[] bytes = secretKey.getEncoded();
-            StringBuilder builder = new StringBuilder();
-            for (byte current : bytes) {
-                builder.append(String.format("%02x", current));
-            }
-            return builder.toString();
-        } catch (NoSuchAlgorithmException ex) {
-            throw new IllegalStateException("AES 密钥生成失败", ex);
-        }
-    }
-
+    /**
+     * 发布单条上链任务。
+     * <p>
+     * 注意：本方法此前<strong>未</strong>检查 chainSyncEnabled，而列表重载检查了，
+     * 导致关闭上链同步时单条更新/回收仍会投递任务，行为不一致。
+     * 现与列表重载保持同一判据。
+     */
     private void publishChainEvent(String actionType, Keymanage keymanage) {
+        if (!chainSyncEnabled || keymanage == null) {
+            return;
+        }
         try {
             kafkaTemplate.send(chainTaskTopic, objectMapper.writeValueAsString(new ChainSyncEvent(actionType, Collections.singletonList(keymanage))));
         } catch (JsonProcessingException ex) {
@@ -376,6 +485,30 @@ public class LifecycleService {
         });
     }
 
+    /**
+     * 本次请求是否**真的**改变了自动更新开关。
+     *
+     * 为什么需要这个判断（2026-09-24 用户反馈的逻辑错误）：
+     * 权限拦截原先写成"只要请求里带了非空的 autoUpdate 就要自动更新权限"。
+     * 而两个前端的"更新密钥"弹窗都会把开关的当前值一起提交
+     * （`autoUpdate: '1'/'0'`，恒非空），于是**只想改密钥名称的用户**
+     * 会被拦下，报错还是"当前用户没有自动更新操作权限" —— 与他在做的事完全对不上。
+     *
+     * 现在只有在**值确实发生变化**时才要求权限：
+     * 既修掉了误拦，也保留了原本的防绕过意图 ——
+     * 想借"顺手改个元数据"把自动更新打开，依然会被拦住。
+     *
+     * 比较用 normalizeAutoUpdate 归一化后再比，避免 'true'/'enabled'/'1' 这类
+     * 等价写法被误判成"变了"。
+     */
+    public boolean changesAutoUpdate(Keymanage current, String requested) {
+        if (requested == null || requested.trim().isEmpty()) {
+            return false;
+        }
+        String currentValue = current == null ? null : current.getAutoUpdate();
+        return !normalizeAutoUpdate(requested).equals(normalizeAutoUpdate(currentValue));
+    }
+
     private String normalizeAutoUpdate(String autoUpdate) {
         if (autoUpdate == null || autoUpdate.trim().isEmpty()) {
             return "0";
@@ -392,6 +525,11 @@ public class LifecycleService {
 
     private String valueOrDefault(String candidate, String fallback) {
         return candidate == null || candidate.trim().isEmpty() ? fallback : candidate;
+    }
+
+    /** 空串判定（含全空白）。与 generate 域的同名helper保持一致语义。 */
+    private boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
     }
 
     private String joinProofParts(Object... parts) {

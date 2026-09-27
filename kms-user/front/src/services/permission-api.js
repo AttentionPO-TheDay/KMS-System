@@ -27,13 +27,18 @@ function withFeatureMeta(featureCode, payload) {
   }
 }
 
+/**
+ * 可申请的权限项。
+ *
+ * D1：用户侧 `PUBLIC_KEY_LIST`（查看公共密钥列表）已**整功能删除** ——
+ * 该功能会让一个用户看到其他用户的公钥集合，与「密钥不外泄」的目标冲突。
+ * 随之删除的还有：工作台的权限卡片项、生成页的「公钥列表」Tab、
+ * 独立的「权限管理」页（申请入口改为「更新与回收」页的按钮 + 弹窗），
+ * 以及生成域后端的整套权限申请接口（kms-generate）。
+ *
+ * 因此现在只剩 AUTO_UPDATE 一项，申请入口在「更新与回收」页。
+ */
 export const permissionFeatures = {
-  PUBLIC_KEY_LIST: {
-    system: 'generate',
-    label: '查看公共密钥列表',
-    requestLevel: 1,
-    apiBase: apiBases.generateApi
-  },
   AUTO_UPDATE: {
     system: 'lifecycle',
     label: '密钥自动更新',
@@ -42,8 +47,17 @@ export const permissionFeatures = {
   }
 }
 
-export function submitPermissionRequest(featureCode, payload) {
+/** 取权限项元数据；未登记的 featureCode 直接抛错，避免出现 undefined.apiBase 这类隐晦失败 */
+function requireFeature(featureCode) {
   const feature = permissionFeatures[featureCode]
+  if (!feature) {
+    throw new Error(`未登记的权限项: ${featureCode}`)
+  }
+  return feature
+}
+
+export function submitPermissionRequest(featureCode, payload) {
+  const feature = requireFeature(featureCode)
   return request(feature.apiBase, '/permission/request/submit', {
     method: 'POST',
     body: JSON.stringify({
@@ -58,7 +72,7 @@ export function submitPermissionRequest(featureCode, payload) {
 }
 
 export function listPermissionRequests(featureCode, userId) {
-  const feature = permissionFeatures[featureCode]
+  const feature = requireFeature(featureCode)
   const query = userId ? `?userId=${encodeURIComponent(userId)}` : ''
   return request(feature.apiBase, `/permission/request/list${query}`).then((payload) => {
     const filteredRows = (payload.rows || []).filter(r => r.featureCode === featureCode)
@@ -76,7 +90,7 @@ export async function getLatestApprovedTemporaryRequest(featureCode, userId) {
 }
 
 export function rollbackPermission(featureCode, requestId) {
-  const feature = permissionFeatures[featureCode]
+  const feature = requireFeature(featureCode)
   return request(feature.apiBase, `/permission/request/rollback/${requestId}`, {
     method: 'PUT'
   })

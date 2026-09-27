@@ -19,7 +19,7 @@
           </el-button>
         </el-form-item>
       </el-form>
-      <div v-if="fetchError" class="mt-10" style="color: #F56C6C; font-size: 13px;">{{ fetchError }}</div>
+      <div v-if="fetchError" class="mt-10" style="color: var(--kms-danger-strong); font-size: 13px;">{{ fetchError }}</div>
     </el-card>
 
     <div class="main-flow mt-20" v-if="hasStarted">
@@ -33,7 +33,7 @@
       <div class="flow-stages mt-30">
         <!-- Step 1: Pre-Condition -->
         <transition name="fade-slide">
-          <el-card class="glass-card stage-card" style="border-left: 4px solid #909399">
+          <el-card class="glass-card stage-card" style="border-left: 4px solid var(--kms-text-secondary)">
             <template #header>
               <div class="card-header">
                 <h3><el-icon><Collection /></el-icon> 前置：选取待轮换的目标密钥</h3>
@@ -53,11 +53,11 @@
                 <span v-else style="color:#666;">运行获取后展示...</span>
               </div>
               <div class="label mt-10">需要被废除的老旧公共特征值 (旧 uA):</div>
-              <div class="value auth" style="color: #909399">
+              <div class="value auth" style="color: var(--kms-text-secondary)">
                 {{ step1Data.oldKeyInfo ? (step1Data.oldKeyInfo.uA || step1Data.oldKeyInfo.ua) : '运行获取后展示...' }}
               </div>
               <div v-if="step1Data.oldKeyInfo" class="label mt-10">旧密钥版本:</div>
-              <div v-if="step1Data.oldKeyInfo" class="value" style="color: #E6A23C">
+              <div v-if="step1Data.oldKeyInfo" class="value" style="color: var(--kms-warning-strong)">
                 Version {{ step1Data.oldKeyInfo.version || 1 }} | 状态: {{ step1Data.oldKeyInfo.status || '-' }}
               </div>
             </div>
@@ -66,7 +66,7 @@
 
         <!-- Step 2: New Random -->
         <transition name="fade-slide">
-          <el-card class="glass-card stage-card mt-20" style="border-left: 4px solid #409EFF">
+          <el-card class="glass-card stage-card mt-20" style="border-left: 4px solid var(--kms-brand)">
             <template #header>
               <div class="card-header">
                 <h3><el-icon><Edit /></el-icon> 第一阶段：客户端销毁旧隐秘，生成新份额</h3>
@@ -90,7 +90,7 @@
 
         <!-- Step 3: KGC Communication -->
         <transition name="fade-slide">
-          <el-card class="glass-card stage-card mt-20" style="border-left: 4px solid #E6A23C">
+          <el-card class="glass-card stage-card mt-20" style="border-left: 4px solid var(--kms-warning)">
             <template #header>
               <div class="card-header">
                 <h3><el-icon><Upload /></el-icon> 第二阶段：KGC 更新协调并签发新物料</h3>
@@ -115,18 +115,18 @@
                 <pre v-else style="color:#666">等待更新确认...</pre>
               </div>
 
-              <div v-if="step3Data.responseObj && step3Data.responseObj.returnedMaterial && (step3Data.responseObj.returnedMaterial.kgcRandomW || step3Data.responseObj.returnedMaterial.kgcMx)" class="math-steps-box mt-15" style="background: rgba(230,162,60,0.1); padding: 15px; border-radius: 8px; border: 1px dashed rgba(230,162,60,0.4);">
-                <div class="label" style="color: #E6A23C; font-weight: bold; margin-bottom: 8px;">🔍 KGC 计算黑盒揭秘 (内部中间变量):</div>
+              <div v-if="step3Data.responseObj && step3Data.responseObj.returnedMaterial && (step3Data.responseObj.returnedMaterial.kgcRandomW || step3Data.responseObj.returnedMaterial.kgcMx)" class="math-steps-box mt-15" style="background: var(--kms-warning-subtle); padding: 15px; border-radius: 8px; border: 1px dashed var(--kms-warning-border);">
+                <div class="label" style="color: var(--kms-warning-strong); font-weight: bold; margin-bottom: 8px;">🔍 KGC 计算黑盒揭秘 (内部中间变量):</div>
                 <div v-if="step3Data.responseObj.returnedMaterial.kgcRandomW">
-                  <div style="font-family: monospace; font-size: 12px; color: #d4d4d4; margin-bottom: 5px; word-break: break-all;">
+                  <div style="font-family: monospace; font-size: 12px; color: var(--kms-text-primary); margin-bottom: 5px; word-break: break-all;">
                     > [SM2] KGC侧临时生成的新轮次随机构件 (w): {{ step3Data.responseObj.returnedMaterial.kgcRandomW }}
                   </div>
-                  <div style="font-family: monospace; font-size: 12px; color: #d4d4d4; margin-bottom: 5px; word-break: break-all;">
+                  <div style="font-family: monospace; font-size: 12px; color: var(--kms-text-primary); margin-bottom: 5px; word-break: break-all;">
                     > [SM2] KGC侧结合新信息算出的摘要验证 (lambda): {{ step3Data.responseObj.returnedMaterial.kgcLambda }}
                   </div>
                 </div>
                 <div v-if="step3Data.responseObj.returnedMaterial.kgcMx">
-                  <div style="font-family: monospace; font-size: 12px; color: #d4d4d4; margin-bottom: 5px; word-break: break-all;">
+                  <div style="font-family: monospace; font-size: 12px; color: var(--kms-text-primary); margin-bottom: 5px; word-break: break-all;">
                     > [SSCL] KGC侧更新的多项式求值变量 (M_x): {{ step3Data.responseObj.returnedMaterial.kgcMx }}
                   </div>
                 </div>
@@ -137,7 +137,7 @@
 
         <!-- Step 4: Combine -->
         <transition name="fade-slide">
-          <el-card class="glass-card stage-card mt-20" style="border-left: 4px solid #67C23A">
+          <el-card class="glass-card stage-card mt-20" style="border-left: 4px solid var(--kms-success)">
             <template #header>
               <div class="card-header">
                 <h3><el-icon><Check /></el-icon> 第三阶段：新轮次公私钥本地生效</h3>
@@ -151,13 +151,13 @@
                 <el-button type="success" size="small" @click="runStep4" :loading="isProcessing">第四步：本地数学固化获取 Version+1 绝密凭据</el-button>
               </div>
 
-              <div class="desc" style="color: #a3aab5; margin-bottom: 10px;">基于全新的中心分片与本地绝对隐秘分片，通过椭圆曲线群运算再次获取最新的绝密通道参量：</div>
+              <div class="desc" style="color: var(--kms-text-tertiary); margin-bottom: 10px;">基于全新的中心分片与本地绝对隐秘分片，通过椭圆曲线群运算再次获取最新的绝密通道参量：</div>
 
               <!-- 中间计算过程展示 -->
-              <div class="math-steps-box mt-10" style="background: rgba(103,194,58,0.1); padding: 15px; border-radius: 8px; border: 1px dashed rgba(103,194,58,0.4);">
-                <div class="label" style="color: #67C23A; font-weight: bold; margin-bottom: 8px;">🔍 揭秘内部计算过程:</div>
+              <div class="math-steps-box mt-10" style="background: var(--kms-success-subtle); padding: 15px; border-radius: 8px; border: 1px dashed var(--kms-success-border);">
+                <div class="label" style="color: var(--kms-success-strong); font-weight: bold; margin-bottom: 8px;">🔍 揭秘内部计算过程:</div>
                 <div v-if="step4Data.mathSteps && step4Data.mathSteps.length > 0">
-                  <div v-for="(step, i) in step4Data.mathSteps" :key="i" style="font-family: monospace; font-size: 12px; color: #d4d4d4; margin-bottom: 5px; word-break: break-all;">
+                  <div v-for="(step, i) in step4Data.mathSteps" :key="i" style="font-family: monospace; font-size: 12px; color: var(--kms-text-primary); margin-bottom: 5px; word-break: break-all;">
                     > {{ step }}
                   </div>
                 </div>
@@ -485,48 +485,48 @@ function sm2PointMultiply(hexPoint, hexScalar) {
 
 <style scoped>
 .process-container {
-  padding: 24px; background-color: transparent; min-height: calc(100vh - 84px); color: #e5eaf3;
+  padding: 24px; background-color: transparent; min-height: calc(100vh - 84px); color: var(--kms-text-primary);
 }
 .page-title { margin-bottom: 25px; }
-.page-title h1 { font-size: 26px; color: #fff; margin: 0 0 8px 0; font-weight: 600; }
-.page-title .subtitle { color: rgba(255, 255, 255, 0.5); margin: 0; font-size: 14px; }
+.page-title h1 { font-size: 26px; color: var(--kms-text-primary); margin: 0 0 8px 0; font-weight: 600; }
+.page-title .subtitle { color: var(--kms-text-tertiary); margin: 0; font-size: 14px; }
 .mt-20 { margin-top: 20px; } .mt-30 { margin-top: 30px; } .mt-10 { margin-top: 10px; } .mt-15 { margin-top: 15px; }
 .glass-card {
-  background: rgba(255, 255, 255, 0.02); backdrop-filter: blur(24px);
-  border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 12px; transition: all 0.3s ease;
+  background: var(--kms-surface-1); backdrop-filter: blur(24px);
+  border: 1px solid var(--kms-surface-3); border-radius: 12px; transition: all 0.3s ease;
 }
-.glass-card:hover { border-color: rgba(255, 255, 255, 0.15); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2); }
+.glass-card:hover { border-color: var(--kms-border-strong); box-shadow: 0 8px 24px var(--kms-shadow); }
 .control-panel .form-inline { display: flex; gap: 20px; align-items: center; }
 :deep(.el-form-item) { margin-bottom: 0; }
-.btn-glow { box-shadow: 0 0 10px rgba(103, 194, 58, 0.4); }
+.btn-glow { box-shadow: 0 0 10px var(--kms-success-border); }
 .custom-steps { max-width: 900px; margin: 0 auto; }
-:deep(.el-step__title) { font-weight: bold; color: rgba(255,255,255,0.8); }
-:deep(.el-step__description) { color: rgba(255,255,255,0.4); }
-:deep(.el-step__head.is-process) { color: #67C23A; border-color: #67C23A; }
-:deep(.el-step__title.is-process) { color: #fff; text-shadow: 0 0 8px rgba(103, 194, 58, 0.5); }
-:deep(.el-step__title.is-success) { color: #67C23A; }
+:deep(.el-step__title) { font-weight: bold; color: var(--kms-text-primary); }
+:deep(.el-step__description) { color: var(--kms-text-tertiary); }
+:deep(.el-step__head.is-process) { color: var(--kms-success-strong); border-color: var(--kms-success); }
+:deep(.el-step__title.is-process) { color: var(--kms-text-primary); text-shadow: 0 0 8px var(--kms-success-border); }
+:deep(.el-step__title.is-success) { color: var(--kms-success-strong); }
 .fade-slide-enter-active, .fade-slide-leave-active { transition: all 0.6s ease; }
 .fade-slide-enter-from { opacity: 0; transform: translateY(20px); }
 .stage-card { margin-bottom: 20px; }
 .card-header { display: flex; justify-content: space-between; align-items: center; }
-.card-header h3 { margin: 0; font-size: 16px; color: #fff; display: flex; align-items: center; gap: 8px; }
+.card-header h3 { margin: 0; font-size: 16px; color: var(--kms-text-primary); display: flex; align-items: center; gap: 8px; }
 .payload-box { padding: 10px 5px; }
-.label { font-size: 13px; color: #a3aab5; margin-bottom: 5px; }
+.label { font-size: 13px; color: var(--kms-text-tertiary); margin-bottom: 5px; }
 .value {
-  font-family: 'Consolas', 'Monaco', monospace; font-size: 13px; background: rgba(0,0,0,0.3);
-  padding: 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); word-break: break-all; color: #409EFF;
+  font-family: 'Consolas', 'Monaco', monospace; font-size: 13px; background: var(--kms-surface-3);
+  padding: 10px; border-radius: 6px; border: 1px solid var(--kms-border); word-break: break-all; color: var(--kms-brand-text);
 }
-.value.auth { color: #F56C6C; }
+.value.auth { color: var(--kms-danger-strong); }
 .code-block pre {
-  font-family: 'Consolas', monospace; font-size: 12px; background: #1e1e1e;
-  padding: 10px; border-radius: 6px; overflow-x: auto; color: #d4d4d4; margin: 0; border: 1px solid #333;
+  font-family: 'Consolas', monospace; font-size: 12px; background: var(--kms-surface-3);
+  padding: 10px; border-radius: 6px; overflow-x: auto; color: var(--kms-text-primary); margin: 0; border: 1px solid #333;
 }
-.response-block pre { color: #E6A23C; border-color: rgba(230, 162, 60, 0.3); }
+.response-block pre { color: var(--kms-warning-strong); border-color: var(--kms-warning-border); }
 .flex-box { display: flex; gap: 20px; flex-wrap: wrap; }
-.item.finalize-block { flex: 1; min-width: 300px; background: rgba(0,0,0,0.3); padding: 15px; border-radius: 8px; border-top: 3px solid #67C23A; }
-.final-priv { border-color: #F56C6C !important; }
-.finalize-block .title { font-weight: bold; font-size: 14px; margin-bottom: 10px; color: #fff; }
-.finalize-block .content { font-family: monospace; font-size: 13px; color: #67C23A; line-height: 1.5; }
-.final-priv .content { color: #F56C6C; }
+.item.finalize-block { flex: 1; min-width: 300px; background: var(--kms-surface-3); padding: 15px; border-radius: 8px; border-top: 3px solid var(--kms-success); }
+.final-priv { border-color: var(--kms-danger) !important; }
+.finalize-block .title { font-weight: bold; font-size: 14px; margin-bottom: 10px; color: var(--kms-text-primary); }
+.finalize-block .content { font-family: monospace; font-size: 13px; color: var(--kms-success-strong); line-height: 1.5; }
+.final-priv .content { color: var(--kms-danger-strong); }
 .break-all { word-break: break-all; }
 </style>

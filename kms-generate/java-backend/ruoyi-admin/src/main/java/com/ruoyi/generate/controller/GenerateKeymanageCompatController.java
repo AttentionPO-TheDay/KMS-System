@@ -12,6 +12,7 @@ import com.ruoyi.generate.domain.GenerateUser;
 import com.ruoyi.generate.domain.Keymanage;
 import com.ruoyi.generate.service.GenerateKeyService;
 import com.ruoyi.generate.service.GenerateUserService;
+import com.ruoyi.generate.service.KeyValueSanitizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -65,6 +66,8 @@ public class GenerateKeymanageCompatController extends BaseController {
         bindSelfScope(query);
         startPage();
         List<Keymanage> list = generateKeyService.selectKeyList(query);
+        // 列表一律不带密钥材料（见 KeyValueSanitizer）
+        KeyValueSanitizer.stripMaterial(list);
         return getDataTable(list);
     }
 
@@ -78,6 +81,8 @@ public class GenerateKeymanageCompatController extends BaseController {
         if (!canAccess(keymanage)) {
             return AjaxResult.error("无权访问该密钥数据");
         }
+        boolean isOwner = keymanage.getUserId() != null && keymanage.getUserId().equals(getUserId());
+        KeyValueSanitizer.sanitizeDetail(keymanage, isOwner);
         return AjaxResult.success("查询成功", keymanage);
     }
 
@@ -123,7 +128,9 @@ public class GenerateKeymanageCompatController extends BaseController {
             }
 
             Keymanage reenrollRequest = buildReenrollRequest(oldKey, keymanage);
-            String keyValue = goBackendClient.reenrollKey(reenrollRequest);
+            // 归属已由 requireOwnedKey 校验，显式传递该密钥的所有者作为已认证身份，
+            // 使 Go 侧不依赖请求体中的 user 字段。
+            String keyValue = goBackendClient.reenrollKey(reenrollRequest, oldKey.getUserName());
             reenrollRequest.setKeyValue(keyValue);
             return AjaxResult.success("更新请求已提交，正在后台入库", reenrollRequest);
         } catch (Exception e) {

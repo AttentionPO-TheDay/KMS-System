@@ -38,25 +38,65 @@
 
 ### API
 
-1. `/generate-ingress/` -> generate Go
-2. `/generate-api/` -> generate Java
-3. `/updatedel-ingress/` -> updatedel Go
-4. `/lifecycle-ingress/` -> `/updatedel-ingress/`
-5. `/updatedel-api/` -> updatedel Java
-6. `/lifecycle-api/` -> updatedel Java
-7. `/pqkds-api/` -> extracted demo Django
-8. `/acceptance-api/` -> acceptance backend `/api/`
+1. `/generate-api/` -> generate Java
+2. `/updatedel-api/` -> updatedel Java
+3. `/lifecycle-api/` -> updatedel Java
+4. `/distribute-api/` -> distribute Java（8083）
+5. `/pqkds-api/` -> extracted demo Django
+6. `/acceptance-api/` -> acceptance backend `/api/`
 
-旧分发 Java 后端仅作为后台服务运行，不通过 nginx 恢复 `/distribute-api/`。
+已下架：`/generate-ingress/`、`/updatedel-ingress/`、`/lifecycle-ingress/`。
+Go 入站层仅限 Docker 内网调用——其身份来自 Java 写入的 `X-Kms-User` 内部头，对外暴露会导致身份可伪造。
+
+旧分发 Java 后端作为后台服务运行，并已恢复 `/distribute-api/` 网关路由，
+为 `kms-user` 的 `/distribute` 页面提供分发记录查询。
+（历史上该路由曾被移除，导致前端请求落到 SPA fallback、拿到 HTML 却当作成功解析，
+表现为「空列表且无任何报错」，同时反复 404 会触发网关的 IP 封禁。）
 
 ### 前端
 
-1. `/generate/`
-2. `/updatedel/`
-3. `/lifecycle/` -> `/updatedel/`
-4. `/distribute/`
-5. `/user/`
-6. `/acceptance/`
+1. `/updatedel/`（统一管理端）
+2. `/lifecycle/` -> `/updatedel/`
+3. `/distribute/`
+4. `/user/`
+5. `/acceptance/`
+
+已下线：`/generate/`。该前端是遗留重复应用（页面已被 `kms-updatedel` 吸收），
+现由网关显式返回 `404`，见 `kms-generate/front/RETIRED.md`。
+注意：下线的只是**静态前端**，`/generate-api/` 路由与 `generate-java` / `generate-go`
+后端仍在服务 —— 统一管理端仍要调用它们做公钥查询 / 用户密钥池 / 生成历史。
+
+#### 前端产物如何发布（易踩坑）
+
+4 个前端产物全部**打进 `kms-gateway-nginx` 镜像**，`docker-compose.yml` 里没有挂载它们
+（网关只挂了 `./nginx/logs`）。因此改完前端只同步 `kms-ops/front/*` 是**没有任何效果**的，
+必须重建镜像：
+
+```bash
+cd kms-updatedel/front && npm run build:prod      # 在对应 front/ 目录构建产物
+cd /path/to/kms-ops                                # 回到 kms-ops
+# 把 dist/ 覆盖到 kms-ops/front/<app>/（或整体跑 build-local.ps1 / build-local.sh）
+docker compose build nginx
+docker compose up -d --force-recreate nginx
+```
+
+#### 前端缓存策略（改动 nginx.conf 前务必先读）
+
+背景事故：原先只有 `/distribute/` 配了 `no-cache`，其余应用入口 HTML 既无 `Cache-Control`
+也无 `Expires`，浏览器便按「启发式缓存」（`Last-Modified` 起 10% 的时间）长期复用磁盘缓存。
+发版后浏览器仍加载旧 `index.html`，而旧 HTML 引用的旧 chunk 已被删除，请求落到 SPA fallback
+拿到 `index.html`（`200 text/html`），页面整片报
+`Expected a JavaScript-or-Wasm module script ... MIME type of text/html`。
+
+| 资源 | 响应头 | 原因 |
+|---|---|---|
+| `/<app>/index.html` | `Cache-Control: no-store` | 入口 HTML 必须每次回源，否则旧 HTML 引用已删除的 chunk |
+| `/<app>/assets/*` | `max-age=31536000, immutable` | 文件名含内容哈希，内容与文件名一一对应，可永久强缓存 |
+| 缺失的 `/assets/*` | `404` + `no-store` | 绝不回落 `index.html`：HTML 冒充 JS 只会报 MIME 错误，把真正的问题掩盖掉；且 404 不能被缓存一年 |
+
+`add_header` 在 nginx 里是「全有或全无」地继承：location 内只要出现一条 `add_header`，
+server 级的全部 `add_header` 都会被丢弃。所以 `nginx/snippets/` 下的
+`kms-security-headers.conf` 必须在每个自带 `add_header` 的 location 里重复 include。
 
 ## 前端开发代理口径
 
@@ -65,7 +105,21 @@
 1. `kms-generate/front`：`/generate-api` -> `http://localhost:9081`
 2. `kms-updatedel/front`：`/generate-api` -> `http://localhost:9081`
 3. `kms-updatedel/front`：`/lifecycle-api` -> `http://localhost:9082`
-4. `kms-user/front`：`/generate-api` -> `9081`，`/lifecycle-api` -> `9082`
+4. `kms-user/front`：`/generate-api` -> `9081`，`/lifecycle-api` -> `9082`，`/distribute-api` -> `8083`
+
+### 前端开发端口分配
+
+四个前端可同时启动，互不冲突：
+
+| 应用 | dev 端口 |
+|---|---|
+| `kms-user/front` | `81` |
+| `kms-generate/front` | `82` |
+| `kms-updatedel/front` | `83` |
+| `kms-acceptance/front` | `5176` |
+
+说明：此前 `kms-user`、`kms-generate`、`kms-updatedel` 三者均使用 `81`，
+同时启动会互相抢占端口，现已分别调整为 `81/82/83`。
 
 Docker 网关发布环境仍由 `kms-ops/nginx/nginx.conf` 统一处理，不依赖这些本地开发代理。
 
@@ -102,13 +156,15 @@ Docker 网关发布环境仍由 `kms-ops/nginx/nginx.conf` 统一处理，不依
 3. 构建 `kms-generate/go-backend`
 4. 构建 `kms-updatedel/go-backend`
 5. 构建 `kms-acceptance/backend`
-6. 构建 `kms-generate/front`
-7. 构建 `kms-updatedel/front`
-8. 构建 `kms-distribute/java-backend` 后台服务
-9. 构建 `kms-distribute/extracted/ruoyi (2)/web` 新分发 demo 前端
-10. 构建 `kms-user/front`
-11. 构建 `kms-acceptance/front`
-12. 整理产物到 `kms-ops/runtime` 和 `kms-ops/front`
+6. 构建 `kms-updatedel/front`
+7. 构建 `kms-distribute/java-backend` 后台服务
+8. 构建 `kms-distribute/extracted/ruoyi (2)/web` 新分发 demo 前端
+9. 构建 `kms-user/front`
+10. 构建 `kms-acceptance/front`
+11. 整理产物到 `kms-ops/runtime` 和 `kms-ops/front`
+
+说明：`/generate/` 前端（`kms-generate/front`）已退役，脚本**不再构建它**，
+generate 只保留后端构建（第 1、3 项）；见 `kms-generate/front/RETIRED.md`。
 
 如果只需单独校验前端，可分别在各自 `front/` 目录执行：
 

@@ -28,7 +28,10 @@ public class InternalGenerateController {
 
     private final GenerateKeyService generateKeyService;
 
-    @Value("${kms.go-backend.internal-token:kms-generate-internal-secret-2026}")
+    // 内部 Token 必须由环境变量 INTERNAL_TOKEN 注入，无默认值。
+    // 历史上默认值为公开的 "kms-generate-internal-secret-2026"，
+    // 泄露后可用于触达生成/更新/回收与内部安全重置接口。
+    @Value("${kms.go-backend.internal-token}")
     private String internalToken;
 
     public InternalGenerateController(GenerateKeyService generateKeyService) {

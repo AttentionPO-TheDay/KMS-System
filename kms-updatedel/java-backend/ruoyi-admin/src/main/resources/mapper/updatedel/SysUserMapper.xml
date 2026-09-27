@@ -26,10 +26,25 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         limit 1
     </select>
 
-    <update id="updateRoleLevel">
-        update sys_user
-        set role_level = #{roleLevel},
-            update_time = now()
-        where user_id = #{userId}
-    </update>
+    <!--
+      用户选择器用（P3 步骤 10）。刻意**不查 password** ——
+      这个列表只是给管理员挑人用的，把口令哈希带出来没有任何必要，
+      只会平白扩大泄露面。
+    -->
+    <select id="selectUserList" resultMap="sysUserResult">
+        select user_id, user_name, role_level
+        from sys_user
+        where del_flag = '0'
+        <if test="keyword != null and keyword != ''">
+            and user_name like concat('%', #{keyword}, '%')
+        </if>
+        order by user_id
+        limit 500
+    </select>
+
+    <!--
+      原 updateRoleLevel 语句已删除。
+      它曾被临时权限审批流用来改写申请人的 role_level（审批通过 → 0，回退 → 2 或已废弃的 1），
+      而 role_level 现在是登录分流的唯一判据（D9/D13）。见 SysUserMapper.java 的注释。
+    -->
 </mapper>
