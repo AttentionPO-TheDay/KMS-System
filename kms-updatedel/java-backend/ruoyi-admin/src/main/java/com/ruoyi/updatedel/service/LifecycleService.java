@@ -101,6 +101,17 @@ public class LifecycleService {
         stampMaterialEpoch(key);
         keymanageMapper.insertkeymanage(key);
         log.info("createKey 成功: keyId={}, encrytName={}", key.getKeyId(), key.getEncrytName());
+
+        // 阶段 7（文档 §8.6）：补上**创建**事件的存证。
+        //
+        // 此前链上只有 ROTATE / REVOKE 两种事件，创建根本没有 ——
+        // 于是"这把密钥什么时候产生的、当时是哪份公开材料"在链上查不到，
+        // 而那恰恰是审计最基本的追问：没有起点，后续的更新与回收
+        // 都缺一个可对照的基准。
+        //
+        // 与轮换/回收一样走事务提交后再投递（见 publishChainEvent），
+        // 避免事务未提交就发事件导致链上记录指向不存在的数据。
+        publishChainEvent(ChainSyncEvent.TYPE_KEY_CREATED, key);
         return key;
     }
 
@@ -325,7 +336,7 @@ public class LifecycleService {
         resetPendingChainState(next.getKeyId());
         keyOperationRecordService.createPendingRecord(next, "UPDATE", normalizedActionSource, PENDING_RESULT_MESSAGE);
         refreshBatchProofAfterCommit(next.getBatchId(), "UPDATE");
-        publishChainEvent(ChainSyncEvent.TYPE_ROTATE, Collections.singletonList(next));
+        publishChainEvent(ChainSyncEvent.TYPE_KEY_UPDATED, Collections.singletonList(next));
         log.info("rotateKey 完成: keyId={}, newVersion={}", next.getKeyId(), next.getVersion());
         return requireExistingKey(next.getKeyId());
     }
@@ -351,7 +362,7 @@ public class LifecycleService {
         resetPendingChainState(keyId);
         Keymanage revoked = requireExistingKey(keyId);
         keyOperationRecordService.createPendingRecord(revoked, "REVOKE", normalizedSource, PENDING_RESULT_MESSAGE);
-        publishChainEvent(ChainSyncEvent.TYPE_REVOKE, Collections.singletonList(revoked));
+        publishChainEvent(ChainSyncEvent.TYPE_KEY_REVOKED, Collections.singletonList(revoked));
     }
 
     @Transactional
@@ -389,7 +400,7 @@ public class LifecycleService {
             }
             affected += currentAffected;
             keyOperationRecordService.createPendingRecords(candidates, "REVOKE", normalizeActionSource(actionSource), PENDING_RESULT_MESSAGE);
-            publishChainEvent(ChainSyncEvent.TYPE_REVOKE, candidates);
+            publishChainEvent(ChainSyncEvent.TYPE_KEY_REVOKED, candidates);
         }
         return affected;
     }
