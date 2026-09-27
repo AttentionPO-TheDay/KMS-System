@@ -161,6 +161,56 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         where key_id = #{keyId}
     </update>
 
+    <!--
+      阶段 4（文档 §5.2）：版本历史归档。
+
+      用 INSERT ... SELECT 直接从 keymanage 取当前行，而不是由 Java 侧把快照传进来。
+      原因：调用方内存里的对象此时可能已被赋上新版本的值（rotateKey 里的 next 对象
+      带的就是**新版**内容），传进来会归档到错误的内容。以数据库当下行为准，
+      才不会有「把新版当旧版归档」这种静默错误。
+
+      ON DUPLICATE KEY UPDATE：同一 (key_id, version) 重复归档时更新而非报错，
+      使轮换/回收流程可安全重试（例如链上事件投递失败后重跑）。
+    -->
+    <insert id="archiveCurrentVersion">
+        insert into keymanage_version_history
+            (key_id, version, ua, key_value, encryt_type, encryt_name, key_domain,
+             status, ms_key_id, algorithm_version,
+             chain_hash, block_height, chain_status,
+             archived_at, archived_reason, archived_by)
+        select key_id, version, ua, key_value, encryt_type, encryt_name, key_domain,
+               status, ms_key_id, algorithm_version,
+               chain_hash, block_height, chain_status,
+               now(), #{reason}, #{by}
+        from keymanage
+        where key_id = #{keyId}
+        on duplicate key update
+            ua                = values(ua),
+            key_value         = values(key_value),
+            encryt_type       = values(encryt_type),
+            encryt_name       = values(encryt_name),
+            key_domain        = values(key_domain),
+            status            = values(status),
+            ms_key_id         = values(ms_key_id),
+            algorithm_version = values(algorithm_version),
+            chain_hash        = values(chain_hash),
+            block_height      = values(block_height),
+            chain_status      = values(chain_status),
+            archived_at       = values(archived_at),
+            archived_reason   = values(archived_reason),
+            archived_by       = values(archived_by)
+    </insert>
+
+    <select id="selectVersionHistory" resultMap="keymanageResult">
+        select key_id, version, ua, key_value, encryt_type, encryt_name, key_domain,
+               status, ms_key_id, algorithm_version,
+               chain_hash, block_height, chain_status,
+               archived_at as upd_time
+        from keymanage_version_history
+        where key_id = #{keyId}
+        order by version desc
+    </select>
+
     <update id="revoke">
         update keymanage
         set status = #{status}, upd_time = now()

@@ -132,6 +132,22 @@ public class LifecycleService {
         return Optional.ofNullable(keymanageMapper.selectkeymanageByKeyId(keyId));
     }
 
+    /**
+     * 阶段 4（文档 §5.2）：某逻辑密钥的历史版本（不含当前版本）。
+     *
+     * <p>当前版本在 {@code keymanage} 表里，历史版本在
+     * {@code keymanage_version_history} 表里 —— 这样"读当前状态"仍是单表主键查找，
+     * 不会被历史数据拖慢。调用方若要把两者拼成完整版本序列，
+     * 需自行把当前版本（version 最大）并进来。
+     *
+     * <p>⚠️ 返回的是**未脱敏**的对象，调用方必须像 {@code getInfo} 那样
+     * 先做属主校验再 {@code KeyValueSanitizer.sanitizeDetail(...)}。
+     * 历史版本里同样含 KGC 部分密钥，不校验就成了一条越权读取的旁路。
+     */
+    public List<Keymanage> findVersionHistory(Long keyId) {
+        return keymanageMapper.selectVersionHistory(keyId);
+    }
+
     public KeyAnalysisResultDto getAssociationAnalysis(Long keyId) {
         KeyAnalysisResultDto result = new KeyAnalysisResultDto();
         Keymanage key = requireExistingKey(keyId);
@@ -258,6 +274,13 @@ public class LifecycleService {
         String normalizedActionSource = normalizeActionSource(actionSource);
         applyUpdateProofMetadata(next, request, current, normalizedActionSource);
 
+        // 阶段 4（文档 §5.2）：**覆盖之前**先把当前版本归档。
+        // 位置很关键 —— 必须在 updatekeymanage 之前，否则旧版的 key_value / ua
+        // 已被新值覆盖，归档到的是新内容，"历史版本"就名存实亡了。
+        // 归档用 INSERT...SELECT 从库里取当前行，不读内存对象（见 Mapper 注释）。
+        keymanageMapper.archiveCurrentVersion(
+            current.getKeyId(), "ROTATE", normalizedActionSource);
+
         keymanageMapper.updatekeymanage(next);
         resetPendingChainState(next.getKeyId());
         keyOperationRecordService.createPendingRecord(next, "UPDATE", normalizedActionSource, PENDING_RESULT_MESSAGE);
@@ -278,10 +301,16 @@ public class LifecycleService {
         if (KeyStatus.REVOKED.getCode().equals(current.getStatus())) {
             return;
         }
+        // 阶段 4（文档 §5.2）：回收前归档当前版本。
+        // 回收本身只改 status，但归档仍有价值：链上存证与历史分发记录
+        // 需要能回答"这把密钥被回收时是哪一版、材料是什么"。
+        String normalizedSource = normalizeActionSource(actionSource);
+        keymanageMapper.archiveCurrentVersion(keyId, "REVOKE", normalizedSource);
+
         keymanageMapper.revoke(keyId, KeyStatus.REVOKED.getCode());
         resetPendingChainState(keyId);
         Keymanage revoked = requireExistingKey(keyId);
-        keyOperationRecordService.createPendingRecord(revoked, "REVOKE", normalizeActionSource(actionSource), PENDING_RESULT_MESSAGE);
+        keyOperationRecordService.createPendingRecord(revoked, "REVOKE", normalizedSource, PENDING_RESULT_MESSAGE);
         publishChainEvent(ChainSyncEvent.TYPE_REVOKE, Collections.singletonList(revoked));
     }
 

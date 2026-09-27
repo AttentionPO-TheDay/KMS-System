@@ -69,6 +69,34 @@ public class LifecycleKeyController extends BaseController {
             .orElseGet(() -> AjaxResult.error("密钥不存在: " + keyId));
     }
 
+    /**
+     * 阶段 4（文档 §5.2）：历史版本列表。
+     *
+     * <p>准入与脱敏必须和 {@link #getInfo} **完全一致** —— 历史快照里同样含
+     * KGC 部分密钥（{@code key_value}）与公钥份额（{@code ua}）。
+     * 这里若省掉 {@code canAccess} 或 {@code sanitizeDetail}，
+     * 就等于开了一条"用别人 key_id 读其历史密钥材料"的旁路。
+     *
+     * <p>按版本号倒序返回，**不含当前版本**（当前版本走 {@code /{keyId}}）。
+     */
+    @PreAuthorize("isAuthenticated()")
+    @GetMapping("/{keyId}/versions")
+    public AjaxResult getVersionHistory(@PathVariable Long keyId) {
+        return lifecycleService.findById(keyId)
+            .map(key -> {
+                if (!canAccess(key)) {
+                    return AjaxResult.error("无权访问该密钥数据");
+                }
+                boolean isOwner = key.getUserId() != null && key.getUserId().equals(getUserId());
+                List<Keymanage> history = lifecycleService.findVersionHistory(keyId);
+                for (Keymanage snapshot : history) {
+                    KeyValueSanitizer.sanitizeDetail(snapshot, isOwner);
+                }
+                return AjaxResult.success(history);
+            })
+            .orElseGet(() -> AjaxResult.error("密钥不存在: " + keyId));
+    }
+
     @PreAuthorize("isAuthenticated()")
     @GetMapping("/analysis/{keyId}")
     public AjaxResult getAnalysis(@PathVariable Long keyId) {
