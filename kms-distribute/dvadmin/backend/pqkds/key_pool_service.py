@@ -42,6 +42,54 @@ class KeyPoolService:
     DEFAULT_EXPIRY_HOURS = 24
     LOW_THRESHOLD_RATIO = 0.2  # 低于 20% 触发补充
 
+    # ----------------------------------------------------------------
+    #  阶段 6（文档 §7.5）：密钥池项状态
+    # ----------------------------------------------------------------
+    # 正常流转 READY → RESERVED → CONSUMED；预分配密钥**一次性消费**，
+    # 不能被多个会话复用（并发保护见 pick_key 的 select_for_update(skip_locked)）。
+    #
+    # 为什么把「可用」定义成一个**集合**而不是单个值：
+    # 库里已有按旧值 'unused' 写入的历史行。只认 'READY' 会让它们
+    # 永远取不出来 —— 现象是"池子里明明有货，却说没有可用的预分配密钥"。
+    # 统一由这个常量表达"什么算可用"，避免各处分别兼容两套拼写。
+    POOL_STATUS_READY_VALUES = ('READY', 'unused')
+    POOL_STATUS_RESERVED = 'RESERVED'
+    POOL_STATUS_CONSUMED_VALUES = ('CONSUMED', 'used', 'distributed')
+    POOL_STATUS_EXPIRED_VALUES = ('EXPIRED', 'expired')
+    POOL_STATUS_REVOKED = 'REVOKED'
+
+    @staticmethod
+    def revoke_pool_items_for_key(node_id: str, key_id, version=None) -> int:
+        """阶段 6（文档 §7.6）：长期密钥被回收后，连带失效依赖它的池项。
+
+        池项里的密文是用**某个长期公钥**封的。那把长期密钥一旦被回收，
+        对应的池项就再也解不开了 —— 但它仍会在池子里显示为 READY，
+        等着某次会话去取，然后在解密时失败。让这种"注定失败"的条目
+        留在可用集合里，既浪费一次会话，也会把真实故障伪装成偶发问题。
+
+        所以回收长期密钥时主动把它们标成 REVOKED，并提示重新预分配。
+
+        范围只动 READY / RESERVED：已 CONSUMED 的是历史事实，
+        改了会让审计记录对不上（那次会话确实用过这把密钥）。
+        """
+        from django.db.models import Q
+
+        # 池项的密文可能封给 node1 或 node2 中的任一方，
+        # 且算法上分节点腿/用户腿 —— 这里按节点匹配，命中任一角色即失效。
+        qs = PreDistributedKey.objects.filter(
+            status__in=KeyPoolService.POOL_STATUS_READY_VALUES
+            + (KeyPoolService.POOL_STATUS_RESERVED,)
+        ).filter(
+            Q(node1__node_id=node_id) | Q(node2__node_id=node_id)
+        )
+        n = qs.update(status=KeyPoolService.POOL_STATUS_REVOKED)
+        if n:
+            logger.warning(
+                "长期密钥回收连带失效池项：node=%s key_id=%s version=%s -> %d 条置为 REVOKED",
+                node_id, key_id, version, n,
+            )
+        return n
+
     # ================================================================
     #  Kyber KEM 方案: 批量预分配
     # ================================================================
@@ -157,7 +205,10 @@ class KeyPoolService:
                     algorithm='kyber_kem',
                     encrypted_key_data=encrypted_data,
                     key_hash=key_hash,
-                    status='unused',
+                    # 阶段 6（文档 §7.5）：新值统一用 READY。
+                    # 旧值 'unused' 仍留在库里（历史行），读取侧经
+                    # POOL_STATUS_READY_VALUES 一并纳入，不会漏掉它们。
+                    status='READY',
                     expires_at=expires_at,
                     generation_time_ms=latency_ms,
                 ))
@@ -269,7 +320,7 @@ class KeyPoolService:
                     algorithm='falcon_lattice',
                     encrypted_key_data=encrypted_data,
                     key_hash=key_hash,
-                    status='unused',
+                    status='READY',
                     expires_at=expires_at,
                     generation_time_ms=latency_ms,
                 ))
@@ -314,8 +365,11 @@ class KeyPoolService:
         支持双向查找（A↔B 或 B↔A）。
         """
         now = timezone.now()
+        # 阶段 6（文档 §7.5）：可用的判据是 READY。
+        # 必须把历史值 'unused' 一并纳入 —— 库里已有按旧值写入的行，
+        # 只查 'READY' 会让它们永远取不出来（表现为"池子里有货却说没有"）。
         q = PreDistributedKey.objects.filter(
-            status='unused', expires_at__gt=now
+            status__in=POOL_STATUS_READY_VALUES, expires_at__gt=now
         ).filter(
             models.Q(node1__node_id=node1_id, node2__node_id=node2_id) |
             models.Q(node1__node_id=node2_id, node2__node_id=node1_id)
@@ -331,7 +385,8 @@ class KeyPoolService:
             }
 
         with transaction.atomic():
-            key.status = 'used'
+            # 阶段 6：消费后置 CONSUMED（旧值 'used' 等价物）。
+            key.status = 'CONSUMED'
             key.used_at = now
             if session:
                 key.used_by_session = session

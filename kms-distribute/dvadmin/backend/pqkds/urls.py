@@ -21,6 +21,8 @@ from .user_distribution_views import (
 )
 # 阶段 2：节点自助（首次登录后的密钥初始化）。身份取自令牌自省，见该模块 docstring。
 from .node_self_views import node_self, node_self_init
+# 阶段 6：长期密钥回收后连带失效预分配池项（内部通道，X-Internal-Token 鉴权）
+from .internal_pool_views import revoke_pool_by_key
 app_name = 'pqkds'
 router = DefaultRouter()
 router.register(r'system-parameters', SystemParametersViewSet, basename='systemparameters')
@@ -49,6 +51,10 @@ urlpatterns = [
     # 现象是"接口通了但字段全 undefined"。
     path('node-self/', node_self, name='node-self'),
     path('node-self/init/', node_self_init, name='node-self-init'),
+
+    # 阶段 6：内部通道（X-Internal-Token 鉴权，不对外暴露）。
+    # 同样排在 router 之前，理由同上。
+    path('internal/pool/revoke-by-key/', revoke_pool_by_key, name='revoke-pool-by-key'),
     path('user-symmetric-keys/', user_symmetric_keys, name='user-symmetric-keys'),
     path('user-symmetric-keys/<int:pk>/', user_symmetric_key_detail, name='user-symmetric-key-detail'),
     path('distribution-batches/', distribution_batches, name='distribution-batches'),

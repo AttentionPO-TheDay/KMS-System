@@ -394,11 +394,26 @@ class PreDistributedKey(CoreModel):
         ('kyber_kem', 'Kyber KEM'),
         ('falcon_lattice', 'Falcon 格密码'),
     ]
+    #: 密钥池项状态（阶段 6，文档 §7.5）。
+    #:
+    #: 正常流转：READY → RESERVED → CONSUMED。预分配密钥**必须一次性消费**，
+    #: 不能被多个会话重复使用 —— 这是整张表存在的意义所在。
+    #:
+    #: ⚠️ 旧值 `unused` / `used` / `distributed` 仍保留在 choices 里：
+    #: 库里已有按旧值写入的历史行，收紧掉会让它们无法被任何查询命中。
+    #: 读取方应统一用 `KeyPoolService.POOL_STATUS_READY_VALUES` 表达"什么算可用"
+    #: （见 key_pool_service），而不是在各处分别兼容两套拼写。
     STATUS_CHOICES = [
-        ('unused', '未使用'),
-        ('used', '已使用'),
-        ('expired', '已过期'),
-        ('distributed', '已下发'),
+        ('READY', '已预分配，可被会话取用'),
+        ('RESERVED', '正在被某次会话占用'),
+        ('CONSUMED', '已成功建立会话，不可再次使用'),
+        ('EXPIRED', '超过有效期'),
+        ('REVOKED', '依赖的长期密钥已回收或检测异常'),
+        # --- 历史值（只读兼容，不再产生） ---
+        ('unused', '未使用（历史值，等价 READY）'),
+        ('used', '已使用（历史值，等价 CONSUMED）'),
+        ('expired', '已过期（历史值，等价 EXPIRED）'),
+        ('distributed', '已下发（历史值，等价 CONSUMED）'),
     ]
     #: 载荷层（被封装的那把对称密钥）用的算法。与上面的 `algorithm` 是两回事：
     #: `algorithm` 是**封装**算法（Kyber/Falcon），本字段是**载荷**算法。
@@ -449,7 +464,7 @@ class PreDistributedKey(CoreModel):
     )
     encrypted_key_data = models.TextField(verbose_name="加密的密钥数据", help_text="使用格密码封装后的对称会话密钥（JSON）")
     key_hash = models.CharField(max_length=64, verbose_name="密钥哈希", help_text="对称密钥的SHA256哈希，用于校验")
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='unused', verbose_name="状态", help_text="密钥当前状态")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='READY', verbose_name="状态", help_text="密钥当前状态")
     used_at = models.DateTimeField(null=True, blank=True, verbose_name="使用时间", help_text="密钥被消耗的时间")
     used_by_session = models.ForeignKey(SessionKey, on_delete=models.SET_NULL, null=True, blank=True, related_name='predist_key', verbose_name="使用该密钥的会话", help_text="消耗此密钥的会话")
     expires_at = models.DateTimeField(verbose_name="过期时间", help_text="密钥过期时间")
