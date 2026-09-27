@@ -115,6 +115,56 @@ def _authorized_node_ids(user_id: int) -> List[int]:
     )
 
 
+def _safe_json_list(raw) -> List[str]:
+    """把库里存的 JSON 数组字段安全解析成列表；坏了就返回空列表。
+
+    批次列表是展示用的，不为一条坏数据把整个列表打成 500。
+    """
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+        return [str(x) for x in parsed] if isinstance(parsed, list) else []
+    except (ValueError, TypeError):
+        return []
+
+
+def _classify_distribution(user_id: int, target_nodes) -> Tuple[str, List[str], str]:
+    """阶段 5（文档 §8.5）：判定本次分发是同域还是跨域。
+
+    返回 `(发起方域, 目标域列表, 'same'|'cross'|'mixed')`。
+
+    发起方域的取法：本系统的分发发起人是 `kms.sys_user`，而"域"是**节点**的属性
+    （Node.domain_id，阶段 2 引入）。所以先经 `Node.sys_user_id` 反查发起人
+    对应的节点，取它的 domain_id。
+
+    取不到时（管理员发起、或账号未映射到节点）返回空串，并且**整体判为 mixed** ——
+    "不知道发起方在哪"时不应擅自断言成"同域"，那会把跨域分发粉饰成同域，
+    正好掩盖了这个标记要暴露的东西。
+    """
+    source_node = Node.objects.filter(sys_user_id=user_id).only('domain_id').first()
+    source_domain = (getattr(source_node, 'domain_id', '') or '').strip()
+
+    target_domains = sorted({
+        (getattr(n, 'domain_id', '') or '').strip()
+        for n in target_nodes
+        if (getattr(n, 'domain_id', '') or '').strip()
+    })
+
+    if not source_domain or not target_domains:
+        return source_domain, target_domains, 'mixed'
+
+    same = [d for d in target_domains if d == source_domain]
+    cross = [d for d in target_domains if d != source_domain]
+    if cross and same:
+        dist_type = 'mixed'
+    elif cross:
+        dist_type = 'cross'
+    else:
+        dist_type = 'same'
+    return source_domain, target_domains, dist_type
+
+
 # ---------------------------------------------------------------------------
 # GET /user-nodes/
 # ---------------------------------------------------------------------------
@@ -235,6 +285,12 @@ def distribution_batches(request, identity):
                 'userEnvelopeOk': bool(batch.user_envelope_ok),
                 'status': batch.status,
                 'createdAt': batch.create_datetime.isoformat() if batch.create_datetime else None,
+                # 阶段 5（文档 §8.5）：跨域标记。历史批次没有这三个字段，
+                # 如实返回空值而不是编造一个 'same' —— 那会把"未记录"
+                # 粉饰成"已确认同域"。
+                'sourceDomainId': batch.source_domain_id or '',
+                'distributionType': batch.distribution_type or '',
+                'targetDomainIds': _safe_json_list(batch.target_domain_ids),
             }
         )
     return _ok({'items': items, 'total': len(items)})
@@ -465,6 +521,12 @@ def distribute_to_user(request, identity):
                 )
 
             success_count = len(succeeded_node_ids)
+            # 阶段 5（文档 §8.5）：跨域标记。
+            # 快照而非回查 —— "这次分发当时是不是跨域"是历史事实，
+            # 不该因后续部门调动/节点换域而被改写。
+            src_domain, target_domains, dist_type = _classify_distribution(
+                user_id, [node_map[nid] for nid in node_ids if nid in node_map]
+            )
             batch = DistributionBatch.objects.create(
                 batch_id=batch_id,
                 user_id=user_id,
@@ -475,6 +537,9 @@ def distribute_to_user(request, identity):
                 user_envelope_ok=True,
                 # 用户那份与**全部**节点都成功才算 success；否则如实记 partial
                 status='success' if success_count == len(node_ids) else 'partial',
+                source_domain_id=src_domain,
+                target_domain_ids=json.dumps(target_domains, ensure_ascii=False),
+                distribution_type=dist_type,
             )
     except WrapperError as exc:
         logger.error('封装失败: batch=%s err=%s', batch_id, exc)

@@ -164,14 +164,24 @@ WRAPPERS: Dict[str, Any] = {
 #: 节点腿默认封装算法（D16）。由节点管理的「默认封装算法」字段配置，这里只是缺省值。
 NODE_DEFAULT_WRAPPING = 'kyber_kem'
 
-#: 密钥池里节点腿能用的封装算法
 #: 密钥池/分发里节点腿能用的封装算法。
 #:
 #: 2026-09-26 从两种扩到四种：用户要能选"这次分发不用抗量子"，
 #: 而节点腿上原本只有格密码（Kyber/Falcon）—— 于是补了国密两条：
 #:   gm_sm2   → 节点持有 SM2 密钥对
 #:   gm_sscl  → 节点持有 SSCL 密钥对（加解密与 SM2 同一套曲线运算，见 SsclWrapper）
-NODE_WRAPPING_CHOICES = ('kyber_kem', 'falcon_lattice', 'gm_sm2', 'gm_sscl')
+#:
+#: ⚠️ 2026-09-28 阶段 5（文档 §6.2）：**移除 falcon_lattice**。
+#: 原因是职责错配 —— SM4 的机密性必须由**加密/封装**算法提供，而 Falcon 是
+#: **签名**算法；签名不提供机密性，"用 Falcon 封装会话密钥"是概念混用。
+#:
+#: 正确分工（文档 §6.2）：
+#:   SM2 / SSCL / Kyber  → 保护 SM4（加密或 KEM）
+#:   Falcon              → 对分发消息签名、验签
+#:
+#: 本元组只约束**新的**选择；已存在的 falcon_lattice 历史记录不受影响
+#: —— 读取端按记录自身的 algorithm 字段分派，与这里无关。
+NODE_WRAPPING_CHOICES = ('kyber_kem', 'gm_sm2', 'gm_sscl')
 
 
 def wrap_for_node(payload_key: bytes, node, wrapping_algorithm: str = NODE_DEFAULT_WRAPPING):

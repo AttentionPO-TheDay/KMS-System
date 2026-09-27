@@ -615,6 +615,28 @@ class DistributionBatch(CoreModel):
     user_envelope_ok = models.BooleanField(default=False, verbose_name="用户信封是否成功")
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, verbose_name="状态")
 
+    # --- 阶段 5（文档 §8.5）：跨域分发标记 ---
+    # 第一版不部署多套独立 KMS，只把跨域**语义与审计数据**做完整：
+    # 记录发起方所属域与各目标节点所属域，据此判定同域/跨域。
+    #
+    # 为什么存 source_domain_id 而不是每次回查发起人所属域：
+    # 人的组织归属会变（部门调动、节点换域），而"这次分发当时是不是跨域"
+    # 是一个**历史事实**，不该随后续变更而改写。
+    source_domain_id = models.CharField(
+        max_length=64, blank=True, default='',
+        verbose_name="发起方所属域", help_text="分发发起时发起方的 domain_id 快照"
+    )
+    target_domain_ids = models.TextField(
+        blank=True, default='',
+        verbose_name="目标域集合", help_text="JSON 数组，各目标节点所属域的并集快照"
+    )
+    distribution_type = models.CharField(
+        max_length=16, blank=True, default='',
+        choices=[('same', '同域'), ('cross', '跨域'), ('mixed', '混合')],
+        verbose_name="分发类型",
+        help_text="same=全部同域 / cross=全部跨域 / mixed=两者都有"
+    )
+
     class Meta:
         verbose_name = "分发批次"
         verbose_name_plural = "分发批次"

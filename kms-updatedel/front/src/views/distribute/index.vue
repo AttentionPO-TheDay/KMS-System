@@ -70,10 +70,13 @@
               </el-radio-group>
             </el-form-item>
 
+            <!-- 阶段 5（文档 §6.2）：抗量子分支下只剩 Kyber。
+                 原先还有 Falcon —— 那是概念混用：Falcon 是**签名**算法，
+                 不提供机密性，不能用它保护 SM4 会话密钥。
+                 正确分工是 SM2/SSCL/Kyber 保护 SM4，Falcon 负责签名验签。 -->
             <el-form-item v-if="form.cryptoFamily === 'pq'" label="抗量子算法">
               <el-radio-group v-model="form.nodeWrappingAlgorithm">
                 <el-radio-button label="kyber_kem">Kyber</el-radio-button>
-                <el-radio-button label="falcon_lattice">Falcon</el-radio-button>
               </el-radio-group>
             </el-form-item>
 
