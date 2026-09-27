@@ -9,9 +9,20 @@ import com.ruoyi.common.utils.StringUtils;
  */
 public class PageDomain
 {
+    /**
+     * 分页参数的兜底与上限。
+     *
+     * 上限由 100 提到 500（2026-09-27）：原先取 100 会**静默截断本仓库自己的
+     * 合法请求** —— `kms-updatedel/front/src/views/chain/index.vue:132` 请求
+     * `pageSize=500`，拿到手的却只有 100 条，且没有任何提示。
+     * （此前未暴露只是因为演示数据总量不到 100。）
+     *
+     * 同时与 kms-generate 后端对齐：那边原本完全没有钳制，本次一并补上，
+     * 上限同样取 500。两个后端的实现现已一致。
+     */
     private static final int DEFAULT_PAGE_NUM = 1;
     private static final int DEFAULT_PAGE_SIZE = 10;
-    private static final int MAX_PAGE_SIZE = 100;
+    private static final int MAX_PAGE_SIZE = 500;
 
     /** 当前记录起始索引 */
     private Integer pageNum;
