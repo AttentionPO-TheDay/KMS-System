@@ -1,6 +1,5 @@
 #include <stddef.h>
 #include <stdint.h>
-#include <string.h>
 #include "params.h"
 #include "indcpa.h"
 #include "polyvec.h"
@@ -24,8 +23,10 @@ static void pack_pk(uint8_t r[KYBER_INDCPA_PUBLICKEYBYTES],
                     polyvec *pk,
                     const uint8_t seed[KYBER_SYMBYTES])
 {
+  size_t i;
   polyvec_tobytes(r, pk);
-  memcpy(r+KYBER_POLYVECBYTES, seed, KYBER_SYMBYTES);
+  for(i=0;i<KYBER_SYMBYTES;i++)
+    r[i+KYBER_POLYVECBYTES] = seed[i];
 }
 
 /*************************************************
@@ -42,8 +43,10 @@ static void unpack_pk(polyvec *pk,
                       uint8_t seed[KYBER_SYMBYTES],
                       const uint8_t packedpk[KYBER_INDCPA_PUBLICKEYBYTES])
 {
+  size_t i;
   polyvec_frombytes(pk, packedpk);
-  memcpy(seed, packedpk+KYBER_POLYVECBYTES, KYBER_SYMBYTES);
+  for(i=0;i<KYBER_SYMBYTES;i++)
+    seed[i] = packedpk[i+KYBER_POLYVECBYTES];
 }
 
 /*************************************************
@@ -156,17 +159,13 @@ static unsigned int rej_uniform(int16_t *r,
 *              - const uint8_t *seed: pointer to input seed
 *              - int transposed: boolean deciding whether A or A^T is generated
 **************************************************/
-#if(XOF_BLOCKBYTES % 3)
-#error "Implementation of gen_matrix assumes that XOF_BLOCKBYTES is a multiple of 3"
-#endif
-
 #define GEN_MATRIX_NBLOCKS ((12*KYBER_N/8*(1 << 12)/KYBER_Q + XOF_BLOCKBYTES)/XOF_BLOCKBYTES)
 // Not static for benchmarking
 void gen_matrix(polyvec *a, const uint8_t seed[KYBER_SYMBYTES], int transposed)
 {
-  unsigned int ctr, i, j;
-  unsigned int buflen;
-  uint8_t buf[GEN_MATRIX_NBLOCKS*XOF_BLOCKBYTES];
+  unsigned int ctr, i, j, k;
+  unsigned int buflen, off;
+  uint8_t buf[GEN_MATRIX_NBLOCKS*XOF_BLOCKBYTES+2];
   xof_state state;
 
   for(i=0;i<KYBER_K;i++) {
@@ -181,8 +180,11 @@ void gen_matrix(polyvec *a, const uint8_t seed[KYBER_SYMBYTES], int transposed)
       ctr = rej_uniform(a[i].vec[j].coeffs, KYBER_N, buf, buflen);
 
       while(ctr < KYBER_N) {
-        xof_squeezeblocks(buf, 1, &state);
-        buflen = XOF_BLOCKBYTES;
+        off = buflen % 3;
+        for(k = 0; k < off; k++)
+          buf[k] = buf[buflen - off + k];
+        xof_squeezeblocks(buf + off, 1, &state);
+        buflen = off + XOF_BLOCKBYTES;
         ctr += rej_uniform(a[i].vec[j].coeffs + ctr, KYBER_N - ctr, buf, buflen);
       }
     }
@@ -190,7 +192,7 @@ void gen_matrix(polyvec *a, const uint8_t seed[KYBER_SYMBYTES], int transposed)
 }
 
 /*************************************************
-* Name:        indcpa_keypair_derand
+* Name:        indcpa_keypair
 *
 * Description: Generates public and private key for the CPA-secure
 *              public-key encryption scheme underlying Kyber
@@ -198,9 +200,7 @@ void gen_matrix(polyvec *a, const uint8_t seed[KYBER_SYMBYTES], int transposed)
 * Arguments:   - uint8_t *pk: pointer to output public key
 *                             (of length KYBER_INDCPA_PUBLICKEYBYTES bytes)
 *              - uint8_t *sk: pointer to output private key
-*                             (of length KYBER_INDCPA_SECRETKEYBYTES bytes)
-*              - const uint8_t *coins: pointer to input randomness
-*                             (of length KYBER_SYMBYTES bytes)
+                              (of length KYBER_INDCPA_SECRETKEYBYTES bytes)
 **************************************************/
 void indcpa_keypair_derand(uint8_t pk[KYBER_INDCPA_PUBLICKEYBYTES],
                            uint8_t sk[KYBER_INDCPA_SECRETKEYBYTES],
@@ -213,9 +213,9 @@ void indcpa_keypair_derand(uint8_t pk[KYBER_INDCPA_PUBLICKEYBYTES],
   uint8_t nonce = 0;
   polyvec a[KYBER_K], e, pkpv, skpv;
 
+  /* ⚠️ 本函数是**移植**进来的（见文末说明），不是 v3.0 原版的一部分。 */
   memcpy(buf, coins, KYBER_SYMBYTES);
-  buf[KYBER_SYMBYTES] = KYBER_K;
-  hash_g(buf, buf, KYBER_SYMBYTES+1);
+  hash_g(buf, buf, KYBER_SYMBYTES);
 
   gen_a(a, publicseed);
 
@@ -240,6 +240,36 @@ void indcpa_keypair_derand(uint8_t pk[KYBER_INDCPA_PUBLICKEYBYTES],
   pack_pk(pk, &pkpv, publicseed);
 }
 
+void indcpa_keypair(uint8_t pk[KYBER_INDCPA_PUBLICKEYBYTES],
+                    uint8_t sk[KYBER_INDCPA_SECRETKEYBYTES])
+{
+  uint8_t coins[KYBER_SYMBYTES];
+  randombytes(coins, KYBER_SYMBYTES);
+  indcpa_keypair_derand(pk, sk, coins);
+}
+
+/* =============================================================================
+ * 关于 indcpa_keypair_derand / crypto_kem_keypair_derand（本仓库新增）
+ * -----------------------------------------------------------------------------
+ * v3.0 原版**只有**随机版 keypair，没有 derand 版；derand 是后续版本才加的。
+ * 而本项目的**无证书 Kyber** 链路需要它：
+ *   pqkds/certificateless_kyber_dll_fusion.py 从无证书私钥经 SHAKE-256 派生
+ *   64 字节 coins，再用 keypair_derand 生成 Kyber 密钥对，从而保证
+ *   "同一 CL 私钥 + 同一身份 → 同一 Kyber 密钥对"。
+ *
+ * 因此这里把后续版本的标准 derand API 移植到 v3.0 核心上。
+ *
+ * ⚠️ 移植的边界（这一点很重要）：
+ *   **只改变随机数从哪里来**，KEM 数学、格运算、编解码、
+ *   以及共享密钥的派生方式**一律未动**。
+ *   所以它与 v3.0 原版的线上格式完全一致 —— 浏览器端的 round-3 实现
+ *   仍然与之互通（有逐字节的共享密钥比对用例守着）。
+ *
+ * ⚠️ 为什么不能只写个包装函数：
+ *   KEM 层的 sk 末尾有一个「拒绝分支用的随机值 z」，
+ *   **只能由 keypair_derand 自己填**（它拿得到 coins 的后 32 字节）。
+ *   在包装里事后覆写做不到 —— `keypair_derand` 的入参里没有 coins。
+ * ========================================================================== */
 
 /*************************************************
 * Name:        indcpa_enc
