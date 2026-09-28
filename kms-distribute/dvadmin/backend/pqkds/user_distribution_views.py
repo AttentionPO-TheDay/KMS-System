@@ -166,6 +166,50 @@ def _create_initiated_sessions(user_id, node_map, succeeded_node_ids, batch_id, 
     return created
 
 
+def _record_distribution_chain_event(source_key_id, key_version, sender_node, target_nodes,
+                                     material_digest, batch_id):
+    """把本次分发记到链上（文档 §8.6 的 KEY_DISTRIBUTED）。
+
+    <h2>为什么失败不影响分发结果</h2>
+    <b>因为分发已经成功了</b> —— 信封已经落库、密钥已经在接收方手里。
+    存证是**旁路增强**：链上少一条记录不会让已发生的事变成没发生。
+    如果这里抛异常并回滚分发，就变成"链写不进去 ⇒ 用户拿不到密钥"，
+    把可用性问题升级成功能问题。
+
+    所以：失败只记日志、**不改分发结论**。但调用方会把结果回显到响应里
+    （`chainEvidence` 字段），让"存证没成功"这件事在界面上看得见 ——
+    静默吞掉才是真正危险的：审计缺口会变成不可见。
+
+    <h2>为什么记 source_key_id 而不是别的</h2>
+    被分发的会话密钥（SM4）不在服务端、也不该上链。链上要回答的是
+    "**哪把长期密钥被用于建立会话**"——那正是 source_key_id，
+    也是后续做密钥泄漏关联分析时的入口。
+
+    ⚠️ 上链的是**摘要**：`material_digest` 是信封的密文摘要，
+    不是密文本身，更不是任何密钥材料。
+    """
+    if sender_node is None:
+        # 没有发送方节点就没有"谁分发的"这个事实。宁可不上链，
+        # 也不要编一个 owner 出来 —— 链上的记录一旦写错就撤不回来。
+        logger.info('批次 %s：发起方未映射到节点，跳过链上存证', batch_id)
+        return None
+    node_code = getattr(sender_node, 'node_id', '') or ''
+    try:
+        tx_hash = kms.record_chain_event(
+            'KEY_DISTRIBUTED',
+            int(source_key_id),
+            int(key_version or 0),
+            node_code,
+            str(material_digest or ''),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning('批次 %s 链上存证失败: %s', batch_id, exc)
+        return None
+    if tx_hash:
+        logger.info('批次 %s 已上链存证: keyId=%s tx=%s', batch_id, source_key_id, tx_hash)
+    return tx_hash
+
+
 def _authorized_node_ids(user_id: int) -> List[int]:
     """该用户当前有效的节点授权 ID 列表。"""
     return list(
@@ -610,6 +654,9 @@ def distribute_to_user(request, identity):
     node_records: List[PreDistributedKey] = []
     node_results: List[Dict[str, Any]] = []
     failed: List[str] = []
+    #: 本次分发里最后一份信封的密文摘要 —— 链上存证用它代表"分发了什么"。
+    #: 传摘要而非密文：链上只需要能核验是不是同一份东西。
+    last_envelope_digest = ''
 
     try:
         with transaction.atomic():
@@ -652,6 +699,7 @@ def distribute_to_user(request, identity):
                     'source_key_id': source_key_id,
                     'expires_at': expires_at.isoformat(),
                 }
+                last_envelope_digest = envelope_for_sign['ciphertext_digest']
                 if sender_node is not None and sender_node.falcon_sign_private_key:
                     _sig = sign_envelope(envelope_for_sign, sender_node.falcon_sign_private_key)
                     if _sig:
@@ -787,6 +835,19 @@ def distribute_to_user(request, identity):
         logger.exception('分发失败: batch=%s', batch_id)
         return _error(f'分发失败：{exc}', 500)
 
+    # 阶段 7（文档 §8.6）：把这次分发记到链上。
+    #
+    # ⚠️ 位置在事务**之外**：存证失败不该回滚一次已经成功的分发
+    #    （信封已落库、密钥已在接收方手里）。详见该函数的说明。
+    chain_tx = _record_distribution_chain_event(
+        source_key_id=source_key_id,
+        key_version=key_info.get('version'),
+        sender_node=sender_node,
+        target_nodes=node_map,
+        material_digest=last_envelope_digest,
+        batch_id=batch_id,
+    )
+
     return _ok(
         {
             'batchId': batch.batch_id,
@@ -804,5 +865,9 @@ def distribute_to_user(request, identity):
             'expiresAt': expires_at.isoformat(),
             'ttlHours': ENVELOPE_TTL_HOURS,
             'status': batch.status,
+            # 链上存证结果。不回显成布尔值而是给哈希：拿不到哈希时，
+            # 前端能如实说"已分发，但存证未成功"，而不是把两者混为一谈。
+            # 缺失既是可诊断的，也不影响分发本身已成立这个事实。
+            'chainHash': chain_tx or '',
         }
     )

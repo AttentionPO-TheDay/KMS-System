@@ -3,18 +3,23 @@ package com.ruoyi.updatedel.controller;
 import com.ruoyi.common.constant.CacheConstants;
 import com.ruoyi.common.core.redis.RedisCache;
 import com.ruoyi.common.utils.StringUtils;
+import com.ruoyi.updatedel.domain.ChainSyncEvent;
 import com.ruoyi.updatedel.domain.Keymanage;
 import com.ruoyi.updatedel.domain.KeyOperationRecord;
 import com.ruoyi.updatedel.service.KeyOperationRecordService;
 import com.ruoyi.updatedel.service.LifecycleService;
+import com.ruoyi.updatedel.service.UpdatedelChainService;
 import com.ruoyi.updatedel.service.UserPublicKeyService;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -23,12 +28,15 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/internal/lifecycle")
 public class InternalLifecycleController {
+    private static final Logger log = LoggerFactory.getLogger(InternalLifecycleController.class);
+
     private final LifecycleService lifecycleService;
     private final KeyOperationRecordService keyOperationRecordService;
     private final RedisCache redisCache;
     private final UserPublicKeyService userPublicKeyService;
     private final com.ruoyi.framework.web.service.TokenService tokenService;
     private final com.ruoyi.updatedel.mapper.SysUserMapper sysUserMapper;
+    private final UpdatedelChainService updatedelChainService;
 
     // 内部 Token 必须由环境变量 INTERNAL_TOKEN 注入，无默认值（历史默认值为公开值）。
     @Value("${kms.go-backend.internal-token}")
@@ -39,13 +47,15 @@ public class InternalLifecycleController {
                                        RedisCache redisCache,
                                        UserPublicKeyService userPublicKeyService,
                                        com.ruoyi.framework.web.service.TokenService tokenService,
-                                       com.ruoyi.updatedel.mapper.SysUserMapper sysUserMapper) {
+                                       com.ruoyi.updatedel.mapper.SysUserMapper sysUserMapper,
+                                       UpdatedelChainService updatedelChainService) {
         this.lifecycleService = lifecycleService;
         this.keyOperationRecordService = keyOperationRecordService;
         this.redisCache = redisCache;
         this.userPublicKeyService = userPublicKeyService;
         this.tokenService = tokenService;
         this.sysUserMapper = sysUserMapper;
+        this.updatedelChainService = updatedelChainService;
     }
 
     /**
@@ -276,6 +286,107 @@ public class InternalLifecycleController {
         }
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("data", items);
+        return payload;
+    }
+
+    /**
+     * 记录一次**生命周期事件**到链上（文档 §8.6 的 KEY_DISTRIBUTED）。
+     *
+     * <h2>为什么单独开一个入口，而不是复用 rotateKey</h2>
+     * 契约里 {@code rotateKey} / {@code changeKeyStatus} 都以"记录必须先存在"为前置
+     * （{@code require(k.keyId != 0)}），而它们的语义也确实只覆盖**本链登记过的**
+     * 密钥状态变迁。分发模块要记的 KEY_DISTRIBUTED 不是状态变迁：被分发的那把密钥
+     * 本来就在链上，分发是它的一次**使用**。硬套 rotateKey 既会说谎
+     * （它并不是"轮换"），也会因为前置条件不满足而失败。
+     *
+     * <p>因此走契约新增的 {@code recordEvent}：只留痕，不改任何 KeyRecord 状态。
+     * 原有的 uploadKey / rotateKey / changeKeyStatus 保持不变 ——
+     * 它们维护状态，这条只记录"发生过什么"。
+     *
+     * <h2>上链内容边界（文档 §8.6 明确禁止项）</h2>
+     * 调用方传进来的应当是**摘要**，不是材料本身。这里显式拒绝看起来像
+     * 私钥 / 秘密份额的值 —— 与其信任调用方，不如在链的入口处挡一道：
+     * 一旦秘密上链就撤不回来了。
+     */
+    @PostMapping("/chain/event")
+    public Map<String, Object> chainEvent(@RequestHeader(value = "X-Internal-Token", required = false) String token,
+                                          @RequestBody Map<String, Object> body) {
+        requireAuthorized(token);
+
+        String eventType = str(body.get("eventType"));
+        if (eventType == null || eventType.trim().isEmpty()) {
+            return errorPayload("eventType 不能为空");
+        }
+        // 只认四类已知事件。放任意字符串进来会让链上日志变成自由文本，
+        // 审计时无法按类型检索 —— 那正是 §8.6 要解决的问题。
+        String normalized = ChainSyncEvent.normalize(eventType.trim());
+        if (!ChainSyncEvent.TYPE_KEY_CREATED.equals(normalized)
+            && !ChainSyncEvent.TYPE_KEY_UPDATED.equals(normalized)
+            && !ChainSyncEvent.TYPE_KEY_REVOKED.equals(normalized)
+            && !ChainSyncEvent.TYPE_KEY_DISTRIBUTED.equals(normalized)) {
+            return errorPayload("不支持的事件类型：" + eventType
+                + "（可选 KEY_CREATED / KEY_UPDATED / KEY_REVOKED / KEY_DISTRIBUTED）");
+        }
+
+        Object rawKeyId = body.get("keyId");
+        if (rawKeyId == null) {
+            return errorPayload("keyId 不能为空");
+        }
+        long keyId;
+        try {
+            keyId = Long.parseLong(String.valueOf(rawKeyId).trim());
+        } catch (NumberFormatException ex) {
+            return errorPayload("keyId 必须是整数");
+        }
+
+        String publicMaterialHash = str(body.get("publicMaterialHash"));
+        String nodeId = str(body.get("nodeId"));
+        // 长度上限按契约里 string 的实际情况给：过长的值会显著抬高上链成本，
+        // 而审计需要的只是"哪把密钥、哪个节点、什么时候"。
+        if (publicMaterialHash != null && publicMaterialHash.length() > 128) {
+            return errorPayload("publicMaterialHash 过长（上限 128 字符）");
+        }
+        if (nodeId != null && nodeId.length() > 128) {
+            return errorPayload("nodeId 过长（上限 128 字符）");
+        }
+
+        int version = 0;
+        try {
+            version = Integer.parseInt(String.valueOf(body.getOrDefault("version", 0)).trim());
+        } catch (NumberFormatException ignored) {
+            // 版本拿不到就记 0，而不是拒绝整条事件：
+            // 分发的关键事实是"哪把 keyId 被分发过"，版本是补充信息。
+        }
+
+        try {
+            String txHash = updatedelChainService.recordLifecycleEvent(
+                normalized, keyId, version, nodeId, publicMaterialHash);
+            if (txHash == null) {
+                return errorPayload("上链失败：链服务未就绪或交易被拒绝");
+            }
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("eventType", normalized);
+            data.put("keyId", keyId);
+            data.put("chainHash", txHash);
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("code", 200);
+            payload.put("data", data);
+            return payload;
+        } catch (Exception ex) {
+            log.warn("记录链上事件失败: type={} keyId={} err={}", normalized, keyId, ex.getMessage());
+            return errorPayload("上链失败：" + ex.getMessage());
+        }
+    }
+
+    private String str(Object value) {
+        return value == null ? null : String.valueOf(value);
+    }
+
+    private Map<String, Object> errorPayload(String message) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("code", 400);
+        payload.put("message", message);
+        payload.put("data", null);
         return payload;
     }
 

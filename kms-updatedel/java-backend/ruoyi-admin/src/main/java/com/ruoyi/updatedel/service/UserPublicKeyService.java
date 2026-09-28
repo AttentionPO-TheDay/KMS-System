@@ -55,6 +55,11 @@ public class UserPublicKeyService {
         result.put("userName", key.getUserName());
         result.put("encrytName", key.getEncrytName());
         result.put("status", key.getStatus());
+        // 版本号（阶段 4 / §8.6 补）：链上存证要求事件带 `key_version`，
+        // 而分发侧要记的 KEY_DISTRIBUTED 正是经这个接口拿目标点的。
+        // 缺了它，链上只能回答"哪把密钥被分发过"，回答不了"哪个版本" ——
+        // 而轮换之后，"哪个版本"恰恰是审计要对照的那个维度。
+        result.put("version", key.getVersion());
         result.put("msKeyId", key.getMsKeyId());
         result.put("algorithmVersion", key.getAlgorithmVersion());
         result.put("keyMaterialState", key.getKeyMaterialState());

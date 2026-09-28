@@ -129,6 +129,56 @@ public class UpdatedelChainService {
         }
     }
 
+    /**
+     * 把一条**通用生命周期事件**记到链上（文档 §8.6）。
+     *
+     * <p>与 {@link #processCreateChainSync} 等方法的关键差别：这里**不要求**
+     * keyId 在本链上已登记，也不改动任何 KeyRecord 状态。分发模块要记的
+     * KEY_DISTRIBUTED 正属于这一类 —— 被分发的密钥是链上已有记录的一次**使用**，
+     * 不是它的状态变迁；而按 keyId 去 rotateKey 既语义不符，也会因为
+     * "记录不存在"而失败。
+     *
+     * <p>同时这里**不写** key_operation_record、不更新 keymanage.chain_status：
+     * 那不是本服务的密钥，改它的状态会污染生命周期侧的审计。
+     * 事件本身留在链上，这才是分发侧要的存证。
+     *
+     * @return 交易哈希；链服务未就绪或交易失败时返回 {@code null}（调用方据此报错）
+     */
+    public String recordLifecycleEvent(String eventType, long keyId, int version,
+                                       String nodeId, String publicMaterialHash) {
+        if (!ensureFiscoWrapper()) {
+            log.warn("记录链上事件失败：FISCO 未就绪, type={} keyId={}", eventType, keyId);
+            return null;
+        }
+        try {
+            TransactionReceipt receipt = fiscoWrapper.recordEvent(
+                eventType,
+                BigInteger.valueOf(keyId),
+                BigInteger.valueOf(version),
+                nodeId == null ? "" : nodeId,
+                publicMaterialHash == null ? "" : publicMaterialHash);
+            if (receipt == null || !receipt.isStatusOK()) {
+                log.warn("记录链上事件交易失败, type={} keyId={} status={}",
+                    eventType, keyId, receipt == null ? "null" : receipt.getStatus());
+                return null;
+            }
+            // 校验事件确实落在回执里再回报成功。
+            // 只看"交易成功"是不够的 —— 本次排查里 MISSING_*_EVENT 正是
+            // "交易成功但事件为空"，两者混淆了一次。这里在源头就分开。
+            List<KeyEvidence.KeyLifecycleEventEventResponse> events =
+                fiscoWrapper.getKeyLifecycleEvents(receipt);
+            if (events.isEmpty()) {
+                log.warn("记录链上事件交易成功但回执无事件（事件签名可能不匹配）, type={} keyId={}",
+                    eventType, keyId);
+                return null;
+            }
+            return receipt.getTransactionHash();
+        } catch (Exception e) {
+            log.warn("记录链上事件异常, type={} keyId={} err={}", eventType, keyId, e.getMessage());
+            return null;
+        }
+    }
+
     private boolean handleCreateReceipt(Long keyId, TransactionReceipt receipt) {
         if (!isReceiptStatusOk(keyId, receipt, "CREATE_KEY")) {
             return false;
@@ -588,6 +638,15 @@ public class UpdatedelChainService {
 
         private List<KeyEvidence.UploadSuccessEventResponse> getUploadSuccessEvents(TransactionReceipt receipt) {
             return keyEvidence.getUploadSuccessEvents(receipt);
+        }
+
+        private TransactionReceipt recordEvent(String eventType, BigInteger keyId, BigInteger version,
+                                               String nodeId, String publicMaterialHash) {
+            return keyEvidence.recordEvent(eventType, keyId, version, nodeId, publicMaterialHash);
+        }
+
+        private List<KeyEvidence.KeyLifecycleEventEventResponse> getKeyLifecycleEvents(TransactionReceipt receipt) {
+            return keyEvidence.getKeyLifecycleEventEvents(receipt);
         }
 
         private TransactionReceipt changeKeyStatus(Long keyId, int newStatus) {

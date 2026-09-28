@@ -96,7 +96,13 @@ require_file "$SCRIPT_DIR/docker-compose.yml"
 mkdir -p "$LIVE_STATE_DIR"
 
 log_info "Ensuring FISCO node and console are running"
-run_compose up -d fisco-node "$CONSOLE_SERVICE"
+# ⚠️ 服务名是 `fisco-node0`（另有 node1..3），**不是** `fisco-node`。
+# 这个脚本是在单节点时代写的，链改多节点后调用会直接报
+# "no such service: fisco-node" 并中止 —— 而它中止的位置在编译之前，
+# 所以现象是"脚本跑不起来"，而不是"合约版本旧"，不容易联想到服务改名。
+# fisco-console 通过 network_mode: service:fisco-node0 共享 node0 的网络栈，
+# 因此拉起 console 本身就会带上 node0（compose 的 depends_on 语义）。
+run_compose up -d "$CONSOLE_SERVICE"
 
 if ! wait_console_ready; then
     log_error "FISCO console is not ready"

@@ -101,9 +101,47 @@ contract KeyEvidence {
 
         records[_keyId].status = _newStatus;
         records[_keyId].updateTime = now;
-        
+
         // 记录是哪个版本发生了状态变更
         emit StatusChanged(_keyId, records[_keyId].version, _newStatus, now);
+        return 0;
+    }
+
+    // =========================================================================
+    // 改动6（文档 §8.6）：通用生命周期事件
+    // -------------------------------------------------------------------------
+    // 为什么需要它
+    // ------------
+    // 上面的 uploadKey / rotateKey / changeKeyStatus 只覆盖**本合约登记过的**
+    // 密钥，而且都要求记录先存在。文档 §8.6 要记录的四类事件里，
+    // KEY_DISTRIBUTED 属于**分发模块**的行为 —— 被分发的那把密钥不在这条链上，
+    // 硬套 rotateKey 既会说谎（它并不是"轮换"），也会因为记录不存在而失败。
+    //
+    // 所以补一个通用的记录入口：只记录"发生过什么"，不改变任何 KeyRecord 状态。
+    // 它**不替代**上面三个方法 —— 那三个维护链上状态，这个只留痕。
+    //
+    // ⚠️ 上链内容边界：只收公开量与元数据。
+    //    绝不上链节点侧秘密 u、完整私钥 d_A 或任何 SM4 明文。
+    //    调用方传进来的应该是**摘要**（如公开材料的 SHA256），不是材料本身。
+    // =========================================================================
+    event KeyLifecycleEvent(
+        string  eventType,
+        uint256 indexed keyId,
+        uint32  version,
+        string  nodeId,
+        string  publicMaterialHash,
+        uint256 timestamp
+    );
+
+    function recordEvent(
+        string _eventType,
+        uint256 _keyId,
+        uint32 _version,
+        string _nodeId,
+        string _publicMaterialHash
+    ) public onlyOwner returns(int256) {
+        require(bytes(_eventType).length > 0, "event type required");
+        emit KeyLifecycleEvent(_eventType, _keyId, _version, _nodeId, _publicMaterialHash, now);
         return 0;
     }
 }

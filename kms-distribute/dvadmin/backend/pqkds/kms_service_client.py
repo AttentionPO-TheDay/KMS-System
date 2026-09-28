@@ -167,6 +167,69 @@ def list_users(keyword: Optional[str] = None) -> list:
     return data if isinstance(data, list) else []
 
 
+def record_chain_event(event_type: str, key_id: int, version: int = 0,
+                       node_id: str = '', public_material_hash: str = '',
+                       timeout: int = 12) -> Optional[str]:
+    """把一条生命周期事件记到链上（文档 §8.6）。
+
+    @return 成功时交易哈希；任何失败都返回 None
+    @raise KmsServiceError 只在调用方明确需要区分"服务不可用"时抛出（见下）
+
+    <h2>为什么失败**不抛异常**</h2>
+    上链存证是**旁路增强**，不是分发主流程的一部分。分发已经把密钥安全地交到了
+    接收方手上 —— 这个事实不因为链上少一条记录而改变。如果这里抛异常并让调用方
+    回滚，就会造成"链上写失败 ⇒ 用户拿不到密钥"，把可用性问题升级成功能问题。
+
+    所以失败一律返回 None 并记日志，由调用方决定怎么呈现（通常是如实告知
+    "已分发，但存证未成功"）。**绝不静默吞掉** —— 那会让审计缺口不可见。
+
+    <h2>为什么不复用 `/kms/lifecycle-record`</h2>
+    那个端点会把请求**转发成一次真实的密钥更新/回收调用**（`_call_lifecycle_api`），
+    语义完全不同：它改密钥状态，本函数只留痕。用它记 KEY_DISTRIBUTED
+    会让主 KMS 把分发误当成一次轮换，把密钥版本白白推进一格。
+    """
+    try:
+        headers = _internal_headers()
+    except KmsServiceError as exc:
+        logger.warning('上链存证不可用（内部令牌未配置）: %s', exc)
+        return None
+
+    payload = {
+        'eventType': event_type,
+        'keyId': int(key_id),
+        'version': int(version or 0),
+        'nodeId': node_id or '',
+        # ⚠️ 传的是**摘要**而不是公开材料本身。链上只需要能核验"是不是同一份材料"，
+        #    不需要材料原文；少写一点，链上就少暴露一点。
+        'publicMaterialHash': public_material_hash or '',
+    }
+    try:
+        response = requests.post(
+            f'{KMS_LIFECYCLE_BASE}/internal/lifecycle/chain/event',
+            headers=headers,
+            json=payload,
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        logger.warning('上链存证请求失败: type=%s keyId=%s err=%s', event_type, key_id, exc)
+        return None
+
+    if response.status_code != 200:
+        logger.warning('上链存证返回 %s: %s', response.status_code, response.text[:200])
+        return None
+    try:
+        body = response.json() or {}
+    except ValueError:
+        logger.warning('上链存证响应不是 JSON: %s', response.text[:200])
+        return None
+    data = body.get('data') or {}
+    tx_hash = data.get('chainHash')
+    if not tx_hash:
+        logger.warning('上链存证未返回交易哈希: %s', str(body)[:200])
+        return None
+    return tx_hash
+
+
 def extract_bearer_token(request) -> Optional[str]:
     """从 Django 请求里取用户令牌。
 
