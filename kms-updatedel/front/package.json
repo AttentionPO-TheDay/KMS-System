@@ -10,7 +10,8 @@
     "build:prod": "vite build",
     "build:stage": "vite build --mode staging",
     "preview": "vite preview",
-    "verify:crypto": "node tools/verify-node-crypto.mjs"
+    "verify:crypto": "node tools/verify-node-crypto.mjs",
+    "verify:session": "node tools/verify-session-establish.mjs"
   },
   "repository": {
     "type": "git",

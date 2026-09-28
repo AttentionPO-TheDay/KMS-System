@@ -270,6 +270,60 @@ class SessionKey(CoreModel):
         db_table = f"{table_prefix}pqkds_session_keys"
     def __str__(self):
         return f"会话-{self.node1.name}↔{self.node2.name}"
+class SessionKeyConfirmation(CoreModel):
+    """会话的**双方确认**记录（文档 §6.5）。
+
+    <h2>为什么单独一张表，而不是给 SessionKey 加两列</h2>
+    确认是"每个节点各一次"的事件，需要各自的**时间**与**证明**。
+    加两列也能存，但会丢掉"谁在什么时候提交了什么证明"——
+    而审计要的恰恰是那个。会话的双方是 node1/node2 两个外键，
+    摊平成列会让"第三个人来提交"这类越权判断散落在代码里。
+
+    <h2>证明是什么（这一步的设计要点）</h2>
+    双方各自提交 `HMAC-SHA256(K, session_id)`，K 是它们**实际解封得到**的
+    SM4 会话密钥。服务端**比较两条证明是否相等**，而不去解出 K ——
+    服务端本来就没有 K，这正是本系统"服务端解不开"那条不变量。
+
+    相等 ⇒ 双方持有**同一把** K。这不是形式检查：
+      * 单方随便算一个值 → 与对方对不上，提升不了；
+      * 双方各持有不同的 K（例如封装时算法搞混）→ 同样对不上。
+    所以"提升为 established"是有依据的，不是宣称。
+
+    ⚠️ 服务端由此看到的只是一个 PRF 输出。K 是 128 位随机值，
+       拿到 HMAC 对它没有实际优势 —— 但这句话的前提是
+       **K 确实是随机的**，所以各处的 `PayloadCipher.generate_key()`
+       不能退化成弱随机源。
+    """
+
+    session = models.ForeignKey(
+        SessionKey, on_delete=models.CASCADE, related_name='confirmations',
+        verbose_name="所属会话"
+    )
+    node = models.ForeignKey(
+        Node, on_delete=models.CASCADE, related_name='session_confirmations',
+        verbose_name="提交确认的节点"
+    )
+    #: HMAC-SHA256(K, session_id) 的十六进制。**不是 K 本身。**
+    proof = models.CharField(max_length=64, verbose_name="持有证明")
+    key_recovered = models.BooleanField(
+        default=False, verbose_name="是否已恢复会话密钥",
+        help_text="节点声明它已成功解封出 K。服务端无法独立验证这一条，"
+                  "真正起作用的是 proof 的相互匹配。",
+    )
+    confirmed_at = models.DateTimeField(verbose_name="确认时间")
+
+    class Meta:
+        verbose_name = "会话确认"
+        verbose_name_plural = "会话确认"
+        db_table = f"{table_prefix}pqkds_session_confirmations"
+        # 一个节点对一条会话只确认一次；重复提交走 update_or_create，
+        # 使整个流程可安全重试（节点网络抖动不该产生第二行）。
+        unique_together = (('session', 'node'),)
+
+    def __str__(self):
+        return f'确认-{self.session.session_id}-{self.node.node_id}'
+
+
 class Message(CoreModel):
     message_id = models.CharField(max_length=64, unique=True, verbose_name="消息ID", help_text="唯一消息标识符")
     session = models.ForeignKey(SessionKey, on_delete=models.CASCADE, related_name='messages', verbose_name="所属会话", help_text="消息所属的会话")

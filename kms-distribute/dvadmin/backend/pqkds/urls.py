@@ -21,6 +21,8 @@ from .user_distribution_views import (
 )
 # 阶段 2：节点自助（首次登录后的密钥初始化）。身份取自令牌自省，见该模块 docstring。
 from .node_self_views import node_self, node_self_init, node_self_keys
+# §6.5：节点取自己的信封 + 提交「我已恢复 K」的证明
+from .node_session_views import node_envelopes, node_session_confirm
 # 阶段 6：长期密钥回收后连带失效预分配池项（内部通道，X-Internal-Token 鉴权）
 from .internal_pool_views import revoke_pool_by_key
 # 阶段 7 §8.7：安全监控总览
@@ -56,6 +58,11 @@ urlpatterns = [
     # 先逐个登记四套公钥，再由 init 收尾置 ACTIVE（见 node_service 的说明）。
     path('node-self/keys/', node_self_keys, name='node-self-keys'),
     path('node-self/init/', node_self_init, name='node-self-init'),
+    # §6.5：节点取**自己那腿**信封并在本地解封（服务端不代解、也没有私钥），
+    # 再提交「我已恢复 K」的证明；双方证明一致即提升为 established。
+    path('node-self/envelopes/', node_envelopes, name='node-self-envelopes'),
+    path('node-self/sessions/<str:session_id>/confirm/', node_session_confirm,
+         name='node-self-session-confirm'),
 
     # 阶段 6：内部通道（X-Internal-Token 鉴权，不对外暴露）。
     # 同样排在 router 之前，理由同上。
