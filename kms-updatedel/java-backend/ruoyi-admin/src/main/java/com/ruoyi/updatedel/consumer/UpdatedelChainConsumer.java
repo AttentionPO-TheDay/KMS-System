@@ -71,11 +71,27 @@ public class UpdatedelChainConsumer {
                     continue;
                 }
 
-                String actionType = event.getActionType();
-                if (ChainSyncEvent.TYPE_ROTATE.equals(actionType) || ChainSyncEvent.TYPE_REVOKE.equals(actionType)) {
+                // ⚠️ 必须经 `normalize` 归一，**不能**直接拿新常量去比。
+                //
+                // 阶段 7（§8.6）把事件类型改名为 KEY_CREATED / KEY_UPDATED /
+                // KEY_REVOKED / KEY_DISTRIBUTED，并保留了 ROTATE / REVOKE 两个
+                // 历史值用于兼容**已投递过的事件**。但当时的改动只动了发布侧，
+                // 消费侧这一行还在拿 @Deprecated 的 TYPE_ROTATE / TYPE_REVOKE 比 ——
+                // 而发布侧从此只发新值，于是**更新与回收在链上完全停止落账**：
+                // 接口返回成功、库里 status/version 都对，只有链上查不到。
+                // 现象与"链本身出问题"一模一样，很容易朝错误的方向排查。
+                //
+                // 用 normalize 之后，新旧值都收敛到同一语义，两边再也不会漂移。
+                String actionType = ChainSyncEvent.normalize(event.getActionType());
+                if (ChainSyncEvent.TYPE_KEY_UPDATED.equals(actionType)
+                    || ChainSyncEvent.TYPE_KEY_REVOKED.equals(actionType)
+                    || ChainSyncEvent.TYPE_KEY_CREATED.equals(actionType)) {
                     taskCount += handleKeys(actionType, event.getKeys());
                 } else {
-                    log.debug("UpdatedelChainConsumer ignored actionType={}", actionType);
+                    // KEY_DISTRIBUTED 由分发模块产生，尚未接通投递（见 §8.6 的说明），
+                    // 这里如实记 info 而不是 debug：否则"事件投递了却什么都没发生"
+                    // 在默认日志级别下完全不可见。
+                    log.info("UpdatedelChainConsumer ignored actionType={}", actionType);
                 }
             } catch (Exception e) {
                 log.error("UpdatedelChainConsumer failed to handle record, offset={}", record.offset(), e);
@@ -143,9 +159,15 @@ public class UpdatedelChainConsumer {
 
     private ChainResult processOne(String actionType, Keymanage key) {
         try {
-            boolean success = ChainSyncEvent.TYPE_ROTATE.equals(actionType)
-                ? updatedelChainService.processRotateChainSync(key)
-                : updatedelChainService.processRevokeChainSync(key);
+            // actionType 已由调用点 normalize 过，这里比较的是规范值。
+            boolean success;
+            if (ChainSyncEvent.TYPE_KEY_CREATED.equals(actionType)) {
+                success = updatedelChainService.processCreateChainSync(key);
+            } else if (ChainSyncEvent.TYPE_KEY_UPDATED.equals(actionType)) {
+                success = updatedelChainService.processRotateChainSync(key);
+            } else {
+                success = updatedelChainService.processRevokeChainSync(key);
+            }
             return new ChainResult(key.getKeyId(), success, success ? "OK" : "FAILED");
         } catch (Exception e) {
             return new ChainResult(key.getKeyId(), false, e.getClass().getSimpleName());

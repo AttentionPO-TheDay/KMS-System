@@ -67,6 +67,93 @@ public class UpdatedelChainService {
         log.info("Lifecycle FISCO wrapper will initialize lazily when chain sync is triggered");
     }
 
+    /**
+     * 把一条**新创建**的密钥登记到链上（文档 §8.6 的 KEY_CREATED）。
+     *
+     * <h2>为什么这个方法是必需的，而不是"多存一笔"</h2>
+     * 契约 {@code KeyEvidence} 的两个写方法都以记录必须存在为前置条件：
+     * <pre>
+     *   rotateKey        require(k.keyId != 0, "key missing")
+     *   changeKeyStatus  require(records[_keyId].keyId != 0, "key missing")
+     * </pre>
+     * 而记录只能由 {@code uploadKey} 建立。本服务此前**从未调用过 uploadKey**，
+     * 所以更新与回收在链上全部 revert —— 但 revert 的回执仍然是"交易成功"，
+     * 事件自然是空的，于是失败被记为 {@code MISSING_ROTATE_EVENT} /
+     * {@code MISSING_STATUS_EVENT}。那两个名字把原因指向"事件解析"，
+     * 而真实原因是"合约里没有这条记录"，排查方向完全被带偏。
+     *
+     * <p>所以补上 uploadKey 不只是为了"多一个 KEY_CREATED 事件"——
+     * 它是另外两条链路能真正落链的**前提**。
+     *
+     * <h2>上链的公开材料</h2>
+     * SM2 / SSCL 上链的是可解密的加密目标点 {@code P_A}（与 rotate 用的是同一个
+     * {@link #calculatePA}）。<b>不</b>上链节点侧秘密 {@code u}、完整私钥 {@code d_A}、
+     * 或任何 SM4 明文 —— 契约里这一列叫 publicKey，字面意思就是公开量。
+     */
+    public boolean processCreateChainSync(Keymanage keymanage) {
+        if (keymanage == null || keymanage.getKeyId() == null) {
+            return false;
+        }
+
+        try {
+            String publicMaterial = calculatePA(keymanage);
+            if (publicMaterial == null) {
+                // 算不出公开材料就不上链：宁可让链上没有这条记录（状态停在"待上链"），
+                // 也不要把一个空串写进去 —— 那会占住 keyId，导致**之后**的 rotateKey
+                // 因为 "key exists" 永远失败，而且失败原因看上去与这里毫无关系。
+                markFailed(keymanage.getKeyId());
+                publishChainResult(keymanage.getKeyId(), "CREATE_KEY", "2", null, null, "PA_CALC_FAILED");
+                return false;
+            }
+
+            if (!ensureFiscoWrapper()) {
+                markFailed(keymanage.getKeyId());
+                publishChainResult(keymanage.getKeyId(), "CREATE_KEY", "2", null, null, "FISCO_NOT_READY");
+                return false;
+            }
+
+            TransactionReceipt receipt = fiscoWrapper.uploadKey(
+                keymanage.getKeyId(),
+                keymanage.getUserName(),
+                publicMaterial,
+                keymanage.getEncrytName(),
+                keymanage.getKeyUse(),
+                "1".equals(keymanage.getAutoUpdate()),
+                keymanage.getVersion() == null ? 1 : keymanage.getVersion());
+            return handleCreateReceipt(keymanage.getKeyId(), receipt);
+        } catch (Exception e) {
+            logDetailFailure("Create chain sync failed", keymanage.getKeyId(), e);
+            markFailed(keymanage.getKeyId());
+            publishChainResult(keymanage.getKeyId(), "CREATE_KEY", "2", null, null, e.getClass().getSimpleName());
+            return false;
+        }
+    }
+
+    private boolean handleCreateReceipt(Long keyId, TransactionReceipt receipt) {
+        if (!isReceiptStatusOk(keyId, receipt, "CREATE_KEY")) {
+            return false;
+        }
+
+        List<KeyEvidence.UploadSuccessEventResponse> events = fiscoWrapper.getUploadSuccessEvents(receipt);
+        if (events.isEmpty()) {
+            // 走到这里说明交易成功却没有 UploadSuccess，最可能的原因是该 keyId
+            // 在链上**已经存在**（uploadKey 里有 require(records[_keyId].keyId == 0,
+            // "key exists")）。如实记下来：这条记录不会再被自动重试，
+            // 因为重试永远不会成功 —— 需要人工确认链上那条是不是同一把密钥。
+            logDetailFailure("Create chain sync missing UploadSuccess event (keyId already on chain?)", keyId, null);
+            keyOperationRecordService.updateLatestResult(keyId, "CREATE", "2", "2",
+                receipt.getTransactionHash(), parseBlockHeight(receipt.getBlockNumber()), "MISSING_UPLOAD_EVENT");
+            publishChainResult(keyId, "CREATE_KEY", "2", receipt.getTransactionHash(),
+                parseBlockHeight(receipt.getBlockNumber()), "MISSING_UPLOAD_EVENT");
+            return false;
+        }
+
+        Long blockHeight = parseBlockHeight(receipt.getBlockNumber());
+        keymanageMapper.updateChainStatus(keyId, "1", receipt.getTransactionHash(), blockHeight);
+        publishChainResult(keyId, "CREATE_KEY", "1", receipt.getTransactionHash(), blockHeight, null);
+        return true;
+    }
+
     public boolean processRotateChainSync(Keymanage keymanage) {
         if (keymanage == null || keymanage.getKeyId() == null) {
             return false;
@@ -468,6 +555,39 @@ public class UpdatedelChainService {
 
         private TransactionReceipt rotateKey(Long keyId, String newPubKey, Integer newVersion) {
             return keyEvidence.rotateKey(BigInteger.valueOf(keyId), newPubKey, BigInteger.valueOf(newVersion == null ? 1 : newVersion));
+        }
+
+        /**
+         * 把一条新密钥登记到链上（文档 §8.6 的 KEY_CREATED 事件）。
+         *
+         * <p><b>这不是可选动作</b>：契约里的 {@code rotateKey} 与
+         * {@code changeKeyStatus} 都以 {@code require(k.keyId != 0)} 开头 ——
+         * **记录必须先 uploadKey 存在**，否则那两笔调用在链上直接 revert。
+         *
+         * <p>在此之前本服务**从未调用过** uploadKey，于是更新与回收虽然能发出交易、
+         * 拿回一个“成功”的回执，链上却没有任何事件 —— 因为合约里的 require
+         * 在写事件之前就失败了。表现为 {@code MISSING_ROTATE_EVENT} /
+         * {@code MISSING_STATUS_EVENT} 这类“交易成功但没有事件”的结论，
+         * 看上去像事件解析出了 bug，实际是记录压根不存在。
+         *
+         * @param pubKey 上链的是**公开材料**：SM2/SSCL 传公钥点，
+         *               Kyber/Falcon 传公钥摘要。绝不上传私钥或节点侧秘密 u。
+         */
+        private TransactionReceipt uploadKey(Long keyId, String username, String pubKey,
+                                             String algo, String usage, Boolean isAutoUpdate,
+                                             Integer version) {
+            return keyEvidence.uploadKey(
+                BigInteger.valueOf(keyId),
+                username == null ? "" : username,
+                pubKey == null ? "" : pubKey,
+                algo == null ? "" : algo,
+                usage == null ? "" : usage,
+                isAutoUpdate != null && isAutoUpdate,
+                BigInteger.valueOf(version == null ? 1 : version));
+        }
+
+        private List<KeyEvidence.UploadSuccessEventResponse> getUploadSuccessEvents(TransactionReceipt receipt) {
+            return keyEvidence.getUploadSuccessEvents(receipt);
         }
 
         private TransactionReceipt changeKeyStatus(Long keyId, int newStatus) {
