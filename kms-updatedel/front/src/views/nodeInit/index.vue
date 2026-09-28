@@ -64,6 +64,34 @@
           description="四套基础密钥均已就绪。你可以前往「密钥生成」创建业务密钥，或在「密钥分发」中与其它节点建立会话。"
         />
 
+        <!-- §4.4 设备绑定：本机不是当初生成密钥的那台设备。
+             必须显式说明"不是你坏了"，否则用户只会看到"解不开信封"而无从判断。 -->
+        <el-alert
+          v-if="deviceMismatch"
+          class="node-init__device"
+          type="error"
+          :closable="false"
+          show-icon
+          title="本机没有该节点的私钥"
+        >
+          <template #default>
+            <p>
+              该节点的密钥是在<strong>另一台设备</strong>上生成的。按设计，
+              私钥只留在那台设备上、<strong>不会从服务器恢复</strong> ——
+              所以本机无法解开平台已分发给该节点的任何信封。
+            </p>
+            <p>两种处置，请按实际需要选择：</p>
+            <ul class="node-init__device-options">
+              <li><strong>续用原设备</strong>：改回原设备登录，本机不做任何改动。</li>
+              <li>
+                <strong>改用本机</strong>：在本机重新初始化一套新密钥。
+                注意旧密钥<strong>不会</strong>因此失效，需要你在「密钥更新与回收」里
+                另行回收 —— 否则平台仍会往旧公钥分发，而旧私钥在对方那台设备上。
+              </li>
+            </ul>
+          </template>
+        </el-alert>
+
         <div class="node-init__actions">
           <el-button
             v-if="!isActive"
@@ -73,7 +101,7 @@
             :disabled="loading || !mapped"
             @click="handleInit"
           >
-            {{ initializing ? '正在生成四套密钥…' : '开始初始化' }}
+            {{ initializing ? '正在初始化…' : '开始初始化' }}
           </el-button>
           <el-button v-if="isActive" type="primary" size="large" @click="goWorkbench">
             进入工作台
@@ -81,10 +109,25 @@
           <el-button :disabled="initializing" @click="load">刷新状态</el-button>
         </div>
 
-        <!-- 时间预期：Falcon 占大头，不告知的话用户会以为卡死 -->
+        <!-- 逐套的进展。四套是串行生成的，用户需要看到"卡在哪一步" ——
+             否则界面上只有一个转圈的按钮，卡住时完全无从判断。 -->
+        <div v-if="initializing && progress.length" class="node-init__progress">
+          <p v-for="(line, i) in progress" :key="i" class="node-init__progress-line">
+            <el-icon class="is-loading"><Loading /></el-icon>
+            <span>{{ line }}</span>
+          </p>
+        </div>
+
+        <!-- 时间预期。⚠️ §4.4 起密钥在**本机**生成，不再有服务端那 15~25 秒，
+             但 Falcon 的 keygen 仍是最慢的一步，所以仍要告知。
+             文案改过：原文写的是"初始化会依次生成…"，
+             现在准确的说法是"在本机依次生成并登记公钥"。
+             ⚠️ 模板里**不能写 Markdown**（`**粗体**` 会原样显示成星号），
+                强调要用 <strong>。 -->
         <p v-if="!isActive" class="node-init__hint">
-          初始化会依次生成 Kyber、SSCL、SM2、Falcon 四套密钥，整体约 15~25 秒
-          （Falcon 的计算与写入占大头）。期间请勿关闭页面或重复点击。
+          初始化会在<strong>本机</strong>依次生成 Kyber、SSCL、SM2、Falcon 四套密钥，
+          并把<strong>公钥</strong>登记到平台（私钥留在本机，不上传）。
+          Falcon 的计算占大头，整体通常在数秒内完成。期间请勿关闭页面或重复点击。
         </p>
       </template>
     </el-card>
@@ -95,8 +138,11 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { getSelfNode, initSelfNodeKeys } from '@/api/pqkds/node-self'
+import { Loading } from '@element-plus/icons-vue'
+import { getSelfNode, initSelfNodeKeys, registerSelfNodePublicKey } from '@/api/pqkds/node-self'
 import { markNodeInitialized } from '@/utils/node-init-status'
+import { cryptoProvider } from '@/utils/crypto/browser-provider.js'
+import { getDeviceId } from '@/utils/crypto/node-key-store.js'
 
 const router = useRouter()
 
@@ -104,6 +150,8 @@ const loading = ref(true)
 const initializing = ref(false)
 const mapped = ref(false)
 const node = ref({})
+/** 逐套生成的进展提示。四套是串行的，用户需要看到"卡在哪一步"。 */
+const progress = ref([])
 
 const KEY_META = [
   { key: 'kyber', label: 'Kyber', role: '后量子密钥封装 / 建立共享秘密' },
@@ -133,12 +181,48 @@ const statusTagType = computed(() => {
 
 const isActive = computed(() => node.value.status === 'ACTIVE')
 
+// ---------------------------------------------------------------------------
+// §4.4 设备绑定
+// ---------------------------------------------------------------------------
+// 服务端记着"这个节点的密钥绑在哪台设备上"（`node.keyDeviceId`），
+// 本机也有自己的 deviceId（在 IndexedDB 里，随密钥库一起生成）。
+// 两者不一致就说明：**本机不是当初生成密钥的那台设备**，
+// 因而本机没有私钥 —— 平台已分发给该节点的信封，这里一个也打不开。
+//
+// 不做这件事的后果是静默的：界面一切正常，直到某天某个信封解不开，
+// 而那时已经很难追到"是因为换了设备"。
+const deviceId = ref('')
+const localKeys = ref({ present: false, algorithms: [] })
+
+const deviceMismatch = computed(() => {
+  const bound = String(node.value.keyDeviceId || '').trim()
+  if (!bound || !deviceId.value) return false
+  // 只在"服务端已绑定 + 本机不是那台设备 + 本机也没有材料"时才算不匹配。
+  // 本机有材料说明就是当初那台（或至少能做下去），不该拦。
+  return bound !== deviceId.value && !localKeys.value.present
+})
+
+async function refreshLocalKeyState() {
+  try {
+    deviceId.value = await getDeviceId()
+    localKeys.value = await cryptoProvider.inspectNodeKeys(node.value.nodeId)
+  } catch (error) {
+    // 密钥库不可用（隐私模式 / 浏览器禁用 IndexedDB）不该让整页打不开，
+    // 但要如实反映成"本机无材料"，而不是假装正常。
+    console.warn('[node-init] 读取本机密钥库失败：', error?.message)
+    localKeys.value = { present: false, algorithms: [] }
+    deviceId.value = ''
+  }
+}
+
 async function load() {
   loading.value = true
   try {
     const data = await getSelfNode()
     mapped.value = Boolean(data?.mapped)
     node.value = data?.node || {}
+    // 先拿到 node.nodeId 才能按它查本机密钥库（keyRef 里含节点编号）
+    await refreshLocalKeyState()
     // 已激活的节点若手工进到本页（书签/后退），顺手把守卫缓存同步成 ACTIVE，
     // 免得它仍按 PENDING_INIT 把用户弹回来。
     if (node.value.status === 'ACTIVE') {
@@ -151,10 +235,48 @@ async function load() {
   }
 }
 
+/**
+ * 节点首次初始化（§4.4 起：**密钥在节点侧生成**）。
+ *
+ * 流程与旧版的关键差别
+ * --------------------
+ * 旧版只调一次 `initSelfNodeKeys()`，服务端在那边生成四套密钥并落库
+ * （含私钥）—— 与 §0/§4「私钥留在节点侧」直接冲突。
+ *
+ * 现在：浏览器逐套生成 → **只上传公钥** → 再由 init 收尾置 ACTIVE。
+ * 所以这里要按顺序做四件事，任何一步失败都必须**明确说出是哪一步** ——
+ * 笼统的"初始化失败"会让用户以为整个流程坏了，而实际上可能只差一套。
+ *
+ * ⚠️ 私钥全程留在 `NodeKeyStore`（加密 IndexedDB），**不上传**。
+ *    这正是本页不能沿用旧实现的原因。
+ */
 async function handleInit() {
   if (initializing.value) return
   initializing.value = true
+  progress.value = []
   try {
+    // 四套依次生成并上报。
+    // 顺序上把 **Falcon 放最后** —— 它的 keygen 最慢（约 70ms/次，
+    // 且是无证书格参数下最重的一步），放前面会让用户在前几秒里
+    // 看不到任何进展。
+    for (const item of KEY_META) {
+      const algo = item.key.toUpperCase()
+      // Kyber 变体：与既有节点保持一致用 768（NIST 3 级）。
+      // 变体由公钥长度**自描述**（服务端按长度推断），所以两边不必预先约定。
+      const options = algo === 'KYBER' ? { variant: 768 } : {}
+      const keyRef = `node-${node.value.nodeId}-${algo}`
+      progress.value.push(`正在生成 ${item.label}…`)
+      const generated = await cryptoProvider.generate(algo, { keyRef, ...options })
+      progress.value.push(`正在登记 ${item.label} 公钥…`)
+      await registerSelfNodePublicKey(
+        algo,
+        generated.publicKey,
+        algo === 'KYBER' ? '768' : undefined,
+        deviceId.value
+      )
+    }
+
+    progress.value.push('四套公钥齐备，正在收尾…')
     const data = await initSelfNodeKeys()
     node.value = data?.node || node.value
     // 主动失效守卫里的状态缓存：不清的话它还是 PENDING_INIT，
@@ -163,15 +285,21 @@ async function handleInit() {
     if (data?.alreadyInitialized) {
       ElMessage.info('该节点此前已完成初始化')
     } else {
-      ElMessage.success('四套基础密钥初始化完成')
+      ElMessage.success('四套基础公钥已登记，节点已激活')
     }
   } catch (error) {
     // 失败时保持 PENDING_INIT，允许重试 —— 明确告知可以再来一次，
     // 而不是让用户以为节点坏了。
-    ElMessage.error(`初始化失败：${error.message}（可稍后重试）`)
+    //
+    // ⚠️ 报错要带上"卡在哪一步"：四套是逐个上报的，只报一句
+    //    "初始化失败"会让用户以为前面几套也白做了（其实没有，
+    //    已登记的会保留，重试时跳过即可）。
+    const at = progress.value[progress.value.length - 1] || '初始化'
+    ElMessage.error(`${at} 失败：${error.message}（可稍后重试，已登记的公钥会保留）`)
     await load()
   } finally {
     initializing.value = false
+    progress.value = []
   }
 }
 
@@ -202,5 +330,15 @@ onMounted(load)
 .node-init__key-role { font-size: 12px; color: var(--kms-text-secondary, #909399); line-height: 1.5; }
 .node-init__done { margin-bottom: 20px; }
 .node-init__actions { display: flex; gap: 12px; }
-.node-init__hint { margin: 16px 0 0; font-size: 12px; color: var(--kms-text-secondary, #909399); line-height: 1.6; }
+.node-init__hint {
+  margin: 16px 0 0; color: var(--kms-text-secondary, #909399);
+  font-size: 13px; line-height: 1.7;
+}
+.node-init__progress { margin-top: 16px; padding: 12px 14px; border-radius: 6px;
+  background: var(--el-fill-color-light, #f5f7fa); }
+.node-init__progress-line { display: flex; align-items: center; gap: 8px;
+  margin: 4px 0; font-size: 13px; color: var(--kms-text-secondary, #606266); }
+.node-init__device { margin-bottom: 16px; }
+.node-init__device p { margin: 6px 0; line-height: 1.7; }
+.node-init__device-options { margin: 6px 0 0; padding-left: 20px; line-height: 1.9; }
 </style>

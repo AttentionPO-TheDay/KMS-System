@@ -28,7 +28,7 @@
 // 这样本模块才能被验证脚本直接 import 进 Node 跑（见 `_probe-provider.mjs`），
 // 否则只能在浏览器里靠肉眼观察，而密码学路径最不能靠肉眼。
 import { CryptoProvider, normalizeAlgorithm } from './provider.js'
-import { listSecrets, removeSecret, sealSecret, unsealSecret, hasSecret } from './node-key-store.js'
+import { inspectNodeKeys, listSecrets, removeSecret, sealSecret, unsealSecret, hasSecret } from './node-key-store.js'
 
 // ---------------------------------------------------------------------------
 // 惰性加载重依赖
@@ -275,6 +275,17 @@ export class BrowserCryptoProvider extends CryptoProvider {
   /** 列出本地持有的全部密钥摘要（不含私密材料）—— 设备绑定判断用它 */
   async listLocalKeys() {
     return listSecrets()
+  }
+
+  /**
+   * 本机对某节点的密钥持有哪些（§4.4 设备绑定）。
+   *
+   * 上层用它判断"我是不是那台设备"，进而决定是续做、重新初始化还是轮换。
+   * 判据是"任意一套在不在本机"而非"四套都在"：
+   * 初始化做到一半同样是"本机有材料"，与"新设备什么都没有"必须区分开。
+   */
+  async inspectNodeKeys(nodeId) {
+    return inspectNodeKeys(nodeId)
   }
 
   /** 读回私密材料的字节形式。**只在本模块内部使用**，不外泄给上层。 */

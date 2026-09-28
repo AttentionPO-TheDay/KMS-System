@@ -251,4 +251,28 @@ export async function assertProtectorNotExportable() {
   return false
 }
 
+/**
+ * 本机是否持有该节点的密钥材料（§4.4 设备绑定的判断基础）。
+ *
+ * 判据是"**任意一套**基础密钥在不在本机"，而不是"四套都在"：
+ * 初始化可能做到一半（比如生成完 SM2 就断网了），
+ * 那种情况下本机**确实**有材料，只是不全 —— 与"新设备什么都没有"
+ * 是两回事，处置也不同（前者续做，后者要重新初始化）。
+ *
+ * @param {string} nodeId 节点编号（前端生成密钥时用它拼 keyRef）
+ * @returns {Promise<{present: boolean, algorithms: string[]}>}
+ */
+export async function inspectNodeKeys(nodeId) {
+  const suffix = `-${String(nodeId || '').trim()}`
+  if (!suffix.trim() || suffix === '-') {
+    return { present: false, algorithms: [] }
+  }
+  const all = await listSecrets()
+  const mine = all.filter((r) => String(r.keyRef || '').endsWith(suffix))
+  return {
+    present: mine.length > 0,
+    algorithms: mine.map((r) => r.algorithm),
+  }
+}
+
 export { getDeviceId }

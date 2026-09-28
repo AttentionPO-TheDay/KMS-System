@@ -16,12 +16,35 @@ export function getSelfNode() {
 }
 
 /**
- * 首次登录后的四套基础密钥初始化（Kyber / SSCL / SM2 / Falcon）。
+ * 登记一个算法的**公钥**（§4.4）。
  *
- * ⚠️ 耗时 15~25 秒（Falcon 占大头）。调用方必须显示 loading 并抑制重复提交 ——
- * 后端是幂等的，但重复提交只会让用户白等。
+ * 私钥在节点浏览器产生并留在本地密钥库，服务端只收公钥。
+ * 后端在入口处**显式拒绝**私钥样式的字段名 —— 所以这里绝不能顺手把
+ * `privateKey` 一起塞进来，那会被拒，而且拒的理由与"密钥不对"很像。
+ *
+ * @param {string} algorithm  SM2 / SSCL / KYBER / FALCON
+ * @param {string} publicKey  **十六进制**。Kyber 由服务端按长度推断变体。
+ * @param {string} [securityLevel]
+ * @param {string} [deviceId] §4.4 设备绑定：本机 deviceId。
+ *   服务端在**第一次**上报时记下它；后续上报若与已绑定的不一致会被拒
+ *   （业务码 409）。那是可处置的状态，不是参数错。
+ */
+export function registerSelfNodePublicKey(algorithm, publicKey, securityLevel, deviceId) {
+  return http
+    .post('/node-self/keys/', { algorithm, publicKey, securityLevel, deviceId })
+    .then(unwrap)
+}
+
+/**
+ * 首次登录后的初始化**收尾**。
+ *
+ * ⚠️ §4.4 起本接口**不再生成密钥** —— 它只校验四套公钥是否齐备，
+ *    齐了就把节点置为 ACTIVE。密钥的产生在前端（`cryptoProvider.generate`），
+ *    见 `views/nodeInit/index.vue`。
+ *
+ * 因此它现在**很快**（不再有 Falcon 的 15~25 秒），
+ * 调用方真正需要 loading 的是前面的密钥生成。
  */
 export function initSelfNodeKeys() {
-  // 单条请求可能超过默认超时，这里显式放宽
-  return http.post('/node-self/init/', null, { timeout: 180000 }).then(unwrap)
+  return http.post('/node-self/init/', null, { timeout: 60000 }).then(unwrap)
 }

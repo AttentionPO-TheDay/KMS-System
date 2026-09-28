@@ -11,7 +11,9 @@
     "build:stage": "vite build --mode staging",
     "preview": "vite preview",
     "verify:crypto": "node tools/verify-node-crypto.mjs",
-    "verify:session": "node tools/verify-session-establish.mjs"
+    "verify:session": "node tools/verify-session-establish.mjs",
+    "verify:node-init-ui": "node tools/verify-node-init-ui.mjs",
+    "verify:device-binding": "node tools/verify-device-binding.mjs"
   },
   "repository": {
     "type": "git",

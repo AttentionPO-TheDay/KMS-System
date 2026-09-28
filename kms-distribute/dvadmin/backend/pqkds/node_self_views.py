@@ -78,6 +78,10 @@ def _node_payload(node: Node) -> dict:
         'domainId': node.domain_id,
         'nodeType': node.node_type,
         'initializedAt': node.initialized_at.isoformat() if node.initialized_at else None,
+        # §4.4 设备绑定：密钥绑在哪台设备上。
+        # 前端拿它与**本机**的 deviceId 比对，判断"我是不是那台设备"——
+        # 新设备登录时本地没有私钥，靠这个才能发现，否则界面看不出任何异常。
+        'keyDeviceId': node.key_device_id or '',
         # 四套密钥各自是否就绪 —— 首次初始化引导页用它显示进度
         'keys': {
             'kyber': bool(node.kyber_public_key),
@@ -152,14 +156,22 @@ def node_self_keys(request, identity):
     try:
         service = NodeService(node.node_id)
         result = service.store_node_public_key(
-            algorithm, public_key, payload.get('securityLevel') or payload.get('security_level')
+            algorithm, public_key,
+            payload.get('securityLevel') or payload.get('security_level'),
+            payload.get('deviceId') or payload.get('device_id'),
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception('节点 %s 登记公钥异常', node.node_id)
         return _error(f'登记公钥失败：{exc}', 500)
 
     if not result.get('success'):
-        return _error(result.get('message') or '登记公钥失败')
+        # 设备不一致是**可处置**的状态（重新初始化 / 换回原设备），
+        # 不是参数错。用一个专门的业务码把它与普通参数错误分开，
+        # 好让前端能给出对应的操作入口，而不是只弹一句红字。
+        return _error(
+            result.get('message') or '登记公钥失败',
+            409 if result.get('device_mismatch') else 400,
+        )
 
     node.refresh_from_db()
     return _ok({'node': _node_payload(node)}, msg=result.get('message') or '公钥已登记')

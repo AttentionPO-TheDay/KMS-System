@@ -401,7 +401,8 @@ class NodeService:
     }
 
     def store_node_public_key(self, algorithm: str, public_key: str,
-                              security_level: str = None) -> Dict[str, Any]:
+                              security_level: str = None,
+                              device_id: str = None) -> Dict[str, Any]:
         """登记一个算法的**公钥**（文档 §4.4）。
 
         这是节点初始化的新入口：私钥在节点浏览器产生并留在那里，
@@ -412,6 +413,11 @@ class NodeService:
            `base64.b64decode(node.kyber_public_key)` 取的，且靠解码后的
            字节长度推断变体（pk_len_map）。这里统一从 hex 入参转换，
            免得调用方各传一套，错了要等到封装时才发现。
+
+        ⚠️ 设备一致性（§4.4）：四套公钥必须来自**同一台设备**，不一致就拒绝。
+           放行的后果很具体：这个节点会持有一套它**打不开**的密钥 ——
+           新设备没有私钥，旧设备又不该再被使用。而问题要等到
+           "某个信封解不开"时才暴露，那时已经很难追到根因。
         """
         import base64 as _b64
 
@@ -425,6 +431,28 @@ class NodeService:
         value = str(public_key or '').strip()
         if not value:
             return {'success': False, 'message': '公钥为空'}
+
+        # --- 设备一致性检查（见 docstring 末段） ---
+        reported = str(device_id or '').strip()
+        bound = (self.node.key_device_id or '').strip()
+        if bound and reported and bound != reported:
+            logger.warning(
+                '节点 %s 上报的设备标识与已绑定的不一致: 已绑定=%s 本次=%s',
+                self.node_id, bound, reported
+            )
+            return {
+                'success': False,
+                'device_mismatch': True,
+                'message': (
+                    '该节点的密钥已与另一台设备绑定。当前设备上没有对应私钥，'
+                    '因此它无法解开平台已分发给该节点的任何信封。'
+                    '请选择：在这台设备上**重新初始化**（并回收旧密钥），'
+                    '或改回原设备登录。'
+                ),
+            }
+        adopts_device = bool(reported) and not bound
+        if adopts_device:
+            self.node.key_device_id = reported
 
         column, extra_columns = self._PUBLIC_KEY_COLUMNS[name]
         if name == 'KYBER':
@@ -447,6 +475,8 @@ class NodeService:
             setattr(self.node, column_name, stored)
 
         fields = [column, *extra_columns]
+        if adopts_device:
+            fields.append('key_device_id')
         if security_level:
             level_field = 'kyber_security_level' if name == 'KYBER' else 'falcon_security_level'
             if hasattr(self.node, level_field):
