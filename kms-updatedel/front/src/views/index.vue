@@ -65,10 +65,13 @@
               <el-icon><Timer /></el-icon>
               <div class="btn-text">自动更新配置</div>
             </div>
-            <div class="action-btn warning" @click="$router.push('/audit/permission/request')">
-              <el-icon><Tickets /></el-icon>
-              <div class="btn-text">系统权限审批</div>
-            </div>
+            <!--
+              这里原来有一个「系统权限审批」按钮，指向 `/audit/permission/request`。
+              阶段 8 已整体删除审批流（`PermissionRequest*` 与其页面），
+              但漏了这个按钮 —— 点下去是个空页面，而界面上看起来一切正常。
+              删掉它：新权限模型由 `principal_type + permission_level + 资源属主`
+              直接决定，没有"申请-审批"这条路径可去。
+            -->
             <div class="action-btn danger" @click="$router.push('/key/keydelete')">
               <el-icon><Delete /></el-icon>
               <div class="btn-text">临时/永久回收</div>
@@ -82,7 +85,9 @@
 
 <script setup>
 import { ref, reactive, onMounted, onUnmounted, markRaw } from 'vue'
-import { Refresh, Delete, Timer, Bell, Top, Bottom, Tickets } from '@element-plus/icons-vue'
+// `Tickets` 随「系统权限审批」按钮一并移除 —— 留着未使用的导入，
+// 会让后来人以为那个入口还在（构建器不会因此报错）。
+import { Refresh, Delete, Timer, Bell, Top, Bottom } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import { getDashboardSummary } from '@/api/lifecycle/lifecycle'
 

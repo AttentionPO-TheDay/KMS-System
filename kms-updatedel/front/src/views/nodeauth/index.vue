@@ -5,9 +5,12 @@
         <div class="panel-head">
           <span>节点分发授权</span>
           <div class="panel-actions">
-            <el-button size="small" @click="$router.push('/audit/permission/request')">
-              去「权限申请」
-            </el-button>
+            <!--
+              这里原来有一个「去「权限申请」」按钮，指向 `/audit/permission/request`。
+              阶段 8 已整体删除审批流与其页面，但漏了这个按钮 —— 点下去是空页面。
+              删掉它：本页的授权由管理员直接增删（右侧「新增授权」），
+              不存在"申请-审批"这条路径。
+            -->
             <el-button type="primary" size="small" @click="openGrant">新增授权</el-button>
           </div>
         </div>
