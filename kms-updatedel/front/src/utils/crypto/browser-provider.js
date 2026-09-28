@@ -67,6 +67,22 @@ export const fromHex = (hex) => {
   return Uint8Array.from(text.match(/.{2}/g)?.map((b) => parseInt(b, 16)) || [])
 }
 
+/**
+ * base64 → hex。
+ *
+ * 信封里的二进制字段是 base64（服务端 `wrappers.py` 用 `base64.b64encode`），
+ * 而本 provider 内部一律按 hex 走 —— 转换只在这一处发生，
+ * 免得各调用点各转一套，错了要等到"解出来是乱码"才发现。
+ */
+function b64ToHex(value) {
+  const binary = atob(String(value || ''))
+  let out = ''
+  for (let i = 0; i < binary.length; i++) {
+    out += binary.charCodeAt(i).toString(16).padStart(2, '0')
+  }
+  return out
+}
+
 //: Kyber 变体。**变体由公钥长度自描述**（服务端 `wrappers.py` 的 pk_len_map 同口径），
 //: 所以两边不必预先约定 —— 但生成时要选一个，默认 768（NIST 3 级）。
 const KYBER_VARIANTS = { 512: { k: 'KeyGen512', dec: 'Decrypt512' }, 768: { k: 'KeyGen768', dec: 'Decrypt768' }, 1024: { k: 'KeyGen1024', dec: 'Decrypt1024' } }
@@ -196,6 +212,60 @@ export class BrowserCryptoProvider extends CryptoProvider {
 
   async hasKey(keyRef) {
     return hasSecret(keyRef)
+  }
+
+  /**
+   * 解开一个**节点腿**信封，取出其中的 SM4 载荷密钥。
+   *
+   * 这是 §6.5 那条「接收节点成功恢复 SM4 会话密钥」在客户端的落地 ——
+   * 在此之前它**从未发生过**：服务端只封装、入库，然后就停在那里
+   * （`views.py` 里那几处 decaps 都在前端不调用的旧端点里）。
+   *
+   * 三种节点腿的封装格式（`wrappers.wrap_for_node`）：
+   *
+   * | wrapping_algorithm | 信封形状 | 解封方式 |
+   * |---|---|---|
+   * | `kyber_kem` | `{kem_ciphertext, encrypted_key, nonce, tag}` | Kyber decaps → KEK → SM4-GCM |
+   * | `gm_sm2` / `gm_sscl` | `{algorithm:'sm2', ciphertext: C1‖C3‖C2}` | 直接用节点 d_A 解 |
+   *
+   * ⚠️ 三条腿解出来的必须是**同一把** K。用户那份走国密、节点那份走抗量子，
+   *    算法不同但 K 相同 —— 这是 D10 方案 A 成立的根本。所以这里
+   *    绝不能再生成一把，只能解出信封里那把。
+   *
+   * @returns {Promise<Uint8Array>} SM4 载荷密钥
+   */
+  async unwrapEnvelope(algorithm, keyRef, envelope) {
+    const wrapping = String(envelope?.wrapping_algorithm || algorithm || '').trim().toLowerCase()
+
+    if (wrapping === 'kyber_kem') {
+      const { sm4GcmDecrypt } = await import('../sm4.js')
+      const shared = await this.decapsulate('KYBER', keyRef, fromHex(b64ToHex(envelope.kem_ciphertext)))
+      // KEK 取共享秘密**前 16 字节** —— 与服务端
+      // `PayloadCipher.kek_from_shared_secret('sm4', ss)` 同一口径
+      // （`sm4_crypto.py:312`）。取错长度不会报错，只会解出乱码。
+      const kek = shared.slice(0, 16)
+      return sm4GcmDecrypt(
+        kek,
+        fromHex(b64ToHex(envelope.encrypted_key)),
+        fromHex(b64ToHex(envelope.nonce)),
+        fromHex(b64ToHex(envelope.tag))
+      )
+    }
+
+    if (wrapping === 'gm_sm2' || wrapping === 'gm_sscl') {
+      const { decryptEnvelope } = await import('../sm2-envelope.js')
+      const privateKeyHex = toHex(await this._secretBytes(keyRef))
+      // 节点腿的国密信封与用户腿是**同一套 SM2Crypto**（`wrappers.py:120`
+      // 复用它而非另写），所以直接复用本仓库已验证的浏览器实现。
+      // 信封里 `algorithm` 恒为 'sm2'（节点腿用哪种档位由 wrapping_algorithm 表达），
+      // 因此 SSCL 也走同一条解密路径。
+      return decryptEnvelope(envelope, privateKeyHex)
+    }
+
+    throw new Error(
+      `不支持的节点腿封装算法：${wrapping || '(空)'}。` +
+        '当前支持 kyber_kem / gm_sm2 / gm_sscl。'
+    )
   }
 
   async destroy(keyRef) {

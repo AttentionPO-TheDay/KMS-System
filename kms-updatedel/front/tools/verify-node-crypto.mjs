@@ -69,6 +69,22 @@ function dockerAvailable() {
 
 const store = await import('../src/utils/crypto/node-key-store.js')
 const { cryptoProvider } = await import('../src/utils/crypto/browser-provider.js')
+const { sm4EncryptBlock, sm4DecryptBlock, sm4GcmEncrypt, sm4GcmDecrypt } = await import('../src/utils/sm4.js')
+
+// ===========================================================================
+// 0. SM4 单分组 —— 国标向量
+// ===========================================================================
+// 为什么先测这个：GCM 往返一致**证明不了任何事**，一个完全错误的 SM4
+// 也能自洽地往返。只有国标向量能钉死"我实现的是 SM4"。
+console.log('\n=== 0. SM4 单分组：GB/T 32907-2016 附录 A.1 向量 ===')
+{
+  const key = fromHex('0123456789abcdeffedcba9876543210')
+  const plain = fromHex('0123456789abcdeffedcba9876543210')
+  const expected = '681edf34d206965e86b3e94f536e4246'
+  const got = toHex(sm4EncryptBlock(key, plain))
+  check('★ 单分组加密与国标向量逐字节一致', got === expected, got === expected ? '' : `得到 ${got}`)
+  check('单分组解密还原', toHex(sm4DecryptBlock(key, fromHex(expected))) === toHex(plain))
+}
 
 // ===========================================================================
 // 1. 本地密钥库：明文不得落库
@@ -198,6 +214,73 @@ console.log('\n=== 7. 本地 verify 不能只是"结构合法" ===')
 console.log('\n=== 8. 设备绑定的判断基础 ===')
 check('本地持有刚生成的密钥', await cryptoProvider.hasKey('probe-falcon'))
 check('本地不持有的引用返回 false（新设备即此情形）', (await cryptoProvider.hasKey('never-created')) === false)
+
+console.log('\n=== 9. SM4-GCM 与服务端 pycryptodome 双向互通 ===')
+if (!dockerAvailable()) {
+  check('★★ SM4-GCM 互通', false, 'docker 容器 dvadmin3-django 不可用 —— 该项未运行')
+} else {
+  const key = fromHex('0123456789abcdeffedcba9876543210')
+  const iv = fromHex('00112233445566778899aabb')
+  const aad = new TextEncoder().encode('kms-envelope-aad')
+  const pt = new TextEncoder().encode('SM4 session key material 16B')
+
+  // 服务端加密 → 本地解密
+  const out = runPy(`
+import binascii
+from pqkds.sm4_crypto import SM4Crypto
+ct, nt = SM4Crypto.encrypt(
+    binascii.unhexlify("${toHex(pt)}"),
+    binascii.unhexlify("${toHex(key)}"),
+    binascii.unhexlify("${toHex(aad)}"))
+print("CT:", binascii.hexlify(ct).decode())
+print("NT:", binascii.hexlify(nt).decode())
+`, 'sm4')
+  const ctHex = (out.match(/CT:\s*([0-9a-f]+)/) || [])[1]
+  const ntHex = (out.match(/NT:\s*([0-9a-f]+)/) || [])[1]
+  if (!ctHex) {
+    check('服务端 SM4-GCM 加密', false, out.trim().slice(0, 140))
+  } else {
+    const nt = fromHex(ntHex)
+    let ok = false
+    let err = ''
+    // 服务端约定 nonceTag = iv(12) ‖ tag(16)（sm4_crypto.py:150-152）
+    try { ok = toHex(sm4GcmDecrypt(key, fromHex(ctHex), nt.slice(0, 12), nt.slice(12), aad)) === toHex(pt) } catch (e) { err = e.message }
+    check('★★ 本地解开服务端的 SM4-GCM 密文', ok, ok ? '' : err)
+  }
+
+  // 本地加密 → 服务端解密
+  const { ciphertext, tag } = sm4GcmEncrypt(key, pt, iv, aad)
+  const out2 = runPy(`
+import binascii
+from pqkds.sm4_crypto import SM4Crypto
+try:
+    got = SM4Crypto.decrypt(
+        binascii.unhexlify("${toHex(ciphertext)}"),
+        binascii.unhexlify("${toHex(key)}"),
+        binascii.unhexlify("${toHex(iv)}") + binascii.unhexlify("${toHex(tag)}"),
+        binascii.unhexlify("${toHex(aad)}"))
+    print("OK:", binascii.hexlify(got).decode())
+except Exception as e:
+    print("ERR:", e)
+`, 'sm4b')
+  const okHex = (out2.match(/OK:\s*([0-9a-f]+)/) || [])[1]
+  check('★★ 服务端解开本地的 SM4-GCM 密文', okHex === toHex(pt), okHex === toHex(pt) ? '' : out2.trim().slice(0, 120))
+}
+
+console.log('\n=== 10. GCM 的认证标签必须真的被校验 ===')
+{
+  const key = fromHex('00112233445566778899aabbccddeeff')
+  const iv = fromHex('00112233445566778899aabb')
+  const pt = new TextEncoder().encode('auth-tag-check')
+  const { ciphertext, tag } = sm4GcmEncrypt(key, pt, iv)
+  const bad = Uint8Array.from(tag)
+  bad[0] ^= 1
+  let threw = false
+  try { sm4GcmDecrypt(key, ciphertext, iv, bad) } catch { threw = true }
+  // 不验 tag 就返回，等于把可被随意篡改的密文当成可信数据 ——
+  // 而且解出来的"明文"长度完全正常，调用方看不出异常。
+  check('★ 篡改 tag 后抛错（而不是返回乱码）', threw)
+}
 
 // ===========================================================================
 const pass = results.filter((r) => r.pass).length
