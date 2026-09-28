@@ -203,9 +203,15 @@ public class LifecycleKeyController extends BaseController {
         // ⚠️ 这与上面那段注释里写的"防绕过的本意保留"并不冲突：
         //    防的是**非属主**借改元数据之名打开自动更新 —— 那个由 canAccess 挡住。
 
-        // 分流依据：是否提供了新的用户部分公钥 ua。
-        // 未提供 → 仅更新元数据（不重新生成密钥材料、version 不变）。
-        // 提供   → 视为真正的密钥轮换，重新生成密钥材料并递增 version。
+        // 分流依据：是否要求**刷新密钥材料**。
+        //
+        // 阶段 4（文档 §5.3）把这个判断从"有没有 ua"改成了显式的 `rotate` 标志，
+        // 理由是 ua 的**存在本身**已经不能表达这个意图了：§5.3 要求更新时
+        // **保留** uA（只换 KGC 那一半），所以正常的部分刷新请求里
+        // 带的正是与库里相同的 uA —— 旧判据会把它读成"换新 uA → 要轮换"，
+        // 而"只改个名字"的请求一旦顺手把库里的 uA 回填回来，也会被误判成轮换。
+        // 两种误判方向相反，却都由同一个含糊的信号产生。
+        // 现在由调用方明确声明意图，ua 只用于校验（必须与库中一致，见 rotateKey）。
         if (!lifecycleService.requiresRotation(request)) {
             try {
                 Keymanage updated = lifecycleService.updateMetadata(request);
@@ -216,7 +222,7 @@ public class LifecycleKeyController extends BaseController {
             }
         }
 
-        // Synchronous key rotation — 调用方已提供新的 ua
+        // Synchronous key rotation
         try {
             log.info("密钥轮换: keyId={}, userId={}", request.getKeyId(), getUserId());
             Keymanage rotated = lifecycleService.rotateKey(request);

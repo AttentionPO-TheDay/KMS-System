@@ -59,6 +59,22 @@ public class Keymanage {
     @JsonProperty("version")
     private Integer version;
 
+    /**
+     * 本次更新请求是否要求**刷新密钥材料**（真正的轮换）。
+     *
+     * <p>阶段 4（文档 §5.3）引入。此前这个意图是靠"请求里有没有 ua"反推的，
+     * 而 §5.3 要求更新时保留 uA —— 正常的部分刷新带着的正是与库里相同的 uA，
+     * 于是"有没有 ua"既会把只改元数据的请求误判成轮换，也不再能表达真实意图。
+     * 改为由调用方显式声明：{@code true} → 走 rotateKey（version +1、重新上链）；
+     * 不给或 {@code false} → 只更新元数据，version 不变。
+     *
+     * <p><b>无对应数据库列</b>：它是请求期的意图声明，不是持久化属性。
+     * 请勿把它加进 Mapper 的 resultMap 或 INSERT / UPDATE 列表 ——
+     * 那样会得到一个永远为 NULL 的列，或者更糟：把意图当成状态存起来。
+     */
+    @JsonProperty("rotate")
+    private Boolean rotate;
+
     @JsonProperty("chain_hash")
     @JsonAlias("chainHash")
     private String chainHash;

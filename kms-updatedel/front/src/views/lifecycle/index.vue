@@ -332,40 +332,50 @@
           <el-input v-model="updateForm.keyDomain" maxlength="64" clearable />
         </el-form-item>
         <!--
-          手动密钥轮换（2026-09-24 新增）。
-          后端是按"请求里有没有新的 uA"分流的：
-            * 不带 uA → updateMetadata：只改 名称/用途/所属域，**版本不变、不写链**；
-            * 带  uA → rotateKey：重新签发部分私钥、**版本 +1**、链上写 rotateKey。
-          在此之前界面上没有任何入口能带新 uA，于是"密钥更新"永远只改元数据 ——
-          用户以为换了密钥，其实密钥材料一个字都没动，链上也没有新记录。
-          这里补上入口，并把"版本更迭"直接写在弹窗里，提交前就能看到。
+          手动密钥轮换（2026-09-24 新增；阶段 4 改为部分刷新）。
+          后端按请求里**显式声明的 `rotate`** 分流：
+            * false / 不给 → updateMetadata：只改 名称/用途/所属域，**版本不变、不写链**；
+            * true        → rotateKey：KGC 重新签发部分密钥、**版本 +1**、链上写 rotateKey。
+          这里原来还有一段注释说明旧判据（"有没有带 uA"）以及它带来的问题，
+          已随判据一起删除 —— 旧判据在部分刷新下必然失效，因为 §5.3 要求
+          更新时 uA **保持不变**，请求里带的正是与库中相同的那个值。
         -->
         <el-form-item label="密钥轮换">
           <div class="rotation-box">
-            <el-button size="small" :disabled="updateSubmitting" @click="regenerateRotationMaterial">
-              重新生成本地密钥材料
-            </el-button>
+            <el-switch
+              v-model="rotateRequested"
+              :disabled="updateSubmitting"
+              active-text="刷新密钥材料"
+              inactive-text="仅改元数据"
+            />
+            <!--
+              文档 §5.3：SM2 / SSCL 的更新是**部分刷新** —— 节点侧秘密 u 与公开量 uA
+              保持不变，只让 KGC 重新生成随机 w 和部分密钥。
+
+              这里原来有一个「重新生成本地密钥材料」按钮，它造的是**新的 u 和新的 uA**，
+              与 §5.3 描述的不是同一个协议：那样虽然也能得到一份可用的新密钥，
+              但节点侧秘密跟着换了，等于换了一把密钥而不是"更新"。改成部分刷新后，
+              本机只需要**现有的**私钥文件，u 从头到尾不动。
+            -->
+            <el-tag size="small" type="warning">部分刷新（uA 保持不变）</el-tag>
             <span class="rotation-hint">版本 {{ versionBefore }} → {{ versionAfter }}</span>
-            <div v-if="rotationMaterial.publicKey" class="rotation-ready">
-              <el-tag size="small" type="warning">新本地材料已生成</el-tag>
+            <div v-if="rotationAvailable" class="rotation-ready">
+              <span class="muted">将用本机密钥环中的私钥合成新版本 d_A</span>
               <span class="mono">{{ shortUa(rotationMaterial.publicKey) }}</span>
-              <span class="muted">{{ rotationMaterial.generatedAt }}</span>
             </div>
             <!--
-              新材料必须**当场能看到、能复制**：轮换时浏览器新生成的那把本地私钥
-              是合成最终私钥的一半，关掉弹窗或刷新就没了，而轮换后的版本只有配合它才可用。
-              私钥默认打码（截图/投屏不泄露），需要时点「显示」。
+              ⚠️ 节点侧秘密 u 与合成后的 d_A **全程不出浏览器**（R1' 红线）。
+              轮换后本机密钥环里的密钥文件会就地更新，因此不需要再让用户手工抄一份
+              —— 这正是部分刷新相比"重新生成材料"的另一个好处：不会产生
+              "旧文件还在、但已经对不上新版本"的静默错配。
             -->
-            <div v-if="rotationMaterial.publicKey" class="rotation-material">
-              <div class="mat-row">
-                <span class="mat-label">本地部分私钥</span>
-                <span class="mono mat-value">{{ showRotationPrivate ? rotationMaterial.privateKey : maskedRotationPrivate }}</span>
-                <el-button link type="primary" size="small" @click="showRotationPrivate = !showRotationPrivate">
-                  {{ showRotationPrivate ? '隐藏' : '显示' }}
-                </el-button>
-                <el-button link type="primary" size="small" @click="copyRotationMaterial">复制新材料</el-button>
-              </div>
-            </div>
+            <el-alert
+              v-else
+              type="warning"
+              :closable="false"
+              show-icon
+              :title="rotationBlockReason"
+            />
           </div>
         </el-form-item>
         <!--
@@ -550,6 +560,9 @@ import {
   updateLifecycleAutoUpdate,
   updateLifecycleKey
 } from '@/services/lifecycle-api'
+// SSCL 的部分刷新要在本机做拉格朗日插值，需要 KGC 公开的公共参数。
+// 这个接口属于密钥生成子系统（参数是全局的），从那边取 —— 不重复实现一份。
+import { getCommonParams } from '@/services/generate-api'
 import { apiBases } from '@/config/api-bases'
 import useUserStore from '@/store/modules/user'
 import { isAdminLevel, roleLevelText } from '@/utils/role'
@@ -557,11 +570,19 @@ import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 // 手动轮换要重新生成本地密钥材料，用的是与「密钥生成」页同一套算法实现，
 // 保证两边产生的 uA 形态一致（否则后端曲线点校验会拒）。
-import { SM2 } from 'gm-crypto'
+// 阶段 4：本页不再用 gm-crypto 生成密钥对。
+// 部分刷新不需要新的 u —— 它要的正是**守住**现有的 u，所以 `SM2.generateKeyPair()`
+// 及其导入一并移除。合成新 d_A 的曲线运算在 `utils/cl-key.js` 里，本页只调用它。
+import { composeUpdatedPrivateKey } from '@/utils/cl-key'
+import { buildKeyFile, serializeKeyFile } from '@/utils/key-file'
+import useKeyringStore from '@/store/modules/keyring'
 
 const { proxy } = getCurrentInstance()
 const router = useRouter()
 const userStore = useUserStore()
+// 阶段 4（§5.3）：部分刷新要用本机密钥环里**这条密钥自己的**私钥来合成新版本，
+// 因此这个页面也依赖密钥环 —— 它不再是"只在解密时才用得到"的东西。
+const keyring = useKeyringStore()
 
 const apiBase = apiBases.lifecycleApi
 const activeTab = ref('mykeys')
@@ -641,31 +662,77 @@ const updateForm = reactive({
 })
 
 // ---------------------------------------------------------------------------
-// 手动轮换（2026-09-24 新增）
+// 手动轮换 —— 阶段 4 起改为**部分刷新**（文档 §5.3）
 // ---------------------------------------------------------------------------
-// 为什么需要：后端按"请求里有没有新 uA"分流 —— 不带 uA 只改元数据（版本不变、
-// 不写链），带 uA 才走 rotateKey（版本 +1、重新上链）。而在此之前界面上没有任何
-// 地方能产生并提交新 uA，于是「密钥更新」永远只是改名字，"版本更迭"无从触发，
-// 更无从展示。这里补的正是那个缺失的入口。
+// §5.3：SM2 / SSCL 更新时节点侧秘密 u 与公开量 uA 保持不变，只由 KGC 重新生成
+// 随机 w 与部分密钥。所以这里**不再生成本地材料**，而是改用密钥环里已有的私钥
+// 去合成新版本的 d_A。
+//
+// 为什么这个区别重要而不是名词之争：造一份新的 u / uA 固然也能得到可用的新密钥，
+// 但那把"新密钥"与旧版本在密码学上毫无关系 —— 它是一次**换钥**。
+// 文档 §5.1 把生成与更新分开定义，要的正是"同一条逻辑密钥的续存"，
+// 而续存的前提是节点侧那一半不变。
 const rotationMaterial = reactive({
   publicKey: '',
   privateKey: '',
   generatedAt: ''
 })
 
-function regenerateRotationMaterial() {
-  const { publicKey, privateKey } = SM2.generateKeyPair()
-  rotationMaterial.publicKey = publicKey
-  rotationMaterial.privateKey = privateKey
-  rotationMaterial.generatedAt = new Date().toLocaleString('zh-CN', { hour12: false })
-  ElMessage.success('已生成本地新密钥材料，提交后将触发密钥轮换')
-}
+/**
+ * 用户是否勾选了"刷新密钥材料"。
+ *
+ * 与 `rotationMaterial.publicKey` 分开：那个是**展示用**的 uA（取自库中，
+ * 用来让用户看见"要保住的正是这个值"），一旦取不到就为空，
+ * 而取不到不代表用户没勾选。把两者合成一个信号，就会出现
+ * "勾了但 uA 没取到 → 静默降级成只改元数据"，正是这次要消掉的那类误判。
+ */
+const rotateRequested = ref(false)
 
-function resetRotationMaterial() {
+/**
+ * 本机是否具备做部分刷新的条件。
+ *
+ * 三个条件缺一不可，缺哪个就明说哪一个 —— 笼统的"无法轮换"会让人以为是后端坏了。
+ */
+const rotationAvailable = computed(() => {
+  if (!isClAlgorithm.value) {
+    return false
+  }
+  return Boolean(keyring.get(updateForm.keyId))
+})
+
+const rotationBlockReason = computed(() => {
+  if (!isClAlgorithm.value) {
+    return `${updateForm.encrytName || '该算法'} 的更新必须由节点侧重新生成密钥对（文档 §5.3）：它的私钥不在服务端，服务端无法为其产生新版本。请改用「密钥生成」新建一把。`
+  }
+  if (!keyring.get(updateForm.keyId)) {
+    return `本机密钥环里没有密钥 ${updateForm.keyId} 的私钥文件。部分刷新要用它合成新版本，请先在「密钥生成」页导出并导入该密钥文件。`
+  }
+  return ''
+})
+
+/** 只有 SM2 / SSCL 走 KGC 份额协议；Kyber / Falcon 的私钥在服务端之外。 */
+const isClAlgorithm = computed(() => {
+  const name = String(updateForm.encrytName || '').trim().toUpperCase()
+  return name === 'SM2' || name === 'SSCL'
+})
+
+async function resetRotationMaterial() {
   rotationMaterial.publicKey = ''
   rotationMaterial.privateKey = ''
   rotationMaterial.generatedAt = ''
-  showRotationPrivate.value = false
+  // 打开弹窗时把库里的 uA 显示出来 —— §5.3 要求它**保持不变**，
+  // 让用户看见"要保住的正是这个值"，比只说一句"uA 不变"更能防止误解。
+  if (isClAlgorithm.value && updateForm.keyId) {
+    try {
+      const response = await getLifecycleKey(updateForm.keyId)
+      const record = response?.data
+      if (record?.ua) {
+        rotationMaterial.publicKey = record.ua
+      }
+    } catch {
+      // 取不到就不显示；合成本身不依赖这个展示值（它取自服务端返回）
+    }
+  }
 }
 
 function shortUa(value) {
@@ -676,36 +743,12 @@ function shortUa(value) {
   return text.length > 26 ? `${text.slice(0, 20)}…${text.slice(-6)}` : text
 }
 
-// 私钥默认打码：文档截图/投屏时不该把私钥带出去，需要核对时点「显示」。
-const showRotationPrivate = ref(false)
-const maskedRotationPrivate = computed(() => {
-  const key = rotationMaterial.privateKey
-  if (!key) {
-    return '-'
-  }
-  return `${key.slice(0, 12)}…${key.slice(-8)}`
-})
-
-async function copyRotationMaterial() {
-  const payload = [
-    `keyId: ${updateForm.keyId}`,
-    `算法: ${updateForm.encrytType} / ${updateForm.encrytName}`,
-    `生成时间: ${rotationMaterial.generatedAt}`,
-    `本地部分公钥 uA: ${rotationMaterial.publicKey}`,
-    `本地部分私钥: ${rotationMaterial.privateKey}`
-  ].join('\n')
-  try {
-    await navigator.clipboard.writeText(payload)
-    ElMessage.success('新材料已复制到剪贴板，请粘贴保存后再提交')
-  } catch {
-    // 非 HTTPS 或浏览器拒绝剪贴板权限时给出可操作的回退
-    ElMessage.warning('浏览器拒绝了剪贴板访问，请点「显示」后手工复制')
-    showRotationPrivate.value = true
-  }
-}
-
 const versionBefore = computed(() => updateForm.version ?? 1)
-const versionAfter = computed(() => Number(versionBefore.value || 1) + 1)
+// 只在真正要轮换时才预告版本 +1。一直显示 "v1 → v2" 而实际不轮换，
+// 会让人以为版本已经变了 —— 那正是"以为换了密钥、其实一个字没动"的老毛病。
+const versionAfter = computed(() =>
+  rotateRequested.value ? Number(versionBefore.value || 1) + 1 : Number(versionBefore.value || 1)
+)
 
 // 版本更迭轨迹：来自 key_operation_record（每次轮换一条）
 const versionHistory = ref([])
@@ -1024,9 +1067,10 @@ async function openUpdateDialog(row) {
     updateForm.keyName = record.keyName || ''
     updateForm.keyUse = record.keyUse || ''
     updateForm.keyDomain = record.keyDomain || ''
-    // 每次打开都从库里取当前版本，并清掉上一次遗留的轮换材料 ——
-    // 否则"上一次点过重新生成、这次只想改名字"会意外触发轮换。
+    // 每次打开都从库里取当前版本，并清掉上一次遗留的轮换状态 ——
+    // 否则"上一次勾了刷新材料、这次只想改名字"会意外触发轮换。
     updateForm.version = record.version ?? 1
+    rotateRequested.value = false
     resetRotationMaterial()
     updateDialogOpen.value = true
   } catch (error) {
@@ -1047,17 +1091,32 @@ async function submitUpdate() {
 
   updateSubmitting.value = true
   errorMessage.value = ''
-  const rotating = Boolean(rotationMaterial.publicKey)
+  // 阶段 4（§5.3）：是否轮换由用户**显式选择**，不再靠"有没有带 uA"反推。
+  // 那个旧判据在部分刷新下已经失效 —— §5.3 要求更新时 uA **保持不变**，
+  // 也就是请求里带的正是与库中相同的那个值，从数据上看和"只改名字"没有区别。
+  const rotating = rotateRequested.value
+  if (rotating && !rotationAvailable.value) {
+    errorMessage.value = rotationBlockReason.value
+    updateSubmitting.value = false
+    return
+  }
+  // 合成需要的那半私钥：拿不到就**不要提交**。
+  // 先提交再合成会让库里出现一个版本 +1、而本机根本没有对应 d_A 的密钥 ——
+  // 那正是本次要消灭的静默错配，不能换个地方再造一次。
+  const localKeyFile = rotating ? keyring.get(updateForm.keyId) : null
+  if (rotating && !localKeyFile) {
+    errorMessage.value = `本机密钥环里没有密钥 ${updateForm.keyId} 的私钥文件，无法合成新版本。`
+    updateSubmitting.value = false
+    return
+  }
   try {
     const response = await updateLifecycleKey({
       keyId: updateForm.keyId,
       keyName: normalizeText(updateForm.keyName),
       keyUse: normalizeText(updateForm.keyUse),
       keyDomain: normalizeText(updateForm.keyDomain),
-      // 只有在用户点了「重新生成本地密钥材料」时才带 uA：
-      // 带上它 → 后端 rotateKey（版本 +1、重新上链）；不带 → updateMetadata（版本不变）。
-      // 绝不能无条件带上库里的旧 uA —— 那会被判成"要轮换"，
-      // 于是"只改个名字"也会白白把版本 +1、在链上多写一笔。
+      // 显式声明意图；ua 只作为一致性校验输入（服务端会要求它与库中一致）。
+      rotate: rotating,
       ua: rotating ? rotationMaterial.publicKey : undefined
       // 刻意**不传** autoUpdate：这是"只改元数据"的更新。
       // 带上它（哪怕值与库里相同）曾让后端判定为"要改自动更新"并拒绝，
@@ -1065,8 +1124,11 @@ async function submitUpdate() {
     })
     if (rotating) {
       const nextVersion = response?.data?.version ?? versionAfter.value
-      proxy.$modal.msgSuccess(`密钥轮换成功，版本已更迭至 v${nextVersion}，正在上链存证`)
-      ElMessage.warning('本地材料已更换：请到「密钥生成」页重新导出并保存该密钥的密钥文件')
+      // 服务端只做完了"KGC 那一半"。要真正拿到可用的新密钥，必须在本机
+      // 用**不变的 u** 与新的部分密钥合成新的 d_A，并就地更新密钥环 ——
+      // 否则本机留着的仍是旧版本的私钥，下次解密会失败，而界面上一切正常。
+      await syncLocalKeyAfterRotation(response?.data, localKeyFile)
+      proxy.$modal.msgSuccess(`密钥已部分刷新，版本更迭至 v${nextVersion}，正在上链存证`)
     } else {
       proxy.$modal.msgSuccess('密钥更新成功（仅元数据，版本不变）')
     }
@@ -1081,6 +1143,82 @@ async function submitUpdate() {
   } finally {
     updateSubmitting.value = false
   }
+}
+
+/**
+ * 轮换后在本机合成新版本的 `d_A` 并**就地替换**密钥环里的密钥文件。
+ *
+ * 为什么必须在这里做、且失败要显式报出来
+ * --------------------------------------
+ * 服务端已经落库了新版本（这个动作不可逆）。如果这一步静默失败，
+ * 用户看到"更新成功"，而本机保存的还是**旧版本**的私钥 —— 下次解开新信封时
+ * 只会得到一句含糊的"完整性校验失败"，没人能想到是轮换时没跟上。
+ * 所以这里失败要单独报、要报得足够具体，让用户知道该重新导出哪一把。
+ *
+ * 密钥环损坏（同 key_id 私钥不同会抛错）不是异常情况而是**安全信号**：
+ * 它意味着本机那份与链上这份对不上了，必须让人来判断，不能自动覆盖。
+ */
+async function syncLocalKeyAfterRotation(updatedRecord, previousKeyFile) {
+  if (!updatedRecord?.keyValue) {
+    throw new Error('轮换成功但服务端未返回新的部分密钥，无法在本机合成新版本，请重新导出该密钥文件')
+  }
+  let commonParams = null
+  if (String(updatedRecord.encrytName || '').trim().toUpperCase() === 'SSCL') {
+    // SSCL 的合成需要拉格朗日插值用的公共参数（xIndex / yIndex / PPub）
+    commonParams = await getCommonParams({
+      encrytType: updatedRecord.encrytType,
+      encrytName: updatedRecord.encrytName
+    })
+  }
+  const composed = composeUpdatedPrivateKey({
+    algorithm: updatedRecord.encrytName,
+    keyValue: updatedRecord.keyValue,
+    clientPrivateHex: previousKeyFile.private_share,
+    commonParams
+  })
+  const nextKeyFile = await buildKeyFile({
+    keyId: updatedRecord.keyId,
+    userId: previousKeyFile.user_id,
+    algorithm: updatedRecord.encrytName,
+    privateShare: composed.finalPrivateKey,
+    publicKey: composed.finalPublicKey || ''
+  })
+  // importKeyFile 在同 key_id 私钥不同时会抛错。这里显然会不同（本来就是要换），
+  // 所以先移除旧的再导入 —— 移除的是**已被服务端废弃的版本**，
+  // 而它的替代品已经在手上（nextKeyFile 构造成功才会走到这里）。
+  keyring.remove(updatedRecord.keyId)
+  try {
+    await keyring.importKeyFile(nextKeyFile)
+  } catch (error) {
+    // 导入失败就把旧文件放回去 —— 宁可留下一份已知过期的私钥（看得出问题），
+    // 也不要留下一个空的密钥位（表现为"从来没导入过"，更难看懂）。
+    try {
+      await keyring.importKeyFile(previousKeyFile)
+    } catch {
+      // 回填也失败就不再掩盖：下面的报错会让用户重新导出
+    }
+    throw new Error(`本机密钥文件更新失败：${error.message}。请到「密钥生成」页重新导出该密钥文件`)
+  }
+  // 顺手把新版密钥文件下载一份：密钥环是本浏览器的，换台机器就没了，
+  // 而这一版的私钥只存在于本机 —— 不下载就没有第二份。
+  downloadText(serializeKeyFile(nextKeyFile), `kms-key-${updatedRecord.keyId}-v${updatedRecord.version}.json`)
+}
+
+/**
+ * 触发浏览器下载一段文本。
+ *
+ * 与 `views/generate/create.vue` 里的同名函数一致 —— 那里已经有一份，
+ * 但两边都不值得为这 8 行引一个模块依赖。真正的重复风险在**密码学**上
+ * （已抽到 `utils/cl-key.js`），这里只是样板。
+ */
+function downloadText(text, filename) {
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
 }
 
 function handleRevoke(row) {

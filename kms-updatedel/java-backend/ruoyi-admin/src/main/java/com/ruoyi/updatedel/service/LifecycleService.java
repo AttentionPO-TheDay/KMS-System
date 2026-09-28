@@ -39,6 +39,13 @@ public class LifecycleService {
     private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final String PENDING_RESULT_MESSAGE = "处理中，请稍后刷新";
 
+    // 算法名常量。文档 §5.3 按算法给出**不同**的更新策略，因此判断必须按算法分流，
+    // 而散落的字符串字面量正是"改了这里漏了那里"的来源。
+    private static final String SM2 = "SM2";
+    private static final String SSCL = "SSCL";
+    private static final String KYBER = "KYBER";
+    private static final String FALCON = "FALCON";
+
     private final KeymanageMapper keymanageMapper;
     private final EccKeyGenerator eccKeyGenerator;
     private final SsclKeyGenerator ssclKeyGenerator;
@@ -237,7 +244,7 @@ public class LifecycleService {
     /**
      * 判断本次请求是否要求重新生成密钥材料（真正的轮换）。
      * <p>
-     * 判据：调用方是否提供了新的用户部分公钥 {@code ua}。
+     * 判据：调用方是否**显式**声明 {@code rotate}。
      * <p>
      * 背景：前端「更新」只提交元数据（keyName / keyUse / keyDomain / autoUpdate），
      * 不携带 ua。而此前的控制器逻辑一旦发现 keyName 等字段非空，
@@ -247,15 +254,37 @@ public class LifecycleService {
      *      结果返回的新密钥材料客户端无法合成出可用私钥（更新后密钥不可用）；
      *   3. version 每次自增，但用户拿不到对应的新私钥。
      * <p>
-     * 因此这里按「是否提供新 ua」显式分流：
-     * 提供新 ua → 真轮换；未提供 → 仅更新元数据，version 保持不变。
+     * <b>为什么判据从"有没有 ua"改成显式标志（阶段 4 / 文档 §5.3）</b>
+     * <p>
+     * 文档 §5.3 要求 SM2 / SSCL 更新时<b>保留</b>节点侧秘密 {@code u} 与公开量
+     * {@code uA}，只让 KGC 重新生成随机 {@code w} 和部分密钥。也就是说，
+     * 一次**正确的**部分刷新请求所携带的 uA，与库中已有的那个是<b>同一个值</b>。
+     * <p>
+     * 于是"有没有 ua"这个信号同时在两个方向上出错：
+     * <ul>
+     *   <li>部分刷新带着（相同的）uA 来 → 看起来像"提供了新 ua" → 被判成轮换，
+     *       虽然结果碰巧正确，但判断依据是错的；</li>
+     *   <li>只改元数据、但顺手把库里的 uA 回填进请求体 → 也被判成轮换，
+     *       而调用方的本意恰恰是不动密钥材料。</li>
+     * </ul>
+     * 两种误判方向相反，根因相同：把"数据恰好在那"当成了"意图在那"。
+     * 现在由调用方声明意图，ua 退回到它应有的角色 —— 只作为
+     * {@link #rotateKey} 里的一致性校验输入。
+     *
+     * @param request 至少要知道它有没有声明 rotate
+     * @return true 表示走 {@link #rotateKey}；false 表示走 {@link #updateMetadata}
      */
     public boolean requiresRotation(Keymanage request) {
         if (request == null) {
             return false;
         }
-        String ua = request.getUa();
-        return ua != null && !ua.trim().isEmpty();
+        // 兼容期：显式标志优先；未提供标志时**不退化为旧的 ua 判据**。
+        //
+        // 退回去看着"向后兼容"，实际会把上面那条误判路径原样保留下来，
+        // 而它正是这次要消掉的东西。旧前端不带标志的后果是「更新」按钮
+        // 只会改元数据 —— 那是个安全的失败方向（不产生错误的版本号、
+        // 不写链、不会让客户端持有解不开的私钥），且界面上能立刻看出来。
+        return Boolean.TRUE.equals(request.getRotate());
     }
 
     /**
@@ -306,11 +335,63 @@ public class LifecycleService {
             throw new IllegalStateException("该密钥已被回收，无法更新");
         }
 
-        log.info("rotateKey 开始: keyId={}, encrytType={}, encrytName={}, ua={}",
-            current.getKeyId(), current.getEncrytType(), current.getEncrytName(),
-            current.getUa() != null ? current.getUa().substring(0, Math.min(8, current.getUa().length())) + "..." : "null");
-
+        String algorithm = normalizeAlgorithmName(current.getEncrytName());
         Keymanage next = mergeForRotation(current, request);
+
+        // ------------------------------------------------------------------
+        // 阶段 4 / 文档 §5.3：各算法的更新策略**不同**，这里按算法显式分流。
+        //
+        // 为什么必须分开：文档 §5.1 把"更新"定义为「保留 key_id、产生新 version」，
+        // 而 §5.3 给的三种做法差别很大。此前不分算法、全部丢给 `generateKeyValue()`
+        // 重新算一遍，掩盖了两件事：
+        //   * 客户端**必须**重新提交一份 uA —— 于是界面上"更新"得先点
+        //     「重新生成本地密钥材料」，而那个按钮造的是**新的 u 和新的 uA**，
+        //     并不是文档要求的"保留 u、只换 KGC 那一半"。文档说 §5.3 未实现，
+        //     指的正是这里：能跑通，但跑的不是 §5.3 描述的那个协议；
+        //   * 真正做不到的算法（Kyber / Falcon，私钥根本不在服务端）与
+        //     "做得到但做法不对"混在同一条路径里，都只在生成函数里抛一句笼统的话。
+        // ------------------------------------------------------------------
+
+        // --- Kyber / Falcon：文档 §5.3 要求由**节点侧**重新 KeyGen -------------
+        // 服务端没有这两者的私钥，造不出新版本。这里显式失败并指出正确路径，
+        // 而不是让它落到下面的兜底分支报一句与算法无关的话。
+        if (KYBER.equals(algorithm) || FALCON.equals(algorithm)) {
+            throw new IllegalStateException(String.format(
+                "%s 的更新必须由节点侧重新生成密钥对（文档 §5.3）：私钥不在服务端，"
+                    + "服务端无法为它产生新版本。请由节点本地重新 KeyGen 后上传新公钥，"
+                    + "或改用「密钥生成」新建一把。keyId=%s",
+                algorithm, current.getKeyId()));
+        }
+
+        // --- SM2 / SSCL：无证书部分刷新（文档 §5.3）---------------------------
+        if (SM2.equals(algorithm) || SSCL.equals(algorithm)) {
+            String currentUa = current.getUa() == null ? "" : current.getUa().trim();
+            if (currentUa.isEmpty()) {
+                throw new IllegalStateException(String.format(
+                    "无法更新：该密钥没有记录用户部分公钥 uA，缺了它就算不出公钥点 P_A。keyId=%s",
+                    current.getKeyId()));
+            }
+            String submittedUa = request.getUa() == null ? "" : request.getUa().trim();
+            if (!submittedUa.isEmpty() && !submittedUa.equalsIgnoreCase(currentUa)) {
+                // 换 uA 就是换节点侧秘密，等于换了一把密钥 —— 不是"更新"。
+                // 放行的后果很具体：库里出现一条"version +1"的记录，而持有该
+                // key_id 私钥文件的人在新版本上已经解不开任何东西，
+                // 审计从版本号上也看不出发生过这种事。
+                throw new IllegalStateException(String.format(
+                    "更新必须保留用户部分公钥 uA（文档 §5.3）：节点侧秘密份额不变，只刷新 KGC 部分。"
+                        + "换 uA 等于换密钥，请改用「密钥生成」新建一把。keyId=%s",
+                    current.getKeyId()));
+            }
+            // 显式保留 uA，不依赖 mergeForRotation 的默认值 —— 那个默认值是对的，
+            // 但"对"应当是显式的：日后若有人改了默认值，这里会静默换掉 uA，
+            // 而 §5.3 的整条协议正是建立在"uA 不变"之上。
+            next.setUa(currentUa);
+
+            log.info("rotateKey 开始（{} 部分刷新）: keyId={}, ua={} 保留不变，"
+                    + "将由 KGC 重新生成随机 w 与部分密钥，节点侧 u 与完整私钥 d_A 需在客户端重算",
+                algorithm, current.getKeyId(),
+                currentUa.substring(0, Math.min(8, currentUa.length())) + "...");
+        }
         next.setVersion(current.getVersion() == null ? 2 : current.getVersion() + 1);
         next.setStatus(KeyStatus.ACTIVE.getCode());
         next.setChainStatus("0");
@@ -474,6 +555,30 @@ public class LifecycleService {
         next.setConsistencyHash(sha256(joinProofParts(parentBatchId, nodeIndex, next.getCommitment())));
         next.setVerifyStatus("0");
         next.setVerifyMessage("waiting for batch proof");
+    }
+
+    /**
+     * 把 `encryt_name` 归一到用于分流的算法名。
+     *
+     * <p>库里这一列的历史取值并不统一（`sm2` / `SM2` / `SM2 国密` 都出现过），
+     * 所以按算法分流之前必须先归一 —— 否则同一算法会走到不同分支，
+     * 而"更新时某个算法没走它该走的协议"这种偏差从版本号上完全看不出来。
+     *
+     * <p>按**从长到短的已知算法名**做包含匹配；认不出来时返回原文大写，
+     * 让调用方的兜底分支去显式报错，而不是在这里猜一个算法出来 ——
+     * 猜错的代价是拿一个不相干的生成器去算密钥材料。
+     */
+    private String normalizeAlgorithmName(String encrytName) {
+        if (encrytName == null) {
+            return "";
+        }
+        String upper = encrytName.trim().toUpperCase();
+        for (String known : new String[] {SSCL, KYBER, FALCON, SM2}) {
+            if (upper.contains(known)) {
+                return known;
+            }
+        }
+        return upper;
     }
 
     private String generateKeyValue(Keymanage key) {
