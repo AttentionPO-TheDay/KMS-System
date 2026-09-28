@@ -20,7 +20,7 @@ from .user_distribution_views import (
     user_symmetric_keys,
 )
 # 阶段 2：节点自助（首次登录后的密钥初始化）。身份取自令牌自省，见该模块 docstring。
-from .node_self_views import node_self, node_self_init
+from .node_self_views import node_self, node_self_init, node_self_keys
 # 阶段 6：长期密钥回收后连带失效预分配池项（内部通道，X-Internal-Token 鉴权）
 from .internal_pool_views import revoke_pool_by_key
 # 阶段 7 §8.7：安全监控总览
@@ -52,6 +52,9 @@ urlpatterns = [
     # `node-self/` 吃成 pk='node-self'，请求落到 NodeViewSet 返回 200 但没有 data，
     # 现象是"接口通了但字段全 undefined"。
     path('node-self/', node_self, name='node-self'),
+    # §4.4：节点侧生成密钥后**只上传公钥**。必须与 init 分开 ——
+    # 先逐个登记四套公钥，再由 init 收尾置 ACTIVE（见 node_service 的说明）。
+    path('node-self/keys/', node_self_keys, name='node-self-keys'),
     path('node-self/init/', node_self_init, name='node-self-init'),
 
     # 阶段 6：内部通道（X-Internal-Token 鉴权，不对外暴露）。

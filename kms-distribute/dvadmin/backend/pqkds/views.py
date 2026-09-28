@@ -109,6 +109,16 @@ def _record_safe_value(value):
 
 
 def _kms_record_material(result, algorithm):
+    """组装密钥记录的**公开部分**。
+
+    ⚠️ §4.4 阶段一：这里**不再返回任何私钥**。
+       原先 KYBER / FALCON 分支会带上 `private_key`（含 `cl_private_key`），
+       无证书分支还会带上 `local_private_share` —— 那是节点侧秘密份额 `u`，
+       按 §4.4 它**不得上传服务端**，更不该再从这里发回去。
+
+       调用方拿到的应当是"记录在哪里、公钥是什么、标识是什么"，
+       私钥一律在节点侧自取自用（`BrowserCryptoProvider` + `NodeKeyStore`）。
+    """
     safe_result = _record_safe_value(result)
     normalized = (algorithm or '').upper()
     material = {
@@ -118,15 +128,12 @@ def _kms_record_material(result, algorithm):
     if 'KYBER' in normalized:
         material.update({
             'public_key': safe_result.get('kyber_public_key') or safe_result.get('cl_public_key'),
-            'private_key': safe_result.get('kyber_private_key') or safe_result.get('cl_private_key'),
             'variant': safe_result.get('variant'),
             'public_key_bytes': safe_result.get('pk_bytes'),
-            'private_key_bytes': safe_result.get('sk_bytes'),
         })
     elif 'FALCON' in normalized:
         material.update({
             'public_key': safe_result.get('falcon_pk') or safe_result.get('public_key'),
-            'private_key': safe_result.get('falcon_sk') or safe_result.get('private_key'),
         })
     else:
         material.update({
@@ -135,7 +142,6 @@ def _kms_record_material(result, algorithm):
             'external_key_name': safe_result.get('external_key_name'),
             'external_user': safe_result.get('external_user'),
             'ua': safe_result.get('ua'),
-            'local_private_share': safe_result.get('local_private_share'),
             'key_value': safe_result.get('key_value'),
         })
     return material
@@ -652,7 +658,23 @@ class NodeViewSet(CustomModelViewSet):
         from django.http import Http404
         raise Http404("Node not found")
     def get_permissions(self):
-        if self.action in ['list', 'retrieve', 'stats', 'register', 'generate_falcon_keys', 'generate_falcon_keys_v2', 'generate_falcon_keypair', 'keys', 'key_details', 'destroy', 'batch_delete', 'update_keys', 'update', 'partial_update', 'get_public_keys', 'discover_node', 'prepare_key_negotiation']:
+        # ⚠️ §4.4 阶段一：`keys` / `key_details` / `destroy` / `batch_delete` /
+        #    `update_keys` **已从这份 AllowAny 名单中移除**。
+        #
+        # 理由：这些动作会接触节点密钥材料与节点生命周期，而此前它们
+        # **不需要任何身份** —— 未认证的请求即可读取密钥详情（当时还会连同
+        # 私钥一并返回，见 key_details 里的说明）、甚至删除节点。
+        #
+        # 名单里保留的都是**只读且不涉及私密材料**的动作（列表/统计/注册/
+        # 生成公钥对/发现节点等），它们本来就是给节点侧在拿到令牌之前
+        # 做能力探测用的。**收窄的是能改数据的与能读密钥的**，
+        # 不是把整个接口关掉 —— 那会打断既有的节点自注册流程。
+        open_actions = [
+            'list', 'retrieve', 'stats', 'register',
+            'generate_falcon_keys', 'generate_falcon_keys_v2', 'generate_falcon_keypair',
+            'get_public_keys', 'discover_node', 'prepare_key_negotiation',
+        ]
+        if self.action in open_actions:
             return []
         return super().get_permissions()
     def get_serializer_class(self):
@@ -1277,7 +1299,10 @@ class NodeViewSet(CustomModelViewSet):
                 'node_id': node.node_id,
                 'kyber': {
                     'public_key': decompress_key_data(node.kyber_public_key) if node.kyber_public_key else None,
-                    'private_key': decompress_key_data(node.kyber_private_key) if node.kyber_private_key else None,
+                    # ⚠️ 这里曾返回 `private_key`（§4.4 之前服务端确实持有节点私钥）。
+                    # 现在**只返回公钥**：私钥在节点浏览器产生并留在那里，服务端没有可返回的东西。
+                    # 更关键的是，本接口当时还在 get_permissions 的 AllowAny 名单里 ——
+                    # 未认证就能取到节点私钥。收口见下方 `get_permissions` 的说明。
                     'partial_key': kyber_partial_key_info,
                     'security_level': node.kyber_security_level if node.kyber_security_level else '512',
                     'keygen_duration': node.kyber_keygen_duration,
@@ -1285,7 +1310,7 @@ class NodeViewSet(CustomModelViewSet):
                 },
                 'falcon': {
                     'public_key': decompress_key_data(node.falcon_public_key) if node.falcon_public_key else None,
-                    'private_key': decompress_key_data(node.falcon_private_key) if node.falcon_private_key else None,
+                    # 同上：不再返回 private_key
                     'partial_key': falcon_partial_key_info,
                     'security_level': node.falcon_security_level if node.falcon_security_level else '512',
                     'keygen_duration': node.falcon_keygen_duration,

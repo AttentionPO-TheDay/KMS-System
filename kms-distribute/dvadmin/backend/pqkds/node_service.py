@@ -385,24 +385,94 @@ class NodeService:
             'sys_user_id': user_id,
         }
 
-    def initialize_base_keys(self) -> Dict[str, Any]:
+    #: 算法 → (主公钥列, 需要一并写入的其它公钥列)
+    #:
+    #: ⚠️ Falcon 同时写两列是**过渡期的刻意选择**，不是笔误：
+    #:   `falcon_sign_public_key` 是签名路径真正读的那一列
+    #:   （`envelope_signature._decode_falcon_public_key`），
+    #:   而 `falcon_public_key` 仍被 ACTIVE 判定与 `_node_payload` 的就绪位读着。
+    #:   放弃 CL-Falcon 之后每个节点只有**一对** Falcon 密钥，两列指向同一把；
+    #:   等下一阶段把旧的 CL-Falcon 列清掉时再收敛为一列。
+    _PUBLIC_KEY_COLUMNS = {
+        'KYBER': ('kyber_public_key', []),
+        'SM2': ('gm_public_key', []),
+        'SSCL': ('sscl_public_key', []),
+        'FALCON': ('falcon_sign_public_key', ['falcon_public_key']),
+    }
+
+    def store_node_public_key(self, algorithm: str, public_key: str,
+                              security_level: str = None) -> Dict[str, Any]:
+        """登记一个算法的**公钥**（文档 §4.4）。
+
+        这是节点初始化的新入口：私钥在节点浏览器产生并留在那里，
+        服务端**只收公钥**，既不生成也不持有。
+
+        ⚠️ 编码口径：SM2 / SSCL / Falcon 存 **hex**（与既有列一致），
+           Kyber 存 **base64** —— 因为 `wrappers.wrap_for_node` 是按
+           `base64.b64decode(node.kyber_public_key)` 取的，且靠解码后的
+           字节长度推断变体（pk_len_map）。这里统一从 hex 入参转换，
+           免得调用方各传一套，错了要等到封装时才发现。
         """
-        阶段 2：**节点首次登录时**初始化四套基础密钥（文档 §3.1）。
+        import base64 as _b64
 
-        流程：节点侧（浏览器）→ 首次登录 → 调本方法 → Kyber/SSCL/SM2/Falcon
-              四套全部成功 → status='ACTIVE'。
+        name = str(algorithm or '').strip().upper().replace('CL-', '')
+        if name not in self._PUBLIC_KEY_COLUMNS:
+            return {
+                'success': False,
+                'message': f'不支持的算法：{algorithm}（可选 {"/".join(self._PUBLIC_KEY_COLUMNS)}）',
+            }
 
-        为什么复用 generate_* 而不是重写一套生成逻辑
-        ------------------------------------------
-        文档 §3.4 明确要求：「不要为'首次四把基础密钥'再维护另一套密码学实现」，
-        首次初始化只是把既有能力**自动连续调用**一遍。所以这里只是编排，
-        密码学实现仍是 Kyber/Falcon/国密的原有代码。
+        value = str(public_key or '').strip()
+        if not value:
+            return {'success': False, 'message': '公钥为空'}
 
-        幂等与失败语义
-        -------------
-        * 已是 ACTIVE 的节点直接返回，不重复生成（再次登录不应重跑）。
-        * 任一套失败即整体失败并**保持 PENDING_INIT**，允许再次登录重试 ——
-          比"成功三套也算成功"安全：缺任何一套都算初始化未完成。
+        column, extra_columns = self._PUBLIC_KEY_COLUMNS[name]
+        if name == 'KYBER':
+            try:
+                raw = bytes.fromhex(value)
+            except ValueError:
+                return {'success': False, 'message': 'Kyber 公钥应为十六进制'}
+            # 变体自描述：服务端按长度推断（与 wrappers.pk_len_map 同一口径）
+            if len(raw) not in (800, 1184, 1568):
+                return {
+                    'success': False,
+                    'message': f'Kyber 公钥长度 {len(raw)} 不是 800/1184/1568，无法确定变体',
+                }
+            stored = _b64.b64encode(raw).decode('utf-8')
+        else:
+            stored = value.lower()
+
+        setattr(self.node, column, stored)
+        for column_name in extra_columns:
+            setattr(self.node, column_name, stored)
+
+        fields = [column, *extra_columns]
+        if security_level:
+            level_field = 'kyber_security_level' if name == 'KYBER' else 'falcon_security_level'
+            if hasattr(self.node, level_field):
+                setattr(self.node, level_field, str(security_level).strip())
+                fields.append(level_field)
+
+        self.node.save(update_fields=fields)
+        logger.info('节点 %s 登记 %s 公钥（长度 %d）', self.node_id, name, len(stored))
+        return {'success': True, 'algorithm': name, 'message': f'{name} 公钥已登记'}
+
+    def initialize_base_keys(self) -> Dict[str, Any]:
+        """节点首次初始化的**收尾**（文档 §3.1 / §4.4）。
+
+        ⚠️ 本方法在 §4.4 阶段一**改变了职责**：它**不再生成任何密钥**。
+           私钥的产生已移到节点浏览器（`BrowserCryptoProvider`），
+           服务端只在校验「四套公钥是否齐备」之后把状态置为 ACTIVE。
+
+        为什么必须改：原先这里在服务端生成并落库四套**私钥**，与文档
+        §0/§4「私钥留在节点侧，服务端只登记公钥」直接冲突 ——
+        实测 `dvadmin_pqkds_nodes` 里就存着 Falcon 私钥 1.43MB 等材料。
+
+        幂等与失败语义（与原实现一致，未改动）
+        --------------------------------------
+        * 已是 ACTIVE 的节点直接返回，不重复处理。
+        * 公钥不齐即整体失败并**保持 PENDING_INIT**，允许节点补交后重试 ——
+          比「齐了三套也算成功」安全：缺任何一套都算初始化未完成。
         """
         from django.utils import timezone
 
@@ -414,133 +484,47 @@ class NodeService:
                 'message': '节点已完成初始化，无需重复生成',
             }
 
-        steps = []
-        failures = []
-
-        # 1) Kyber —— 与旧 register_node 一致：先建 Node 行再生成
-        try:
-            import time
-            t0 = time.time()
-            kyber_kp = self.keygen_service.generate_kyber_keypair(self.node_id)
-            if not kyber_kp.get('success'):
-                failures.append(f"Kyber: {kyber_kp.get('error')}")
-            else:
-                kyber_pk = kyber_kp['kyber_public_key']
-                kyber_sk = kyber_kp['kyber_private_key']
-                self.node.kyber_public_key = base64.b64encode(kyber_pk).decode('utf-8')
-                self.node.kyber_private_key = base64.b64encode(kyber_sk).decode('utf-8')
-                _cl_pk = kyber_kp.get('cl_public_key')
-                _cl_sk = kyber_kp.get('cl_private_key')
-                _sys_A = kyber_kp.get('system_A')
-                self.node.kyber_partial_key_data = json.dumps({
-                    'partial_key_t': kyber_kp.get('partial_key_t'),
-                    'secret_value_s_id': kyber_kp.get('secret_value_s_id'),
-                    'hash_c': kyber_kp.get('hash_c'),
-                    'u_prime_id': kyber_kp.get('u_prime_id'),
-                    'cl_public_key': _cl_pk.tolist() if hasattr(_cl_pk, 'tolist') else _cl_pk,
-                    'cl_private_key': _cl_sk.tolist() if hasattr(_cl_sk, 'tolist') else _cl_sk,
-                    'A': _sys_A.tolist() if hasattr(_sys_A, 'tolist') else _sys_A,
-                    'algorithm': kyber_kp.get('algorithm', 'CertificatelessKyber512_DLL'),
-                    'parameters': {'n': 512, 'm': 1024, 'q': 12289},
-                })
-                self.node.kyber_keygen_time = timezone.now()
-                self.node.kyber_keygen_duration = time.time() - t0
-                self.node.status = 'kyber_uploaded'
-                self.node.save()
-                steps.append('Kyber')
-        except Exception as exc:  # noqa: BLE001
-            failures.append(f"Kyber: {exc}")
-
-        # 2) 国密（SM2 + SSCL）
-        try:
-            gm = self.generate_gm_keys()
-            if gm.get('success'):
-                steps.append('国密(SM2/SSCL)')
-            else:
-                failures.append(f"国密: {gm.get('message')}")
-        except Exception as exc:  # noqa: BLE001
-            failures.append(f"国密: {exc}")
-
-        # 3) Falcon
-        try:
-            falcon = self.generate_falcon_keys_v2()
-            if falcon.get('success'):
-                steps.append('Falcon')
-            else:
-                failures.append(f"Falcon: {falcon.get('message')}")
-        except Exception as exc:  # noqa: BLE001
-            failures.append(f"Falcon: {exc}")
-
-        # 3b) 标准 Falcon 签名密钥（阶段 5 §6.2/§6.3）
-        #
-        # 与上面那步**不是一回事**：generate_falcon_keys_v2 产出的是 CL-Falcon
-        # 格材料（D_id/S_id 矩阵），与标准 Falcon DLL 不兼容，无法用于 crypto_sign。
-        # 文档 §0.5 要求 Falcon 回归"标准密钥生成 + 签名验签"的定位，
-        # 故另生成一对标准密钥专用于对分发信封签名（§6.3）。
-        try:
-            sign_kp = self.generate_falcon_signing_keypair()
-            if sign_kp.get('success'):
-                steps.append('Falcon签名密钥')
-            else:
-                failures.append(f"Falcon签名密钥: {sign_kp.get('message')}")
-        except Exception as exc:  # noqa: BLE001
-            failures.append(f"Falcon签名密钥: {exc}")
-
         self.node.refresh_from_db()
 
-        if failures:
-            logger.error("节点 %s 基础密钥初始化失败: %s", self.node_id, failures)
-            return {
-                'success': False,
-                'status': self.node.status,
-                'completed': steps,
-                'message': '基础密钥初始化未完成：' + '；'.join(failures),
-            }
-
-        # 4) 落库校验 —— **必须**在置 ACTIVE 之前。
-        #
-        # 前三步各自返回 success 只说明"该步的函数没报错"，**不等于数据真的写进去了**。
-        # 2026-09-27 实测过一个真实的静默数据丢失：Falcon 路径在长耗时计算前会
-        # `connection.close()`（node_service.py:1022），若外层用事务包裹，
-        # 这个 close 会把此前未提交的 Kyber/国密写入一并丢弃 ——
-        # 结果就是"四步全报成功、状态被置成 ACTIVE，库里却只有 Falcon"。
-        # 回查一次数据库，把这类问题从"静默成功"变成"明确失败"。
-        missing = [
-            name for name, value in (
-                ('Kyber', self.node.kyber_public_key),
-                ('SM2', self.node.gm_public_key),
-                ('SSCL', self.node.sscl_public_key),
-                ('Falcon', self.node.falcon_public_key),
-            ) if not value
+        # 落库校验：四套**公钥**必须都在。
+        # 与原实现同一口径（原本查的也是公钥列），差别只在公钥现在来自节点侧。
+        required = [
+            ('Kyber', self.node.kyber_public_key),
+            ('SM2', self.node.gm_public_key),
+            ('SSCL', self.node.sscl_public_key),
+            # Falcon 以签名公钥为准（那才是签名路径读的列）；
+            # 兼容早期只写了 falcon_public_key 的节点。
+            ('Falcon', self.node.falcon_sign_public_key or self.node.falcon_public_key),
         ]
+        missing = [name for name, value in required if not value]
         if missing:
-            logger.error("节点 %s 密钥未落库: %s（拒绝置为 ACTIVE）", self.node_id, missing)
+            logger.warning('节点 %s 初始化未完成，缺少公钥: %s', self.node_id, missing)
             return {
                 'success': False,
                 'status': self.node.status,
-                'completed': steps,
-                'message': '以下密钥生成成功但未写入数据库：' + '、'.join(missing) + '，请重试',
+                'completed': [name for name, value in required if value],
+                'message': '以下基础公钥尚未登记：' + '、'.join(missing) + '，请在节点侧完成生成后重试',
             }
 
-        # 5) 四套齐备且已落库 → ACTIVE（文档 §3.1）
+        # 四套齐备 → ACTIVE（文档 §3.1）
         self.node.status = 'active'
         self.node.initialized_at = timezone.now()
         self.node.save(update_fields=['status', 'initialized_at'])
 
-        # 5) 上链（与旧 register_node 一致；失败不影响初始化结论）
+        # 上链（与旧 register_node 一致；失败不影响初始化结论）
         try:
             up = self.upload_service.upload_node_registration(self.node)
             if not up.get('success'):
-                logger.warning("节点 %s 上链失败: %s", self.node_id, up.get('message'))
+                logger.warning('节点 %s 上链失败: %s', self.node_id, up.get('message'))
         except Exception as exc:  # noqa: BLE001
-            logger.warning("节点 %s 上链异常: %s", self.node_id, exc)
+            logger.warning('节点 %s 上链异常: %s', self.node_id, exc)
 
-        logger.info("节点 %s 基础密钥初始化完成，状态置为 ACTIVE", self.node_id)
+        logger.info('节点 %s 公钥齐备，状态置为 ACTIVE', self.node_id)
         return {
             'success': True,
             'status': 'active',
-            'completed': steps,
-            'message': '四套基础密钥初始化完成',
+            'completed': [name for name, _ in required],
+            'message': '四套基础公钥齐备，初始化完成',
         }
 
     def generate_falcon_signing_keypair(self) -> Dict[str, Any]:

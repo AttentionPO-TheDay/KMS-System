@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 
 from django.http import JsonResponse
@@ -106,6 +107,62 @@ def node_self(request, identity):
         # 这不是错误状态，而是"这个账号不是节点"—— 由前端据此决定视图分流。
         return _ok({'mapped': False, 'node': None})
     return _ok({'mapped': True, 'node': _node_payload(node)})
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+@require_kms_user
+def node_self_keys(request, identity):
+    """登记一个算法的**公钥**（文档 §4.4）。
+
+    私钥在节点浏览器产生并留在那里，服务端只收公钥 —— 这是本接口与旧
+    「服务端生成四套密钥」路径的根本区别（旧路径见 `initialize_base_keys` 的说明）。
+
+    ⚠️ 入口处显式拒绝私钥样式的字段名：与其信任调用方，不如在入口挡一道。
+       一旦私钥进来，它就已经落进服务端日志与请求记录，**撤不回来**。
+    """
+    node = _find_node(identity)
+    if node is None:
+        return _error('当前账号未关联任何节点，无法登记密钥', 403)
+    if _public_status(node) == 'DISABLED':
+        return _error('该节点已被停用，无法登记密钥', 403)
+
+    try:
+        payload = json.loads(request.body or b'{}')
+    except (ValueError, TypeError):
+        return _error('请求体不是合法 JSON')
+    if not isinstance(payload, dict):
+        return _error('请求体应为 JSON 对象')
+
+    forbidden = sorted(
+        k for k in payload
+        if str(k).lower() in {'privatekey', 'secretkey', 'private_key', 'secret_key', 'sk', 'private'}
+    )
+    if forbidden:
+        return _error(
+            '本接口只接受公钥，请求体中出现私钥字段：' + '、'.join(forbidden)
+            + '。私钥应在节点侧保管，不得上传。'
+        )
+
+    algorithm = payload.get('algorithm')
+    public_key = payload.get('publicKey') or payload.get('public_key')
+    if not algorithm or not public_key:
+        return _error('缺少 algorithm 或 publicKey')
+
+    try:
+        service = NodeService(node.node_id)
+        result = service.store_node_public_key(
+            algorithm, public_key, payload.get('securityLevel') or payload.get('security_level')
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception('节点 %s 登记公钥异常', node.node_id)
+        return _error(f'登记公钥失败：{exc}', 500)
+
+    if not result.get('success'):
+        return _error(result.get('message') or '登记公钥失败')
+
+    node.refresh_from_db()
+    return _ok({'node': _node_payload(node)}, msg=result.get('message') or '公钥已登记')
 
 
 @csrf_exempt
