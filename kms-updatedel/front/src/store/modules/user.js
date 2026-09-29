@@ -31,15 +31,34 @@ const useUserStore = defineStore(
         const password = userInfo.password
         const code = userInfo.code
         const uuid = userInfo.uuid
-        return new Promise((resolve, reject) => {
-          login(username, password, code, uuid).then(res => {
-            setToken(res.token)
-            this.token = res.token
-            resolve()
-          }).catch(error => {
-            reject(error)
-          })
+        return login(username, password, code, uuid).then(res => {
+          const token = typeof res?.token === 'string' ? res.token.trim() : ''
+          if (!token) {
+            this.clearSession()
+            throw new Error(res?.msg || '登录失败，服务器未返回有效令牌')
+          }
+          setToken(token)
+          this.token = token
+          return token
+        }).catch(error => {
+          // 登录失败时不能保留旧 token，否则路由守卫会把失败登录当成已登录会话。
+          this.clearSession()
+          throw error
         })
+      },
+      // 只清理浏览器本地会话，不请求后端。失效 token 场景下后端注销
+      // 本身可能返回 401，路由恢复不能依赖那个请求成功。
+      clearSession() {
+        this.token = ''
+        this.id = ''
+        this.name = ''
+        this.avatar = ''
+        this.roles = []
+        this.permissions = []
+        this.roleLevel = null
+        this.principalType = null
+        resetNodeInitStatusCache()
+        removeToken()
       },
       // 获取用户信息
       getInfo() {
@@ -69,22 +88,11 @@ const useUserStore = defineStore(
       },
       // 退出系统
       logOut() {
-        return new Promise((resolve, reject) => {
-          logout(this.token).then(() => {
-            this.token = ''
-            this.roles = []
-            this.permissions = []
-            this.roleLevel = null
-            this.principalType = null
-            // 清节点初始化状态缓存：它按会话缓存，不清的话下一个登录的账号
-            // 会继承上一个账号的主体/初始化状态（阶段 2）。
-            resetNodeInitStatusCache()
-            removeToken()
-            resolve()
-          }).catch(error => {
-            reject(error)
-          })
-        })
+        // 服务端注销是尽力而为；无论请求是否成功，都必须清掉本地会话，
+        // 否则失效 token 会让后续路由继续被当成已登录状态。
+        return logout(this.token)
+          .catch(() => undefined)
+          .then(() => this.clearSession())
       }
     }
   })

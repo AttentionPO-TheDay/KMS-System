@@ -154,9 +154,17 @@ router.beforeEach((to, from, next) => {
             }
           })
         }).catch(err => {
-          useUserStore().logOut().then(() => {
-            ElMessage.error(err)
-            next({ path: '/' })
+          // 旧 token 可能在 Docker/Redis 重启后已经失效。
+          // 本地会话必须先清掉，且不能等待 /logout 成功：失效 token 的
+          // 注销请求也可能失败，若把 next() 放在 logOut().then() 里，
+          // 当前导航就会一直悬挂，表现为页面卡死。
+          useUserStore().clearSession()
+          isRelogin.show = false
+          ElMessage.error(err?.message || err || '登录状态已失效，请重新登录')
+          next({
+            path: '/login',
+            query: { redirect: to.fullPath },
+            replace: true
           })
         })
       } else {
@@ -169,8 +177,28 @@ router.beforeEach((to, from, next) => {
     // 阶段 1（前端合并）前，这里整页跳到 kms-user 的登录页（D9「唯一登录入口」）。
     // 用户前台随本次合并退役后，那个入口已不存在，故改为回到本应用的 /login，
     // 与 request.js 里 getLoginPath() 的会话过期处理保持一致。
-    next(`/login?redirect=${to.fullPath}`)
-    NProgress.done()
+    //
+    // ⚠️ 白名单必须**先判**，否则整页卡死（2026-09-28 实测）。
+    //
+    // 上一版这里直接 `next('/login?redirect=' + to.fullPath)` 就收工了，
+    // 漏掉了下面这个判断。而 `isPathMatch` 是拿 `^...$` 全串锚定的正则，
+    // `/login?redirect=/` **匹配不上** 模式 `/login`（query 把 $ 锚点顶掉了）。
+    // 于是重定向到登录页后守卫再跑一遍：仍然没有 token → 又匹配不上白名单
+    // → 再跳一次，且 redirect 的值每轮把自己套一层：
+    //     /login?redirect=/login?redirect=/login?redirect=/...
+    // 导航始终在守卫里被改写，**永远不提交**（实测 pushState 恒为 0），
+    // 而每轮都调 NProgress.start()/done()，堆起的定时器与微任务把主线程
+    // 彻底占满 —— 表现为页面白屏卡死，连 DOMContentLoaded 都不触发。
+    //
+    // 注意这不是"多加一层保险"：登录页本身也在白名单里，所以
+    // 判到 `to.path === '/login'` 时必须放行，否则就是上面那个循环。
+    if (isWhiteList(to.path)) {
+      next()
+      NProgress.done()
+    } else {
+      next(`/login?redirect=${to.fullPath}`)
+      NProgress.done()
+    }
   }
 })
 

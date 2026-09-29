@@ -123,7 +123,13 @@ function handleLogin() {
         Cookies.remove("rememberMe");
       }
       // 调用action的登录方法
-      userStore.login(loginForm.value).then(() => {
+      userStore.login(loginForm.value).then((token) => {
+        // 只有登录 action 返回有效 token 才允许进入后续路由。
+        // 失败登录由 request.js 拒绝并进入 catch，绝不能导航到受保护页面。
+        if (!token) {
+          loading.value = false;
+          return;
+        }
         const query = route.query;
         const otherQueryParams = Object.keys(query).reduce((acc, cur) => {
           if (cur !== "redirect") {

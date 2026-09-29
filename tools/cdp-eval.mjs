@@ -61,7 +61,12 @@ const W = Number(arg('width', '1600'))
 const H = Number(arg('height', '1000'))
 await send('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: 1, mobile: false })
 if (URL_ && URL_ !== 'about:blank') {
-  await send('Page.navigate', { url: URL_ })
+  // ⚠️ **不要 await `Page.navigate` 的响应**。
+  //    实测它会偶发不返回，于是整个脚本挂死在那一行、零输出 ——
+  //    看起来像"页面加载不出来"，实际是工具卡住了。
+  //    （本文件上面那段注释说的"偶发不返回"就是这个。）
+  //    发出去就不管，靠下面的 sleep 等页面自己加载完。
+  ws.send(JSON.stringify({ id: ++id, method: 'Page.navigate', params: { url: URL_ } }))
   await sleep(WAIT)
 }
 const r = await send('Runtime.evaluate', {
