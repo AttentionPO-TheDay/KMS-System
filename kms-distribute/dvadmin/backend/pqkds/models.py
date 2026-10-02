@@ -190,6 +190,54 @@ class Node(CoreModel):
         help_text="首次上报公钥的设备标识；与该设备本地密钥库一一对应"
     )
 
+    # -------------------------------------------------------------------------
+    # 文档 §3.1 / §5：设备认证凭据（节点登录的**唯一**凭据）
+    # -------------------------------------------------------------------------
+    # 与上面 key_device_id 的关系，别混：
+    #   key_device_id        —— **自报**的浏览器随机串，只用于"发现换了设备"并提示，
+    #                           服务端无法验证（上面那段注释已说明它不是证明）。
+    #   device_auth_public_key —— **真证明**。节点侧 WebCrypto 生成不可导出的
+    #                           ECDSA P-256 私钥，公钥上报到这里；登录时服务端下发
+    #                           一次性挑战，节点用私钥签名，服务端用这把公钥验签。
+    #                           私钥从不出本机，服务端无法伪造节点身份。
+    #
+    # 每个节点**各有一把**，存在该节点自己的命名空间里
+    # （前端 keyRef = `node-{nodeId}-device-auth`），因此**同一个浏览器可以托管
+    # 多个互不干扰的节点身份** —— 这正是文档 §4 的设计（一个浏览器 ≠ 一个节点，
+    # 而是"一个节点本地测试环境，可托管多个独立节点身份"）。
+    device_auth_public_key = models.TextField(
+        blank=True, default='',
+        verbose_name="设备认证公钥",
+        help_text="ECDSA P-256 公钥（JWK JSON）；登录挑战-应答验签用。私钥只在节点本机"
+    )
+    device_auth_algorithm = models.CharField(
+        max_length=32, blank=True, default='ECDSA-P256',
+        verbose_name="设备认证算法",
+        help_text="便于日后换算法时不必猜旧值是什么"
+    )
+
+    # --- 一次性激活凭证（文档 §3）---
+    # 管理员建节点时签发，**只回传一次明文**，库里只存哈希。
+    # 一次性 + 有有效期 + 用后立即失效 + 支持重新签发（文档 §3 的原文要求）。
+    #
+    # 为什么不存明文：凭证等同于节点的"入场券"，泄漏即可冒名激活。
+    # 存哈希使得"读库"不等于"能激活"。
+    activation_code_hash = models.CharField(
+        max_length=128, blank=True, default='',
+        verbose_name="激活凭证哈希",
+        help_text="一次性激活凭证的 SHA-256 十六进制；明文只在签发响应里出现一次"
+    )
+    activation_code_issued_at = models.DateTimeField(
+        null=True, blank=True, verbose_name="凭证签发时间"
+    )
+    activation_code_expires_at = models.DateTimeField(
+        null=True, blank=True, verbose_name="凭证过期时间"
+    )
+    activated_at = models.DateTimeField(
+        null=True, blank=True, verbose_name="设备激活时间",
+        help_text="节点首次用激活凭证换取设备凭据的时间"
+    )
+
     # --- 阶段 5（文档 §6.2/§6.3）：标准 Falcon 签名密钥 ---
     # ⚠️ 与上面的 falcon_public_key / falcon_private_key **不是一回事**：
     # 那两列装的是 CL-Falcon 的格矩阵（D_id / S_id），与标准 Falcon DLL 不兼容，

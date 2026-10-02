@@ -466,6 +466,12 @@ services:
       - GENERATE_JAVA_BASE=http://generate-java:9081
       - LIFECYCLE_BACKEND_BASE=http://updatedel-go:8082
       - INTERNAL_TOKEN=${INTERNAL_TOKEN:?必须设置 INTERNAL_TOKEN，参见 kms-ops/.env.example}
+      # 节点设备凭据登录的一次性挑战必须**跨 worker 共享**（gunicorn workers=2），
+      # 故显式指向 kms_redis。不配的话 Django 退化成 LocMemCache：
+      # 挑战写在 worker A、验证落在 worker B 时必然查不到，
+      # 表现为登录随机失败且重试可能又成功，极难定位。
+      # 用 db 2 —— db 0 已被 RuoYi 的令牌/验证码占用，分开便于排查。
+      - REDIS_URL=${PQKDS_REDIS_URL:-redis://kms_redis:6379/2}
       - PQKDS_DEMO_GENERATE_USER=${PQKDS_DEMO_GENERATE_USER:-pqkds-demo-service}
       - PQKDS_DEMO_GENERATE_PASSWORD=${PQKDS_DEMO_GENERATE_PASSWORD:-admin123}
     volumes:

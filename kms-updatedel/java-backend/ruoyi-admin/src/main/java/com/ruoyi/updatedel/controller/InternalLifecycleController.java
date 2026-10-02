@@ -37,6 +37,8 @@ public class InternalLifecycleController {
     private final com.ruoyi.framework.web.service.TokenService tokenService;
     private final com.ruoyi.updatedel.mapper.SysUserMapper sysUserMapper;
     private final UpdatedelChainService updatedelChainService;
+    private final com.ruoyi.system.service.ISysUserService sysUserService;
+    private final com.ruoyi.framework.web.service.UserDetailsServiceImpl userDetailsService;
 
     // 内部 Token 必须由环境变量 INTERNAL_TOKEN 注入，无默认值（历史默认值为公开值）。
     @Value("${kms.go-backend.internal-token}")
@@ -48,7 +50,9 @@ public class InternalLifecycleController {
                                        UserPublicKeyService userPublicKeyService,
                                        com.ruoyi.framework.web.service.TokenService tokenService,
                                        com.ruoyi.updatedel.mapper.SysUserMapper sysUserMapper,
-                                       UpdatedelChainService updatedelChainService) {
+                                       UpdatedelChainService updatedelChainService,
+                                       com.ruoyi.system.service.ISysUserService sysUserService,
+                                       com.ruoyi.framework.web.service.UserDetailsServiceImpl userDetailsService) {
         this.lifecycleService = lifecycleService;
         this.keyOperationRecordService = keyOperationRecordService;
         this.redisCache = redisCache;
@@ -56,6 +60,99 @@ public class InternalLifecycleController {
         this.tokenService = tokenService;
         this.sysUserMapper = sysUserMapper;
         this.updatedelChainService = updatedelChainService;
+        this.sysUserService = sysUserService;
+        this.userDetailsService = userDetailsService;
+    }
+
+    /**
+     * 为**已通过设备凭据验证**的节点铸发登录令牌（文档 §5）。
+     *
+     * <h2>为什么由 KMS 铸令牌，而不是让分发模块自己签</h2>
+     * D7 把 {@code kms.sys_user} 定为唯一身份源 —— 令牌只能有 RuoYi 一个签发者。
+     * 分发模块（Django）自行签 JWT 就要复制 JWT 密钥与 Redis 会话格式，
+     * 身份源立刻变成两处，且两边会各自漂移（漂移的表现是"某些页面莫名 401"）。
+     * 所以 Django 只负责**验证设备签名**，然后把结论交给这里换令牌。
+     *
+     * <h2>为什么这个接口能被"请"得动</h2>
+     * 它只信任 {@code X-Internal-Token}（与 introspect / user-public-key 同一把）。
+     * 因此**绝不能**把它暴露到外部 —— 那等于允许任何人给任意账号铸令牌。
+     * 该端点经网关 {@code /lifecycle-api/} 前缀理论可达，屏障就是这把共享密钥，
+     * 与既有内部端点同一处境（见本仓库 nginx 无 {@code /internal/} 专用规则的现状）。
+     *
+     * <h2>安全约束：只能铸 NODE 主体的令牌</h2>
+     * 这是本接口与"后门"的区别所在。设备凭据只发给节点（文档 §2.1），
+     * 管理员走用户名+口令。若这里不设限，一次内部通道泄漏就能直接拿到**管理员**
+     * 令牌 —— 那比泄漏一个节点令牌严重得多。
+     * 因此显式校验 {@code principalType == "NODE"}，并拒绝已停用/已删除的账号。
+     *
+     * @param payload 形如 {@code {"userId": 123}}
+     * @return {@code {data: {ok, token, userId, userName}}}；失败时 {@code ok=false}
+     */
+    @PostMapping("/session/issue")
+    public Map<String, Object> issueSession(
+            @RequestHeader(value = "X-Internal-Token", required = false) String token,
+            @RequestBody(required = false) Map<String, Object> payload) {
+        requireAuthorized(token);
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            Object rawUserId = payload == null ? null : payload.get("userId");
+            if (rawUserId == null) {
+                result.put("ok", false);
+                result.put("errorMessage", "缺少 userId");
+                return wrapData(result);
+            }
+            Long userId;
+            try {
+                userId = Long.valueOf(str(rawUserId));
+            } catch (NumberFormatException ex) {
+                result.put("ok", false);
+                result.put("errorMessage", "userId 不是合法数字");
+                return wrapData(result);
+            }
+
+            com.ruoyi.common.core.domain.entity.SysUser sysUser = sysUserService.selectUserById(userId);
+            if (sysUser == null) {
+                result.put("ok", false);
+                result.put("errorMessage", "账号不存在");
+                return wrapData(result);
+            }
+            if (!"0".equals(sysUser.getDelFlag())) {
+                result.put("ok", false);
+                result.put("errorMessage", "账号已删除");
+                return wrapData(result);
+            }
+            if (!"0".equals(sysUser.getStatus())) {
+                result.put("ok", false);
+                result.put("errorMessage", "账号已停用");
+                return wrapData(result);
+            }
+            // ⚠️ 这条是安全边界，不是可选的健壮性检查。见方法注释。
+            String principalType = sysUser.getPrincipalType();
+            if (principalType == null || !"NODE".equalsIgnoreCase(principalType.trim())) {
+                result.put("ok", false);
+                result.put("errorMessage", "该接口只为核心节点签发令牌");
+                return wrapData(result);
+            }
+
+            // 复用登录流程同一个 createLoginUser —— 不另造一套权限装配，
+            // 否则"设备凭据登录进来的节点"与"口令登录进来的节点"权限会不一致。
+            com.ruoyi.common.core.domain.model.LoginUser loginUser =
+                    (com.ruoyi.common.core.domain.model.LoginUser)
+                            userDetailsService.createLoginUser(sysUser);
+
+            String issued = tokenService.createToken(loginUser);
+            result.put("ok", true);
+            result.put("token", issued);
+            result.put("userId", userId);
+            result.put("userName", sysUser.getUserName());
+        } catch (Exception ex) {
+            // 与 introspect 同一约定：预期内的拒绝走 ok=false，
+            // 真异常也不抛 500 给内部调用方，但把原因带回去便于排查。
+            log.warn("内部令牌签发失败: {}", ex.getMessage());
+            result.put("ok", false);
+            result.put("errorMessage", "令牌签发失败: " + ex.getMessage());
+        }
+        return wrapData(result);
     }
 
     /**

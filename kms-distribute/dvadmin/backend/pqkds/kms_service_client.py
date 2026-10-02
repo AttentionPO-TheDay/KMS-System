@@ -137,6 +137,54 @@ def user_public_key(key_id: int) -> Dict[str, Any]:
     return data
 
 
+def issue_session(user_id: int) -> str:
+    """为**已通过设备凭据验证**的节点铸一个标准 RuoYi 令牌。
+
+    为什么必须走这里，而不是在 Django 侧自己造令牌
+    ------------------------------------------------
+    D7 把 `kms.sys_user` 定为唯一身份源 —— 令牌只能有 RuoYi 一个签发者。
+    Django 若自行签一份 JWT，就要复制 JWT 密钥与 Redis 会话格式，
+    身份源立刻变成两处，且两边会各自漂移（而漂移的表现是"某些页面莫名 401"）。
+    所以这里只做"把已验证的结论告诉 KMS，请它发令牌"。
+
+    ⚠️ 调用前提：**调用方已完成设备签名验证**。
+       本函数自己**不做任何身份校验** —— 它信任内部通道的调用者。
+       因此它绝不能暴露成对外端点（对外暴露 = 任何人可给任意 userId 铸令牌）。
+       这正是它只被 `node_auth_views` 在验签成功之后调用的原因。
+
+    @param user_id 目标账号（应为该节点的 `sys_user_id`）
+    @return 令牌字符串
+    @raise KmsServiceError 网络/服务端故障，或 KMS 拒绝签发
+    """
+    headers = _internal_headers()
+    try:
+        response = requests.post(
+            f'{KMS_LIFECYCLE_BASE}/internal/lifecycle/session/issue',
+            headers=headers,
+            json={'userId': int(user_id)},
+            timeout=DEFAULT_TIMEOUT,
+        )
+    except requests.RequestException as exc:
+        raise KmsServiceError(f'无法连接主 KMS 令牌签发接口: {exc}') from exc
+
+    if response.status_code != 200:
+        raise KmsServiceError(
+            f'主 KMS 令牌签发接口返回 {response.status_code}: {response.text[:200]}'
+        )
+
+    payload = response.json() or {}
+    data = payload.get('data') or {}
+    if not data.get('ok'):
+        raise KmsServiceError(data.get('errorMessage') or '主 KMS 拒绝签发令牌')
+
+    token = str(data.get('token') or '').strip()
+    if not token:
+        # "说 ok 却没给令牌"这种半成功必须当失败，
+        # 否则调用方会拿着空串当令牌用，现象是"登录后立刻 401"。
+        raise KmsServiceError('主 KMS 返回 ok 但未包含 token')
+    return token
+
+
 def list_users(keyword: Optional[str] = None) -> list:
     """账号列表（供管理端的用户选择器用）。
 

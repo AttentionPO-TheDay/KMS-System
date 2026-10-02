@@ -101,6 +101,33 @@ TIME_ZONE = "Asia/Shanghai"
 USE_I18N = True
 USE_L10N = True
 USE_TZ = False
+
+# ---------------------------------------------------------------------------
+# 缓存（Redis）
+# ---------------------------------------------------------------------------
+# 为什么必须显式配置，不能用 Django 默认的 LocMemCache：
+#   节点设备凭据登录要用一次性 **挑战**（`node_auth_views`）。挑战先在
+#   `challenge` 端点写入、再到 `login` 端点读出核销。而本服务以
+#   **gunicorn workers=2**（见 gunicorn_conf.py）运行 —— 默认的 LocMemCache
+#   **是每个 worker 各一份**，两个请求落到不同 worker 时挑战就"查不到"。
+#   表现为登录随机失败，且重试可能又成功，极难定位。
+#
+# 用同一套 kms_redis（compose 已在网络里，服务名 kms_redis）。
+# 连接串可用环境变量覆盖，便于本地不开 compose 时改指本机 redis。
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": os.getenv("REDIS_URL", "redis://kms_redis:6379/2"),
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            # 连接不上时**明确报错**，不要静默退化成"没有缓存"——
+            # 那会让挑战验证看起来像"挑战不存在"，把部署故障伪装成登录失败。
+            "IGNORE_EXCEPTIONS": False,
+        },
+        "KEY_PREFIX": "pqkds",
+    }
+}
+
 STATIC_URL = "/static/"
 STATICFILES_DIRS = [
     os.path.join(BASE_DIR, "static"),

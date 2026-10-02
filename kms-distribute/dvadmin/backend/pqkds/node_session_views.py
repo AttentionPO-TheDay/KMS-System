@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 import logging
 
+from django.db.models import Q
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -117,6 +118,63 @@ def node_envelopes(request, identity):
             # 信封本体：密文而已，只有节点本地那把私钥能解开
             'envelope': envelope,
         })
+    return _ok({'items': items, 'total': len(items)})
+
+
+@csrf_exempt
+@require_http_methods(['GET'])
+@require_kms_user
+def node_sessions(request, identity):
+    """当前节点**参与**的会话列表（文档 §10.10 会话管理）。
+
+    为什么要有这个端点
+    ------------------
+    "让前端调 `/session-keys/` 再自己过滤"是**假的隔离**，而且会静默出错：
+      * `/session-keys/` 是分发模块的 ViewSet，返回的是**全系统**会话；
+        Node.node1/node2 是外键，序列化出来的是 `Node.name`；
+      * 而前端手上只有 `Node.node_id`（业务编号）与 `Node.name`（显示名），
+        这两列**不保证相同**。拿 nodeId 去比 name，要么永远不等（页面空白）、
+        要么靠名称恰好相同撞对（一旦重名就串号）。
+    两种失败都不抛异常，只安静地显示错的东西 —— 所以过滤必须放在服务端，
+    判据必须是**外键主键**，不是名字。
+
+    ⚠️ 这里返回的 `senderNode` / `recipientNode` 是**显示名**（node1.name），
+       仅供界面展示；隔离已经由上面的 `filter(node1=node) | filter(node2=node)`
+       做完了，前端**不需要**再按名字过滤一次。
+
+    只返回元数据：不含 `encrypted_session_key` / `key_exchange_data`
+    （密文属于会话双方，列表页没有理由下发）。
+    """
+    node = _find_node(identity)
+    if node is None:
+        return _error('当前账号未关联任何节点', 403)
+
+    queryset = (
+        SessionKey.objects
+        .filter(Q(node1=node) | Q(node2=node))
+        .select_related('node1', 'node2')
+        .order_by('-create_datetime')
+    )
+    # 默认只给进行中的；`includeExpired=1` 才带已过期/已撤销的历史
+    if request.GET.get('includeExpired') not in ('1', 'true', 'True'):
+        queryset = queryset.exclude(status__in=('expired', 'revoked'))
+
+    limit = min(int(request.GET.get('limit') or 200), 500)
+    items = [
+        {
+            'sessionId': s.session_id,
+            'senderNode': s.node1.name if s.node1_id else '',
+            'recipientNode': s.node2.name if s.node2_id else '',
+            'protectionAlgorithm': s.session_type,
+            'status': s.status,
+            'createdAt': s.create_datetime.isoformat() if s.create_datetime else None,
+            'expiresAt': s.expires_at.isoformat() if s.expires_at else None,
+            # node1 是会话发起节点（模型上的语义，见 models.py 的 help_text）。
+            # 用 id 而非名字比较，与上面的过滤口径一致。
+            'isSender': s.node1_id == node.id,
+        }
+        for s in queryset[:limit]
+    ]
     return _ok({'items': items, 'total': len(items)})
 
 

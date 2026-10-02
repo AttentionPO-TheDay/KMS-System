@@ -22,7 +22,11 @@ from .user_distribution_views import (
 # 阶段 2：节点自助（首次登录后的密钥初始化）。身份取自令牌自省，见该模块 docstring。
 from .node_self_views import node_self, node_self_init, node_self_keys
 # §6.5：节点取自己的信封 + 提交「我已恢复 K」的证明
-from .node_session_views import node_envelopes, node_session_confirm
+# §10.10：节点自己的会话列表（服务端按外键隔离，见该函数的 docstring）
+from .node_session_views import node_envelopes, node_session_confirm, node_sessions
+# §3 激活 / §5 登录：设备凭据认证（节点**唯一的**登录方式，节点没有口令）。
+# ⚠️ 这两个端点刻意**不要求登录态** —— 它们就是用来产生令牌的。
+from .node_auth_views import node_activate, node_challenge, node_login
 # 阶段 6：长期密钥回收后连带失效预分配池项（内部通道，X-Internal-Token 鉴权）
 from .internal_pool_views import revoke_pool_by_key
 # 阶段 7 §8.7：安全监控总览
@@ -61,8 +65,21 @@ urlpatterns = [
     # §6.5：节点取**自己那腿**信封并在本地解封（服务端不代解、也没有私钥），
     # 再提交「我已恢复 K」的证明；双方证明一致即提升为 established。
     path('node-self/envelopes/', node_envelopes, name='node-self-envelopes'),
+    # §10.10：本节点参与的会话。同样必须排在 router 之前，
+    # 否则 `session-keys/<pk>/` 的通配段会把它吃掉。
+    path('node-self/sessions/', node_sessions, name='node-self-sessions'),
     path('node-self/sessions/<str:session_id>/confirm/', node_session_confirm,
          name='node-self-session-confirm'),
+
+    # --- §3 激活 / §5 登录（设备凭据）---
+    # ⚠️ 这三条**必须**排在 router 之前，且必须排在上面那些
+    #    `node-self/` 路由**之前或之列**都可以 —— 它们路径不同，互不吃掉。
+    #    （真正会吃掉它们的是 router 的 `nodes/<pk>/`，见本文件顶部说明。）
+    # ⚠️ 注意它们与上面三条的区别：上面三条要求**已登录**（require_kms_user），
+    #    下面三条恰恰是用来产生登录态的，不能要求登录态。
+    path('node-self/activate/', node_activate, name='node-self-activate'),
+    path('node-self/challenge/', node_challenge, name='node-self-challenge'),
+    path('node-self/login/', node_login, name='node-self-login'),
 
     # 阶段 6：内部通道（X-Internal-Token 鉴权，不对外暴露）。
     # 同样排在 router 之前，理由同上。

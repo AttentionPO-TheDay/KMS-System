@@ -943,12 +943,34 @@ class NodeViewSet(CustomModelViewSet):
                 result = node_service.provision_node(**basic_data, **optional_data)
                 if result['success']:
                     logger.info(f" 节点创建成功: {node_data['node_id']}")
+                    # 文档 §3：建节点时签发**一次性激活凭证**，交给节点操作者。
+                    # 节点没有口令（见 node_account_service 的「密码」段），
+                    # 这张凭证是它上线的唯一入口 —— 不在这里给出，节点就无法激活。
+                    #
+                    # ⚠️ 明文只在**本次响应**里回传一次，库里只存哈希
+                    #    （由 node_auth_views.issue_activation_code 负责）。
+                    #    前端要把它当成"只显示一次"，不要落 localStorage。
+                    activation_code = ''
+                    try:
+                        created = Node.objects.filter(node_id=node_data['node_id']).first()
+                        if created is not None:
+                            from .node_auth_views import issue_activation_code
+                            activation_code = issue_activation_code(created)
+                        else:
+                            logger.error(f" 节点 {node_data['node_id']} 创建后查不到，无法签发激活凭证")
+                    except Exception as exc:  # noqa: BLE001
+                        # 凭证签发失败**不应**让建节点整体失败：节点与账号已建好，
+                        # 管理员可用「重新签发凭证」补救。但必须留下明确日志。
+                        logger.exception(f" 节点 {node_data['node_id']} 激活凭证签发失败: {exc}")
+
                     return SuccessResponse(data={
                         'node_id': result.get('node_id'),
                         'status': result.get('status'),
                         'sys_user_id': result.get('sys_user_id'),
-                        'message': result.get('message')
-                    }, msg="节点创建成功，等待节点首次登录完成密钥初始化")
+                        'message': result.get('message'),
+                        # 只此一次。为空表示签发失败，需管理员重新签发。
+                        'activation_code': activation_code,
+                    }, msg="节点创建成功，请把激活凭证交给节点操作者（只显示这一次）")
                 else:
                     logger.error(f" 节点注册失败: {result['message']}")
                     return ErrorResponse(msg=result['message'])
@@ -966,6 +988,42 @@ class NodeViewSet(CustomModelViewSet):
             import traceback
             traceback.print_exc()
             return ErrorResponse(msg=f"节点注册失败: {str(e)}")
+
+    @action(detail=True, methods=['post'])
+    def reissue_activation_code(self, request, pk=None):
+        """重新签发节点的激活凭证（文档 §3「支持管理员重新签发」）。
+
+        什么时候用：
+          * 凭证过期或丢失；
+          * 节点换了浏览器／清了 IndexedDB，需要在新设备上重新激活；
+          * 怀疑凭证泄漏。
+
+        ⚠️ 重签会**立即作废**旧凭证（同一列被覆盖）。
+           这是刻意的：否则"重新签发"会让系统里同时存在两张有效凭证，
+           而管理员以为自己已经收回了旧的那张。
+
+        ⚠️ 重签**不清除**已登记的设备公钥 —— 已经激活过的设备仍能正常登录。
+           要停用某台设备请用节点停用（status），那是另一个语义。
+           把"换凭证"和"踢设备"混成一个动作，会让管理员在只想补发一张纸的时候
+           意外踢掉在线的节点。
+        """
+        try:
+            node = self.get_object()
+            from .node_auth_views import issue_activation_code
+            code = issue_activation_code(node)
+            logger.info(f"节点 {node.node_id} 激活凭证已重新签发")
+            return SuccessResponse(
+                data={
+                    'node_id': node.node_id,
+                    # 只此一次。前端必须提示"仅显示一次"。
+                    'activation_code': code,
+                    'expires_at': node.activation_code_expires_at,
+                },
+                msg="激活凭证已重新签发（旧凭证立即失效，本凭证只显示这一次）"
+            )
+        except Exception as e:
+            logger.error(f"节点凭证重签失败: {e}")
+            return ErrorResponse(msg=f"重新签发失败: {str(e)}")
 
     @action(detail=True, methods=['post'])
     def generate_falcon_keypair(self, request, pk=None):

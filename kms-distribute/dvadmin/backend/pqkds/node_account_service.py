@@ -27,27 +27,57 @@
 
 密码
 ----
-沿用仓库既有约定：与 RuoYi 默认管理员相同的 BCrypt 哈希（`admin123`）。
-`17_add_demo_test_user.sql:4` 与 `19_add_acceptance_user.sql:4` 都写明
-"与管理员相同的 BCrypt 哈希"，本模块保持一致，不另造一套口令策略。
+**节点没有可用口令**（2026-09-30 改）。文档 §3 的节点登录设计是
+「节点名称 + 一次性激活码」，之后走设备凭据挑战-应答（§5），本来就没有口令。
+
+原先这里复用 RuoYi 的 `admin123` 哈希，后果是**知道 node_id 就能登录任意节点**
+（`node_id` 是可枚举的，口令是公开常量）—— 那不是弱口令，等于没有认证。
+
+现在给每个节点账号写一个**随机、且从不以任何形式披露**的 BCrypt 哈希：
+  * 口令明文从未存在过（随机字节直接哈希后即丢弃），所以谁也登不上；
+  * 列仍非空，满足 `sys_user.password` 的既有约束，不必改表；
+  * 节点走 `node_auth_views` 的激活/挑战-应答拿令牌，与口令无关。
+
+⚠️ 由此「重置节点口令」这种操作**不存在也不该存在** —— 节点忘记凭据的正确处置是
+   管理员在「节点管理」里重新签发激活凭证，而不是给它设个新口令。
 """
 import hashlib
 import logging
+import secrets
 
+from django.contrib.auth.hashers import make_password
 from django.db import connection
 
 logger = logging.getLogger(__name__)
-
-# RuoYi 默认口令 admin123 的 BCrypt 哈希。
-# 与 02.sql 的 admin 行、17_/19_ 两个迁移脚本逐字节一致 —— 刻意复用，
-# 不引入第二套口令策略。
-DEFAULT_PASSWORD_HASH = "$2a$10$7JB720yubVSZvUI0rEqK/.VqGOZTH.ulu33dHOiBE8ByOhJIrdAu2"
 
 # 节点账号挂「普通角色」（role_id=2）。角色 1 是超级管理员，绝不能给节点。
 NODE_ROLE_ID = 2
 
 # sys_user.user_name 是 varchar(30)，而 node_id 允许到 64 字符。
 USER_NAME_MAX_LEN = 30
+
+
+def _unusable_password_hash() -> str:
+    """生成一个**无人知道明文**的口令哈希。
+
+    明文是 48 字节随机数，哈希之后**立刻丢弃** ——
+    没有任何一条代码路径能再得到它，因此不存在"能登录该账号的口令"。
+    需要在重置等场景复用同一手法即可，不要为了"方便"改成固定值。
+
+    ⚠️ 这里刻意**不用固定哈希**（改版前是 RuoYi 的 admin123 常量），
+       因为那等于"知道 node_id 就能登录任意节点"—— 不是弱口令，是没有认证。
+
+    ⚠️ 用 Django 默认的 PBKDF2，与 RuoYi 的 BCrypt **格式不同**。
+       这是**刻意保留**的，不要"顺手对齐"成 BCrypt：
+         * 实测（2026-09-30）格式不同不会出事：RuoYi 的
+           `BCryptPasswordEncoder.matches()` 对非 BCrypt 串直接判 false，
+           节点用任意口令登录会得到干净的"用户不存在/密码错误"，**不是 500**。
+         * 改用 BCrypt 需要给 Django 镜像加 `bcrypt` 依赖（当前没有），
+           而收益只是"格式看起来一致"—— 换不来任何安全性或功能。
+       （bcrypt 在 Python 里也会截断到 72 字节，而这里本就是随机高熵串，
+         两种算法对"无人知道明文"这个目标没有区别。）
+    """
+    return make_password(secrets.token_urlsafe(48))
 
 
 def _node_user_name(node_id: str) -> str:
@@ -71,6 +101,11 @@ def ensure_node_account(node) -> int:
 
     幂等：已存在同名账号时直接复用（不重置密码、不改昵称），
     这样重复调用不会覆盖运维后续对该账号做的调整。
+
+    ⚠️ 账号的 `password` 是**无人知道明文的随机哈希**（见模块 docstring 的「密码」段）——
+       这不是"忘了设"，是刻意的：节点**不通过口令登录**，走
+       `node_auth_views` 的激活凭证 + 设备凭据挑战-应答。
+       不要为了"能登进去看看"把它改成固定口令。
 
     调用方应处于 `transaction.atomic()` 中 —— 与 Node 行的创建同事务，
     避免出现"Node 建了但账号没建"的半截状态。
@@ -109,7 +144,7 @@ def ensure_node_account(node) -> int:
                     user_name,
                     nick_name,
                     (node.email or "")[:50],
-                    DEFAULT_PASSWORD_HASH,
+                    _unusable_password_hash(),
                     f"节点账号，由建节点流程自动创建（node_id={node.node_id}）",
                 ],
             )
