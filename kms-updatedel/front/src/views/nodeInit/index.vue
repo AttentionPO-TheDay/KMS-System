@@ -142,7 +142,7 @@ import { Loading } from '@element-plus/icons-vue'
 import { getSelfNode, initSelfNodeKeys, registerSelfNodePublicKey } from '@/api/pqkds/node-self'
 import { markNodeInitialized } from '@/utils/node-init-status'
 import { cryptoProvider } from '@/utils/crypto/browser-provider.js'
-import { getDeviceId } from '@/utils/crypto/node-key-store.js'
+import { deviceFingerprint, hasDeviceKey } from '@/utils/crypto/device-credential.js'
 
 const router = useRouter()
 
@@ -184,34 +184,46 @@ const isActive = computed(() => node.value.status === 'ACTIVE')
 // ---------------------------------------------------------------------------
 // §4.4 设备绑定
 // ---------------------------------------------------------------------------
-// 服务端记着"这个节点的密钥绑在哪台设备上"（`node.keyDeviceId`），
-// 本机也有自己的 deviceId（在 IndexedDB 里，随密钥库一起生成）。
-// 两者不一致就说明：**本机不是当初生成密钥的那台设备**，
-// 因而本机没有私钥 —— 平台已分发给该节点的信封，这里一个也打不开。
+// 判据是「**本机有没有该节点的设备私钥**」，不是比对某个字符串。
+//
+// 改造前这里比的是 `node.keyDeviceId`（服务端记的）与本机 `getDeviceId()`
+// （浏览器级随机串、明文存在 IndexedDB）。那套是**自报身份**：任何脚本都能改
+// 本机那个值，服务端也验证不了 —— `Node.key_device_id` 的模型注释自己就写明
+// "不是密码学证明"。
+//
+// 现在用设备凭据（§3.1）：本机私钥**不可导出**，签得出名就证明是那台设备。
+// 所以"本机不是当初那台"的正确判据是：**服务端登记了设备公钥，而本机没有对应私钥**。
+// 既更准，也把"换台机器"从不置可否变成可验证。
 //
 // 不做这件事的后果是静默的：界面一切正常，直到某天某个信封解不开，
 // 而那时已经很难追到"是因为换了设备"。
-const deviceId = ref('')
+const hasDeviceCredential = ref(false)
+/** 设备公钥指纹。与激活时服务端记进 Node.key_device_id 的是同一个值。 */
+const deviceFingerprintValue = ref('')
 const localKeys = ref({ present: false, algorithms: [] })
 
 const deviceMismatch = computed(() => {
-  const bound = String(node.value.keyDeviceId || '').trim()
-  if (!bound || !deviceId.value) return false
-  // 只在"服务端已绑定 + 本机不是那台设备 + 本机也没有材料"时才算不匹配。
-  // 本机有材料说明就是当初那台（或至少能做下去），不该拦。
-  return bound !== deviceId.value && !localKeys.value.present
+  // 服务端还没登记设备公钥 → 该节点还没在**任何**设备上激活过，
+  // 谈不上"换设备"（真走那条路会先被登录页的激活流程拦住）。
+  const boundOnServer = Boolean(String(node.value.keyDeviceId || '').trim())
+  if (!boundOnServer) return false
+  // 服务端已绑定 + 本机签不出名 → 本机不是那台设备。
+  // 本机有私钥说明就是当初那台（或至少能继续做下去），不该拦。
+  return !hasDeviceCredential.value
 })
 
 async function refreshLocalKeyState() {
   try {
-    deviceId.value = await getDeviceId()
+    hasDeviceCredential.value = await hasDeviceKey(node.value.nodeId)
+    deviceFingerprintValue.value = await deviceFingerprint(node.value.nodeId)
     localKeys.value = await cryptoProvider.inspectNodeKeys(node.value.nodeId)
   } catch (error) {
     // 密钥库不可用（隐私模式 / 浏览器禁用 IndexedDB）不该让整页打不开，
-    // 但要如实反映成"本机无材料"，而不是假装正常。
+    // 但要如实反映成"本机无凭据/无材料"，而不是假装正常。
     console.warn('[node-init] 读取本机密钥库失败：', error?.message)
     localKeys.value = { present: false, algorithms: [] }
-    deviceId.value = ''
+    hasDeviceCredential.value = false
+    deviceFingerprintValue.value = ''
   }
 }
 
@@ -272,7 +284,10 @@ async function handleInit() {
         algo,
         generated.publicKey,
         algo === 'KYBER' ? '768' : undefined,
-        deviceId.value
+        // 传**设备公钥指纹**而不是浏览器级 deviceId（改造前是后者）。
+        // 服务端在节点激活时已把同一指纹写进 Node.key_device_id，
+        // `store_node_public_key` 会比对两者；不一致会报"设备不一致"（业务码 409）。
+        deviceFingerprintValue.value
       )
     }
 

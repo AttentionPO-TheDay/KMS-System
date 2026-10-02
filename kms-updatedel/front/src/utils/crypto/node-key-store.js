@@ -31,9 +31,16 @@
  */
 
 const DB_NAME = 'kms-node-keystore'
-const DB_VERSION = 1
+// ⚠️ 本模块是这座 IndexedDB 的**唯一 schema 所有者**。
+//    别的模块（如 device-credential.js）只通过本模块的导出读写同一个库，
+//    **不得**自己调 `indexedDB.open(name, 别的版本号)` —— 同名不同版本会互相
+//    触发 VersionError，表现为"本地密钥库打不开"，且只在某些加载顺序下出现。
+//    要新增 object store 就在这里加，并把版本号 +1。
+//    v2：新增 STORE_DEVICE_KEYS（设备认证私钥的 CryptoKey 对象，见 device-credential.js）。
+const DB_VERSION = 2
 const STORE_META = 'meta'
 const STORE_KEYS = 'keys'
+const STORE_DEVICE_KEYS = 'deviceKeys'
 
 const META_PROTECTOR = 'protector'
 const META_DEVICE = 'deviceId'
@@ -60,6 +67,14 @@ function openDb() {
       }
       if (!db.objectStoreNames.contains(STORE_KEYS)) {
         db.createObjectStore(STORE_KEYS, { keyPath: 'keyRef' })
+      }
+      if (!db.objectStoreNames.contains(STORE_DEVICE_KEYS)) {
+        // 设备认证私钥的 CryptoKey **对象**（不可导出，字节形式从未存在过）。
+        // 单独一个 store 而不是塞进 keys：keys 里的记录都要走
+        // 「AES-GCM 加密后存字节」那条路，而 CryptoKey 对象是结构化克隆直存的，
+        // 两种形态混在一个 store 里，读取方要先判断类型才能决定怎么解 ——
+        // 那是"看起来能用、出错时极难定位"的设计。
+        db.createObjectStore(STORE_DEVICE_KEYS, { keyPath: 'keyRef' })
       }
     }
     request.onsuccess = () => resolve(request.result)
@@ -228,6 +243,71 @@ export async function removeSecret(keyRef) {
   await tx(STORE_KEYS, 'readwrite', (store) => req(store.delete(String(keyRef))))
 }
 
+// ---------------------------------------------------------------------------
+// 设备认证密钥（文档 §3.1 / §5）
+// ---------------------------------------------------------------------------
+// 与上面那批的区别：这里存的是 **CryptoKey 对象本身**（结构化克隆直存），
+// 不是"加密后的字节"。因为设备私钥以 `extractable: false` 生成，
+// **根本没有字节形态可取** —— 这正是它比"加密后存盘"更强的地方：
+// 同源脚本即使拿到整座数据库，也无法把私钥导出带走。
+
+/**
+ * 写入某节点的设备认证密钥对。
+ *
+ * ⚠️ 只允许本模块写这个 store —— 其它地方要存设备凭据请走
+ *    `device-credential.js` 的 `ensureDeviceKey()`，
+ *    不要自己 open 数据库（同库不同版本会 VersionError）。
+ */
+export async function putDeviceKeyPair(keyRef, keyPair) {
+  await tx(STORE_DEVICE_KEYS, 'readwrite', (store) => req(store.put({
+    keyRef: String(keyRef),
+    publicKey: keyPair.publicKey,
+    privateKey: keyPair.privateKey,
+    createdAt: new Date().toISOString(),
+  })))
+}
+
+/** 取设备认证私钥（CryptoKey）；不存在或损坏返回 null。 */
+export async function getDevicePrivateKey(keyRef) {
+  try {
+    const record = await tx(STORE_DEVICE_KEYS, 'readonly', (store) => req(store.get(String(keyRef))))
+    return record?.privateKey || null
+  } catch {
+    return null
+  }
+}
+
+/** 取设备认证公钥（CryptoKey）；不存在返回 null。 */
+export async function getDevicePublicKey(keyRef) {
+  try {
+    const record = await tx(STORE_DEVICE_KEYS, 'readonly', (store) => req(store.get(String(keyRef))))
+    return record?.publicKey || null
+  } catch {
+    return null
+  }
+}
+
+/** 删除设备认证密钥对（幂等）。 */
+export async function removeDeviceKeyPair(keyRef) {
+  await tx(STORE_DEVICE_KEYS, 'readwrite', (store) => req(store.delete(String(keyRef))))
+}
+
+/**
+ * 列出所有设备认证密钥的 keyRef。
+ *
+ * ⚠️ 它读的是 `deviceKeys` store，**不是** `listSecrets()` 读的那个 `keys` store。
+ *    两者装的东西不同：`keys` 是「加密后的字节」，`deviceKeys` 是 CryptoKey 对象。
+ *    混用会得到恒空的结果 —— 而且不报错，只是列表莫名其妙没东西。
+ */
+export async function listDeviceKeyRefs() {
+  try {
+    const all = await tx(STORE_DEVICE_KEYS, 'readonly', (store) => req(store.getAll()))
+    return (all || []).map((r) => String(r.keyRef || '')).filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
 /**
  * 清空整个密钥库（含保护密钥与设备标识）。
  *
@@ -275,4 +355,4 @@ export async function inspectNodeKeys(nodeId) {
   }
 }
 
-export { getDeviceId }
+export { getDeviceId, STORE_DEVICE_KEYS, DB_NAME }

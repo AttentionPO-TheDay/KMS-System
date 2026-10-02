@@ -1,8 +1,8 @@
 <template>
   <div class="dashboard-container">
     <div class="page-title">
-      <h1>KMS 管理控制台</h1>
-      <p class="subtitle">密钥生成、更新、回收与分发全流程运行概览</p>
+      <h1>系统总览</h1>
+      <p class="subtitle">节点、密钥生命周期与分发会话的运行概览</p>
     </div>
 
     <!-- 统计卡片区 -->
@@ -44,52 +44,25 @@
         </div>
       </el-col>
     </el-row>
-
-    <!-- 底部区域 -->
-    <!--
-      跳转路径一律写「路由内路径」，不要带 /updatedel 前缀。
-      router 已用 createWebHistory(import.meta.env.BASE_URL) 把 /updatedel/ 作为 base，
-      push 时会自动拼接；再手写前缀会变成 /updatedel/updatedel/xxx，
-      命中 catch-all 落到 404 页。这些路径必须与 sys_menu 下发的 path 一致。
-    -->
-    <el-row :gutter="20" class="action-section" style="margin-top: 20px;">
-      <el-col :span="24">
-        <div class="glass-card">
-          <div class="card-header">更新与回收管理操作</div>
-          <div class="action-grid">
-            <div class="action-btn primary" @click="$router.push('/key/keyupdate')">
-              <el-icon><Refresh /></el-icon>
-              <div class="btn-text">密钥更新</div>
-            </div>
-            <div class="action-btn success" @click="$router.push('/key/keyautoupdate')">
-              <el-icon><Timer /></el-icon>
-              <div class="btn-text">自动更新配置</div>
-            </div>
-            <!--
-              这里原来有一个「系统权限审批」按钮，指向 `/audit/permission/request`。
-              阶段 8 已整体删除审批流（`PermissionRequest*` 与其页面），
-              但漏了这个按钮 —— 点下去是个空页面，而界面上看起来一切正常。
-              删掉它：新权限模型由 `principal_type + permission_level + 资源属主`
-              直接决定，没有"申请-审批"这条路径可去。
-            -->
-            <div class="action-btn danger" @click="$router.push('/key/keydelete')">
-              <el-icon><Delete /></el-icon>
-              <div class="btn-text">临时/永久回收</div>
-            </div>
-          </div>
-        </div>
-      </el-col>
-    </el-row>
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, onMounted, onUnmounted, markRaw } from 'vue'
-// `Tickets` 随「系统权限审批」按钮一并移除 —— 留着未使用的导入，
-// 会让后来人以为那个入口还在（构建器不会因此报错）。
-import { Refresh, Delete, Timer, Bell, Top, Bottom } from '@element-plus/icons-vue'
+import { Bell, Bottom, Delete, Refresh, Timer, Top } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import { getDashboardSummary } from '@/api/lifecycle/lifecycle'
+
+// ---------------------------------------------------------------------------
+// 这一页是**管理端的系统总览**（文档 §9.1）。
+//
+// 它曾经被改成一个「选择业务子系统」的门户：三张卡片，点进去才到业务页。
+// 那个门户不在设计文档里，而且它在路由里带了 meta.hideSidebar，
+// 进去之后侧边栏整个消失 —— 正是"看不到该子系统的菜单"的直接原因。
+// 现在改回 §9.1 的总览：管理员一登录就看全局状态，侧边栏常驻。
+//
+// 节点端（NODE 主体）的落地页不是这里，是 /workbench（见 utils/landing.js）。
+// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // ECharts 配色（必须使用字面量）
@@ -98,8 +71,6 @@ import { getDashboardSummary } from '@/api/lifecycle/lifecycle'
 // 因此图表配色在此显式声明，取值与 design-tokens/tokens.scss 保持一致，修改令牌时需同步。
 // 注意：图表属非文字用途，故 brand 取 --kms-brand (#1677ff)，
 //       而非承载白字的 --kms-brand-fill (#0e5fd8)。
-// 此前本文件缺失该定义，导致看板初始化抛 ReferenceError: CHART_COLORS is not defined，
-// 被 initData 的 catch 吞掉后仅打印「获取统计数据失败」，表现为所有图表空白。
 const CHART_COLORS = {
   brand: '#1677ff',
   success: '#00b42a',
@@ -173,13 +144,13 @@ const initCharts = () => {
     tooltip: { trigger: 'axis', backgroundColor: CHART_COLORS.surfaceOverlay, borderColor: CHART_COLORS.brand, textStyle: { color: CHART_COLORS.textPrimary } },
     legend: { data: ['手动更新', '自动更新', '密钥回收'], textStyle: { color: textColor } },
     grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
-    xAxis: { 
-      type: 'category', 
-      boundaryGap: false, 
+    xAxis: {
+      type: 'category',
+      boundaryGap: false,
       data: chartState.labels,
       axisLabel: { color: textColor }
     },
-    yAxis: { 
+    yAxis: {
       type: 'value',
       axisLabel: { color: textColor },
       splitLine: { lineStyle: { color: splitLineColor } }
@@ -380,52 +351,4 @@ onUnmounted(() => {
   height: 320px;
   width: 100%;
 }
-
-.action-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
-}
-.action-btn {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: var(--kms-surface-1);
-  border: 1px solid var(--kms-border);
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.3s;
-}
-.action-btn .el-icon {
-  font-size: 32px;
-  margin-bottom: 12px;
-  transition: transform 0.3s;
-}
-.action-btn .btn-text {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--kms-text-primary);
-}
-.action-btn:hover {
-  background: var(--kms-surface-3);
-  border-color: var(--kms-border);
-  box-shadow: 0 4px 15px var(--kms-shadow);
-}
-.action-btn:hover .el-icon {
-  transform: scale(1.1);
-}
-
-.action-btn.primary:hover { border-color: var(--kms-brand-border); }
-.action-btn.primary .el-icon { color: var(--kms-brand-text); }
-
-.action-btn.success:hover { border-color: var(--kms-brand-border); }
-.action-btn.success .el-icon { color: var(--kms-brand-text); }
-
-.action-btn.warning:hover { border-color: var(--kms-warning-border); }
-.action-btn.warning .el-icon { color: var(--kms-warning-strong); }
-
-.action-btn.danger:hover { border-color: var(--kms-danger-border); }
-.action-btn.danger .el-icon { color: var(--kms-danger-strong); }
 </style>

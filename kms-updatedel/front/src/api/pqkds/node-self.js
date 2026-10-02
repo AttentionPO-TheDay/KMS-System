@@ -48,3 +48,61 @@ export function registerSelfNodePublicKey(algorithm, publicKey, securityLevel, d
 export function initSelfNodeKeys() {
   return http.post('/node-self/init/', null, { timeout: 60000 }).then(unwrap)
 }
+
+/**
+ * 本节点**参与**的会话列表（文档 §10.10）。
+ *
+ * ⚠️ 用这个，不要用 `@/api/pqkds/distribution` 的 `listSessions()` 再在前端过滤。
+ * 那个接口返回**全系统**会话，而且 node1/node2 序列化出来的是节点**名字**，
+ * 与前端手上的 `nodeId`（业务编号 Node.node_id）**不是同一列**。
+ * 拿 nodeId 去比名字要么永远不等（页面空白）、要么靠重名撞对（串号），
+ * 两种失败都不报错。隔离由服务端按外键主键完成，前端只负责取。
+ *
+ * 返回项的 `senderNode` / `recipientNode` 是**显示名**，仅用于展示。
+ *
+ * @param {{includeExpired?: boolean, limit?: number}} [options]
+ */
+export function listSelfSessions(options = {}) {
+  const params = {}
+  if (options.includeExpired) params.includeExpired = 1
+  if (options.limit) params.limit = options.limit
+  return http.get('/node-self/sessions/', { params }).then(unwrap)
+}
+
+// ---------------------------------------------------------------------------
+// 设备凭据认证（文档 §3 激活 / §5 登录）
+// ---------------------------------------------------------------------------
+// ⚠️ 这三个接口与上面几个的**根本区别**：上面都要求已登录（带令牌），
+//    下面三个恰恰是**用来产生令牌**的，所以**不带令牌**调用。
+//    `@/api/pqkds/http` 的请求拦截器会自动加 Authorization —— 这里没关系，
+//    服务端不读它（`node_auth_views` 里这三个视图没有 `require_kms_user`）。
+
+/**
+ * 首次激活：节点名 + 一次性激活凭证 → 登记设备公钥 + 换发登录令牌。
+ *
+ * @param {{nodeId: string, code: string, devicePublicKey: object, deviceAlgorithm?: string}} payload
+ * @returns {Promise<{token: string, nodeId: string, name: string}>}
+ */
+export function activateNode(payload) {
+  return http.post('/node-self/activate/', payload).then(unwrap)
+}
+
+/**
+ * 取一次性登录挑战。
+ *
+ * 挑战由**服务端**生成 —— 客户端可控的挑战等于没有挑战
+ * （攻击者固定一个已知值就能重放抓到的签名）。
+ */
+export function getNodeChallenge(nodeId) {
+  return http.get('/node-self/challenge/', { params: { nodeId } }).then(unwrap)
+}
+
+/**
+ * 挑战-应答登录：用设备私钥签名换令牌。
+ *
+ * @param {{nodeId: string, challengeId: string, signature: string}} payload
+ * @returns {Promise<{token: string, nodeId: string, name: string}>}
+ */
+export function loginWithDevice(payload) {
+  return http.post('/node-self/login/', payload).then(unwrap)
+}

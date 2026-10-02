@@ -119,10 +119,13 @@
         <el-table-column label="最后活跃" width="170">
           <template #default="scope">{{ formatTime(scope.row.last_active) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="190" fixed="right">
+        <el-table-column label="操作" width="260" fixed="right">
           <template #default="scope">
             <el-button link type="primary" size="small" @click="openEdit(scope.row)">编辑</el-button>
             <el-button link type="primary" size="small" @click="openKeys(scope.row)">密钥</el-button>
+            <!-- 重签凭证：节点没有口令，凭证是它上线的唯一入口，
+                 所以这个动作放在列表里常驻，而不是藏在某个二级页面 -->
+            <el-button link type="warning" size="small" @click="handleReissue(scope.row)">重签凭证</el-button>
             <el-button link type="danger" size="small" @click="handleDelete(scope.row)">删除</el-button>
           </template>
         </el-table-column>
@@ -162,8 +165,17 @@
         </el-form-item>
       </el-form>
       <el-alert type="warning" :closable="false" show-icon>
-        新增会为该节点生成 <b>Kyber + 国密（SM2/SSCL） + Falcon</b> 三套密钥，
-        其中 Falcon 较慢，<b>整体约需 20 秒</b>，请勿重复提交。
+        <!--
+          ⚠️ 这里原先写"会生成 Kyber + 国密 + Falcon 三套密钥、约需 20 秒"——
+             那是**改造前**的行为。现在 `provision_node` 只创建节点记录与登录账号，
+             四套基础密钥在节点**首次登录时于本机浏览器**生成（文档 §2.4 / §3.1）。
+             继续沿用旧文案会让人以为密钥已经在服务端了，
+             恰好与"私钥不出本机"这条边界相反。
+        -->
+        新增只创建节点与登录账号，<b>不在服务端生成任何密钥</b>。
+        四套基础密钥（SM2 / SSCL / Kyber / Falcon）由节点首次登录时在
+        <b>本机浏览器</b>生成，私钥只留在那台设备上。
+        创建完成后会显示一次<b>激活凭证</b>，请交给节点操作者。
       </el-alert>
       <div v-if="createError" class="dialog-error">{{ createError }}</div>
       <template #footer>
@@ -267,6 +279,38 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!--
+      一次性激活凭证。**只显示一次** —— 服务端只存哈希，关掉这个弹窗后
+      没有任何办法再取回（只能重签一张新的）。所以文案必须把这件事说清楚，
+      不能让人以为"以后还能在哪儿看到"。
+    -->
+    <el-dialog v-model="activationOpen" title="节点激活凭证" width="560px" :close-on-click-modal="false">
+      <el-alert
+        type="warning"
+        :closable="false"
+        show-icon
+        title="此凭证只显示这一次"
+        description="服务端只保存哈希，关闭后无法再次查看。请立即交给节点操作者；遗失可随时重签（旧凭证会失效）。"
+        class="mb16"
+      />
+      <el-descriptions :column="1" border class="mb16">
+        <el-descriptions-item label="节点">{{ activationTarget || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="激活凭证">
+          <div class="code-row">
+            <code class="code-text">{{ activationCode }}</code>
+            <el-button size="small" type="primary" plain @click="copyActivationCode">复制</el-button>
+          </div>
+        </el-descriptions-item>
+      </el-descriptions>
+      <div class="hint-text">
+        节点操作者打开登录页 → 选择「节点」→ 输入节点名称与这张凭证即可完成激活。
+        激活后设备凭据留在那台浏览器本机，之后该节点可在此浏览器直接点击登录。
+      </div>
+      <template #footer>
+        <el-button type="primary" @click="activationOpen = false">我已保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -297,7 +341,7 @@
  */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { batchDeleteNodes, deleteNode, generateNodeFalconKey, generateNodeGmKey, getNodeKeys, listNodes, registerNode, updateNode } from '@/api/nodes/nodes'
+import { batchDeleteNodes, deleteNode, generateNodeFalconKey, generateNodeGmKey, getNodeKeys, listNodes, registerNode, reissueActivationCode, updateNode } from '@/api/nodes/nodes'
 
 const NODE_TYPES = [
   { value: 'full', label: '全节点' },
@@ -323,6 +367,12 @@ const filter = reactive({ keyword: '', nodeType: '', status: '' })
 
 const createOpen = ref(false)
 const creating = ref(false)
+
+// 一次性激活凭证弹窗。凭证只在签发响应里出现一次，关掉就再也拿不到
+// （库里只存哈希），所以这里不做"稍后再看"之类的入口。
+const activationOpen = ref(false)
+const activationCode = ref('')
+const activationTarget = ref('')
 const createError = ref('')
 const createFormRef = ref()
 const createForm = reactive({
@@ -454,14 +504,62 @@ async function submitCreate() {
     if (res && res.is_duplicate) {
       ElMessage.warning(res.message || '该节点已存在，未新增')
     } else {
-      ElMessage.success('节点已创建（Kyber / 国密 / Falcon 密钥均已生成）')
+      // ⚠️ 这里**不能**说"密钥已生成"：provision_node 只建账号与节点记录，
+      //    四套基础密钥要等节点首次登录时在**本机**生成（文档 §2.4 / §3.1）。
+      //    文案写错会让人以为密钥已经在服务端了 —— 恰好与"私钥不出本机"相悖。
+      ElMessage.success('节点已创建')
       createOpen.value = false
+      // 一次性激活凭证：只在这里出现一次，必须立刻展示并提示"仅显示一次"。
+      activationCode.value = res?.activation_code || ''
+      activationTarget.value = res?.node_id || createForm.node_id || ''
+      if (activationCode.value) {
+        activationOpen.value = true
+      } else {
+        // 签发失败不能静默 —— 节点没有口令，没有凭证就等于进不去。
+        ElMessage.warning('节点已创建，但激活凭证签发失败。请用列表里的「重签凭证」补发。')
+      }
     }
     await load()
   } catch (error) {
     createError.value = error.message
   } finally {
     creating.value = false
+  }
+}
+
+/** 为已有节点补发凭证（凭证丢了/过期/换设备） */
+async function handleReissue(row) {
+  try {
+    await ElMessageBox.confirm(
+      `为节点 ${row.node_id} 重新签发激活凭证？旧凭证会立即失效。已激活设备的登录不受影响。`,
+      '重新签发激活凭证',
+      { confirmButtonText: '签 发', cancelButtonText: '取 消', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  try {
+    const res = await reissueActivationCode(row.id)
+    activationCode.value = res?.activation_code || ''
+    activationTarget.value = row.node_id
+    if (activationCode.value) {
+      activationOpen.value = true
+    } else {
+      ElMessage.error('签发失败：服务端未返回凭证')
+    }
+  } catch (error) {
+    ElMessage.error(error?.message || '重新签发失败')
+  }
+}
+
+async function copyActivationCode() {
+  try {
+    await navigator.clipboard.writeText(activationCode.value)
+    ElMessage.success('凭证已复制')
+  } catch {
+    // 剪贴板 API 在非 HTTPS / 无权限时会失败。不弹错误打断流程 ——
+    // 凭证就在屏幕上，手动选中复制也行。
+    ElMessage.warning('浏览器不允许自动复制，请手动选中复制')
   }
 }
 
@@ -752,5 +850,32 @@ onMounted(load)
 
 .mb16 {
   margin-bottom: 16px;
+}
+
+/* 激活凭证：等宽字体 + 可选中等宽，便于核对与抄写 */
+.code-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.code-text {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--kms-surface-2, #fafafa);
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-size: 13px;
+  /* 凭证是长随机串，必须能换行，否则会被对话框裁掉一截 —— 而这一截
+     恰好是用户抄不着又看不出来的部分 */
+  word-break: break-all;
+  user-select: all;
+}
+
+.hint-text {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--kms-text-secondary);
 }
 </style>

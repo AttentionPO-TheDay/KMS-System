@@ -20,6 +20,47 @@
       </div>
     </el-card>
 
+    <!--
+      业务子系统入口 —— **本页的主元素**，放在所有统计之上。
+      它是"接下来要做什么"的起点；下面的 KPI 与图表是"现在是什么状态"。
+      顺序不能反：先选去处，再看现状。
+
+      卡片不硬编码路径：按 menuId 从侧边栏路由里找（见 utils/subsystems.js）。
+    -->
+    <section class="subsystem-portal" aria-labelledby="subsystem-portal-title">
+      <div class="portal-heading">
+        <h3 id="subsystem-portal-title">业务子系统</h3>
+        <p>每个子系统负责密钥生命周期的一个阶段，进入后侧边栏只显示该子系统的功能。</p>
+      </div>
+      <div class="subsystem-grid">
+        <button
+          v-for="entry in subsystemEntries"
+          :key="entry.key"
+          type="button"
+          class="subsystem-card"
+          :data-subsystem-key="entry.key"
+          :data-subsystem-path="entry.path || ''"
+          :class="{ 'is-disabled': !entry.available }"
+          :disabled="!entry.available"
+          :aria-label="entry.available ? `进入${entry.title}` : `${entry.title}不可用：${entry.disabledReason}`"
+          :title="entry.available ? `进入${entry.title}` : entry.disabledReason"
+          @click="openSubsystem(entry)"
+        >
+          <span class="subsystem-icon" aria-hidden="true">
+            <el-icon><component :is="entry.iconComponent" /></el-icon>
+          </span>
+          <span class="subsystem-copy">
+            <strong>{{ entry.title }}</strong>
+            <span>{{ entry.description }}</span>
+          </span>
+          <span class="subsystem-action" aria-hidden="true">
+            {{ entry.available ? '进入' : '暂无权限' }}
+            <el-icon v-if="entry.available"><ArrowRight /></el-icon>
+          </span>
+        </button>
+      </div>
+    </section>
+
     <!-- 关键指标 -->
     <el-row :gutter="16">
       <el-col v-for="item in kpiCards" :key="item.title" :xs="24" :sm="12" :lg="6">
@@ -164,10 +205,10 @@
 
 <script setup>
 import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { Bell, CircleCheck, Key, Refresh, Share } from '@element-plus/icons-vue'
+import { ArrowRight, Bell, CircleCheck, Key, Refresh, Share } from '@element-plus/icons-vue'
 import * as echarts from 'echarts/core'
 import { BarChart, LineChart, PieChart } from 'echarts/charts'
-import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
+import { GridComponent, LegendComponent, TitleComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import useUserStore from '@/store/modules/user'
 import { batchGetGenerateChainStatus, listGenerateKeys } from '@/services/generate-api'
@@ -175,8 +216,22 @@ import { listLifecycleKeys } from '@/services/lifecycle-api'
 import { listDistributionBatches } from '@/services/user-distribution-api'
 import { permissionFeatures } from '@/services/permission-api'
 import { isAdminLevel, roleLevelText } from '@/utils/role'
+import usePermissionStore from '@/store/modules/permission'
+import { SUBSYSTEMS, findSubsystemRoute } from '@/utils/subsystems'
+import { ElMessage } from 'element-plus'
+import { useRouter } from 'vue-router'
 
-echarts.use([LineChart, PieChart, BarChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer])
+const router = useRouter()
+
+/**
+ * 注册 ECharts 组件。
+ *
+ * ⚠️ `TitleComponent` 必须在这里（2026-09-30 补）：饼图中心那个"总数"用的是
+ *    `title`，而 ECharts 对**未注册的组件是静默忽略**的 —— 不报错、只是不画。
+ *    所以此前中心数字**从来没出现过**（有数据时也没有，不只是空数据），
+ *    而现象上看起来只像"这个图就是这个样子"，很难联想到是漏注册。
+ */
+echarts.use([LineChart, PieChart, BarChart, GridComponent, TooltipComponent, LegendComponent, TitleComponent, CanvasRenderer])
 
 /**
  * canvas 渲染器无法解析 CSS 变量，图表配色只能写字面量。
@@ -313,6 +368,53 @@ const greeting = computed(() => {
 
 const levelText = computed(() => roleLevelText(userStore.roleLevel))
 
+// ---------------------------------------------------------------------------
+// 业务子系统入口
+// ---------------------------------------------------------------------------
+const permissionStore = usePermissionStore()
+
+/** 图标必须是组件（markRaw 避免被 Vue 做成响应式代理） */
+const SUBSYSTEM_ICONS = { Key: markRaw(Key), Refresh: markRaw(Refresh), Share: markRaw(Share) }
+
+/**
+ * 三个业务子系统的入口卡片。
+ *
+ * ⚠️ 路径**不硬编码**：由后端 `sys_menu` 下发，这里按 `menuId` 从侧边栏路由里找。
+ *    硬编码会在任何一次菜单重排后失效，而且**不报错** —— 只是卡片点不动。
+ */
+const subsystemEntries = computed(() =>
+  SUBSYSTEMS.map((sub) => {
+    const found = findSubsystemRoute(permissionStore.sidebarRouters, sub)
+    // 第一个子菜单就是该子系统的入口页（§11.2 每个分区下第一项都是主功能）
+    const firstChild = found?.children?.[0] || null
+    const path = firstChild
+      ? `${String(found.zone.path || '').replace(/\/+$/, '')}/${String(firstChild.path || '').replace(/^\/+/, '')}`
+      : null
+    return {
+      ...sub,
+      iconComponent: SUBSYSTEM_ICONS[sub.icon],
+      path,
+      available: Boolean(path),
+      disabledReason: found ? '该子系统下没有可访问的页面' : '当前账号没有该子系统的权限'
+    }
+  })
+)
+
+function openSubsystem(entry) {
+  if (!entry.available || !entry.path) {
+    ElMessage.warning(`${entry.title}不可用：${entry.disabledReason}`)
+    return
+  }
+  // 确认目标路由真的注册过，避免点了落到 404。
+  // 这类失败不报错、只显示 404 页，事后很难追 —— 宁可在这里先说清楚。
+  const resolved = router.resolve(entry.path)
+  if (!resolved.matched.length || resolved.matched.some((r) => r.path === '/:pathMatch(.*)*')) {
+    ElMessage.warning(`${entry.title}页面尚未加载，请刷新后重试`)
+    return
+  }
+  router.push(entry.path)
+}
+
 const kpiCards = computed(() => [
   {
     title: '我的密钥',
@@ -363,6 +465,22 @@ const algorithmItems = computed(() => {
     const name = String(item?.encrytName || '').trim() || '未标注'
     counter.set(name, (counter.get(name) || 0) + 1)
   })
+  // ⚠️ 没有数据时也要给出**完整的分类骨架**（值为 0），而不是空数组
+  //    （2026-09-30 改）。改前返回空 → 图表没东西可画 → 页面盖一句"暂无数据"，
+  //    用户分不清"真的是 0"还是"没查到"。现在渲染出四个 0 条柱，
+  //    "这类密钥一个都没有"这件事是看得见的。
+  //
+  //    只在**确实一条都没有**时才铺骨架：有任何数据时就按实际出现的分类走，
+  //    免得凭空多出四条空柱噪音。
+  if (!generateKeys.value.length) {
+    return ALGORITHM_ORDER
+      .filter((name) => !name.startsWith('CL-'))   // 退役算法不再出现在空骨架里
+      .map((name, index) => ({
+        name,
+        value: 0,
+        itemStyle: { color: CHART_PALETTE[index % CHART_PALETTE.length] }
+      }))
+  }
   const known = ALGORITHM_ORDER.filter((name) => counter.has(name))
   const rest = [...counter.keys()].filter((name) => !ALGORITHM_ORDER.includes(name)).sort()
   return [...known, ...rest].map((name, index) => ({
@@ -450,10 +568,25 @@ function sampleText(shown, total) {
   return Number(total) > Number(shown) ? `共 ${countText(total)} 条 · 已统计 ${shown} 条` : `共 ${countText(total)} 条`
 }
 
-function chartNotice(source, isEmpty, emptyText = '暂无数据') {
+/**
+ * 图表上的提示文字。
+ *
+ * ⚠️ **只用于"加载中 / 取数失败"**，不再用于"没有数据"（2026-09-30 改）。
+ *
+ * 改前：数据为空时用一句"暂无数据"把整个图表**盖住**。用户看到的是一块空白，
+ *       分不清"系统里真的是 0"还是"没查到 / 加载失败"。
+ * 改后：数据为空**照常渲染图表**，各分类显示 0 ——
+ *       "0 个已回收"与"页面坏了"是完全不同的两件事，界面必须能区分。
+ *
+ * `isEmpty` 参数保留但**不再用于生成文案**：调用处仍会传，是为了让签名稳定，
+ * 免得日后有人加回"空就盖住"的行为时又要改一圈调用点。
+ */
+function chartNotice(source, isEmpty, emptyText = '') {
   const state = sourceState[source]
   if (state === STAT_READY) {
-    return isEmpty ? emptyText : ''
+    // 就绪但为空 → 不给提示，让图表自己把 0 画出来。
+    // emptyText 仍保留形参，但不渲染（见上方说明）。
+    return ''
   }
   return STATE_TEXT[state] || ''
 }
@@ -718,33 +851,43 @@ function buildTrendOption() {
 }
 
 function buildPieOption(items) {
-  const data = items.filter((item) => item.value > 0)
+  // ⚠️ **不过滤 0 值**（2026-09-30 改）。
+  //    改前是 `items.filter(v => v > 0)`：某一类为 0 时它连同图例一起消失，
+  //    全为 0 时整张图什么都不画 —— 用户无从知道"是 0"还是"没数据"。
+  //    现在全部分类都进图例、都显示计数（0 就是 0）。
+  //
+  //    副作用要知道：饼图**画不出 0 值的扇区**（角度为 0），所以全 0 时
+  //    圆环是空的 —— 但图例、中心数字、tooltip 都还在，语义是清楚的。
+  const data = items
   const total = data.reduce((sum, item) => sum + item.value, 0)
-  const hasData = data.length > 0 && total > 0
+  // 图例带上**每类的计数**，这样"某类为 0"是看得见的。
+  // 只列名字的话，用户只知道有这几类，不知道各有多少 —— 而"零也要看得见"
+  // 恰恰要求把 0 写出来。
+  const countByName = new Map(data.map((item) => [item.name, item.value]))
   return {
     tooltip: { trigger: 'item', formatter: '{b}：{c} 个（{d}%）' },
     color: data.map((item) => item.itemStyle?.color || CHART_COLORS.brand),
-    legend: hasData
-      ? {
-          bottom: 0,
-          left: 'center',
-          icon: 'circle',
-          itemWidth: 8,
-          itemHeight: 8,
-          itemGap: 12,
-          textStyle: { color: CHART_COLORS.textSecondary, fontSize: 12 }
-        }
-      : { show: false },
-    title: hasData
-      ? {
-          text: String(total),
-          subtext: '个',
-          left: 'center',
-          top: '30%',
-          textStyle: { color: CHART_COLORS.textPrimary, fontSize: 22, fontWeight: 600 },
-          subtextStyle: { color: CHART_COLORS.textSecondary, fontSize: 12 }
-        }
-      : undefined,
+    legend: {
+      bottom: 0,
+      left: 'center',
+      icon: 'circle',
+      itemWidth: 8,
+      itemHeight: 8,
+      itemGap: 12,
+      textStyle: { color: CHART_COLORS.textSecondary, fontSize: 12 },
+      data: data.map((item) => item.name),
+      // 例：已回收 0 · 有效 0 …（有数据时是「有效 12」这样）
+      formatter: (name) => `${name} ${countByName.get(name) ?? 0}`
+    },
+    title: {
+      // 中心数字始终显示（0 也显示 0）。需要 TitleComponent 已注册，见 echarts.use。
+      text: String(total),
+      subtext: '个',
+      left: 'center',
+      top: '30%',
+      textStyle: { color: CHART_COLORS.textPrimary, fontSize: 22, fontWeight: 600 },
+      subtextStyle: { color: CHART_COLORS.textSecondary, fontSize: 12 }
+    },
     series: [
       {
         type: 'pie',
@@ -754,6 +897,23 @@ function buildPieOption(items) {
         label: { show: false },
         labelLine: { show: false },
         itemStyle: { borderColor: CHART_COLORS.surface, borderWidth: 2 },
+        // ⚠️ 关掉 ECharts 的"空数据占位圆"（PieView 的 `showEmptyCircle`）。
+        //    默认 true 时，数据全被过滤掉的饼图会画一个 **lightgray 整圆**
+        //    —— 它长得跟"有数据的实心圆环"几乎一样，比"暂无数据"更容易误读：
+        //    用户会以为"有一大块"，而实际是 0。
+        showEmptyCircle: false,
+        // ⚠️ **必须关掉 `stillShowZeroSum`**（默认 true，见 PieSeries.js:140）。
+        //    它是"全 0 时仍然画出扇区"的意思，实现是 `pieLayout.js:156` 的
+        //    `sum === 0 ? unitRadian : ...` —— 即**每个扇区均分整圆**。
+        //    后果（2026-09-30 实测截图）：四个分类都是 0 时，圆环被画成
+        //    四个等分扇形，看起来像"四类各占 25%"—— 比灰色空环更误导。
+        //    关掉后全 0 不画扇区，只留中心 0 与图例的 0，语义才是对的。
+        stillShowZeroSum: false,
+        // ⚠️ **始终传完整 data，不要在空数据时传 []**（2026-09-30 实测踩到）：
+        //    ECharts 的**图例项来自 series.data 的 name**。传 [] 就没有图例项，
+        //    于是"图例列出各分类的 0"这条要求会静默失效 —— 中心有 0、图例全空。
+        //    传完整 data（配合 stillShowZeroSum:false）时，0 值扇区角度为 0
+        //    画不出来，但**图例项照样生成** —— 这正是"零也要看得见"要的效果。
         data
       }
     ]
@@ -797,7 +957,13 @@ function buildKeyStatusOption() {
           position: 'top',
           color: CHART_COLORS.textSecondary,
           fontSize: 12,
-          formatter: ({ value }) => (value ? String(value) : '')
+          // ⚠️ 零值也要显示 "0"（2026-09-30 改）。
+          //    改前是 `value ? String(value) : ''` —— 0 被当成"没有"而返回空串，
+          //    于是全 0 时柱子上方什么都没有：用户看到一张空图，
+          //    分不清"真的是 0"还是"没查到"。
+          //    注意判据必须是 `value == null`（缺值）而不是 `!value`（0 也是假值），
+          //    否则 0 又会被吃掉 —— 这正是改前那行的毛病。
+          formatter: ({ value }) => (value == null ? '' : String(value))
         }
       }
     ]
@@ -1007,6 +1173,153 @@ onBeforeUnmount(() => {
   height: 260px;
 }
 
+/* ---------------------------------------------------------------------------
+   业务子系统入口（本页主元素）
+   --------------------------------------------------------------------------- */
+.subsystem-portal {
+  margin: 16px 0;
+}
+
+.portal-heading {
+  margin-bottom: 12px;
+}
+
+.portal-heading h3 {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--kms-text-primary);
+}
+
+.portal-heading p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--kms-text-secondary);
+}
+
+.subsystem-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.subsystem-card {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 108px;
+  padding: 20px;
+  gap: 16px;
+  border: 1px solid var(--kms-border);
+  border-radius: 12px;
+  background: var(--kms-surface-1);
+  color: var(--kms-text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease, background-color 0.2s ease;
+}
+
+.subsystem-card:hover:not(:disabled) {
+  border-color: var(--kms-brand-border);
+  background: var(--kms-surface-3);
+  box-shadow: var(--kms-shadow-md);
+  transform: translateY(-2px);
+}
+
+.subsystem-card:focus-visible {
+  outline: 3px solid var(--kms-brand-border);
+  outline-offset: 3px;
+}
+
+.subsystem-card:disabled,
+.subsystem-card.is-disabled {
+  border-color: var(--kms-border);
+  background: var(--kms-surface-2);
+  color: var(--kms-text-disabled);
+  cursor: not-allowed;
+  opacity: 0.68;
+}
+
+.subsystem-icon {
+  display: inline-flex;
+  flex: 0 0 48px;
+  width: 48px;
+  height: 48px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: var(--kms-brand-subtle);
+  color: var(--kms-brand-text);
+  font-size: 24px;
+}
+
+.subsystem-card:nth-child(2) .subsystem-icon {
+  background: var(--kms-warning-subtle);
+  color: var(--kms-warning-strong);
+}
+
+.subsystem-card:nth-child(3) .subsystem-icon {
+  background: var(--kms-success-subtle);
+  color: var(--kms-success-strong);
+}
+
+.subsystem-copy {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.subsystem-copy strong {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.subsystem-copy span {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--kms-text-secondary);
+}
+
+.subsystem-action {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  font-size: 14px;
+  color: var(--kms-text-secondary);
+  white-space: nowrap;
+  transition: transform 0.2s ease, color 0.2s ease;
+}
+
+.subsystem-card:hover:not(:disabled) .subsystem-action,
+.subsystem-card:focus-visible .subsystem-action {
+  color: var(--kms-brand-text);
+  transform: translateX(3px);
+}
+
+.subsystem-card:disabled .subsystem-action,
+.subsystem-card.is-disabled .subsystem-action {
+  color: var(--kms-text-disabled);
+}
+
+@media (max-width: 900px) {
+  .subsystem-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 720px) {
+  .subsystem-grid { grid-template-columns: minmax(0, 1fr); }
+  .subsystem-card { min-height: 92px; padding: 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .subsystem-card,
+  .subsystem-action { transition: none; }
+}
+
 .chart-notice {
   position: absolute;
   inset: 0;
@@ -1015,8 +1328,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   background: var(--kms-surface-1);
-  color: var(--kms-text-tertiary);
-  font-size: var(--kms-font-size-sm);
+  color: var(--kms-text-tertiary);  font-size: var(--kms-font-size-sm);
 }
 
 .perm-layout {

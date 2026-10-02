@@ -1,6 +1,7 @@
 <template>
   <div class="navbar">
-    <hamburger id="hamburger-container" :is-active="appStore.sidebar.opened" class="hamburger-container" @toggleClick="toggleSideBar" />
+    <!-- 侧边栏整页隐藏时（节点端工作台），折叠按钮点了不会有反应，一并收起 -->
+    <hamburger v-if="!hideSidebar" id="hamburger-container" :is-active="appStore.sidebar.opened" class="hamburger-container" @toggleClick="toggleSideBar" />
     <breadcrumb id="breadcrumb-container" class="breadcrumb-container" v-if="!settingsStore.topNav" />
     <top-nav id="topmenu-container" class="topmenu-container" v-if="settingsStore.topNav" />
 
@@ -60,9 +61,22 @@ import useAppStore from '@/store/modules/app'
 import useUserStore from '@/store/modules/user'
 import useSettingsStore from '@/store/modules/settings'
 
+const props = defineProps({
+  /**
+   * 侧边栏是否被整页隐藏（路由 `meta.hideSidebar`，由 layout/index.vue 传入）。
+   * 侧边栏不在时折叠按钮也要收起 —— 留一个点了没反应的按钮更糟。
+   */
+  hideSidebar: {
+    type: Boolean,
+    default: false
+  }
+})
+
 const appStore = useAppStore()
 const userStore = useUserStore()
 const settingsStore = useSettingsStore()
+
+const hideSidebar = computed(() => props.hideSidebar)
 
 function toggleSideBar() {
   appStore.toggleSideBar()
