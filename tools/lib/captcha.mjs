@@ -23,10 +23,15 @@ const REDIS_CONTAINER = process.env.KMS_REDIS_CONTAINER || 'kms_redis'
 
 /**
  * 取一张验证码并从 Redis 读出答案。
+ * @param {{signal?: AbortSignal, timeoutMs?: number}} [options]
  * @returns {Promise<{enabled: boolean, uuid: string, code: string}>}
  */
-export async function getCaptcha(origin, base = '/lifecycle-api') {
-  const res = await fetch(`${origin}${base}/captchaImage`)
+export async function getCaptcha(origin, base = '/lifecycle-api', options = {}) {
+  const { signal, timeoutMs } = options || {}
+  const res = await fetch(
+    `${origin}${base}/captchaImage`,
+    signal ? { signal } : undefined
+  )
   const body = await res.json().catch(() => null)
   if (!body) return { enabled: false, uuid: '', code: '' }
   if (!body.captchaEnabled) return { enabled: false, uuid: '', code: '' }
@@ -37,7 +42,10 @@ export async function getCaptcha(origin, base = '/lifecycle-api') {
     answer = execFileSync(
       'docker',
       ['exec', REDIS_CONTAINER, 'redis-cli', 'get', `captcha_codes:${body.uuid}`],
-      { encoding: 'utf8' }
+      {
+        encoding: 'utf8',
+        ...(Number.isFinite(timeoutMs) && timeoutMs > 0 ? { timeout: timeoutMs } : {})
+      }
     ).trim()
   } catch (e) {
     throw new Error(
@@ -56,8 +64,8 @@ export async function getCaptcha(origin, base = '/lifecycle-api') {
 }
 
 /** 只取登录要用的两个字段，便于直接展开进请求体 */
-export async function captchaFields(origin, base = '/lifecycle-api') {
-  const c = await getCaptcha(origin, base)
+export async function captchaFields(origin, base = '/lifecycle-api', options = {}) {
+  const c = await getCaptcha(origin, base, options)
   return { code: c.code, uuid: c.uuid }
 }
 
@@ -65,12 +73,15 @@ export async function captchaFields(origin, base = '/lifecycle-api') {
  * 带验证码登录，返回 token。
  * @param {string} origin 例如 http://127.0.0.1
  * @param {string} base   登录接口前缀，例如 /lifecycle-api
+ * @param {{signal?: AbortSignal, timeoutMs?: number}} [options]
  */
-export async function login(origin, base, username, password) {
-  const extra = await captchaFields(origin, base)
+export async function login(origin, base, username, password, options = {}) {
+  const { signal } = options || {}
+  const extra = await captchaFields(origin, base, options)
   const res = await fetch(`${origin}${base}/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    ...(signal ? { signal } : {}),
     body: JSON.stringify({ username, password, ...extra })
   })
   const json = await res.json().catch(() => null)
