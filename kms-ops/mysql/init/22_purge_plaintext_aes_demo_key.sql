@@ -23,6 +23,13 @@
 
 -- 只删这一类：明确是 AES 对称密钥、且 key_value 没有 `ua`（非无证书体系）的演示行。
 -- 用 encryt_type/encryt_name 双条件，避免误伤任何非对称密钥。
+-- ⚠️ 必须有这一行（2026-09-30 补）：本文件含中文，而**管道导入**
+--    （docker-entrypoint-initdb.d / docker exec -i ... mysql < file）时
+--    客户端字符集不保证是 utf8mb4。缺了它中文会按单字节解析后再以 utf8mb4 存储，
+--    即**双重编码** —— 库里存的是 C3A5C2B7... 这类字节，前端渲染成「å·¥ä½œå°」。
+--    本文件此前正因缺这一行，把 20 个菜单名写坏（由 42_*.sql 修复）。
+SET NAMES utf8mb4;
+
 DELETE FROM keymanage
 WHERE (encryt_type = 'AES' OR encryt_name IN ('AES', 'AES-256'))
   AND ua IS NULL;

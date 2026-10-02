@@ -25,6 +25,13 @@
 -- ---------------------------------------------------------------------------
 -- 4000 = 密钥管理(9001) 下的「密钥生成」，component = generate/index
 -- 2002 = 其下唯一的按钮级子项
+-- ⚠️ 必须有这一行（2026-09-30 补）：本文件含中文，而**管道导入**
+--    （docker-entrypoint-initdb.d / docker exec -i ... mysql < file）时
+--    客户端字符集不保证是 utf8mb4。缺了它中文会按单字节解析后再以 utf8mb4 存储，
+--    即**双重编码** —— 库里存的是 C3A5C2B7... 这类字节，前端渲染成「å·¥ä½œå°」。
+--    本文件此前正因缺这一行，把 20 个菜单名写坏（由 42_*.sql 修复）。
+SET NAMES utf8mb4;
+
 DELETE FROM sys_role_menu WHERE menu_id IN (4000, 2002);
 DELETE FROM sys_menu      WHERE menu_id IN (4000, 2002);
 

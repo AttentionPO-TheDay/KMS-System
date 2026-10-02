@@ -24,6 +24,13 @@
 -- 顶层直接放一个 `C` 不会出现在菜单树里（页面能通过 URL 打开，接口也正常，
 -- 所以现象很像"菜单没生效"，其实是结构不对）。
 -- 这里照 9001（目录 key）+ 5000（页面 keyupdate）的形状来。
+-- ⚠️ 必须有这一行（2026-09-30 补）：本文件含中文，而**管道导入**
+--    （docker-entrypoint-initdb.d / docker exec -i ... mysql < file）时
+--    客户端字符集不保证是 utf8mb4。缺了它中文会按单字节解析后再以 utf8mb4 存储，
+--    即**双重编码** —— 库里存的是 C3A5C2B7... 这类字节，前端渲染成「å·¥ä½œå°」。
+--    本文件此前正因缺这一行，把 20 个菜单名写坏（由 42_*.sql 修复）。
+SET NAMES utf8mb4;
+
 INSERT INTO sys_menu (menu_id, menu_name, parent_id, order_num, path, component, is_frame, is_cache,
                       menu_type, visible, status, perms, icon, create_by, create_time, remark)
 VALUES (9005, '节点鉴权', 0, 55, 'nodeauth', NULL, 1, 0,
