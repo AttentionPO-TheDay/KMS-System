@@ -76,6 +76,11 @@ npm-debug.logyarn-error.log
 # build_chain.sh 的原始产物（含每节点一份 30MB 二进制副本）
 /kms-ops/fisco/.rebuild/
 # Java 后端侧同一套 SDK 证书（与 console/conf 同源）
+# ⚠️ 这两条规则对**已跟踪**的文件不生效 —— 它们挡的是将来新出现的同名文件。
+#    现状（2026-10-02 决定）：
+#      ca.crt / sdk.crt  → 有意保留在版本库（证书是公开的一半，随链重建更新）
+#      sdk.key           → 已 `git rm --cached` 停止跟踪，不入库
+#    因此这两个 .crt 仍会出现在 `git status` 里，属正常，不是规则失效。
 /kms-ops/kms-java-backend/conf/*.crt
 /kms-ops/kms-java-backend/conf/*.key
 # 诊断用 Java 探针的编译产物
@@ -162,3 +167,19 @@ kms-distribute/111.7z
 .omc
 .gemini
 .cursor
+
+# ---------------------------------------------------------------------------
+# 以下四组从未进入版本库，2026-10-02 明确决定保持不入库。
+# 它们此前**不在** .gitignore 里，一条 `git add -A` 就会把它们全部吞进去
+# （最大的一组有 209MB），因此在这里补上规则。
+# ---------------------------------------------------------------------------
+# 数据库转储与重置前快照：含真实业务数据，单文件最大 161MB。
+# 归档保留在本地即可，需要时另行拷贝。
+/kms-ops/backups/
+# 过程截图（页面走查、对照图）——是排查过程的产物，不是交付物。
+/logs/
+/node-crud-*.png
+/node-crud-report.json
+# 调研中间产物：含 GB/T 国标 PDF 原文（有版权、13MB）与一次性探针脚本。
+# 脚本按需重跑即可，原文另行保存。
+/_research/
