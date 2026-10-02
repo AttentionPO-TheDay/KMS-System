@@ -56,6 +56,33 @@ public class RouterVo
      */
     private List<RouterVo> children;
 
+    /**
+     * 对应的 `sys_menu.menu_id`。
+     *
+     * <h2>为什么要把主键下发到前端</h2>
+     * 前端要按菜单树的**结构**做判断（例如节点端"进入了哪个业务子系统"，
+     * 然后侧边栏只显示该子系统那一棵）。原先没有稳定字段可用，
+     * 只能靠 {@code path} 或 {@code meta.title} 去认 —— 而这两个都是**会改的**：
+     * 本仓库菜单被重排过多次（20/21/26/36/41 号迁移），
+     * 41_*.sql 就改过 {@code 9104} 的 path、也改过多个 title。
+     * 一旦改名，靠字符串匹配的判断会**静默失效**（不报错，只是行为不对）。
+     * {@code menu_id} 是 sys_menu 主键，不随改名而变，是唯一稳定的判据。
+     *
+     * 注意它只作**结构标识**下发，不构成权限信息 ——
+     * 能否访问仍由后端按 sys_role_menu 下发的菜单决定。
+     */
+    private Long menuId;
+
+    public Long getMenuId()
+    {
+        return menuId;
+    }
+
+    public void setMenuId(Long menuId)
+    {
+        this.menuId = menuId;
+    }
+
     public String getName()
     {
         return name;

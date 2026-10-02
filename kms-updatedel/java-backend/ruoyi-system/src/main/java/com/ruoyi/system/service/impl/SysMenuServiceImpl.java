@@ -173,6 +173,9 @@ public class SysMenuServiceImpl implements ISysMenuService
             router.setPath(getRouterPath(menu));
             router.setComponent(getComponent(menu));
             router.setQuery(menu.getQuery());
+            // 把菜单主键一并下发：前端按结构做判断（如"当前在哪个业务子系统"）
+            // 需要它。path/title 都会随迁移改名，menu_id 不会 —— 详见 RouterVo 的注释。
+            router.setMenuId(menu.getMenuId());
             router.setMeta(new MetaVo(menu.getMenuName(), menu.getIcon(), StringUtils.equals("1", menu.getIsCache()), menu.getPath()));
             List<SysMenu> cMenus = menu.getChildren();
             if (StringUtils.isNotEmpty(cMenus) && UserConstants.TYPE_DIR.equals(menu.getMenuType()))
@@ -189,6 +192,9 @@ public class SysMenuServiceImpl implements ISysMenuService
                 children.setPath(menu.getPath());
                 children.setComponent(menu.getComponent());
                 children.setName(getRouteName(menu.getRouteName(), menu.getPath()));
+                // 子项同样带 menuId —— 顶层 C 菜单（如「工作台」9050）会走这条分支，
+                // 真正的页面在 children 里，前端认分区时要靠它。
+                children.setMenuId(menu.getMenuId());
                 children.setMeta(new MetaVo(menu.getMenuName(), menu.getIcon(), StringUtils.equals("1", menu.getIsCache()), menu.getPath()));
                 children.setQuery(menu.getQuery());
                 childrenList.add(children);
@@ -204,6 +210,7 @@ public class SysMenuServiceImpl implements ISysMenuService
                 children.setPath(routerPath);
                 children.setComponent(UserConstants.INNER_LINK);
                 children.setName(getRouteName(menu.getRouteName(), routerPath));
+                children.setMenuId(menu.getMenuId());
                 children.setMeta(new MetaVo(menu.getMenuName(), menu.getIcon(), menu.getPath()));
                 childrenList.add(children);
                 router.setChildren(childrenList);
