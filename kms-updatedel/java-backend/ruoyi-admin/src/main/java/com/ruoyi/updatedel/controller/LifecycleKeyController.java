@@ -2,8 +2,10 @@ package com.ruoyi.updatedel.controller;
 
 import com.ruoyi.common.core.domain.AjaxResult;
 import com.ruoyi.common.core.controller.BaseController;
+import com.ruoyi.common.core.domain.entity.SysUser;
 import com.ruoyi.common.core.page.TableDataInfo;
 import com.ruoyi.common.utils.SecurityUtils;
+import com.ruoyi.system.service.ISysUserService;
 import com.ruoyi.updatedel.domain.KeyAnalysisResultDto;
 import com.ruoyi.updatedel.domain.KeyHealthResult;
 import com.ruoyi.updatedel.domain.KeyStatus;
@@ -32,11 +34,14 @@ public class LifecycleKeyController extends BaseController {
 
     private final LifecycleService lifecycleService;
     private final KeyHealthService keyHealthService;
+    private final ISysUserService userService;
 
     public LifecycleKeyController(LifecycleService lifecycleService,
-                                  KeyHealthService keyHealthService) {
+                                  KeyHealthService keyHealthService,
+                                  ISysUserService userService) {
         this.lifecycleService = lifecycleService;
         this.keyHealthService = keyHealthService;
+        this.userService = userService;
     }
 
     @PreAuthorize("isAuthenticated()")
@@ -155,18 +160,46 @@ public class LifecycleKeyController extends BaseController {
             .orElseGet(() -> AjaxResult.error("密钥不存在: " + keyId));
     }
 
+    /**
+     * 新建密钥。
+     *
+     * <p>属主**只能来自令牌**，不能来自请求体。原先的写法只在请求没带 userId 时才
+     * 回填当前用户，于是任何登录用户 POST 一个别人的 userId，就能把新密钥记在
+     * 别人名下（并在响应里拿到自己生成的那份材料）。已核对全部调用方：
+     * 前端只走 {@code /generate/keymanage}，脚本一律用管理员令牌显式指定属主。
+     *
+     * <p>因此按主体分流：
+     * <ul>
+     *   <li>非管理员：属主强制为令牌持有者，请求体里的 userId/userName 一律忽略；</li>
+     *   <li>管理员：允许代建（脚本与运维需要），但目标账号必须真实存在，
+     *       否则直接报错，而不是让外键在插入时才失败。</li>
+     * </ul>
+     *
+     * <p>响应与 {@link #getInfo} 同口径做脱敏：调用方拿到的是自己刚生成的记录，
+     * 但"创建响应"不该成为 list/detail 之外第三条返回密钥材料的通道。
+     */
     @PreAuthorize("isAuthenticated()")
     @PostMapping
     public AjaxResult create(@RequestBody Keymanage request) {
-        try {
-            if (request.getUserId() == null) {
-                request.setUserId(getUserId());
+        if (!SecurityUtils.isAdmin(getUserId())) {
+            request.setUserId(getUserId());
+            request.setUserName(getUsername());
+        } else if (request.getUserId() != null) {
+            SysUser owner = userService.selectUserById(request.getUserId());
+            if (owner == null) {
+                return AjaxResult.error("指定的密钥属主不存在: " + request.getUserId());
             }
             if (request.getUserName() == null || request.getUserName().trim().isEmpty()) {
-                request.setUserName(getLoginUser().getUser().getUserName());
+                request.setUserName(owner.getUserName());
             }
+        }
+        if (request.getUserName() == null || request.getUserName().trim().isEmpty()) {
+            request.setUserName(getUsername());
+        }
+        try {
             log.info("密钥新建: userId={}, encrytName={}", request.getUserId(), request.getEncrytName());
             Keymanage created = lifecycleService.createKey(request);
+            KeyValueSanitizer.sanitizeDetail(created, true);
             return AjaxResult.success("密钥创建成功", created);
         } catch (Exception e) {
             log.error("密钥新建异常", e);
