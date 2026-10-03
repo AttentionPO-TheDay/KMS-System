@@ -1,5 +1,6 @@
 /**
- * KMS-008/009 验收：**新的分发请求契约**（节点到节点，由节点本机封装并签名）。
+ * KMS-008/009/010 验收：**新的分发请求契约**（节点到节点，由节点本机封装并签名，
+ * 由服务端验签）。
  *
  * 判据为什么是这几个动作，而不是"接口返回 200"
  * ------------------------------------------
@@ -9,6 +10,9 @@
  *   * 保护算法只允许 SM2 / SSCL / Kyber；
  *   * 旧用户腿接口保留迁移期，但标记 deprecated。
  * KMS-009 再加一条：**SM4 与封装在节点本机完成，服务端只登记**（计划 §2.1）。
+ * KMS-010 收口阶段 3 出口检查的后半句：**服务端真验签，验不过必拒**
+ * （第 4.1 节：改一个被签字段、换一把私钥、缺签名者版本、已回收的签名版本
+ * 各自被拒且不留半行 —— 这几条同时覆盖"验签真的在跑"与"它不是恒返回 False"）。
  *
  * 这四条都不能用"调用成功"证明，因为**失败形态恰恰是成功**：
  *
@@ -23,6 +27,7 @@
  *   * "信封带着签名" ≠ "签名是真的、且绑住了这些字段"。所以第 4.5 节
  *     用**服务端那份规范实现**验签（跨语言比对序列化口径），再把一个被签字段
  *     改掉、要求**验不过** —— 否则"验签函数恒返回 True"也会让前者绿。
+ *     KMS-010 起这件事在**请求路径上**也成立：改写过的信封会被服务端直接拒收。
  *   * "不再要求 source_key_id" ≠ "新接口在服务端真的没用它"。所以第 9 节
  *     连"传了也不作数"一起验：库里那一列必须是 NULL，且批次/池行都如此。
  *   * "标记 deprecated" 是一个**头部**事实，不是 body 里的字段。所以第 8 节
@@ -285,7 +290,7 @@ const distribute = (session, body) =>
  */
 async function buildSignedBody({
   receiverNodeId, protectionAlgorithm, recipientKeyId, recipientKeyVersion,
-  recipientPublicKeyHex, expiresInHours = 2
+  recipientPublicKeyHex, expiresInHours = 2, falconKeyVersion = 1, signerKeyRef = null
 }) {
   const {
     buildNodeEnvelope, generatePayloadKey, newBatchId, signNodeEnvelope
@@ -306,7 +311,11 @@ async function buildSignedBody({
     recipientKeyVersion,
     expiresAt
   })
-  const signature = await signNodeEnvelope(cryptoProvider, keys.A.FALCON.keyRef, built.envelope)
+  // `signerKeyRef` 用于反例：用**别的版本/别的节点**的私钥签，却仍声称
+  // `falconKeyVersion` 指定的那一版 —— 服务端必须验不过（KMS-010 的核心判据）。
+  const signature = await signNodeEnvelope(
+    cryptoProvider, signerKeyRef || keys.A.FALCON.keyRef, built.envelope
+  )
   return {
     batchId,
     built,
@@ -316,6 +325,9 @@ async function buildSignedBody({
       protectionAlgorithm,
       recipientKeyId,
       recipientKeyVersion,
+      // KMS-010：签名者那一版必须随请求显式给出（服务端按它查公钥验签）。
+      falconKeyId: keys.A.FALCON.keyId,
+      falconKeyVersion,
       batchId,
       expiresAt,
       envelope: built.envelope,
@@ -356,6 +368,63 @@ check('有效期进了库（2 小时，不是写死的 24）',
 check('★ 会话已建立，且**按实际保护算法**记（kyber_kem，不再一律 kyber_kem 的时代结束了）',
   sessionFact(batchB) === 'kyber_kem|initiated',
   `读到 ${sessionFact(batchB)}`)
+
+// ---------------------------------------------------------------------------
+// 4.1 ★★ KMS-010：服务端**验签**（阶段 3 出口检查的后半句）
+// ---------------------------------------------------------------------------
+title('4.1 ★★ KMS-010：服务端验签 —— 验不过必拒，验过才登记')
+info('KMS-009 之前只强制"必须带签名"，KMS-010 起服务端用**请求指定的那一版**')
+info('发送方 Falcon 公钥真验一次；验不过一律拒（SIGNATURE_INVALID），')
+info('且**一条池行都不留**。下面的判据都能证伪：改一个被签字段、换一把私钥、')
+info('拿已回收的版本发信 —— 每一种都必须被拒。')
+
+check('★★ 分发成功时回执如实给 signatureVerified=true（**验过**才可能回这个字段）',
+  distB.body?.data?.signatureVerified === true
+  && distB.body?.data?.falconKeyId === keys.A.FALCON.keyId
+  && Number(distB.body?.data?.falconKeyVersion) === 1,
+  `verified=${distB.body?.data?.signatureVerified} falconKeyId=${distB.body?.data?.falconKeyId}`
+  + ` v=${distB.body?.data?.falconKeyVersion}`)
+
+// 判据一：**签名之后改一个被签字段**（接收方版本 1→2）→ 必须拒。
+// ⚠️ 只改 envelope 里的字段、不动签名 —— 这就是"篡改"的样子。验签若只做
+//    "有没有签名"或"签名与某公钥自洽"，这一条会照常成功，信封落在库里，
+//    而接收方按 v1 去解一封声明 v2 的信，任何一处都不报错。
+const tamperBody = JSON.parse(JSON.stringify(reqB.body))
+tamperBody.envelope.recipient_key_version = 2
+tamperBody.batchId = (await import('../src/utils/crypto/envelope-signing.js')).newBatchId()
+const tampered = await distribute(nodeA, tamperBody)
+check('★★ 签名之后改一个被签字段（接收方版本 1→2）→ SIGNATURE_INVALID',
+  tampered.body?.data?.error_code === 'SIGNATURE_INVALID',
+  `${tampered.body?.data?.error_code} msg=${tampered.body?.msg}`)
+check('★★ 被拒的那一批**一条池行、一条会话都没留下**（拒收不是"先落库后报错"）',
+  Number(sqlScalar(`SELECT COUNT(*) FROM ${POOL_TABLE} WHERE pool_id='${tamperBody.batchId}';`) || 0) === 0
+  && Number(sqlScalar(`SELECT COUNT(*) FROM ${SESSION_TABLE} WHERE session_id LIKE '${tamperBody.batchId}-%';`) || 0) === 0,
+  `池行=${sqlScalar(`SELECT COUNT(*) FROM ${POOL_TABLE} WHERE pool_id='${tamperBody.batchId}';`)}`
+  + ` 会话=${sqlScalar(`SELECT COUNT(*) FROM ${SESSION_TABLE} WHERE session_id LIKE '${tamperBody.batchId}-%';`)}`)
+
+// 判据二：**用 C 的 Falcon 私钥签**（信封里声称是 A 发的）→ 必须拒。
+// 这一条钉的是"签名绑住了发送者身份"：信封内容与签名自洽（一份完整合法的
+// 签名），只是这把私钥不属于它声称的发送节点。
+const impostorBody = JSON.parse(JSON.stringify(reqB.body))
+impostorBody.batchId = (await import('../src/utils/crypto/envelope-signing.js')).newBatchId()
+impostorBody.envelope.batch_id = impostorBody.batchId
+// ⚠️ 上面改了 batch_id（被签字段），所以要用 **C 的私钥重新签这一份新内容** ——
+//    这样它是一份"签名自洽、但不是 A 签的"合法信封，而不是"内容被改过"的
+//    残破信封。后者也会被拒，但拒的原因与被测性质无关（那正是判据一测的）。
+const { signNodeEnvelope: resign } = await import('../src/utils/crypto/envelope-signing.js')
+impostorBody.signature = await resign(cryptoProvider, keys.C.FALCON.keyRef, impostorBody.envelope)
+const impostor = await distribute(nodeA, impostorBody)
+check('★★ 用别的节点（C）的私钥签、信封声称是 A 发的 → SIGNATURE_INVALID',
+  impostor.body?.data?.error_code === 'SIGNATURE_INVALID',
+  `${impostor.body?.data?.error_code} msg=${impostor.body?.msg}`)
+
+// 判据三：**缺签名者版本** → INVALID_PARAMETER（计划 §6.1：所有请求显式携带版本）。
+const noVerBody = { ...reqB.body }
+delete noVerBody.falconKeyVersion
+const noVer = await distribute(nodeA, noVerBody)
+check('★ 缺 falconKeyVersion → INVALID_PARAMETER（服务端不替调用方挑"当前生产版"）',
+  noVer.body?.data?.error_code === 'INVALID_PARAMETER',
+  `${noVer.body?.data?.error_code} msg=${noVer.body?.msg}`)
 
 // ---------------------------------------------------------------------------
 // 4.5 ★★ KMS-009：库里的信封**就是节点本机产出的那一份**，且签名是真的
@@ -770,10 +839,11 @@ check('★ 新接口**没有** Deprecation 头（与第 8 节配成一对）',
 
 // 新契约里 source_key_id 即使被传了也不作数（库内必须是 NULL）。
 // ⚠️ 另造一份**新签的**请求体再塞 `source_key_id`，而不是改上面那份的 batchId ——
-//    `batch_id` 是被签字段，改它等于提交一份"签名对不上的请求"。
-//    那种请求现在（还没验签）能过，但它是**语义非法**的，会把这条断言
-//    建立在"服务端还没验签"之上；KMS-010 落地后它会突然变红，
-//    而红的原因与本条要证明的事（source_key_id 不作数）毫无关系。
+//    `batch_id` 是被签字段，改它等于提交一份"签名对不上的请求"：
+//    KMS-010 起那种请求会直接被 `SIGNATURE_INVALID` 拒掉，于是这条断言会
+//    以一个与本条要证明的事（source_key_id 不作数）毫无关系的原因变红。
+//    `source_key_id` 本身**不在被签字段集**里，所以"额外带上它"不构成篡改 ——
+//    它被忽略是服务端的行为，而不是签名把这件事实屏蔽掉了。
 const reqWithSource = await buildSignedBody({
   receiverNodeId: nodeB.nodeId,
   protectionAlgorithm: KYBER,
@@ -791,6 +861,40 @@ check('★ 传了 source_key_id 也不作数：批次行与池行的来源密钥
   && batchFact(withSourceBatch).startsWith('NULL|')
   && poolFact(withSourceBatch).endsWith('|NULL'),
   `批次=${batchFact(withSourceBatch)} 池=${poolFact(withSourceBatch)}`)
+
+// ---------------------------------------------------------------------------
+// 9.5 ★ 已回收的**签名者**版本 → KEY_REVOKED（回收禁止新签名）
+// ---------------------------------------------------------------------------
+title('9.5 ★ 撤掉发送方的签名密钥之后，新分发必须被拒')
+info('放在最后：本节撤掉 A 的 FALCON，而前面每一节都要用它签名 ——')
+info('放在中间会让后续用例集体变红，红的原因却不是各自被测的性质。')
+
+const revokeFalcon = await api(PQKDS, '/node-self/keys/revoke/', {
+  method: 'POST', token: nodeA.token,
+  body: {
+    algorithm: 'FALCON', keyId: keys.A.FALCON.keyId, keyVersion: 1,
+    reason: 'KMS-010 验收：造一把已回收的签名密钥'
+  }
+})
+check('A 回收自己的 FALCON v1（终态）', isOk(revokeFalcon.body),
+  `code=${revokeFalcon.body?.code} msg=${revokeFalcon.body?.msg}`)
+
+// 用**新签的一份**请求（本机仍留着私钥，签得出来）—— 服务端必须先因
+// "这一版签名密钥已回收"拒收，而不是报"签名无效"。
+const reqRevokedSig = await buildSignedBody({
+  receiverNodeId: nodeB.nodeId,
+  protectionAlgorithm: KYBER,
+  recipientKeyId: K2v2.keyId,
+  recipientKeyVersion: 2,
+  recipientPublicKeyHex: K2v2.publicKey
+})
+const revokedSig = await distribute(nodeA, reqRevokedSig.body)
+check('★★ 已回收的签名版本 → KEY_REVOKED（不是 SIGNATURE_INVALID：该换密钥，不是怀疑伪造）',
+  revokedSig.body?.data?.error_code === 'KEY_REVOKED',
+  `${revokedSig.body?.data?.error_code} msg=${revokedSig.body?.msg}`)
+check('★ 被拒之后没有留下池行（这一批的批号在库里查不到）',
+  Number(sqlScalar(`SELECT COUNT(*) FROM ${POOL_TABLE} WHERE pool_id='${reqRevokedSig.batchId}';`) || 0) === 0,
+  `池行=${sqlScalar(`SELECT COUNT(*) FROM ${POOL_TABLE} WHERE pool_id='${reqRevokedSig.batchId}';`)}`)
 
 // ---------------------------------------------------------------------------
 // 10. 清理：脚本自建自清
@@ -833,5 +937,6 @@ check('清理完成：域内不再有本脚本建的节点',
 info(`本次真建的节点：${nodeA.nodeId} / ${nodeB.nodeId} / ${nodeC.nodeId}（已在上面删掉）`)
 info('证据都在上面：对端密钥列表与归属校验（含未授权 403）、按指定版本封装并在库内逐字核对、')
 info('接收方用那一版私钥真解封（含"另一版解不开"的反证）、三种保护算法各一次完整往返、')
-info('五种拒绝各自的错误码、新契约对 source_key_id 不作数、新旧接口的弃用头对照。')
+info('五种拒绝各自的错误码、新契约对 source_key_id 不作数、新旧接口的弃用头对照、')
+info('以及 KMS-010 的验签面：改被签字段/换私钥/缺版本/已回收版本各自被拒且不留半行。')
 finish()

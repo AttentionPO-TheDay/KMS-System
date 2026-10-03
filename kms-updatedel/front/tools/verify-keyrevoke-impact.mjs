@@ -617,14 +617,19 @@ info('旧脚本从没跑过放行分支，于是"这条路径其实没接上"与
 info('做法：种一把真 Falcon-512 私钥进 falcon_sign_private_key，分发一次，')
 info('然后在**库内**核对那封信封确实带上了签名，并让服务端自己验一次。')
 
-// ⚠️ 只种私钥列，**不动** `falcon_sign_public_key`：分发路径只读私钥列
-//    （公钥列是 `distribution-batches` 查询接口验签用的）。改了公钥列会让
-//    "物化列与登记行一致"这条既有不变量出现一处人造的破口，而本用例并不需要它。
+// ⚠️ 只种私钥列，**不动** `falcon_sign_public_key`：分发路径只读私钥列。
+//    而取件口（`GET /user-symmetric-keys/<id>/`）读的正是公钥列，所以
+//    §3.6 末尾那条"取件口真能取到密文"要**成对**地种：两列都换成这同一把
+//    Falcon 的公钥/私钥（base64，服务端生成那把的格式）。
+//    为什么种服务端格式而不是 hex：`generate_falcon_signing_keypair` 写的就是
+//    base64，而节点侧登记写的是 hex（两种来源，编码不同）—— 解码侧现在按
+//    **形状**认（KMS-010），哪种都要能验；hex 那一路单独由 HEX_VERIFY 钉住。
 // ⚠️ 种真密钥而不是垃圾：`sign_envelope` 会先 base64 解码、再比对 1281 字节长度，
 //    最后交给 DLL 真签一次；喂 `'00'` 会在第一步就返回 None —— 信封没有签名，
 //    而那与"放行分支没接上"在断言上无法区分。
 const falconPair = generateFalconKeypair()
 sqlScalar(`UPDATE ${NODE_TABLE} SET falcon_sign_private_key='${falconPair.privateKey}' WHERE node_id='${nodeA.nodeId}';`)
+sqlScalar(`UPDATE ${NODE_TABLE} SET falcon_sign_public_key='${falconPair.publicKey}' WHERE node_id='${nodeA.nodeId}';`)
 check('⑤ 正对照：已在本机种入一把真 Falcon-512 私钥（1281 字节 → base64 后约 1708 字符）',
   falconPair.privateKey.length > 1000,
   `privateKey 长度=${falconPair.privateKey.length}`)
@@ -646,48 +651,37 @@ const envelopeHasSig = sqlScalar(
   `SELECT IF(encrypted_key_data LIKE '%"signature"%', 'HAS_SIG', 'NO_SIG') `
   + `FROM ${ENVELOPE_TABLE} WHERE batch_id='${signedBatchId}' LIMIT 1;`
 ) || ''
-// ⚠️ 这里**只断言"签名被写出来了"**，不追加"验得过" —— 因为现在验不过，
-//    而且那是一个**与回收无关的既有断口**（写这份时的实测结论）：
+// ⚠️ **KMS-010 起验得过**，所以这里追加"验得过"这一半。
+//    修之前的状态（如实记在计划 §13.1 里）：签名覆盖
+//    `envelope_signature.SIGNED_FIELDS`（batch_id / wrapping_algorithm /
+//    payload_algorithm / recipient_user_id / ciphertext_digest / source_key_id /
+//    expires_at），但落库的 `user_envelope` 里**只有 ciphertext_digest 与
+//    payload_algorithm** —— 另外五个字段从没写进去，验签侧从库里重建被签
+//    字节串时它们全是 `None`，于是「自己签的信，自己验不过」，
+//    `GET /user-symmetric-keys/<id>/` 一律 403 拒交密文 —— 也就是
+//    **用户腿的信封根本取不出来**，而每一处日志只有"403"。
+//    KMS-010 的修法：那五个字段随信封一起落库（写签名的那一段）。
 //
-//      签名覆盖 `envelope_signature.SIGNED_FIELDS`（batch_id / wrapping_algorithm /
-//      payload_algorithm / recipient_user_id / ciphertext_digest / source_key_id /
-//      expires_at），但落库的 `user_envelope` 里**只有 ciphertext_digest 与
-//      payload_algorithm** —— 另外五个字段从没写进去。验签侧
-//      `_verify_envelope_signature` 从库里重建被签字节串时，它们全是 `None`，
-//      于是「自己签的信，自己验不过」。
-//
-//    影响面：`GET /user-symmetric-keys/<id>/` 在交出密文前先验签，
-//    验不过时返回 403「信封验签失败，拒绝交出密文」—— 也就是**用户腿的信封
-//    当前取不到密文**。签名写入那一步本身是对的（`HAS_SIG` 这条能过），
-//    坏在"被签的字段没有随信封一起落库"。
-//
-//    为什么不在这里修：它不在 KMS-007 的改动面上（KMS-007 是回收影响处理），
-//    且修它要决定"信封里该冗余存哪些字段"这类契约问题（KMS-010 的信封登记
-//    与 KMS-011 的取信封才是那条线）。这里如实记录，不掩盖也不越界。
-//    追它的最小复现：本脚本 §3.6 那条 `HAS_SIG` 之后再查一次
-//    `batch_id` 是否为 null —— 是 null 就说明本注释描述的断口仍在。
+//    这条断言现在的方向是**正**的（必须验得过）；若哪天有人把
+//    `user_envelope.update(sign_fields)` 删了，它立刻红。
 const signedEnvFields = sqlScalar(
   `SELECT CONCAT_WS('|', IF(encrypted_key_data LIKE '%"batch_id"%', 'BATCH', 'NO_BATCH'), `
   + `IF(encrypted_key_data LIKE '%"source_key_id"%', 'SRC', 'NO_SRC')) `
   + `FROM ${ENVELOPE_TABLE} WHERE batch_id='${signedBatchId}' LIMIT 1;`
 ) || ''
-check('⑤ 正对照：签名**写出去了**（放行分支真的走到底了，与"没接上"可区分）',
+check('★ ⑤ 正对照：签名**写出去了**（放行分支真的走到底了，与"没接上"可区分）',
   Boolean(signedBatchId) && envelopeHasSig === 'HAS_SIG',
   `batchId=${signedBatchId} 信封=${envelopeHasSig}`)
-check('⚠️ 既有断口（如实记录，非本次修复面）：落库的信封里**没有**被签的字段',
-  signedEnvFields === 'NO_BATCH|NO_SRC',
-  `落库字段=${signedEnvFields} —— 若变成 BATCH|SRC，说明该断口已被 KMS-010/011 修掉，`
-  + '本节注释与下面那条"验不过"的说明应当一并更新')
+check('★ 被签字段**随信封落库**（KMS-010 修复合：修之前恒为 NO_BATCH|NO_SRC）',
+  signedEnvFields === 'BATCH|SRC',
+  `落库字段=${signedEnvFields} —— 若退回 NO_BATCH|NO_SRC，用户腿取件口会重新变成 403`)
 
-// 再让服务端自己验一次 —— 但它现在**必然验不过**，所以这里的断言方向是反的：
-// 断言"验不过"，并把原因钉住（被签字段缺失）。这样做的价值在于：
-//   * 若哪天有人把字段补上，这条**立刻红**，提醒去更新上面那段说明；
-//   * 若哪天验签逻辑被改坏成"永远返回 False"，这条**照样绿** —— 所以它单独
-//     不足以证明验签实现是对的，它的作用只是把断口的存在与原因写进证据里。
-// 同时用**两个**视角各验一次，把"签名本身是好的"与"重建不出被签内容"分开：
-//   A) 拿**签名时同一份** `envelope_for_sign` 的字段值（在本进程里重建）→ 应当 True
-//   B) 拿**库里存下来的**信封重建 → 应当 False（缺五个字段）
-// 两条合起来才说明：签名的密码学是对的，坏的是"字段没随信封落库"。
+// 再让服务端自己验一次。**KMS-010 起两条视角都必须 True**：
+//   A) 拿**签名时同一份** `envelope_for_sign` 的字段值（在本进程里重建）→ True；
+//   B) 拿**库里存下来的**信封重建 → 也必须 True（被签字段已随信封落库）。
+// 两条合起来说明：签名的密码学是对的，且重建所需的字段一个不缺。
+// ⚠️ 若 B 退回 False，`GET /user-symmetric-keys/<id>/` 会重新开始 403 ——
+//    这条断言就是那个断口的哨兵。
 const verifyProgram = `
 import json, sys
 sys.path.insert(0, '/backend')
@@ -702,12 +696,13 @@ payload = json.loads(env.encrypted_key_data or '{}')
 pub = '${falconPair.publicKey}'
 sig = payload.get('signature')
 print('SIG_PRESENT=%s' % bool(sig))
-# B) 库里存下来的字段（缺 batch_id/source_key_id/... → 重建不出被签串）
+# B) 库里存下来的字段（KMS-010 起五个字段都在 → 重建得出被签串）
 stored_view = {k: payload.get(k) for k in SIGNED_FIELDS}
 print('MISSING_FIELDS=%s' % ','.join(k for k in SIGNED_FIELDS if stored_view.get(k) is None))
 print('STORED_VERIFY=%s' % verify_envelope(stored_view, sig, pub))
 # A) 用**数据库列**里记着的那些值重建（batch_id/source_key_id/expires_at 都在列上，
-#    不在 JSON 里）—— 验得过就证明签名本身有效、签的确实是这些值。
+#    不在 JSON 里）—— 两个视角都验得过，才说明"签名与这些值匹配"这一条对两条
+#    读取路径同时成立。
 row_view = dict(stored_view)
 row_view['batch_id'] = env.batch_id
 row_view['source_key_id'] = env.source_key_id
@@ -718,6 +713,12 @@ row_view['expires_at'] = env.expires_at.isoformat() if env.expires_at else None
 # 实际是这个字段没填。
 row_view['recipient_user_id'] = env.user_id
 print('ROW_VERIFY=%s' % verify_envelope(row_view, sig, pub))
+# C) **hex 编码的公钥**同样要验得过。真节点上 Node.falcon_sign_public_key
+#    存的就是 hex（KMS-005 起节点上传 hex、登记层原样落库，实测库里每条都如此），
+#    而按 base64 去解 1794 位 hex **不报编码错**（1794 % 4 == 2，异常被吞掉），
+#    表现为"验签失败"——看起来像伪造。这条钉住"按形状认编码"。
+hex_pub = __import__('base64').b64decode(pub).hex()
+print('HEX_VERIFY=%s' % verify_envelope(row_view, sig, hex_pub))
 `
 const verifyOut = execFileSync(dockerBin, ['exec', '-i', '-w', '/backend', 'dvadmin3-django', 'python', '-'], {
   input: verifyProgram,
@@ -731,10 +732,27 @@ check('★ ⑤ 正对照：签名本身**是有效的**（用落库值重建被�
   verifyOut.includes('ROW_VERIFY=True'),
   sigLines + ' —— ROW_VERIFY=False 意味着连"签名与这些值匹配"都不成立，'
   + '那会是比"字段没落库"更严重的问题')
-check('⚠️ 既有断口复现：拿**库里信封**重建被签串时验不过，且缺的正是那五个字段',
-  verifyOut.includes('STORED_VERIFY=False') && verifyOut.includes('MISSING_FIELDS=')
-  && /MISSING_FIELDS=(?!\s*$)./.test(verifyOut),
+check('★ 公钥按**形状**认编码：hex 形式的同一把公钥同样验得过（真节点列里存的就是 hex）',
+  verifyOut.includes('HEX_VERIFY=True'),
+  sigLines + ' —— HEX_VERIFY=False 意味着按 base64 去解 hex 公钥（1794 % 4 == 2，'
+  + '异常被吞）又回到了"验签永远不通过"，而现象只是 403')
+check('★ 断口已修（KMS-010）：拿**库里信封**重建被签串时**验得过**，五个字段一个不缺',
+  verifyOut.includes('STORED_VERIFY=True') && verifyOut.includes('MISSING_FIELDS=\n'),
   sigLines)
+
+// 影响面：取件口对这把带签名的信封**真的交出密文**（KMS-010 之前这里恒 403）。
+// ⚠️ 用 A 自己的令牌：`user_symmetric_key_detail` 按令牌里的 userId 过滤，
+//    拿不到别人的行（返回 404 而不是 403，不区分"不存在"与"不属于你"）。
+const envId = sqlScalar(
+  `SELECT id FROM ${ENVELOPE_TABLE} WHERE batch_id='${signedBatchId}' LIMIT 1;`
+) || ''
+const detail = await api(PQKDS, `/user-symmetric-keys/${envId}/`, { token: nodeA.token })
+check('★ 用户腿取件口真能取到密文（修之前 403「信封验签失败，拒绝交出密文」）',
+  isOk(detail.body) && detail.body?.data?.signatureState === 'valid'
+  && typeof detail.body?.data?.encryptedKeyData === 'string'
+  && detail.body.data.encryptedKeyData.length > 0,
+  `code=${detail.body?.code} state=${detail.body?.data?.signatureState} `
+  + `密文长度=${String(detail.body?.data?.encryptedKeyData || '').length} msg=${detail.body?.msg}`)
 
 // ---------------------------------------------------------------------------
 // 3.7 ★ 反例哨兵：一条**无关节点对**的活跃会话，回收全程都不该被碰

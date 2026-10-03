@@ -36,6 +36,13 @@
 * 不做 Falcon 签名（KMS-010 补齐验签后，"没有签名就不能发送"才落得下）；
 * 不写用户腿信封：新模型是节点到节点，没有"发起用户自己的那一份"，
   旧用户腿接口保留一段迁移期但已标记 deprecated。
+
+KMS-010（已落地）
+-----------------
+上面两条"不做"里的签名与验签都已接上：SM4 与封装在 KMS-009 搬进了发送节点
+浏览器，KMS-010 把 `verify_node_envelope` 接进 `create_node_distribution` ——
+信封必须由**请求里显式指定的那一版**发送方 Falcon 长期密钥验得过才登记
+（失败 `SIGNATURE_INVALID`），验过了才回 `signatureVerified`。
 """
 
 from __future__ import annotations
@@ -51,7 +58,7 @@ from django.utils import timezone
 
 from . import api_contract as C
 from . import kms_service_client as kms
-from .envelope_signature import ciphertext_digest
+from .envelope_signature import ciphertext_digest, verify_node_envelope
 from .models import DistributionBatch, Node, PreDistributedKey, SessionKey, UserNodeAuthorization
 from .node_key_registry import require_key_version
 from .sm4_crypto import PAYLOAD_ALGORITHM_SM4
@@ -410,22 +417,25 @@ def create_node_distribution(sender: Node, receiver: Node, *,
                              expires_at: Any,
                              envelope: Any,
                              signature: Any,
+                             falcon_key_id: Any,
+                             falcon_key_version: Any,
                              key_hash: Any) -> Dict[str, Any]:
     """发送节点 → 接收节点的一次分发：**登记节点产出的信封**（KMS-009）。
 
     KMS-008 时这里还在服务端生成 SM4 并封装（过渡实现）。KMS-009 把那份工作
     搬到了发送节点的浏览器里（`provider.wrapForPeer` + `signNodeEnvelope`），
-    本函数从此只做三件事：**核形状、算摘要、落库**。
+    KMS-010 起本函数再加**一道验签**：只有用请求指定的那一版发送方 Falcon
+    公钥验得过的信封才会被登记（表见下）。
 
     | | 谁做 |
     |---|---|
     | 生成 SM4、用接收方那一版公钥封装 | 发送节点（浏览器） |
     | 用本地 Falcon 私钥签名 | 发送节点（浏览器） |
     | 校验密钥版本可用、批次号/有效期合法、摘要自洽 | 服务端（本函数） |
-    | 验签 | **KMS-010**（本阶段只要求"必须带签名"，还没验） |
+    | **验签**（用请求指定的那一版发送方 Falcon 公钥） | 服务端（本函数，KMS-010） |
 
     ⚠️ **服务端从头到尾拿不到 SM4 明文**（计划 §2.1）：节点交上来的是已加密的
-       信封与它的哈希，服务端只做搬运与登记。
+       信封与它的哈希，服务端只做搬运、验签与登记。
     ⚠️ `key_hash` 由节点给出，服务端**无法自算**（没有 K）——它不是这里的判据，
        而是留给**接收方**解出 K 之后自查的（KMS-011/012）。
 
@@ -433,14 +443,26 @@ def create_node_distribution(sender: Node, receiver: Node, *,
     服务端就不能在事后赋值。服务端仍负责校验它们的合法性（形状、上界、
     不与既有批次撞号），所以"客户端说了算"只限**值**，不限**约束**。
 
+    <h2>KMS-010：验签为什么用「请求指定的那一版」而不是「发送方当前生产版本」</h2>
+    计划 §6.1「所有请求显式携带版本；不允许依赖'当前最新版本'的隐式行为」。
+    按物化列/当前生产版本去查的失败方式很安静：发送方在**签名之后、服务端
+    验签之前**轮换过 Falcon（更新页随时可能发生），验签就会拿另一把公钥去验
+    一份用旧私钥签的信 —— 报出来的是 `SIGNATURE_INVALID`（一个**安全事件**
+    的措辞），而实际只是并发轮换。签名者必须与验签者用的是**同一版**的公钥，
+    所以版本由请求显式给出，与接收方密钥版本同一口径
+    （`require_key_version(sender, 'FALCON', ...)`）。
+
     抛 `C.ContractError`：
       * 算法不在保护白名单（含 FALCON）→ `ALGORITHM_NOT_ALLOWED`；
       * 缺签名 → `SIGNATURE_REQUIRED`；摘要对不上 → `ENVELOPE_TAMPERED`；
+      * **签名验不过 → `SIGNATURE_INVALID`**（KMS-010）；
       * 批次号/有效期/信封形状非法 → `INVALID_PARAMETER`；
-      * 接收方那一版不可用 → `require_key_version` 的四种码，原样透出。
+      * 接收方或发送方 Falcon 那一版不可用 → `require_key_version` 的四种码，
+        原样透出（`KEY_NOT_FOUND` / `KEY_REVOKED` / `KEY_EXPIRED` /
+        `KEY_VERSION_MISMATCH`）。
 
     返回 dict（不是 HTTP 响应）：`{batch, batch_id, key_hash, digest,
-    recipient_key, session_count, chain_hash, expires_at}`。
+    recipient_key, session_count, chain_hash, expires_at, signature_verified}`。
     """
     canonical = C.canonical_algorithm(protection_algorithm)
     if canonical not in C.PROTECTION_ALGORITHMS:
@@ -457,11 +479,23 @@ def create_node_distribution(sender: Node, receiver: Node, *,
     # 它同时回答"这个节点这个算法有没有可用版本"，是 KMS-008 起就有的判据。
     key = require_key_version(receiver, canonical, recipient_key_id, recipient_key_version)
 
+    # KMS-010：**签名者那一版** Falcon 长期密钥。与接收方那一版同一套校验
+    # （KEY_NOT_FOUND / KEY_REVOKED / KEY_EXPIRED / KEY_VERSION_MISMATCH
+    # 原样透出）—— 已回收的签名密钥不能继续发新信，这是"回收禁止新签名"
+    # 在节点间分发这条路径上的落点。
+    #
+    # ⚠️ `for_new_work=True`（默认）是刻意的：信封是**新工作**。
+    #    解旧信封那条路（准 RETIRED）不属于这里。
+    # ⚠️ 这一步**先于**摘要与签名检查：版本不可用时，调用方该做的第一件事是
+    #    换一版，而不是去查签名。顺序反过来的话，一把已回收的密钥会先得到
+    #    "签名无效"（像伪造），而真正的原因只是它被撤了。
+    signing_key = require_key_version(sender, 'FALCON', falcon_key_id, falcon_key_version)
+
     batch_id = _as_batch_id(batch_id)
     expires_at = _as_expires_at(expires_at)
 
     # --- 以下三样全部由**发送节点**产出（KMS-009）---
-    # 服务端不再生成 SM4、不再封装。它在这里做的事只有"收下、核形状、落库"：
+    # 服务端不再生成 SM4、不再封装。它在这里做的事只有"收下、核形状、验签、落库"：
     #   * `envelope` 是节点用接收方**那一版公钥**封好的密文（含待签字段）；
     #   * `signature` 是节点用本地 Falcon 私钥对规范字节串的签名；
     #   * `key_hash` 是那把 SM4 的 SHA256（服务端没有 K，无法自算 —— 见 docstring）。
@@ -484,9 +518,34 @@ def create_node_distribution(sender: Node, receiver: Node, *,
         # 节点声明的摘要与服务端重算的对不上 —— 只可能是两边的规范化口径漂移了。
         # **不收**：等 KMS-010 拿它去验签时才发现的话，报出来的会是"签名无效"，
         # 而那看起来像伪造（安全事件），实际只是序列化不一致。
+        #
+        # ⚠️ 这一条必须**先于**验签（它排在下面那段之前）。两者报的都是"这封信
+        #    有问题"，但处置完全不同：这里是"我们改了规范"，那里是安全事件。
+        #    顺序反了的话，序列化漂移会全部伪装成伪造。
         raise C.ContractError(
             '信封的密文摘要与服务端重算的不一致：两侧的规范化序列化口径可能漂移了',
             code=C.ERR_ENVELOPE_TAMPERED,
+        )
+
+    # --- KMS-010：验签。失败方向必须是**拒绝**，不能是放行 ---
+    # 公钥来自**登记表**那一行（`NodeLongTermKey.public_key`，**hex**），
+    # `verify_node_envelope` 内部按形状认编码（`_decode_registry_key_material`）
+    # —— 用用户腿那套 base64 解码会**永远验不过**且不报编码错（KMS-009 实测）。
+    #
+    # ⚠️ 验签覆盖的字段集（`NODE_ENVELOPE_SIGNED_FIELDS`）包含 `sender_node_id`
+    #    等元数据，所以"用别的节点私钥签、却声称是本节点发的"必然验不过 ——
+    #    签名绑住了发送者身份，这里不只是检查"有没有签名"。
+    #
+    # ⚠️ 验签用的信封就是**待落库的那一份**（含 batch_id/expires_at 等）——
+    #    重建被签字节串的 `node_canonical_payload` 取的是同一批字段，而它们
+    #    刚才已经过了形状与摘要检查。服务端**不**把签名写进这份 dict 再验
+    #    （签名字段不在被签字段集里，写不写都不影响，但少动一份更不容易错）。
+    if not verify_node_envelope(envelope, signature, signing_key.public_key):
+        raise C.ContractError(
+            f'信封签名校验失败：签名与发送节点 {sender.node_id} 的 FALCON 密钥 '
+            f'{signing_key.key_id} v{signing_key.key_version} 不匹配，'
+            f'或信封内容在签名之后被改动过',
+            code=C.ERR_SIGNATURE_INVALID,
         )
 
     stored_json = json.dumps(
@@ -580,6 +639,10 @@ def create_node_distribution(sender: Node, receiver: Node, *,
         'key_hash': key_hash,
         'digest': digest,
         'recipient_key': key,
+        # KMS-010：签名者那一版（回显给接口层，回执里如实说"验过了"）。
+        # 走到这里它必然非空 —— 上面验签不过会抛 SIGNATURE_INVALID。
+        'signing_key': signing_key,
+        'signature_verified': True,
         'session_count': session_count,
         'chain_hash': chain_hash,
         'expires_at': expires_at,

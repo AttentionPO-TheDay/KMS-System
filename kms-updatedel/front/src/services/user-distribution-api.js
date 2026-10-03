@@ -105,12 +105,18 @@ export async function listPeerKeys(nodeCode, algorithms) {
  * KMS-009 起，`envelope` / `signature` / `keyHash` / `batchId` / `expiresAt`
  * **全部由调用方（页面在本机）产出** —— SM4 在浏览器生成、用接收方那一版公钥
  * 封装、用本机 Falcon 私钥签名（见 `utils/crypto/envelope-signing.js`）。
- * 服务端只登记，从此拿不到 SM4 明文。
+ * 服务端只验证并登记，从此拿不到 SM4 明文。
+ *
+ * KMS-010 起还要带上**签名者那一版** Falcon 密钥（`falconKeyId` /
+ * `falconKeyVersion`）：服务端按它们查公钥**验签**（计划 §6.1「所有请求
+ * 显式携带版本」）。缺了它们，服务端只能按"当前生产版本"去猜，而并发轮换时
+ * 会拿另一把公钥验一份用旧私钥签的信 —— 报成 `SIGNATURE_INVALID`（像伪造）。
  *
  * ⚠️ `batchId` 与 `expiresAt` 必须由调用方给：签名覆盖它们，服务端就不能事后赋值。
  *
  * @param {{receiverNodeId: string, protectionAlgorithm: 'SM2'|'SSCL'|'KYBER',
  *          recipientKeyId: string, recipientKeyVersion: number,
+ *          falconKeyId: string, falconKeyVersion: number,
  *          batchId: string, expiresAt: string, envelope: object,
  *          signature: string, keyHash: string}} payload
  *   `receiverNodeId` 是**业务编号**；`protectionAlgorithm` 用**规范名**
@@ -121,6 +127,8 @@ export async function createNodeDistribution({
   protectionAlgorithm,
   recipientKeyId,
   recipientKeyVersion,
+  falconKeyId,
+  falconKeyVersion,
   batchId,
   expiresAt,
   envelope,
@@ -133,6 +141,9 @@ export async function createNodeDistribution({
     protectionAlgorithm,
     recipientKeyId,
     recipientKeyVersion,
+    // KMS-010：签名者那一版 —— 服务端按它查公钥验签，不替调用方挑"当前生产版"。
+    falconKeyId,
+    falconKeyVersion,
     batchId,
     expiresAt,
     envelope,

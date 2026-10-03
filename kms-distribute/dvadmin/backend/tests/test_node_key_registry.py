@@ -100,6 +100,7 @@ KMS-007 追加一组（回收的影响面：顺序、重试、以及"撤的是�
 """
 
 import base64
+import json
 import os
 import sys
 import uuid
@@ -147,13 +148,22 @@ def _hex_pub(byte_pair):
     return '04' + byte_pair * 64
 
 
-def _make_node(tag):
+def _make_node(tag, *, with_user=False):
+    """一个临时节点。`with_user=True` 时给一个 `sys_user_id` —— 只有
+    需要跑 `create_node_distribution` 的组才要（分发批次行有 NOT NULL 的
+    `user_id`，而那是 `Node.sys_user_id` 的镜像；不给值会在落批次行时炸
+    IntegrityError，看着像"验收代码写错"，实际只是夹具缺一列）。"""
     node = Node.objects.create(
         node_id=f'TESTKMS004-{tag}-{uuid.uuid4().hex[:6]}',
         name=f'KMS-004 自测节点（{tag}）',
         ip_address='127.0.0.1',
         port=9010,
         status='PENDING_INIT',
+        # `sys_user_id` 是**唯一约束**列：给每个自测节点一个随机值而不是固定
+        # 值，否则同一次运行里两个节点会撞唯一键（报的是驱动层的 IntegrityError，
+        # 看着像被测代码坏了）。随机值取小片区间，够用且不与开发库里的真账号
+        # 撞概率可忽略。
+        sys_user_id=(uuid.uuid4().int % 2_000_000_000 + 1) if with_user else None,
     )
     return node
 
@@ -1264,6 +1274,280 @@ def test_require_key_version(node):
     return all(results)
 
 
+def test_verify_node_distribution_signature(node):
+    """KMS-010：服务端**验签** —— 验不过必须拒收（阶段 3 出口检查的后半句）。
+
+    ---- 这一组防的是什么 ----
+    KMS-009 把 SM4 的生成、封装、签名都搬到了发送节点，服务端只"核形状、
+    算摘要、落库"；本组落地最后一步：**用发送方登记的 Falcon 公钥验签**，
+    验不过一律拒（`SIGNATURE_INVALID`）。阶段 3 出口检查「Falcon 缺失时不能
+    发送」在此之前只能靠"没带签名"表达，现在补上了"签了但验不过"。
+
+    三条断言各自防一种"看起来已经验过了"的假象：
+
+      * **改一个被签字段**（接收方版本 1→3）→ 必须拒，且**一条池行都不留**。
+        不验签的实现会让它照常登记 —— 库里躺着一封"接收方以为是 v1、实际
+        按 v3 声明"的信，而每一处都成功。
+      * **用别的节点的私钥签、信封里声称是本节点发的** → 必须拒。这条钉住
+        "签名绑住了发送者身份"：只检查"签名与公钥自洽"会放过它。
+      * **正常路径必须真的通** → 回 `signature_verified=True` 且库内信封与
+        请求逐字相同。只测拒绝面的话，"验签永远返回 False"也能全绿 ——
+        而这会把所有正当分发全拒掉。
+
+    ⚠️ 本组用**真 Falcon / 真 Kyber**，不是假材料：`FalconCrypto`（DLL）、
+       `KyberCrypto`（DLL）、`wrap_with_public_key`、`node_canonical_payload`
+       全是生产那条路径上的实现。假公钥在这里会**必然失败**（长度校验都过不去），
+       而失败会被读成"验签实现了"。
+    """
+    from pqkds.crypto_utils import FalconCrypto, KyberCrypto
+    from pqkds.distribution_service import create_node_distribution
+    from pqkds.envelope_signature import ciphertext_digest, node_canonical_payload
+    from pqkds.models import DistributionBatch
+    from pqkds.sm4_crypto import SM4Crypto
+    from pqkds.wrappers import wrap_with_public_key
+
+    results = []
+    receiver = _make_node('16-receiver')
+    other = _make_node('16-other')
+    try:
+        # --- 夹具：接收方真 Kyber-768 公钥 + 本节点真 Falcon 公钥（登记表 hex 口径）---
+        k_kyber = KyberCrypto(768)
+        rec_pk, rec_sk = k_kyber.generate_keypair()
+        rec_key = R.register_public_key(
+            receiver, algorithm='KYBER', public_key=base64.b64encode(rec_pk).decode(),
+            key_id='KMS010-REC', key_version=1,
+        )
+
+        f_sender = FalconCrypto(512)
+        fpk_v1, fsk_v1 = f_sender.generate_keypair()
+        # ⚠️ 登记表里的 Falcon 公钥是 **hex**（KMS-009 实测踩中）——这里按生产
+        #    路径的口径登记，让 `_decode_registry_key_material` 的"按形状认编码"
+        #    真的被走一遍（登记成 base64 会让验签恒失败且不报编码错）。
+        falcon_v1 = R.register_public_key(
+            node, algorithm='FALCON', public_key=fpk_v1.hex(),
+            key_id='KMS010-SIGN', key_version=1,
+        )
+        # 另一个节点的 Falcon 私钥：用于"冒充发送方"的反例。
+        _, fsk_other = FalconCrypto(512).generate_keypair()
+
+        def make_request(*, signer_sk, falcon_key_id='KMS010-SIGN', falcon_key_version=1,
+                         sender_node_id=None, tamper=None, signer_ref=None):
+            """造一份**真签名**的分发请求。
+
+            签名口径与生产完全一致：`wrap_with_public_key` 产出信封 →
+            补齐被签字段 → `node_canonical_payload` 重建字节串 → DLL 签名。
+            """
+            payload_key = os.urandom(16)
+            envelope, key_hash = wrap_with_public_key(
+                payload_key, base64.b64encode(rec_pk).decode(), 'kyber_kem',
+            )
+            batch_id = timezone.now().strftime('dist-%Y%m%d%H%M%S-') + uuid.uuid4().hex[:8]
+            expires_at = timezone.now() + timedelta(hours=2)
+            envelope.update({
+                'batch_id': batch_id,
+                'sender_node_id': sender_node_id or node.node_id,
+                'receiver_node_id': receiver.node_id,
+                'recipient_key_id': rec_key.key_id,
+                'recipient_key_version': 1,
+                'key_hash': key_hash,
+                # 摘要算的是**内层密文**（与 `_canonical_inner_json` 同一口径），
+                # 与生产端 `envelope-signing.js` 的做法逐字节一致。
+                #
+                # ⚠️ 这里直接对**信封里已有的那几项**取子集再序列化（而不是另写
+                #    一份字段清单）：做法与生产端 `canonicalJson(inner)` 一致 ——
+                #    另写清单会在信封换形状时留下一条永远对不上的摘要，
+                #    而现象只是"摘要不符"。
+                'ciphertext_digest': ciphertext_digest(json.dumps(
+                    {
+                        'kem_ciphertext': envelope['kem_ciphertext'],
+                        'encrypted_key': envelope['encrypted_key'],
+                        'nonce': envelope['nonce'],
+                        'tag': envelope['tag'],
+                        'payload_algorithm': envelope['payload_algorithm'],
+                        'wrapping_algorithm': envelope['wrapping_algorithm'],
+                    },
+                    ensure_ascii=False, sort_keys=True, separators=(',', ':'),
+                )),
+                'expires_at': expires_at.isoformat(),
+            })
+            signature = FalconCrypto(512).sign(node_canonical_payload(envelope), signer_sk)
+            if tamper:
+                # 篡改发生在**签名之后**：改的是"已经被签过的那份内容"，
+                # 这才是伪造的样子。先改后签等于签了一份新内容，验得过。
+                tamper(envelope)
+            return {
+                'envelope': envelope,
+                'signature': signature,
+                'batch_id': batch_id,
+                'key_hash': key_hash,
+                'args': dict(
+                    protection_algorithm='KYBER',
+                    recipient_key_id=rec_key.key_id,
+                    recipient_key_version=1,
+                    batch_id=batch_id,
+                    expires_at=envelope['expires_at'],
+                    envelope=envelope,
+                    signature=base64.b64encode(signature).decode('ascii'),
+                    falcon_key_id=signer_ref[0] if signer_ref else falcon_key_id,
+                    falcon_key_version=signer_ref[1] if signer_ref else falcon_key_version,
+                    key_hash=key_hash,
+                ),
+            }
+
+        def pool_rows(batch_id):
+            return PreDistributedKey.objects.filter(pool_id=batch_id).count()
+
+        def call(req):
+            return create_node_distribution(node, receiver, **req['args'])
+
+        # --- A. 正常路径：验得过才登记，且如实回签名者版本 --------------------
+        req_ok = make_request(signer_sk=fsk_v1)
+        out_ok = call(req_ok)
+        stored = json.loads(
+            PreDistributedKey.objects.get(pool_id=req_ok['batch_id']).encrypted_key_data
+        )
+        results.append(_report(
+            '★ 真签名 → 登记成功，且回 signature_verified=True（只有验过才可能回）',
+            out_ok.get('signature_verified') is True
+            and out_ok['signing_key'].pk == falcon_v1.pk
+            and out_ok['signing_key'].key_version == 1,
+            f"verified={out_ok.get('signature_verified')} signer={out_ok['signing_key'].key_id}"
+            f" v{out_ok['signing_key'].key_version}",
+        ))
+        results.append(_report(
+            '★ 库内信封就是被签的那一份：签名与全部被签字段逐字相同',
+            stored.get('signature') == req_ok['args']['signature']
+            and all(stored.get(k) == req_ok['envelope'].get(k)
+                    for k in ('batch_id', 'sender_node_id', 'receiver_node_id',
+                              'recipient_key_id', 'recipient_key_version',
+                              'key_hash', 'ciphertext_digest', 'expires_at')),
+            f"signature 长度={len(str(stored.get('signature')))}",
+        ))
+        # 落库的信封**真能解开**（用接收方私钥按生产口径解）—— 顺带证明这一组
+        # 夹具不是"看起来像信封"的假数据。
+        ss = k_kyber.decrypt(base64.b64decode(stored['kem_ciphertext']), rec_sk)
+        from pqkds.sm4_crypto import PayloadCipher  # noqa: E402  局部导入：只有本组用
+        kek = PayloadCipher.kek_from_shared_secret('sm4', ss)
+        opened = SM4Crypto.decrypt(
+            base64.b64decode(stored['encrypted_key']), kek,
+            base64.b64decode(stored['nonce']) + base64.b64decode(stored['tag']),
+        )
+        results.append(_report(
+            '库内信封能被接收方私钥解开（16 字节 SM4）—— 验签通过的那一封是真信封',
+            isinstance(opened, bytes) and len(opened) == 16,
+            f'解出 {len(opened) if opened else 0} 字节',
+        ))
+
+        # --- B. 摘要不自洽：报 ENVELOPE_TAMPERED 而不是 SIGNATURE_INVALID -------
+        # 顺序判据：序列化漂移（我们改了规范）与伪造（安全事件）必须分开报。
+        req_digest = make_request(
+            signer_sk=fsk_v1,
+            tamper=lambda env: env.update({'ciphertext_digest': 'f' * 64}),
+        )
+        ok, detail = _expect_contract_error(
+            C.ERR_ENVELOPE_TAMPERED, call, req_digest,
+        )
+        results.append(_report(
+            '★ 摘要被改 → ENVELOPE_TAMPERED（**先于**验签报出：序列化漂移不该伪装成伪造）',
+            ok, detail,
+        ))
+
+        # --- C. 篡改**被签字段** → SIGNATURE_INVALID 且一条池行都不留 ----------
+        req_tampered = make_request(
+            signer_sk=fsk_v1,
+            tamper=lambda env: env.update({'recipient_key_version': 3}),
+        )
+        ok, detail = _expect_contract_error(C.ERR_SIGNATURE_INVALID, call, req_tampered)
+        results.append(_report(
+            '★ 签名之后改一个被签字段（接收方版本 1→3）→ SIGNATURE_INVALID',
+            ok, detail,
+        ))
+        results.append(_report(
+            '★ 被拒的那一批**一条池行、一条批次行都没留下**（拒收不是"先落库后报错"）',
+            pool_rows(req_tampered['batch_id']) == 0
+            and DistributionBatch.objects.filter(batch_id=req_tampered['batch_id']).count() == 0,
+            f"池行={pool_rows(req_tampered['batch_id'])} "
+            f"批次行={DistributionBatch.objects.filter(batch_id=req_tampered['batch_id']).count()}",
+        ))
+
+        # --- D. 别的节点私钥签、声称是本节点发的 → 必须拒 ----------------------
+        # 信封内容与"本节点身份"自洽（sender_node_id 写的是本节点），签名却不
+        # 出自本节点那把私钥 —— 只检查"签名与某个公钥自洽"的实现会放过它。
+        req_impostor = make_request(signer_sk=fsk_other)
+        ok, detail = _expect_contract_error(C.ERR_SIGNATURE_INVALID, call, req_impostor)
+        results.append(_report(
+            '★ 用别的节点私钥签、信封声称是本节点发的 → SIGNATURE_INVALID（签名绑住发送者身份）',
+            ok, detail,
+        ))
+
+        # --- E. 缺签名者版本：显式携带是契约（计划 §6.1）-----------------------
+        req_missing = make_request(signer_sk=fsk_v1, falcon_key_id='', falcon_key_version=None)
+        ok, detail = _rejects(C.ERR_INVALID_PARAMETER, call, req_missing, needle='FALCON')
+        results.append(_report(
+            '缺 falconKeyId / falconKeyVersion → INVALID_PARAMETER（不替调用方挑"当前生产版"）',
+            ok, detail,
+        ))
+
+        # --- F. 轮换后：拿旧私钥签、声称新版本 → 验不过（版本真的进了查询）-----
+        fpk_v2, fsk_v2 = FalconCrypto(512).generate_keypair()
+        R.rotate_public_key(
+            node, algorithm='FALCON', public_key=fpk_v2.hex(),
+            key_id='KMS010-SIGN', key_version=2,
+        )
+        req_old_sign = make_request(signer_sk=fsk_v1, falcon_key_version=2)
+        ok, detail = _expect_contract_error(C.ERR_SIGNATURE_INVALID, call, req_old_sign)
+        results.append(_report(
+            '★ v2 在产时：拿 v1 私钥签、声称 v2 → 验不过（版本真的进了验签查询，不是拿"最新一把"糊上）',
+            ok, detail,
+        ))
+        # 用 v1 私钥签、**如实声称 v1** → 现在是 KEY_VERSION_MISMATCH（v1 已 RETIRED），
+        # 而不是"验签失败"。这条把"版本转换"与"签名不对"分开 —— 两者处置不同。
+        req_retired = make_request(signer_sk=fsk_v1, falcon_key_version=1)
+        ok, detail = _expect_contract_error(C.ERR_KEY_VERSION_MISMATCH, call, req_retired)
+        results.append(_report(
+            '拿已被取代的 v1 发新信 → KEY_VERSION_MISMATCH（不是 SIGNATURE_INVALID：该换版本，不是怀疑伪造）',
+            ok, detail,
+        ))
+
+        # --- G. 轮换后正常路径仍然通，且验的是 v2 公钥 --------------------------
+        req_v2 = make_request(signer_sk=fsk_v2, falcon_key_version=2)
+        out_v2 = call(req_v2)
+        results.append(_report(
+            '★ v2 私钥签 + 声称 v2 → 通过（换一把之后判据在两个版本上各成立一次）',
+            out_v2.get('signature_verified') is True
+            and out_v2['signing_key'].key_version == 2,
+            f"verified={out_v2.get('signature_verified')} v={out_v2['signing_key'].key_version}",
+        ))
+
+        # --- H. 已回收的签名版本 → KEY_REVOKED（回收禁止新签名）----------------
+        R.revoke_public_key(
+            NodeLongTermKey.objects.get(pk=falcon_v1.pk),
+            'KMS-010 自测：回收终态',
+        )
+        R.revoke_public_key(R.require_key_version(node, 'FALCON', 'KMS010-SIGN', 2),
+                            'KMS-010 自测：撤掉在产的 v2')
+        req_revoked = make_request(signer_sk=fsk_v2, falcon_key_version=2)
+        ok, detail = _expect_contract_error(C.ERR_KEY_REVOKED, call, req_revoked)
+        results.append(_report(
+            '★ 已回收的签名版本 → KEY_REVOKED（同一个请求体在撤之前是通过的）',
+            ok, detail,
+        ))
+        results.append(_report(
+            '全部被拒之后：本组只留下成功的那两批（A 与 G），没有半行',
+            pool_rows(req_ok['batch_id']) == 1
+            and pool_rows(req_v2['batch_id']) == 1
+            and all(pool_rows(r['batch_id']) == 0 for r in (
+                req_digest, req_impostor, req_missing, req_old_sign,
+                req_retired, req_revoked,
+            )),
+            f"A={pool_rows(req_ok['batch_id'])} G={pool_rows(req_v2['batch_id'])}",
+        ))
+    finally:
+        other.delete()
+        receiver.delete()
+    return all(results)
+
+
 def _make_pool_item(node, tag, status='READY', algorithm='kyber_kem',
                     long_term_key_id=None, long_term_key_version=None):
     """一条预分配池项。字段取**最小可用集** —— 本组只关心它的 status 与长期密钥引用。"""
@@ -1526,13 +1810,21 @@ def _main():
         ("登记口不能给已有 keyId 加版本", test_register_path_cannot_add_version),
         ("回收的影响面：三个连带失效、重试补做、版本区分", test_revoke_service_impact),
         ("按显式版本取密钥：四种拒绝各自可区分（KMS-008）", test_require_key_version),
+        ("服务端验签：验不过必拒、验过才登记（KMS-010）", test_verify_node_distribution_signature),
     ]
 
     failed = []
     created = []
     try:
         for index, (name, fn) in enumerate(tests, start=1):
-            node = _make_node(f'{index:02d}')
+            # KMS-010 的验签组要落 `DistributionBatch`（user_id 非空，取
+            # `Node.sys_user_id`），所以它的两个夹具节点必须带账号映射；
+            # 其余组不需要（复用同一个 `_make_node` 也行，但那样每个节点都占
+            # 一个 sys_user 值，与"这个组用不上它"的事实不符）。
+            node = _make_node(
+                f'{index:02d}',
+                with_user=(fn is test_verify_node_distribution_signature),
+            )
             created.append(node)
             print(f"-- {name}")
             try:

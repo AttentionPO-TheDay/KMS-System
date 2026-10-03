@@ -246,8 +246,9 @@ def verify_node_envelope(envelope: Dict[str, Any], signature_b64: str,
 # ⚠️ 这里**不要**去解 `Node.falcon_private_key`。
 #    实测该列装的是 CL-Falcon 的格矩阵 {D_id, S_id, ...}（各 1024 维），
 #    与标准 Falcon DLL 不兼容 —— crypto_sign 需要 1281 字节的 NIST 私钥。
-#    标准签名密钥单独存在 `falcon_sign_private_key` / `falcon_sign_public_key`，
-#    是普通 base64 字节串，无需解压或解析结构。
+#    标准签名密钥单独存在 `falcon_sign_private_key` / `falcon_sign_public_key`。
+#    **私钥**是普通 base64 字节串（服务端自己 `generate_falcon_signing_keypair`
+#    写进去的），公钥则按"谁写的"分两种编码 —— 见各自的 `_decode_*` 说明。
 #
 #    这个区别是踩过的坑：最初按"从 falcon_private_key 里找 sk 字段"来写，
 #    在真实数据上永远解不出来，而失败被 try/except 吞掉后表现为
@@ -268,8 +269,17 @@ def _decode_falcon_private_key(raw: str) -> Optional[bytes]:
 
 
 def _decode_falcon_public_key(raw: str) -> Optional[bytes]:
-    """取节点的**标准** Falcon 签名公钥（来自 falcon_sign_public_key）。"""
-    return _decode_b64(raw)
+    """取节点的**标准** Falcon 签名公钥（来自 `Node.falcon_sign_public_key`）。
+
+    ⚠️ 这一列在**真节点上是 hex**（1794 字符，KMS-005 起节点上传的就是 hex，
+       登记层原样落库；实测库里每条都如此）。按 base64 解它**不会报编码错**：
+       1794 % 4 == 2，binascii 抛异常被吞掉 → 返回 None → 验签 False，
+       看起来完全像"签名无效/信封被篡改"（安全事件），实际只是编码不对。
+       KMS-010 实测踩中：被签字段补齐之后取件口**仍然 403**，
+       排查到的原因就是这里——所以按**形状**认编码（与
+       `_decode_registry_key_material` 同一套判法），而不是假定调用方给的是哪一种。
+    """
+    return _decode_registry_key_material(raw)
 
 
 def _decode_registry_key_material(raw: str) -> Optional[bytes]:

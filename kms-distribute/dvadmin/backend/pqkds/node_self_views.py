@@ -656,12 +656,19 @@ def node_self_distributions(request, identity):
       "protectionAlgorithm": "KYBER",      // SM2 / SSCL / KYBER（规范名）
       "recipientKeyId": "KRB-XXXX-KYBER-ab12cd34",
       "recipientKeyVersion": 1,
+      "falconKeyId": "KRB-XXXX-FALCON-4b7e1b0a",   // 发送方用于签名的 Falcon 密钥（KMS-010）
+      "falconKeyVersion": 1,
       "batchId": "dist-20261003153012-4b7e1b0a",
       "expiresAt": "2026-10-04T15:30:12+08:00",
       "envelope": { ... },                 // 节点用接收方那一版公钥封好的密文
       "signature": "<base64>",             // 节点用本地 Falcon 私钥对规范字节串的签名
       "keyHash": "<64 位十六进制>" }        // SM4 载荷密钥的 SHA256（接收方自查用）
     ```
+
+    ⚠️ `falconKeyId` / `falconKeyVersion` 必须与**签名时用的那把**一致：
+       服务端按它们查公钥验签（计划 §6.1「所有请求显式携带版本」）。
+       缺了它们无从得知是哪把私钥签的 —— 按"当前生产版本"替调用方猜会
+       在并发轮换时验到另一把上，报成"签名无效"（像伪造）。
 
     <h2>与旧 `POST /key-pool/distribute-to-user/` 的差别（这就是"新契约"）</h2>
     1. **没有 `source_key_id`** —— 发送方不再需要一把"给自己解封"的用户密钥。
@@ -684,9 +691,12 @@ def node_self_distributions(request, identity):
        服务端就不能在事后赋值。服务端仍校验形状与上界（"客户端给值"不等于
        "客户端说了算"）。
 
-    ⚠️ **验签是 KMS-010**：本阶段只强制"必须带签名"（没签名直接拒），
-       还没做密码学验证 —— 那一步落地时本接口不用改（服务层已经收好了
-       `signature` 与规范字段）。
+    <h2>KMS-010：服务端**验签**（本接口从"只收签名"升级为"验过才收"）</h2>
+    信封必须用 `falconKeyId` / `falconKeyVersion` 指定的那一版发送方 Falcon
+    公钥验得过才登记；验不过一律拒（`SIGNATURE_INVALID`），且**一条池行都不留下**。
+    验签覆盖收发节点、保护算法、接收方 keyId 与版本、密文摘要、载荷密钥哈希、
+    批次号与有效期 —— 改任何一个被签字段都会验不过。
+    通过后回执里如实给 `signatureVerified: true`（只有验过才可能被回）。
 
     <h2>身份与权限</h2>
     发送方 = 令牌映射到的节点（前端传不了，也不该传）。需要：
@@ -747,6 +757,16 @@ def node_self_distributions(request, identity):
             else payload.get('batch_id'),
             expires_at=payload.get('expiresAt') if payload.get('expiresAt') is not None
             else payload.get('expires_at'),
+            # KMS-010：**签名者那一版** Falcon 长期密钥，由请求显式给出。
+            # ⚠️ 与 `keyVersion` 同一套读法：先驼峰、再 snake_case，用
+            #    `is not None` 而不是 `or` 兜底 —— 后者会把 `0` 吞成"没提供"。
+            #    版本 0 本来就非法（`_as_version` 拒），但读法不一致的代价是
+            #    两个字段在同一份请求里行为不同，将来没人记得住哪条是哪条。
+            falcon_key_id=payload.get('falconKeyId') if payload.get('falconKeyId') is not None
+            else payload.get('falcon_key_id'),
+            falcon_key_version=payload.get('falconKeyVersion')
+            if payload.get('falconKeyVersion') is not None
+            else payload.get('falcon_key_version'),
             # KMS-009：这三样由**节点**产出（本地封装 + 本地签名），
             # 服务端只登记。见该 service 的 docstring。
             envelope=payload.get('envelope'),
@@ -780,12 +800,18 @@ def node_self_distributions(request, identity):
             # 空串 = 存证未成功（链不可用等）。**不隐藏**：
             # 前端据此如实显示"已分发，但存证未成功"，而不是混成一句"成功"。
             'chainHash': result['chain_hash'] or '',
-            # KMS-009：信封确实带着发送节点的签名 —— 但**本阶段还没验签**
-            # （那是 KMS-010）。所以这里如实回 `signaturePresent`（有没有带）
-            # 而不是 `signatureVerified`（验没验过）：后者现在恒为假，
-            # 回一个假的字段比不回更糟 —— 它会被当成"验过了但不通过"。
+            # KMS-010：验签真实发生了，且这一条只有**验过**才可能被回。
+            # 失败在服务层就抛 `SIGNATURE_INVALID` 了，走不到这里 ——
+            # 所以它不是"声明"，是"这一步已经过去了"。
+            'signatureVerified': bool(result.get('signature_verified')),
+            # 回显**验签实际用的**那一版签名密钥：页面显示"用哪把验的"，
+            # 与请求里给的那一版逐字段对得上（对不上就说明请求的版本没进验签）。
+            'falconKeyId': result['signing_key'].key_id,
+            'falconKeyVersion': result['signing_key'].key_version,
+            # 保留 `signaturePresent`（KMS-009 起就有）：它是"有没有带"的如实回答，
+            # 与"验没验过"是两个问题。既有调用方若只看这一个字段，行为不变。
             'signaturePresent': True,
             'status': 'success',
         },
-        msg='分发完成',
+        msg='分发完成（信封已验签）',
     )

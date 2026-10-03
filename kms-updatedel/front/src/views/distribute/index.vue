@@ -146,11 +146,14 @@
                 （{{ result.protectionLabel }}）封好会话密钥，交给 {{ result.receiverNodeName }}。
               </p>
               <p>有效期至 {{ formatTime(result.expiresAt) }}；登记会话 {{ result.sessionCount }} 条。</p>
-              <p v-if="result.signaturePresent">
-                信封已用本机 Falcon 私钥签名（载荷密钥哈希 <code>{{ result.localKeyHash }}</code>）——
-                <span class="muted">服务端此刻只登记、还没验签，验签是下一步（KMS-010）。</span>
+              <p v-if="result.signatureVerified">
+                <b>服务端已验签通过</b>：信封用本机 Falcon 密钥
+                <code>{{ result.falconKeyId }} v{{ result.falconKeyVersion }}</code> 签名，
+                并由服务端按**同一版公钥**验证（载荷密钥哈希 <code>{{ result.localKeyHash }}</code>）。
               </p>
-              <p v-else class="muted">⚠️ 服务端未回执"已带签名"，请把这条报给维护者。</p>
+              <p v-else class="muted">
+                ⚠️ 服务端未回执"已验签"，请把这条报给维护者（验过的请求才可能回这个字段）。
+              </p>
               <p v-if="result.chainHash">链上存证：{{ result.chainHash }}</p>
               <!-- ⚠️ 存证没成功**如实说**，不与"分发成功"混成一句 ——
                    分发本身已经成立（信封落库、接收方能取），缺的是审计那一半。 -->
@@ -216,7 +219,7 @@
  *   1. 生成 16 字节 SM4 载荷密钥；
  *   2. 用接收方**那一版**公钥封好（`provider.wrapForPeer`）；
  *   3. 用**本机 Falcon 私钥**签名（`signNodeEnvelope`）。
- * 服务端只登记，从此拿不到 SM4 明文（计划 §2.1）。
+ * 服务端验签并登记（KMS-010），从此拿不到 SM4 明文（计划 §2.1）。
  *
  * 三条由服务端保证、前端只做体验优化：
  *   * 接收节点的密钥列表要对它有**授权**才拿得到（未授权 403）；
@@ -476,6 +479,11 @@ async function handleDistribute() {
       protectionAlgorithm: form.protectionAlgorithm,
       recipientKeyId: parsed.keyId,
       recipientKeyVersion: parsed.keyVersion,
+      // KMS-010：把**本机签名用的那一版** Falcon 一并交上去 —— 服务端按它
+      // 查公钥验签（计划 §6.1）。两者必须同源：都是上面那把 `falconKey`，
+      // 页面不另选一把、服务端也不替它挑"当前生产版本"。
+      falconKeyId: falconKey.value.keyId,
+      falconKeyVersion: falconKey.value.keyVersion,
       batchId,
       expiresAt,
       envelope,
@@ -492,7 +500,10 @@ async function handleDistribute() {
       sessionCount: data?.sessionCount ?? 0,
       expiresAt: data?.expiresAt,
       chainHash: data?.chainHash || '',
-      signaturePresent: Boolean(data?.signaturePresent),
+      // KMS-010：服务端**验过签**才回这个字段（验不过的请求在服务端就被拒、走不到这里）。
+      signatureVerified: Boolean(data?.signatureVerified),
+      falconKeyId: data?.falconKeyId || falconKey.value.keyId,
+      falconKeyVersion: data?.falconKeyVersion ?? falconKey.value.keyVersion,
       localKeyHash: keyHash
     }
     ElMessage.success('分发完成')
@@ -535,6 +546,8 @@ function describeError(error) {
       return '该算法不能用于保护会话密钥（Falcon 只做签名）。请选 SM2 / SSCL / Kyber。'
     case 'SIGNATURE_REQUIRED':
       return '服务端没有收到签名。本机这把 Falcon 私钥可能不在密钥库里（换过设备或清过数据）—— 请在本机重新生成一把 Falcon 密钥后再分发。'
+    case 'SIGNATURE_INVALID':
+      return '服务端验签没通过（信封内容与本机签名对不上）。最可能的两种原因：本机这把 Falcon 私钥与登记的那一版不是一对（重新生成过），或信封在本机之外被改动过。请刷新后重试；若仍失败，把这一步报给维护者。'
     case 'ENVELOPE_TAMPERED':
       return '信封的摘要与服务端重算的对不上（两侧的规范化序列化口径可能漂移了）。这是实现问题，请把它报给维护者，不要重试。'
     case 'INVALID_PARAMETER':

@@ -595,14 +595,22 @@ def distribute_to_user(request, identity):
                 # 若签原文，验签时拿存储值反推必然重建不出同一份字节串
                 # （自己签的信自己验不过）。摘要只取决于内层密文，与签名本身无关。
                 inner_json = envelope_to_json(user_envelope)
-                envelope_for_sign = {
+                # ⚠️ KMS-010：这些字段不只是"签名时的输入"，还**必须随信封落库**
+                #    （见下面 `user_envelope.update(sign_fields)` 那段）。分出来
+                #    写就是为了让"签了什么"与"存了什么"从同一个对象出发 ——
+                #    两处各写一份字面量，改一处漏一处，表现是"自己签的信自己
+                #    验不过"，而验不过看起来像伪造（安全事件）。
+                sign_fields = {
                     'batch_id': batch_id,
                     'wrapping_algorithm': wrapping_algorithm,
                     'payload_algorithm': PAYLOAD_ALGORITHM_SM4,
                     'recipient_user_id': user_id,
-                    'ciphertext_digest': ciphertext_digest(inner_json),
                     'source_key_id': source_key_id,
                     'expires_at': expires_at.isoformat(),
+                }
+                envelope_for_sign = {
+                    **sign_fields,
+                    'ciphertext_digest': ciphertext_digest(inner_json),
                 }
                 last_envelope_digest = envelope_for_sign['ciphertext_digest']
                 if sender_node is not None and sender_node.falcon_sign_private_key:
@@ -616,9 +624,28 @@ def distribute_to_user(request, identity):
                         # 从内层密文现算也行，但那样"摘要算法变了"会让
                         # 历史信封全部验不过 —— 存下来更稳。
                         user_envelope['ciphertext_digest'] = envelope_for_sign['ciphertext_digest']
+                        # ⚠️ KMS-010：被签的字段**整体随信封落库**。
+                        #
+                        # 不这么做会怎样（实测过的既有断口，KMS-007 复核时发现）：
+                        # 验签侧 `_verify_envelope_signature` 是拿**库里的信封
+                        # JSON** 重建被签字节串的（`payload.get('batch_id')` …），
+                        # 而这里只存了密文与摘要 —— 另外五个字段从没进过 JSON，
+                        # 重建时全是 `None`，于是「自己签的信，自己验不过」，
+                        # `GET /user-symmetric-keys/<id>/` 一律 403 拒交密文：
+                        # 用户腿的信封**根本取不出来**，而每一处日志只有"403"。
+                        #
+                        # 连带约束：`_envelope_summary` / 前端列表也会读到这些
+                        # 字段（batchId 等），这是**加字段**而不是改含义，既有
+                        # 读取方不受影响。日期经 `isoformat` 落库，
+                        # `datetime.fromisoformat` 读回来逐字符相同 —— USE_TZ=False，
+                        # 库里与这里都是朴素本地时间，不存在时区换算导致的不等。
+                        user_envelope.update(sign_fields)
                     else:
                         # 签不出来就**不写**签名字段 —— 写个空串会让验签侧
                         # 以为"有签名但没通过"，与"根本没签"是两回事。
+                        # 被签字段也就**不落库**：没有签名时它们没有被签的事实，
+                        # 存下来只会让人误以为"签过"（验签侧对无签名信封报
+                        # 'missing'，不会因此拒发）。
                         logger.warning('批次 %s：发送方 %s 签名失败，该信封将不含签名',
                                        batch_id, sender_node.node_id)
 
