@@ -87,6 +87,15 @@ public class UpdatedelChainConsumer {
                     || ChainSyncEvent.TYPE_KEY_REVOKED.equals(actionType)
                     || ChainSyncEvent.TYPE_KEY_CREATED.equals(actionType)) {
                     taskCount += handleKeys(actionType, event.getKeys());
+                } else if (ChainSyncEvent.SESSION_TRAIL_ONLY_TYPES.contains(actionType)) {
+                    // KMS-014：三个会话类事件**显式**只留痕、不改状态 ——
+                    // 会话状态由 PQKDS 侧的状态机负责（链上消费者若也去改，
+                    // 系统里就有两套"会话现在是什么状态"的答案）。
+                    // 写成显式分支而不是靠 else 兜底：兜底分支的语义是
+                    // "不认识"，而这三个是**认识的**，只是不该动状态 ——
+                    // 混在一起之后，"新增事件忘了处理"与"刻意不处理"就无法区分。
+                    log.info("UpdatedelChainConsumer session event trail-only, actionType={} keys={}",
+                        actionType, event.getKeys().size());
                 } else {
                     // KEY_DISTRIBUTED 由分发模块产生，尚未接通投递（见 §8.6 的说明），
                     // 这里如实记 info 而不是 debug：否则"事件投递了却什么都没发生"

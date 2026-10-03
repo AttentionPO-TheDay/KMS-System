@@ -5,11 +5,29 @@
         <div class="la-header">
           <h2>泄漏关联分析</h2>
           <div class="la-query">
+            <!-- KMS-014：两类密钥的关联面**在不同表**里（用户密钥 = kms.keymanage、
+                 节点长期密钥 = falcon_kds.NodeLongTermKey），keyId 空间也不同
+                 （数字 vs 形如 KRb-XX-KYBER-1a2b3c4d 的字符串）。后端因此分成
+                 两个入口；这里显式选，避免"输入框填错表 → 查到空、看起来像没泄漏"。
+                 KMS-008 之后的节点到节点分发**完全不用用户密钥**，处置节点密钥
+                 泄漏要选第二项。 -->
+            <el-radio-group v-model="space" size="small">
+              <el-radio-button value="user">用户密钥</el-radio-button>
+              <el-radio-button value="node">节点长期密钥</el-radio-button>
+            </el-radio-group>
             <el-input
               v-model="keyId"
-              placeholder="输入疑遭泄漏的密钥ID"
+              :placeholder="space === 'user' ? '输入疑遭泄漏的用户密钥ID（数字）' : '输入节点长期密钥 keyId'"
               clearable
-              style="width: 200px"
+              style="width: 240px"
+              @keyup.enter="load"
+            />
+            <el-input
+              v-if="space === 'node'"
+              v-model="version"
+              placeholder="版本（留空=全部版本）"
+              clearable
+              style="width: 170px"
               @keyup.enter="load"
             />
             <el-button type="primary" icon="Search" :loading="loading" @click="load">分析</el-button>
@@ -89,10 +107,13 @@
 import { onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { getKeymanageAnalysis } from '@/api/lifecycle/lifecycle'
+import { getKeymanageAnalysis, getNodeKeyAnalysis } from '@/api/lifecycle/lifecycle'
 
 const route = useRoute()
 const keyId = ref('')
+/** KMS-014：'user' = 用户密钥（kms.keymanage）；'node' = 节点长期密钥。 */
+const space = ref('user')
+const version = ref('')
 const loading = ref(false)
 const base = ref(null)
 const footprints = ref([])
@@ -134,7 +155,11 @@ async function load() {
   footprintCols.value = []
   trailCols.value = []
   try {
-    const res = await getKeymanageAnalysis(id)
+    // 两条入口的响应形状一致（同一 DTO）；分流只决定走哪个标识空间，
+    // 见 KMS-014 在 `LifecycleService.getNodeKeyLeakAnalysis` 的说明。
+    const res = space.value === 'node'
+      ? await getNodeKeyAnalysis(id, version.value ? Number(version.value) : undefined)
+      : await getKeymanageAnalysis(id)
     if (res?.code && res.code !== 200) {
       ElMessage.error(res.msg || '分析失败')
       return

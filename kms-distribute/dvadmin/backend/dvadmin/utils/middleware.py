@@ -10,7 +10,17 @@ class ApiLoggingMiddleware(MiddlewareMixin):
         super().__init__(get_response)
         self.enable = getattr(settings, 'API_LOG_ENABLE', None) or False
         self.methods = getattr(settings, 'API_LOG_METHODS', None) or set()
-        self.operation_log_id = None
+        # ⚠️ KMS-014 修：审计行 id 过去挂在**中间件实例**上（第 13 行原本是
+        # `self.operation_log_id = None`）。中间件实例是**进程级**的（启动时
+        # 实例化一次），于是这个 id 在请求之间残留：`process_view` 只对 DRF
+        # ViewSet（有 `cls.queryset`）新建行，**函数视图**（如 `/node-self/*`
+        # 的验签/确认/关闭）永远拿不到自己的 id，响应阶段就用
+        # `update_or_create(id=<上一个 ViewSet 请求留下的 id>)` **覆盖别人的
+        # 审计行**。实测表现（KMS-014 验收）：篡改被拒（ENVELOPE_TAMPERED）与
+        # 越权确认（NOT_SESSION_PARTY）在那之前/之后的请求覆盖掉，审计表里
+        # 查不到它们 —— 而"越权、篡改必须有拒绝和审计记录"正是阶段 6 的出口
+        # 判据。改成把 id 放在 **request 上**：每个请求各归各行，函数视图
+        # 响应阶段 `id=None` → 新建自己的行。
     @classmethod
     def __handle_request(cls, request):
         request.request_ip = get_request_ip(request)
@@ -46,14 +56,18 @@ class ApiLoggingMiddleware(MiddlewareMixin):
 
         # 处理数据库连接问题
         from django.db import connection
+        # KMS-014：id 从 **request** 上取（见 `__init__` 的说明）——函数视图没有
+        # 预建行，这里是 None，于是 update_or_create **新建**属于本请求的行，
+        # 而不是覆盖上一个请求的审计记录。
+        log_id = getattr(request, 'operation_log_id', None)
         try:
-            operation_log, creat = OperationLog.objects.update_or_create(defaults=info, id=self.operation_log_id)
+            operation_log, creat = OperationLog.objects.update_or_create(defaults=info, id=log_id)
         except Exception as e:
             if 'Server has gone away' in str(e) or '2006' in str(e):
                 # 连接断开，关闭并重新连接
                 connection.close()
                 try:
-                    operation_log, creat = OperationLog.objects.update_or_create(defaults=info, id=self.operation_log_id)
+                    operation_log, creat = OperationLog.objects.update_or_create(defaults=info, id=log_id)
                 except Exception as retry_error:
                     # 重试失败，记录错误但不中断响应
                     import logging
@@ -104,14 +118,15 @@ class ApiLoggingMiddleware(MiddlewareMixin):
                     log = OperationLog(request_modular=get_verbose_name(view_func.cls.queryset))
                     try:
                         log.save()
-                        self.operation_log_id = log.id
+                        # KMS-014：挂到 **request** 上（不是 self 上 —— 见 __init__）。
+                        request.operation_log_id = log.id
                     except Exception as e:
                         if 'Server has gone away' in str(e) or '2006' in str(e):
                             from django.db import connection
                             connection.close()
                             try:
                                 log.save()
-                                self.operation_log_id = log.id
+                                request.operation_log_id = log.id
                             except Exception:
                                 pass
                         else:

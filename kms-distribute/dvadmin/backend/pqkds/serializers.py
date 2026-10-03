@@ -155,6 +155,15 @@ class TransactionSerializer(CustomModelSerializer):
 class SessionKeySerializer(CustomModelSerializer):
     node1_name = serializers.CharField(source='node1.node_id', read_only=True)
     node2_name = serializers.CharField(source='node2.node_id', read_only=True)
+    # KMS-014：监管页五态读数（已登记/已验签/已解封/已建立/已上链）。
+    # 由 `SessionKey.evidence_state()` 从 `lifecycle_evidence` 算 ——
+    # **不**从 status 反推：关闭/撤销后 status 只剩终态标记，
+    # "走到过哪一步"会静默丢失。
+    evidence_state = serializers.SerializerMethodField()
+
+    def get_evidence_state(self, obj):
+        return obj.evidence_state()
+
     class Meta:
         model = SessionKey
         fields = '__all__'

@@ -62,6 +62,10 @@ const DOMAIN = 'kms013'
 
 const POOL_TABLE = 'falcon_kds.dvadmin_pqkds_pre_distributed_keys'
 
+// KMS-014：`/key-pool/*` 不再是匿名命名空间（收口前未认证即可消费密钥）。
+// 本脚本用**管理员令牌**调用（管理员不受"节点对一方"限制，正好适合做夹具）。
+let adminTokenForPool = ''
+
 /**
  * 容器内跑一段 Django ORM 脚本。
  * 沿用 KMS-011 建立的两段式夹具做法：js 拼 SQL 去改 JSON 字段会因引号转义
@@ -93,6 +97,8 @@ const pairReadyCount = (a, b) => Number(sqlScalar(
 
 const consumeHttp = (node1, node2) => api(PQKDS, '/key-pool/consume/', {
   method: 'POST',
+  // KMS-014：必须是登录身份（本脚本用管理员令牌）。
+  token: adminTokenForPool,
   body: { node1_id: node1, node2_id: node2 }
 })
 
@@ -100,14 +106,18 @@ const consumeHttp = (node1, node2) => api(PQKDS, '/key-pool/consume/', {
  * 在**独立 node 子进程**里发一次消费请求 —— 每个子进程是独立进程、独立连接，
  * 这就是"真并发"与"同一进程里连调两次"的区别所在。用 `process.execPath`
  * 而不是裸 `node`：新 shell 里 node 不在 PATH（本仓库踩过的坑）。
+ * ⚠️ KMS-014 起 `/key-pool/*` 要登录：令牌必须**带进子进程**
+ *（拼在源码里），否则 8 个"并发"会整齐地拿到"未登录"——
+ * 那看起来像"恰好 N 个都失败的并发测试"，实际一条都没摸到消费路径。
  */
 function consumeInChild(node1, node2) {
   const url = `${PQKDS}/key-pool/consume/`
   const body = JSON.stringify({ node1_id: node1, node2_id: node2 })
+  const token = JSON.stringify(adminTokenForPool)
   const code = `
     fetch(${JSON.stringify(url)}, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + ${token} },
       body: ${JSON.stringify(body)}
     }).then((r) => r.json())
       .then((b) => process.stdout.write(JSON.stringify(b)))
@@ -130,7 +140,10 @@ title('1. ★ 部署探针：consume 不再报 NameError（跑的是 KMS-013 之
 info('KMS-013 之前这条路**从未成功执行过**：常量是类属性而函数里用了裸名，')
 info("HTTP 层把它收成「密钥取用失败: name 'POOL_STATUS_READY_VALUES' is not defined」。")
 info('探针不碰真数据（节点对不存在）—— 老错误串还在，说明镜像没重建。')
+info('KMS-014：/key-pool/* 要登录了，令牌先取（管理员不受节点对限制，')
+info('      探针与后续夹具都用它）。')
 
+adminTokenForPool = await adminLogin()
 const probe1 = await consumeHttp('probe-not-a-node-a', 'probe-not-a-node-b')
 const probeText = String(probe1.body?.msg || '')
 check('★ consume 已部署：不再出现 "is not defined"（断口 1 已修）',
@@ -140,7 +153,7 @@ check('★ 如实报"没有可用"并带可编程码 POOL_ITEM_UNAVAILABLE（断
   !isOk(probe1.body) && probeText.includes('POOL_ITEM_UNAVAILABLE'),
   `msg=${probeText.slice(0, 110)}`)
 
-const probe2 = await api(PQKDS, '/key-pool/consume/', { method: 'POST', body: {} })
+const probe2 = await api(PQKDS, '/key-pool/consume/', { method: 'POST', token: adminTokenForPool, body: {} })
 check('缺参数仍是明确的参数错误（探针没有把校验路径吃掉）',
   String(probe2.body?.msg || '').includes('缺少 node1_id 或 node2_id'),
   `msg=${String(probe2.body?.msg || '').slice(0, 60)}`)
@@ -150,7 +163,7 @@ check('缺参数仍是明确的参数错误（探针没有把校验路径吃掉�
 // ---------------------------------------------------------------------------
 title('2. 夹具：A/B 两个真节点（登记四套并完成 init —— 预分配要求 KYBER 可用）')
 
-const adminToken = await adminLogin()
+const adminToken = adminTokenForPool  // 第 1 节已登录，不重复登录
 const nodeA = await newNodeSession(adminToken, { prefix: 'K13A', name: 'KMS-013 节点A', domainId: DOMAIN })
 const nodeB = await newNodeSession(adminToken, { prefix: 'K13B', name: 'KMS-013 节点B', domainId: DOMAIN })
 check('两个节点已建好并激活', Boolean(nodeA.token && nodeB.token),
@@ -204,6 +217,7 @@ title('3. 预分配一批（HTTP /key-pool/generate/）→ 池项回填接收方
 
 const genBatch = (count) => api(PQKDS, '/key-pool/generate/', {
   method: 'POST',
+  token: adminTokenForPool,
   body: { node1_id: nodeA.nodeId, node2_id: nodeB.nodeId, algorithm: 'kyber_kem', count }
 })
 
@@ -224,7 +238,7 @@ check('★ 池项回填了接收方（B）的 KYBER 引用（回收精确失效�
 // ---------------------------------------------------------------------------
 title('4. 列表下发真实状态与接收密钥版本（计划 §8.4）')
 
-const listRes = await api(PQKDS, `/key-pool/?pool_id=${encodeURIComponent(pool3)}&page=1&limit=50`)
+const listRes = await api(PQKDS, `/key-pool/?pool_id=${encodeURIComponent(pool3)}&page=1&limit=50`, { token: adminTokenForPool })
 const listItems = listRes.body?.data || []
 const row3 = listItems[0] || {}
 check('列表返回该批次的池项（3 条）', listItems.length === 3, `count=${listItems.length}`)
@@ -348,7 +362,7 @@ check('过期行原状（消费不动它，过期不是消费）',
 // "取不出来"是同一个结论（口径一致的可观测形式）。
 // ⚠️ 不能反过来先读列表再消费：那次加载会把夹具行删掉，下面的断言
 // 会以"读到 null"的方式失败，看起来像消费坏了。
-const expiredRow = await api(PQKDS, '/key-pool/?pool_id=TESTKMS013-expired&page=1&limit=5')
+const expiredRow = await api(PQKDS, '/key-pool/?pool_id=TESTKMS013-expired&page=1&limit=5', { token: adminTokenForPool })
 const expiredItem = (expiredRow.body?.data || [])[0] || {}
 const expiredRemaining = sqlScalar(
   `SELECT COUNT(*) FROM ${POOL_TABLE} WHERE pool_id='TESTKMS013-expired';`)
@@ -490,7 +504,7 @@ print('EXPIRED2_OK')
 check('夹具：一条已过期、无长期密钥引用的 READY 行', ormExpired2.includes('EXPIRED2_OK'),
   ormExpired2.trim().split('\n')[-1])
 
-const cleanupRes = await api(PQKDS, '/key-pool/cleanup/', { method: 'POST' })
+const cleanupRes = await api(PQKDS, '/key-pool/cleanup/', { method: 'POST', token: adminTokenForPool })
 check('cleanup 调用成功（cleaned ≥ 1）', isOk(cleanupRes.body),
   `msg=${cleanupRes.body?.msg}`)
 check('★ 过期未用行被清掉',
@@ -508,7 +522,7 @@ check('★ 已消费行**必须还在**（它是"被哪次会话用掉"的历史
 // ---------------------------------------------------------------------------
 title('11. 统计口径：reserved 恒 0（保留值），三个读数与库内同一套判据')
 
-const stats = await api(PQKDS, '/key-pool/stats/')
+const stats = await api(PQKDS, '/key-pool/stats/', { token: adminTokenForPool })
 check('stats 返回 reserved/revoked 两个新读数（reserved 是保留值）',
   isOk(stats.body) && stats.body?.data?.reserved === 0
   && Number.isInteger(stats.body?.data?.revoked)

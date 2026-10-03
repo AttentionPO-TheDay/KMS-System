@@ -601,6 +601,7 @@ check('① 正对照：回收前 B 能取到信封（HTTP 200 + code 200 + items
 //    ⚠️ count 显式给 1：缺省是 50，白造 50 条池项。
 const ep4Pos = await api(PQKDS, '/key-pool/distribute/', {
   method: 'POST',
+  token: adminToken,
   body: { sender_node_id: nodeA.nodeId, receiver_node_id: nodeB.nodeId, count: 1 }
 })
 check('④ 正对照：回收前 A→B 的线上预分配成功（闸门在发送方，此刻它是好的）',
@@ -804,6 +805,8 @@ info('  恒回 generated=0，拿它当对照只会空洞地通过 —— 详见�
 //    ⚠️ 不传令牌：`KeyPoolViewSet.get_permissions` 返回空列表，这个命名空间本来就不鉴权。
 const kyberGen = (count) => api(PQKDS, '/key-pool/generate/', {
   method: 'POST',
+  // KMS-014：/key-pool/* 收口为登录命名空间（带管理员令牌）。
+  token: adminToken,
   body: { node1_id: nodeA.nodeId, node2_id: nodeB.nodeId, algorithm: 'kyber_kem', count }
 })
 
@@ -1033,6 +1036,7 @@ check('★ ② 失败腿没有落下任何属于 B 的池行（failed[] 里那�
 // ③ 预分配（key-pool 约定：HTTP 恒 200、code=400、错误码**没有字段**、只在 msg 文本里）
 const ep3 = await api(PQKDS, '/key-pool/generate/', {
   method: 'POST',
+  token: adminToken,
   body: { node1_id: nodeA.nodeId, node2_id: nodeB.nodeId, algorithm: 'kyber_kem', count: 1 }
 })
 check('③ /key-pool/generate/：code=400，且 msg 里指名 KEY_REVOKED（这个命名空间没有错误码字段）',
@@ -1055,6 +1059,7 @@ check('★ ③ 被拒之后该节点对（A,B）的全局池行数**一条都没
 // ④ 线上预分配（闸门在**发送方**：这一支撤的是 B 的密钥，所以让 B 当 sender）
 const ep4 = await api(PQKDS, '/key-pool/distribute/', {
   method: 'POST',
+  token: adminToken,
   body: { sender_node_id: nodeB.nodeId, receiver_node_id: nodeA.nodeId, count: 1 }
 })
 check('④ /key-pool/distribute/：闸门在发送方，code=400 且 msg 里指名 KEY_REVOKED',

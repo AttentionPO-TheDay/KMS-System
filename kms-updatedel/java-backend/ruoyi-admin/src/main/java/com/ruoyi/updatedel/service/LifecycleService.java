@@ -242,6 +242,123 @@ public class LifecycleService {
     }
 
     /**
+     * KMS-014（计划 §7 阶段 6「泄漏分析按具体密钥版本追踪受影响信封、池项和会话」）
+     * ：以**节点长期密钥**（`NodeLongTermKey` 的 keyId + 版本）为线索的泄漏分析。
+     *
+     * <p>为什么需要第二条入口，而不是把 keyId 塞进现有那个
+     * -------------------------------------------------------
+     * 主 KMS 的 `keymanage.key_id`（bigint）与分发模块 `NodeLongTermKey.key_id`
+     * （字符串，如 `KRB-XXXX-KYBER-1a2b3c4d`）是**两个不同的标识空间**：
+     * 前者是用户密钥，后者是节点长期密钥。KMS-008 之后的节点到节点分发
+     * **完全不用用户密钥**（`source_key_id` 为 NULL 是如实记录），
+     * 所以"某把用户密钥的泄漏分析里没有新批次"是对的 —— 新批次跟它无关。
+     * 真正的处置问题变成了："**某台节点的某版长期密钥**泄漏了，
+     * 哪些信封/池项/会话受影响、该失效什么。"
+     *
+     * <p>这正是 KMS-008 如实记录的过渡缺口所指的关联键
+     * （`PreDistributedKey.long_term_key_id/version`、`SessionKey.recipient_key_id/
+     * recipient_key_version` 与 `falcon_key_id/falcon_key_version`）。
+     *
+     * <p>查询与 `getAssociationAnalysis` 同一条纪律：跨库只读、失败不让整体失败
+     * （每一段各自 catch 后置空并记 warning —— "分析少一段"仍比"分析整体 500"有用）。
+     *
+     * @param longTermKeyId 节点长期密钥的业务 keyId（字符串，逐字比对）
+     * @param version       版本；0 或缺省表示**该 keyId 的全部版本**（keyId 本身
+     *                      在 KMS-006 的模型里标识一把密钥，版本才是一次换代）
+     */
+    public KeyAnalysisResultDto getNodeKeyLeakAnalysis(String longTermKeyId, Integer version) {
+        KeyAnalysisResultDto result = new KeyAnalysisResultDto();
+        String kid = longTermKeyId == null ? "" : longTermKeyId.trim();
+        if (kid.isEmpty()) {
+            return result;
+        }
+        Integer ver = (version == null || version <= 0) ? null : version;
+        String verClause = ver == null ? "" : " AND long_term_key_version = ? ";
+
+        // ---- 信封（新模型里信封就是池项行；按 KMS-010 的口径逐字比对）----
+        String envelopeSql =
+            "SELECT p.pool_id, p.key_index, p.status, p.long_term_key_id, p.long_term_key_version, " +
+            "       p.expires_at " +
+            "FROM falcon_kds.dvadmin_pqkds_pre_distributed_keys p " +
+            "WHERE p.recipient_type = 'node' AND p.long_term_key_id = ? " + verClause +
+            "ORDER BY p.create_datetime DESC LIMIT 200";
+        try {
+            result.setDistributeFootprints(ver == null
+                ? jdbcTemplate.queryForList(envelopeSql, kid)
+                : jdbcTemplate.queryForList(envelopeSql, kid, ver));
+        } catch (RuntimeException ex) {
+            log.warn("节点密钥泄漏分析：信封查询失败 keyId={} v={} err={}", kid, ver, ex.getMessage());
+            result.setDistributeFootprints(Collections.emptyList());
+        }
+
+        // ---- 池项：仍可取用的（READY 含旧拼写；已消费的是历史事实）----
+        String poolSql =
+            "SELECT p.pool_id, COUNT(*) AS item_count, p.status " +
+            "FROM falcon_kds.dvadmin_pqkds_pre_distributed_keys p " +
+            "WHERE p.long_term_key_id = ? " + verClause +
+            "  AND p.status IN ('READY','unused','RESERVED') " +
+            "GROUP BY p.pool_id, p.status ORDER BY p.pool_id";
+        try {
+            result.setAffectedPoolItems(ver == null
+                ? jdbcTemplate.queryForList(poolSql, kid)
+                : jdbcTemplate.queryForList(poolSql, kid, ver));
+        } catch (RuntimeException ex) {
+            log.warn("节点密钥泄漏分析：池项查询失败 keyId={} v={} err={}", kid, ver, ex.getMessage());
+            result.setAffectedPoolItems(Collections.emptyList());
+        }
+
+        // ---- 会话：两处引用都要查（接收方保护密钥 / 发送方签名密钥）----
+        String sessionSql =
+            "SELECT s.session_id, s.status, s.session_type, " +
+            "       s.recipient_key_id, s.recipient_key_version, " +
+            "       s.falcon_key_id, s.falcon_key_version, " +
+            "       n1.node_id AS sender_node_id, n2.node_id AS receiver_node_id " +
+            "FROM falcon_kds.dvadmin_pqkds_session_keys s " +
+            "JOIN falcon_kds.dvadmin_pqkds_nodes n1 ON n1.id = s.node1_id " +
+            "JOIN falcon_kds.dvadmin_pqkds_nodes n2 ON n2.id = s.node2_id " +
+            "WHERE (s.recipient_key_id = ?" + (ver == null ? "" : " AND s.recipient_key_version = ?") + ") " +
+            "   OR (s.falcon_key_id = ?" + (ver == null ? "" : " AND s.falcon_key_version = ?") + ") " +
+            "ORDER BY s.create_datetime DESC LIMIT 200";
+        try {
+            List<Object> args = new ArrayList<>();
+            args.add(kid);
+            if (ver != null) {
+                args.add(ver);
+            }
+            args.add(kid);
+            if (ver != null) {
+                args.add(ver);
+            }
+            result.setOperationTrails(jdbcTemplate.queryForList(sessionSql, args.toArray()));
+        } catch (RuntimeException ex) {
+            log.warn("节点密钥泄漏分析：会话查询失败 keyId={} v={} err={}", kid, ver, ex.getMessage());
+            result.setOperationTrails(Collections.emptyList());
+        }
+
+        // ---- 受影响节点：引用过这一版的所有节点（去重）----
+        String nodeSql =
+            "SELECT DISTINCT n.node_id, n.name, n.permission_level, n.domain_id " +
+            "FROM falcon_kds.dvadmin_pqkds_nodes n " +
+            "WHERE n.id IN (" +
+            "  SELECT p.node1_id FROM falcon_kds.dvadmin_pqkds_pre_distributed_keys p " +
+            "    WHERE p.long_term_key_id = ?" + (ver == null ? "" : " AND p.long_term_key_version = ?") +
+            "    AND p.node1_id IS NOT NULL " +
+            "  UNION " +
+            "  SELECT p.node2_id FROM falcon_kds.dvadmin_pqkds_pre_distributed_keys p " +
+            "    WHERE p.long_term_key_id = ?" + (ver == null ? "" : " AND p.long_term_key_version = ?") +
+            "    AND p.node2_id IS NOT NULL)";
+        try {
+            Object[] args = ver == null ? new Object[]{kid, kid} : new Object[]{kid, ver, kid, ver};
+            result.setAffectedNodes(jdbcTemplate.queryForList(nodeSql, args));
+        } catch (RuntimeException ex) {
+            log.warn("节点密钥泄漏分析：受影响节点查询失败 keyId={} v={} err={}", kid, ver, ex.getMessage());
+            result.setAffectedNodes(Collections.emptyList());
+        }
+
+        return result;
+    }
+
+    /**
      * 判断本次请求是否要求重新生成密钥材料（真正的轮换）。
      * <p>
      * 判据：调用方是否**显式**声明 {@code rotate}。

@@ -70,6 +70,22 @@ export function getKeymanageAnalysis(keyId) {
 }
 
 /**
+ * KMS-014（计划 §7 阶段 6）：以**节点长期密钥**为线索的泄漏分析。
+ *
+ * 与 `getKeymanageAnalysis` 是两个**不同的标识空间**：那个收 kms.keymanage
+ * 的数字 keyId（用户密钥），这里收分发模块 NodeLongTermKey 的字符串 keyId。
+ * KMS-008 之后的节点到节点分发完全不用用户密钥，处置节点密钥泄漏走这条。
+ * `version` 可选 —— 不给表示该 keyId 的**全部版本**。
+ */
+export function getNodeKeyAnalysis(longTermKeyId, version) {
+  return request({
+    url: '/lifecycle/keymanage/node-key-analysis/' + encodeURIComponent(longTermKeyId),
+    method: 'get',
+    params: version ? { version } : undefined
+  })
+}
+
+/**
  * 阶段 4（文档 §5.2）：某逻辑密钥的历史版本列表。
  *
  * 返回**不含当前版本** —— 当前版本在 keymanage 表里（走 getKeymanage），

@@ -20,6 +20,21 @@ import lombok.NoArgsConstructor;
  * <p>原先只有 {@code ROTATE} / {@code REVOKE} 两个值，且**创建根本没有事件** ——
  * 于是"这把密钥什么时候产生的"在链上查不到，而那是审计最基本的追问。
  *
+ * <h2>KMS-014 追加的三个会话类事件（计划 §6 第 329 行、§7 阶段 6）</h2>
+ * <pre>
+ *   ENVELOPE_VERIFIED   接收方验签通过（会话推进到 recipient_verified）
+ *   SESSION_ESTABLISHED 会话建立（双方 proof 一致）
+ *   SESSION_CLOSED      会话关闭（终态）
+ * </pre>
+ * 计划要求的七个事件至此齐备（前四个由 KMS-006/007/008 接通）。
+ * 三者的锚定口径与 {@code KEY_DISTRIBUTED} 一致：{@code keyId} 是
+ * **被用于建立会话的那把长期密钥**（新流程 = 接收方那一行）的整数主键，
+ * nodeId 是该密钥的归属节点 —— 链上回读时要能回答"谁的哪把钥匙受了影响"。
+ *
+ * <p>⚠️ 这三个事件是**只留痕、不改状态**：`UpdatedelChainConsumer` 对它们
+ * 只记一条 info（与 KEY_DISTRIBUTED 同口径）。会话状态由 PQKDS 侧的状态机
+ * 负责，让链上消费者也去改状态会造出第二套事实来源。
+ *
  * <h2>为什么保留旧值</h2>
  * {@link #TYPE_ROTATE} / {@link #TYPE_REVOKE} 仍留在类里：历史事件可能已经
  * 按旧值落库或投递，消费端要能认出它们。新的发布一律用新值，
@@ -51,6 +66,23 @@ public class ChainSyncEvent {
     public static final String TYPE_KEY_REVOKED = "KEY_REVOKED";
     /** 密钥分发（由分发模块产生的事件，经本类型统一命名）。 */
     public static final String TYPE_KEY_DISTRIBUTED = "KEY_DISTRIBUTED";
+    /** KMS-014：接收方验签通过（会话推进到 recipient_verified）。 */
+    public static final String TYPE_ENVELOPE_VERIFIED = "ENVELOPE_VERIFIED";
+    /** KMS-014：会话建立（双方 proof 一致，established）。 */
+    public static final String TYPE_SESSION_ESTABLISHED = "SESSION_ESTABLISHED";
+    /** KMS-014：会话关闭（终态）。 */
+    public static final String TYPE_SESSION_CLOSED = "SESSION_CLOSED";
+
+    /**
+     * KMS-014：只留痕、不改状态的会话类事件集合。
+     *
+     * <p>放在类里而不是消费端各写一遍：发布侧的白名单、消费侧的忽略分支、
+     * 以及文档三处都要用同一个集合 —— 分头写必然漂移，而漂移的表现是
+     * "某个事件在链上有、状态却被误改"或"事件被当错误重试"。
+     */
+    public static final java.util.Set<String> SESSION_TRAIL_ONLY_TYPES =
+        java.util.Collections.unmodifiableSet(new java.util.LinkedHashSet<>(java.util.Arrays.asList(
+            TYPE_ENVELOPE_VERIFIED, TYPE_SESSION_ESTABLISHED, TYPE_SESSION_CLOSED)));
 
     // ------------------------------------------------------------------
     // 历史值（只读兼容，不再产生）
@@ -71,21 +103,27 @@ public class ChainSyncEvent {
     /**
      * 把任意（含历史）事件类型归一到规范值。
      *
-     * <p>认不出的值**原样返回**，不强行归到某一类：把一个未知事件
-     * 硬塞进"更新"或"回收"，会让审计记录说谎。宁可让上层看到陌生值，
+     * <p>认不出的值**原样返回**（大写化后），不强行归到某一类：把一个未知
+     * 事件硬塞进"更新"或"回收"，会让审计记录说谎。宁可让上层看到陌生值，
      * 也不要给它一个错误的定性。
+     *
+     * <p>KMS-014 的七个规范值（四个密钥事件 + 三个会话事件）本来就按规范
+     * 拼写发布，走 default 分支原样返回 —— 只有两个历史值需要真正改写。
+     * 白名单判定在 {@code InternalLifecycleController} 的入口处显式枚举，
+     * 那里才是"哪些值被接受"的单一出处。
      */
     public static String normalize(String raw) {
         if (raw == null) {
             return null;
         }
-        switch (raw.trim().toUpperCase()) {
+        String value = raw.trim().toUpperCase();
+        switch (value) {
             case TYPE_ROTATE:
                 return TYPE_KEY_UPDATED;
             case TYPE_REVOKE:
                 return TYPE_KEY_REVOKED;
             default:
-                return raw.trim().toUpperCase();
+                return value;
         }
     }
 

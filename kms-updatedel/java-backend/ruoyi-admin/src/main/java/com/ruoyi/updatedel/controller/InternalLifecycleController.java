@@ -414,15 +414,20 @@ public class InternalLifecycleController {
         if (eventType == null || eventType.trim().isEmpty()) {
             return errorPayload("eventType 不能为空");
         }
-        // 只认四类已知事件。放任意字符串进来会让链上日志变成自由文本，
-        // 审计时无法按类型检索 —— 那正是 §8.6 要解决的问题。
+        // 只认七类已知事件（KMS-014 起含三个会话类）。放任意字符串进来会让
+        // 链上日志变成自由文本，审计时无法按类型检索 —— 那正是 §8.6 要解决的问题。
+        // 三个会话类事件是**只留痕、不改状态**的（`SESSION_TRAIL_ONLY_TYPES`，
+        // 消费端同口径忽略 —— 会话状态由 PQKDS 侧状态机负责，不让链上消费者
+        // 造出第二套事实来源）。
         String normalized = ChainSyncEvent.normalize(eventType.trim());
         if (!ChainSyncEvent.TYPE_KEY_CREATED.equals(normalized)
             && !ChainSyncEvent.TYPE_KEY_UPDATED.equals(normalized)
             && !ChainSyncEvent.TYPE_KEY_REVOKED.equals(normalized)
-            && !ChainSyncEvent.TYPE_KEY_DISTRIBUTED.equals(normalized)) {
+            && !ChainSyncEvent.TYPE_KEY_DISTRIBUTED.equals(normalized)
+            && !ChainSyncEvent.SESSION_TRAIL_ONLY_TYPES.contains(normalized)) {
             return errorPayload("不支持的事件类型：" + eventType
-                + "（可选 KEY_CREATED / KEY_UPDATED / KEY_REVOKED / KEY_DISTRIBUTED）");
+                + "（可选 KEY_CREATED / KEY_UPDATED / KEY_REVOKED / KEY_DISTRIBUTED"
+                + " / ENVELOPE_VERIFIED / SESSION_ESTABLISHED / SESSION_CLOSED）");
         }
 
         Object rawKeyId = body.get("keyId");

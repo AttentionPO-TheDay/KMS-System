@@ -40,6 +40,27 @@
             <el-tag size="small" :type="statusTag(scope.row.status)">{{ statusLabel(scope.row.status) }}</el-tag>
           </template>
         </el-table-column>
+        <!-- KMS-014（计划 §7 阶段 6）：监管页区分五态。
+             数据源是会话的 `evidence_state`（服务端从 `lifecycle_evidence` 轨迹算），
+             **不**从 status 反推 —— 会话关闭/撤销后 status 只剩一个终态标记，
+             "它曾经走到过哪一步"会静默丢失，而监管要看的恰恰是完整轨迹。
+             悬停能看到每一步的时间与链上哈希（tx 为空即该步无链上事件）。 -->
+        <el-table-column label="证据（五态）" min-width="260">
+          <template #default="scope">
+            <el-tooltip placement="top" :content="evidenceTooltip(scope.row)">
+              <span class="evidence-row">
+                <el-tag
+                  v-for="step in EVIDENCE_STEPS"
+                  :key="step.key"
+                  size="small"
+                  :type="scope.row.evidence_state?.[step.key] ? 'success' : 'info'"
+                  :effect="scope.row.evidence_state?.[step.key] ? 'light' : 'plain'"
+                  class="evidence-tag"
+                >{{ step.label }}</el-tag>
+              </span>
+            </el-tooltip>
+          </template>
+        </el-table-column>
         <el-table-column label="过期时间" width="180">
           <template #default="scope">{{ formatTime(scope.row.expires_at) }}</template>
         </el-table-column>
@@ -71,6 +92,38 @@ const SESSION_STATUS = {
   blockchain_recorded: '已记录到区块链',
   expired: '已过期',
   revoked: '已撤销'
+}
+
+/**
+ * KMS-014 五态（计划 §7 阶段 6）。key 与服务端 `evidence_state()` 的字段名
+ * **逐字对应**：名字对不上时这一列会恒显示灰色（"看起来正常"），
+ * 所以这里不另起中文名当 key。
+ */
+const EVIDENCE_STEPS = [
+  { key: 'registered', label: '已登记' },
+  { key: 'verified', label: '已验签' },
+  { key: 'recovered', label: '已解封' },
+  { key: 'established', label: '已建立' },
+  { key: 'onChain', label: '已上链' }
+]
+
+/** 悬停详情：每一步的时间与链上哈希（从 `lifecycle_evidence` 轨迹解析）。 */
+function evidenceTooltip(row) {
+  let data = {}
+  try {
+    data = JSON.parse(row.lifecycle_evidence || '{}') || {}
+  } catch {
+    return '证据轨迹不是合法 JSON（库内值异常，请让维护者查看该会话行）'
+  }
+  const at = (k) => (data[k] && data[k].at) || ''
+  const tx = (k) => (data[k] && data[k].tx) || ''
+  return [
+    '已登记：会话行建立（信封登记那一刻）',
+    `已验签：${at('verified') || '—'}${tx('verified') ? `  tx=${tx('verified')}` : ''}`,
+    `已解封：${at('recovered') || '—'}（节点单方声明，无链上事件）`,
+    `已建立：${at('established') || '—'}${tx('established') ? `  tx=${tx('established')}` : ''}`,
+    `已关闭：${at('closed') || '—'}${tx('closed') ? `  tx=${tx('closed')}` : ''}`
+  ].join('\n')
 }
 
 const all = ref([])
@@ -140,4 +193,6 @@ onMounted(load)
 .filter-bar { margin-bottom: 4px; }
 .table-foot { margin-top: 10px; color: var(--el-text-color-secondary); font-size: 12px; }
 .mb16 { margin-bottom: 16px; }
+.evidence-row { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.evidence-tag { font-size: 11px; }
 </style>

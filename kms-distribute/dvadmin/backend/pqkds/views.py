@@ -8,6 +8,7 @@ import time
 import requests
 from rest_framework import status
 from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from django.db.models import Count, Q, Max
@@ -1745,9 +1746,35 @@ class SessionKeyViewSet(CustomModelViewSet):
     extra_filter_class = []
     ordering = ['-id']
     def get_permissions(self):
-        if self.action in ['list', 'retrieve', 'initiate', 'initiate_kyber_agreement', 'verify_and_decrypt', 'send_message', 'decrypt_message', 'destroy', 'update', 'partial_update', 'check_expiration', 'cleanup_expired', 'expiration_stats']:
-            return []
-        return super().get_permissions()
+        # KMS-014：`list` / `retrieve` **移出匿名名单** —— 未登录即可拉全量
+        # 会话元数据（谁和谁、什么状态、关联哪两版密钥）是不该有的暴露面；
+        # 管理端监管页（`/sessions`）本来就走登录令牌，收紧它没有副作用。
+        #
+        # ⚠️ 但闸门**不能**走 `super().get_permissions()`（DRF 的 IsAuthenticated）：
+        #    实测管理员的 RuoYi 令牌在 DRF 的 JWT 认证下是 AnonymousUser
+        #    （回 4000「身份认证信息未提供」），换成它会把管理端监管页**一起**
+        #    挡在门外。所以走本模块统一的 `introspect` 链，在 `initial()` 里判
+        #    —— 与 `/key-pool/*` 的 `_pool_actor` 同一套路、同一理由。
+        #
+        # ⚠️ 剩下的几个动作（initiate / send_message / decrypt_message …）是
+        # **旧会话模型**的端点，前端已无调用方；它们的去留（连同
+        # `verify-session-establish.mjs` 那条旧链路）由 KMS-015「封存旧路径」
+        # 一并决定 —— 在这里逐条收紧只会把 KMS-015 的工作摊成两处。
+        return []
+
+    def initial(self, request, *args, **kwargs):
+        """KMS-014：读动作要求登录（introspect 链，见 get_permissions 说明）。"""
+        super().initial(request, *args, **kwargs)
+        if (getattr(self, 'action', '') or '') not in ('list', 'retrieve'):
+            return
+        from . import kms_service_client as kms
+        token = kms.extract_bearer_token(request)
+        if not token:
+            raise PermissionDenied(detail='未登录：缺少 Authorization: Bearer <token>')
+        try:
+            kms.introspect(token)
+        except kms.KmsTokenInvalid as exc:
+            raise PermissionDenied(detail=f'登录状态无效：{exc}')
     def get_serializer_class(self):
         if self.action == 'create':
             return SessionKeyCreateSerializer
@@ -3307,6 +3334,82 @@ def batch_verify_falcon_public_keys(request):
 # ================================================================
 #  密钥预分配 (Key Pool) ViewSet
 # ================================================================
+def _pool_actor(request, *, mode, node_ids=None):
+    """`/key-pool/*` 的身份与能力闸门（KMS-014，计划 §7 阶段 6）。
+
+    这个命名空间原先把 `get_permissions` 覆写成**空列表** —— 未认证即可读列表、
+    生成池子、甚至取用密钥。KMS-013 修好两条断口之后，`consume` 是一个**真的
+    会消费密钥**的写端点，那个洞从"死代码"变成了"活的"；本函数就是收口。
+
+    `mode` 三档，对应三类调用者（与页面的两类主体一一对应）：
+      * `read`   —— 列表/详情/统计。登录即可：管理员看监管视图、节点用户看自己那页，
+                    两边是同一批接口（见 `views/keypool/overview.vue` 的说明）。
+      * `work`   —— 生成/补充/分发/消费这类**业务动作**。要求：
+                    管理员，或**能映射到某节点**且具备 `CAP_DISTRIBUTE` 的令牌
+                    （L2 及以上，与 KMS-008/009 对分发的口径一致）。
+      * `admin`  —— 维护动作（过期清理、批量删除、单条删除）。只管理员可做：
+                    它们不是节点通信的一部分，是池子的运维操作。
+
+    ⚠️ 刻意**不用** DRF 的 `IsAuthenticated`：本模块的令牌经
+       `kms_service_client.introspect` 解析（RuoYi / kms.sys_user 那一套），
+       与 DRF 配置的 JWT/Session 认证不是同一条链路 —— 换成 IsAuthenticated
+       会把管理员控制台与节点用户**一起**挡在门外。
+    ⚠️ 管理员判据用身份里的 `roleLevel`（0=管理员、2=普通用户，见
+       `utils/role.js` 的说明与 `kms_service_client.introspect` 的返回），
+       **不**用 django 的 `request.user`：本视图不经过 DRF 认证，
+       那个对象恒是 AnonymousUser。
+
+    返回 `(node_or_None, error_msg_or_None)`；出错时由调用方抛
+    `PermissionDenied(detail=msg)` —— 本模块的 `CustomExceptionHandler`
+    会把它收成 `{code: 4000, msg: <明细>}`（与其他 DRF 异常同一形状），
+    所以**失败原因必须写在 msg 里**，不能让调用方只看到"没有权限"。
+    """
+    from . import kms_service_client as kms
+    from .node_permission import NodePermissionError, CAP_DISTRIBUTE, require_capability
+
+    token = kms.extract_bearer_token(request)
+    if not token:
+        return None, '未登录：缺少 Authorization: Bearer <token>'
+    try:
+        identity = kms.introspect(token)
+    except kms.KmsTokenInvalid as exc:
+        return None, f'登录状态无效：{exc}'
+    except kms.KmsServiceError as exc:
+        logger.error('KMS 自省失败: %s', exc)
+        return None, '身份服务暂时不可用，请稍后重试'
+
+    try:
+        role_level = int(identity.get('roleLevel'))
+    except (TypeError, ValueError):
+        # 拿不到等级按**最小权限**处理（与 node_permission.DEFAULT_LEVEL 同一取舍），
+        # 但要显式 log：等级缺失是配置问题，"默认当普通用户"必须看得见。
+        logger.warning('身份 %s 没有 roleLevel，按普通用户处理', identity.get('userName'))
+        role_level = None
+    is_admin = role_level is not None and role_level <= 0
+
+    if mode == 'read':
+        return (None, None)  # 登录即可
+
+    node = Node.objects.filter(sys_user_id=identity.get('userId')).first()
+    if is_admin:
+        return (node, None)
+
+    if mode == 'admin':
+        return None, '该操作是池子的运维动作，仅管理员可执行'
+
+    # mode == 'work'：普通用户必须映射到节点并具备分发能力。
+    if node is None:
+        return None, '当前账号未映射到任何节点，无法执行预分配/分发/取用'
+    try:
+        require_capability(node, CAP_DISTRIBUTE)
+    except NodePermissionError as exc:
+        return None, f'节点 {node.node_id} 权限不足：{exc}'
+    if node_ids is not None and node.node_id not in set(node_ids):
+        # 越权面：不是这一对节点的一方，不能替它们生成/取用池项。
+        return None, f'节点 {node.node_id} 不是该节点对的一方，无权操作该池'
+    return (node, None)
+
+
 class KeyPoolViewSet(CustomModelViewSet):
     """基于格的安全密钥预分配管理"""
     from .models import PreDistributedKey
@@ -3317,7 +3420,30 @@ class KeyPoolViewSet(CustomModelViewSet):
     ordering = ['-id']
 
     def get_permissions(self):
+        # KMS-014：仍然返回 []，但**闸门移进了 `initial()`** ——
+        # 这个命名空间的身份链是 `kms_service_client.introspect`（RuoYi 令牌），
+        # 不是 DRF 的认证后端，所以不能用 permission_classes 表达。
+        # 每个请求在进 action 之前都被 `_POOL_PERMISSION_MODES` 决定档位并过闸。
         return []
+    #: 各 action → 闸门档位（见 `_pool_actor` 的三档说明）。
+    #: ⚠️ 新增 action 若没登记在这里，兜底取最严的 'admin' —— "忘了登记"
+    #: 是**拒绝**而不是放行（放行方向上的错误会静默变成越权口）。
+    _POOL_PERMISSION_MODES = {
+        'list': 'read', 'retrieve': 'read', 'stats': 'read',
+        'generate': 'work', 'distribute': 'work', 'consume': 'work',
+        'replenish': 'work',
+        'cleanup': 'admin', 'destroy': 'admin', 'batch_delete': 'admin',
+    }
+
+    def initial(self, request, *args, **kwargs):
+        """统一闸门（KMS-014）。身份与能力不足在这里就被拒，action 不会执行。"""
+        super().initial(request, *args, **kwargs)
+        mode = self._POOL_PERMISSION_MODES.get(getattr(self, 'action', '') or '', 'admin')
+        node, err = _pool_actor(request, mode=mode)
+        if err is not None:
+            raise PermissionDenied(detail=err)
+        # 动作里还要判"是不是这一对节点的一方"时用它（管理员为 None）。
+        self.pool_actor_node = node
 
     def get_queryset(self):
         from .models import PreDistributedKey
@@ -3405,6 +3531,13 @@ class KeyPoolViewSet(CustomModelViewSet):
             if count < 1 or count > 1000:
                 return ErrorResponse(msg="count 范围: 1-1000")
 
+            # KMS-014 越权面：普通用户只能替自己参与的节点对生成（同 consume）。
+            actor = getattr(self, 'pool_actor_node', None)
+            if actor is not None and actor.node_id not in (node1_id, node2_id):
+                return ErrorResponse(
+                    msg=f'节点 {actor.node_id} 不是该节点对（{node1_id}↔{node2_id}）的一方，'
+                        f'无权为其预分配密钥')
+
             from .key_pool_service import KeyPoolService
             if algorithm == 'falcon_lattice':
                 result = KeyPoolService.generate_falcon_pool(node1_id, node2_id, count, expiry_hours)
@@ -3433,6 +3566,16 @@ class KeyPoolViewSet(CustomModelViewSet):
 
             if not node1_id or not node2_id:
                 return ErrorResponse(msg="缺少 node1_id 或 node2_id")
+
+            # KMS-014 越权面：普通用户（有映射节点）只能替**自己参与的节点对**
+            # 取用；管理员不受限（是 None）。这一条防的是"任一节点用户拿别人的
+            # 节点编号把他们的预分配密钥取走" —— 池项密文的机密性不依赖它
+            # （取走也解不开），但"谁在消费谁的池子"是必须可审计的事实。
+            actor = getattr(self, 'pool_actor_node', None)
+            if actor is not None and actor.node_id not in (node1_id, node2_id):
+                return ErrorResponse(
+                    msg=f'节点 {actor.node_id} 不是该节点对（{node1_id}↔{node2_id}）的一方，'
+                        f'无权取用其预分配密钥')
 
             from .key_pool_service import KeyPoolService
             result = KeyPoolService.consume_key(node1_id, node2_id, algorithm)
@@ -3580,6 +3723,13 @@ class KeyPoolViewSet(CustomModelViewSet):
                 return ErrorResponse(msg="缺少 sender_node_id 或 receiver_node_id")
             if count < 1 or count > 1000:
                 return ErrorResponse(msg="count 范围: 1-1000")
+
+            # KMS-014 越权面：普通用户只能替自己参与的节点对生成（同 consume）。
+            actor = getattr(self, 'pool_actor_node', None)
+            if actor is not None and actor.node_id not in (sender_node_id, receiver_node_id):
+                return ErrorResponse(
+                    msg=f'节点 {actor.node_id} 不是该节点对'
+                        f'（{sender_node_id}→{receiver_node_id}）的一方，无权为其生成密钥池')
 
             from .key_pool_service import KeyPoolService
             result = KeyPoolService.generate_distributable_pool(

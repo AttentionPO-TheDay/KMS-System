@@ -23,6 +23,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -158,6 +159,38 @@ public class LifecycleKeyController extends BaseController {
                 }
             })
             .orElseGet(() -> AjaxResult.error("密钥不存在: " + keyId));
+    }
+
+    /**
+     * KMS-014（计划 §7 阶段 6）：以**节点长期密钥**为线索的泄漏分析。
+     *
+     * <p>与上面 `/analysis/{keyId}` 的分工：那个走 `kms.keymanage.key_id`
+     * （用户密钥，bigint）；这条走分发模块 `NodeLongTermKey.key_id`
+     * （节点长期密钥，字符串）。两者是**不同的标识空间** —— KMS-008 之后的
+     * 节点到节点分发完全不用用户密钥（`source_key_id` 为 NULL 是如实记录），
+     * 所以"用户密钥的泄漏分析里没有新批次"是对的；节点长期密钥的泄漏处置
+     * 问题由这条入口回答：哪些信封/池项/会话引用了它、该失效什么。
+     *
+     * <p>权限：**仅平台管理员**。它跨用户给全量关联面（哪些节点、
+     * 哪些会话受一把节点密钥影响），不是"自己的密钥自己查"的场景 ——
+     * 与用户密钥分析里 `canAccess` 的属主口径刻意不同，这里没有属主可言。
+     *
+     * @param version 可选；不给表示该 keyId 的**全部版本**（keyId 标识一把密钥，
+     *                版本才是一次换代）。
+     */
+    @PreAuthorize("isAuthenticated()")
+    @GetMapping("/node-key-analysis/{longTermKeyId}")
+    public AjaxResult getNodeKeyAnalysis(@PathVariable String longTermKeyId,
+                                         @RequestParam(required = false) Integer version) {
+        if (!SecurityUtils.isAdmin(getUserId())) {
+            return AjaxResult.error("无权分析节点密钥的关联面（仅平台管理员）");
+        }
+        try {
+            return AjaxResult.success(lifecycleService.getNodeKeyLeakAnalysis(longTermKeyId, version));
+        } catch (Exception e) {
+            log.error("节点密钥关联分析异常: keyId={} v={}", longTermKeyId, version, e);
+            return AjaxResult.error("分析失败: " + e.getMessage());
+        }
     }
 
     /**

@@ -8,10 +8,16 @@
 </div>
           <div class="panel-actions">
             <el-button size="small" :loading="loading" @click="loadAll">刷 新</el-button>
-            <el-button size="small" @click="handleCleanup">清理过期</el-button>
-            <el-button size="small" type="danger" :disabled="!selected.length" @click="handleBatchDelete">
-              批量删除{{ selected.length ? `（${selected.length}）` : '' }}
-            </el-button>
+            <!-- KMS-014：过期清理 / 批量删除是池子的**运维动作**，服务端只认管理员
+                 （`views.KeyPoolViewSet` 的 admin 档）。节点用户不显示这些按钮 ——
+                 让它点了再吃 403，不如一开始就不给预期。（生成并分发对节点用户是
+                 正常动作：服务端要求 CAP_DISTRIBUTE 且必须是该节点对的一方。） -->
+            <template v-if="isAdmin">
+              <el-button size="small" @click="handleCleanup">清理过期</el-button>
+              <el-button size="small" type="danger" :disabled="!selected.length" @click="handleBatchDelete">
+                批量删除{{ selected.length ? `（${selected.length}）` : '' }}
+              </el-button>
+            </template>
             <el-button size="small" type="primary" @click="openDistribute">生成并分发</el-button>
           </div>
         </div>
@@ -106,7 +112,9 @@
         </el-table-column>
         <el-table-column label="操作" width="90" fixed="right">
           <template #default="scope">
-            <el-button link type="danger" size="small" @click="handleDelete(scope.row)">删除</el-button>
+            <!-- KMS-014：单条删除同属运维动作（服务端 admin 档），节点用户不显示。 -->
+            <el-button v-if="isAdmin" link type="danger" size="small" @click="handleDelete(scope.row)">删除</el-button>
+            <span v-else class="cell-sub">—</span>
           </template>
         </el-table-column>
       </el-table>
@@ -194,6 +202,8 @@ import {
   listKeyPool
 } from '@/api/pqkds/distribution'
 import { listNodes } from '@/api/nodes/nodes'
+import { isAdminPrincipal } from '@/utils/principal'
+import useUserStore from '@/store/modules/user'
 
 const allRows = ref([])
 const rows = ref([])
@@ -208,6 +218,19 @@ const distributing = ref(false)
 const distError = ref('')
 const distResult = ref('')
 const distForm = reactive({ algorithm: 'kyber_kem', sender_node_id: '', receiver_node_id: '', count: 10, expiry_hours: 24 })
+
+/**
+ * KMS-014：当前主体是不是管理员。
+ * 池页面由**两类人**看：管理员（监管视图，`poolgov`）与节点用户（`selfpool`）。
+ * 服务端把过期清理/删除定为管理员动作（`views.KeyPoolViewSet` 的 admin 档），
+ * 所以按钮可见性必须与那一档一致 —— 判据与 `permission.js` 的视图分流
+ * 用**同一个** `resolvePrincipalType`，不在这里另写一套。
+ */
+const userStore = useUserStore()
+const isAdmin = computed(() => isAdminPrincipal({
+  principalType: userStore.principalType,
+  roleLevel: userStore.roleLevel
+}))
 
 const algorithmOptions = computed(() => {
   const seen = new Map()

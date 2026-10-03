@@ -411,6 +411,81 @@ class SessionKey(CoreModel):
         null=True, blank=True, verbose_name="发送方 Falcon 版本",
     )
 
+    # --- KMS-014：会话的证据轨迹（监管页五态的数据源）---
+    # 计划 §7 阶段 6 要求监管页区分「已登记 / 已验签 / 已解封 / 已建立 / 已上链」。
+    # 前四态能从 `status` 推，**但只在会话还活着的时候** —— 关闭之后 status 只剩
+    # 一个 `closed`，"它曾经走到过哪一步"就再也答不出来；而监管要看的恰恰是
+    # 完整轨迹。所以每一步证据在这里各记一条（时间 + 链上哈希）：
+    #
+    #   {"verified":    {"at": "...", "tx": "0x…"},
+    #    "recovered":   {"at": "...", "tx": ""},        # 解封无链上事件（服务端无法复核，见下）
+    #    "established": {"at": "...", "tx": "0x…"},
+    #    "closed":      {"at": "...", "tx": "0x…"}}
+    #
+    # ⚠️ `recovered` **没有**对应的链上事件（计划只要求三个会话类事件：
+    #    ENVELOPE_VERIFIED / SESSION_ESTABLISHED / SESSION_CLOSED）。解封是
+    #    节点的单方声明、服务端无法独立复核（不变量：服务端没有 K），
+    #    它进不了链上存证 —— 这里如实记时间，tx 留空。不假装它上过链。
+    # ⚠️ 不用 `status` 反推轨迹：那会在关闭/撤销后**静默丢失**轨迹，
+    #    且与"五态"的语义（证据各有其时间线，与当前状态无关）不符。
+    lifecycle_evidence = models.TextField(
+        default='{}', blank=True, verbose_name="会话证据轨迹",
+        help_text='JSON：各步证据的时间与链上哈希（KMS-014，监管页五态的数据源）',
+    )
+
+    def record_evidence(self, step: str, *, tx: str = '', at=None) -> None:
+        """把一步证据追加进 `lifecycle_evidence`（幂等：已记过的不覆盖）。
+
+        ⚠️ 只**追加**不覆盖：同一步事件重试时（例如链上失败后的重放），
+        第一条时间才是"这一步真的发生"的时刻；覆盖会把它改写成一个更晚的
+        时间，轨迹会悄悄后移。`tx` 为空且已有记录时也**顺带补写 tx** ——
+        链上哈希是后到的事实（验证已提交、存证是旁路），补写不篡改时间。
+        """
+        import json as _json
+        try:
+            data = _json.loads(self.lifecycle_evidence or '{}')
+            if not isinstance(data, dict):
+                data = {}
+        except (ValueError, TypeError):
+            # 库内值坏了：不把它当致命错误（监管页少一条轨迹 > 整个列表 500），
+            # 但**要看得见** —— warning 里带会话 ID。
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                '会话 %s 的 lifecycle_evidence 不是合法 JSON，本次重建', self.session_id,
+            )
+            data = {}
+        entry = data.get(step) or {}
+        if not isinstance(entry, dict):
+            entry = {}
+        if not entry.get('at'):
+            from django.utils import timezone as _tz
+            entry['at'] = (at or _tz.now()).isoformat()
+        if tx and not entry.get('tx'):
+            entry['tx'] = tx
+        data[step] = entry
+        self.lifecycle_evidence = _json.dumps(data, ensure_ascii=False, sort_keys=True)
+
+    def evidence_state(self) -> dict:
+        """给监管页的五态读数（不依赖当前 status，见 `lifecycle_evidence` 的说明）。"""
+        import json as _json
+        try:
+            data = _json.loads(self.lifecycle_evidence or '{}')
+        except (ValueError, TypeError):
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        return {
+            'registered': True,  # 行在 = 已登记（信封登记是建行那一刻）
+            'verified': bool((data.get('verified') or {}).get('at')),
+            'recovered': bool((data.get('recovered') or {}).get('at')),
+            'established': bool((data.get('established') or {}).get('at')),
+            # 已上链 = 至少一条**链上事件**落了 tx（解封不计，它本就不上链）。
+            'onChain': any(
+                (data.get(step) or {}).get('tx')
+                for step in ('verified', 'established', 'closed')
+            ),
+        }
+
     class Meta:
         verbose_name = "会话密钥"
         verbose_name_plural = "会话密钥"

@@ -58,6 +58,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from typing import Optional
 
 from django.db.models import Count, Q
 from django.http import JsonResponse
@@ -68,9 +69,10 @@ from django.views.decorators.http import require_http_methods
 from . import api_contract as C
 from .distribution_service import _canonical_inner_json
 from .envelope_signature import ciphertext_digest, verify_node_envelope
-from .models import Node, PreDistributedKey, SessionKey, SessionKeyConfirmation
+from .models import Node, NodeLongTermKey, PreDistributedKey, SessionKey, SessionKeyConfirmation
 from .node_key_registry import require_key_version, require_usable_key
 from .user_distribution_views import require_kms_user
+from .kms_service_client import record_chain_event
 
 logger = logging.getLogger(__name__)
 
@@ -607,6 +609,16 @@ def node_envelope_verify(request, envelope_pk, identity):
         # 已经在这条线的后面了：如实回 ok，不动状态（中间状态只增不减）。
         advanced = False
 
+    # KMS-014：验签通过 → 链上留痕 ENVELOPE_VERIFIED。
+    # ⚠️ 只在**真的推进了**这一步时发（advanced=True）—— 重复回执不重复上链。
+    #    与 KMS-007 对回收的口径一致：同一次动作在链上留多条记录，
+    #    "验签过几次"就没有可信答案了。
+    chain_tx = record_session_chain_event('ENVELOPE_VERIFIED', session) if advanced else None
+    if advanced:
+        # KMS-014：证据轨迹（监管页五态的数据源；关闭后仍要读得出走没走过这步）。
+        session.record_evidence('verified', tx=chain_tx or '')
+        session.save(update_fields=['lifecycle_evidence'])
+
     return _ok({
         'envelopeId': record.pk,
         'sessionId': session.session_id,
@@ -614,6 +626,9 @@ def node_envelope_verify(request, envelope_pk, identity):
         'advanced': advanced,
         'falconKeyId': signing_key.key_id,
         'falconKeyVersion': signing_key.key_version,
+        # 与 KEY_UPDATED / KEY_DISTRIBUTED 同一口径：回哈希而不是布尔值；
+        # 拿不到时是空串，页面据此如实说"已验签，但存证未成功"。
+        'chainHash': chain_tx or '',
     }, msg='验签通过（服务端已独立复核）' if advanced else '这条会话已越过验签这一步，本次未做改动')
 
 
@@ -664,6 +679,13 @@ def node_envelope_recover(request, envelope_pk, identity):
                           error_code=exc.code)
         advanced = False
 
+    if advanced:
+        # KMS-014：证据轨迹记下这一步（**无链上事件** —— 解封是节点单方声明、
+        # 服务端无法独立复核，见 models.SessionKey.lifecycle_evidence 的说明；
+        # tx 留空，不假装它上过链）。
+        session.record_evidence('recovered')
+        session.save(update_fields=['lifecycle_evidence'])
+
     # KMS-012：双方确认可以**先于**这一步提交（发起方分发完就能确认、
     # 接收方也可以先交证明再回来解封）。那两笔确认一直在库里等着 ——
     # 这里补一次提升机会，让"证据齐了"立刻兑现，而不是要用户再点一次确认。
@@ -672,8 +694,9 @@ def node_envelope_recover(request, envelope_pk, identity):
     #    `key_recovered → established`，而 verify → recipient_verified 时
     #    状态机本来就还不允许（也**不该**允许 —— 那会让"没解封也建立"成真）。
     establish_state = 'waiting'
+    establish_tx = None
     try:
-        establish_state, _ = _maybe_establish(session)
+        establish_state, _, establish_tx = _maybe_establish(session)
     except Exception as exc:  # noqa: BLE001
         # 补一次提升是**尽力而为**：它失败了不该让"解封已登记"变成一次 500。
         logger.warning('会话 %s 解封后补提升失败（不影响解封登记）: %s', session.session_id, exc)
@@ -685,6 +708,9 @@ def node_envelope_recover(request, envelope_pk, identity):
         'advanced': advanced,
         # 补提升的结果如实回报：established 表示双方确认早就齐了、这一刻兑现。
         'established': establish_state == 'established',
+        # KMS-014：若这次补提升真的建立了会话，把它的链上哈希一并回传
+        # （申请方据此知道"建立"这一步的存证情况）；未建立时是空串。
+        'chainHash': establish_tx or '',
         # 口径提示（给页面看）：这一步是节点的声明，安全性来自后面的双方 proof。
         'note': '服务端不持有会话密钥，本状态依据的是节点回报；真正的建立条件是双方 proof 一致',
     }, msg='解封成功已登记' if advanced else '这条会话此前已解封，本次未做改动')
@@ -700,6 +726,86 @@ def _session_of_batch(batch_id: str, node: Node):
        再多一列；命名规则是本仓库既有约定，先用它，并把耦合写在这里。）
     """
     return SessionKey.objects.filter(session_id=f'{batch_id}-n{node.id}').first()
+
+
+# ---------------------------------------------------------------------------
+# KMS-014：三个会话类事件的链上存证（计划 §6 第 329 行、§7 阶段 6）
+# ---------------------------------------------------------------------------
+# ENVELOPE_VERIFIED / SESSION_ESTABLISHED / SESSION_CLOSED 是计划要求的
+# 七个链上事件里的后三个（前四个由 KMS-006/007/008 接通）。它们的落点就是
+# 本模块已经建成的三处：verify 端点、`_maybe_establish`、close 端点。
+#
+# ⚠️ 顺序是硬约束：Java 侧的入口白名单（`InternalLifecycleController.chainEvent`）
+#    必须先认得这三个事件，PQKDS 侧发才有意义 —— 顺序反了的话
+#    `record_chain_event` 只返回 None，表现为"存证没成功"，而白名单文案
+#    只在容器日志里能看到。
+_SESSION_CHAIN_EVENT_TYPES = frozenset({
+    'ENVELOPE_VERIFIED', 'SESSION_ESTABLISHED', 'SESSION_CLOSED',
+})
+
+
+def record_session_chain_event(event_type: str, session: SessionKey) -> Optional[str]:
+    """把一次会话类事件记到链上；任何失败只记日志、返回 None（旁路增强）。
+
+    三个字段的口径与 KEY_DISTRIBUTED（KMS-008）**逐字一致** —— 链上回读时
+    "谁的哪把钥匙"必须只有一个答案：
+
+      * `keyId`   —— **被用于建立会话的那把长期密钥**（接收方那一行
+        `NodeLongTermKey`）的整数主键。Java 接口只收整数，业务字符串
+        key_id 会被解析失败吞成"存证未成功"。
+      * `nodeId`  —— 该密钥的**归属节点**（接收节点）。链上记录一旦在这里
+        分叉（比如会话事件记发送方），回读时就无法回答"谁受影响"。
+      * `materialHash` —— 那一行的 `public_key_hash`（存储形式公钥的
+        sha256）。链上只需要能核验"是不是同一份材料"，不需要材料本身。
+
+    ⚠️ 事务边界：调用点必须在**状态推进已提交之后**（本模块几个端点的
+       推进各自独立 save），与 KMS-006/007 同一条纪律 —— 存证失败不改
+       会话结论；把网络调用包进事务还会一直占着连接。
+    ⚠️ 锚定取不到（历史会话没有两版引用、或登记行已不在）时**不上链**，
+       记一条 warning：宁可留一个可见的审计缺口，也不要编一个 keyId 上链 ——
+       链上的记录写错就撤不回来了。
+    """
+    if event_type not in _SESSION_CHAIN_EVENT_TYPES:
+        # 防御性：这个 helper 只服务会话类事件。写错事件名混进来会让
+        # "哪些事件由这里产生"变得不可读（那些事件各有自己的落点与白名单）。
+        logger.warning('record_session_chain_event 收到非会话类事件 %r，跳过', event_type)
+        return None
+
+    algorithm = C.canonical_algorithm(session.session_type or '')
+    key_row = None
+    if session.recipient_key_id and session.recipient_key_version:
+        # 接收方 = session.node2（`create_initiated_sessions` 建行时
+        # node1=发送方、node2=接收方，见 distribution_service 的注释）。
+        key_row = NodeLongTermKey.objects.filter(
+            node=session.node2,
+            algorithm=algorithm,
+            key_id=session.recipient_key_id,
+            key_version=session.recipient_key_version,
+        ).first()
+    if key_row is None:
+        logger.warning(
+            '会话 %s（%s）：找不到接收方长期密钥行（alg=%s key_id=%s v%s），'
+            '本次**不上链** —— 宁可留一个可见的审计缺口，也不编一个 keyId',
+            session.session_id, event_type, algorithm or '(认不出)',
+            session.recipient_key_id, session.recipient_key_version,
+        )
+        return None
+
+    try:
+        tx = record_chain_event(
+            event_type,
+            int(key_row.pk),
+            int(key_row.key_version or 0),
+            session.node2.node_id,
+            str(key_row.public_key_hash or ''),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning('会话 %s 的 %s 链上存证失败: %s', session.session_id, event_type, exc)
+        return None
+    if tx:
+        logger.info('会话 %s 已上链存证: %s keyId=%s tx=%s',
+                    session.session_id, event_type, key_row.pk, tx)
+    return tx
 
 
 def _confirmation_state(session):
@@ -718,12 +824,16 @@ def _confirmation_state(session):
 def _maybe_establish(session):
     """双方证明已齐且一致时，按状态机把会话提升为 `established`。
 
-    返回 `(state, detail)`，state ∈ {'established', 'waiting', 'mismatch', 'state'}：
+    返回 `(state, detail, chain_tx)`，state ∈ {'established', 'waiting',
+    'mismatch', 'state'}：
       * `waiting`   —— 只有一方确认（或还没有）；
       * `mismatch`  —— 两方确认了但 proof 不同（两边持有的 K 不是同一把）；
       * `state`     —— 证明齐了，但会话还没走到 `key_recovered`（验签/解封的回执
                        还没齐）—— 状态机不允许跳过，如实拒绝提升；
       * `established` —— 提升成功（或本来就已建立）。
+
+    `chain_tx` 是 SESSION_ESTABLISHED 的链上交易哈希（KMS-014；只有**本次
+    真的提升了**才有值，其余情况为 None）—— 调用方把它如实回给页面。
 
     ⚠️ 后三种都**不是错误**：confirm 本身是一次合法的提交，只是"建立"这个
        动作还不到时候。调用方按各自上下文给文案，不要把 'state' 报成 500/400 ——
@@ -735,23 +845,31 @@ def _maybe_establish(session):
     """
     count, proofs_equal = _confirmation_state(session)
     if count < 2:
-        return 'waiting', f'已确认 {count}/2'
+        return 'waiting', f'已确认 {count}/2', None
     if not proofs_equal:
         logger.warning(
             '会话 %s 双方确认证明不一致（各自持有的 K 不同）', session.session_id,
         )
-        return 'mismatch', '双方证明不一致'
+        return 'mismatch', '双方证明不一致', None
     if session.status == C.SESSION_ESTABLISHED:
-        return 'established', '早已建立'
+        # "早已建立"不重复上链：那一条在**第一次**建立时已经发过。
+        # 无条件重发会让链上出现多条 SESSION_ESTABLISHED，
+        # "这条会话建立过几次"就没有可信答案了（与 KMS-007 回收同口径）。
+        return 'established', '早已建立', None
     try:
         _advance_session(session, C.SESSION_ESTABLISHED,
                          allow_from=(C.SESSION_KEY_RECOVERED,))
     except C.ContractError as exc:
         # 状态机还没走到 key_recovered：证明齐了也不能建。
         logger.info('会话 %s 双方确认已齐，但状态机不允许提升：%s', session.session_id, exc.message)
-        return 'state', exc.message
+        return 'state', exc.message, None
     logger.info('会话 %s 双方确认一致 → established', session.session_id)
-    return 'established', ''
+    # KMS-014：建立 → 链上留痕 + 证据轨迹。状态推进已提交（上面 save 完），
+    # 存证在事务之外、失败只记日志（旁路增强）。
+    chain_tx = record_session_chain_event('SESSION_ESTABLISHED', session)
+    session.record_evidence('established', tx=chain_tx or '')
+    session.save(update_fields=['lifecycle_evidence'])
+    return 'established', '', chain_tx
 
 
 @csrf_exempt
@@ -796,10 +914,21 @@ def node_session_close(request, session_id, identity):
     except C.ContractError as exc:
         return _error(exc.message, C.ERROR_HTTP_STATUS.get(exc.code, 400), error_code=exc.code)
 
+    # KMS-014：关闭是终态事件 → 链上留痕 SESSION_CLOSED。
+    # 上面的终态幂等分支与这段的 `advanced=False` 都不上链 ——
+    # 重复关闭不重复写，"关闭过几次"在链上只有一个可信答案。
+    chain_tx = record_session_chain_event('SESSION_CLOSED', session) if advanced else None
+    if advanced:
+        # 证据轨迹：关闭后 status 只剩 closed，"走到过哪一步"靠这条轨迹回答
+        # —— 这正是监管页五态存在的理由。
+        session.record_evidence('closed', tx=chain_tx or '')
+        session.save(update_fields=['lifecycle_evidence'])
+
     return _ok({
         'sessionId': session.session_id,
         'status': session.status,
         'advanced': advanced,
+        'chainHash': chain_tx or '',
         'note': '关闭是终态：该会话不再接受确认或状态变更；要重新通信请重新分发',
     }, msg='会话已关闭（终态）')
 
@@ -876,7 +1005,7 @@ def node_session_confirm(request, session_id, identity):
         },
     )
 
-    state, detail = _maybe_establish(session)
+    state, detail, establish_tx = _maybe_establish(session)
     confirmed_by = _confirmation_state(session)[0]
 
     if state == 'established':
@@ -885,6 +1014,9 @@ def node_session_confirm(request, session_id, identity):
             'status': session.status,
             'confirmedBy': confirmed_by,
             'established': True,
+            # KMS-014：本次真的建立时的链上哈希（"早已建立"与"证据不齐"时是空串 --
+            # 那两种情况没有可回的新哈希，页面据此如实显示）。
+            'chainHash': establish_tx or '',
         }, msg='双方确认一致，会话已建立' if detail != '早已建立' else '会话已建立（无需重复确认）')
     if state == 'mismatch':
         return _ok({
