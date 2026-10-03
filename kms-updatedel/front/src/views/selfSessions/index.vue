@@ -21,10 +21,16 @@
 
         KMS-011：我是**接收方**且会话还没走到 established 时，行上出现「处理」——
         全在本机完成：取信封 → 用发送方那一版 Falcon 公钥验签 → 用本机私钥解封
-        → 自查解出的 K（sha256 与信封声明比）→ 算 HMAC proof → 回报并确认。
+        → 自查解出的 K（sha256 与信封声明比）→ **存进本机会话密钥库** →
+        算 HMAC proof → 回报并确认。
         每一步都**如实回报**服务端（verify/recover 端点），状态由状态机推进；
         本页不做"跳过某一步"的捷径 —— `initiated → established` 那条直跳
         在服务端就是非法的。
+
+        KMS-012：确认是**双方各自提交** `HMAC(K, session_id)`（服务端只比较两条
+        是否相等、不去解 K），所以发起方那侧也有「确认」——它的 K 在分发时
+        就存进了本机（`sealSessionSecret`），不必等接收方处理完。
+        确认列的 "x/2" 如实显示进度；「关闭」是终态（关闭后删本机副本）。
       -->
 
       <el-alert
@@ -105,14 +111,30 @@
               <span v-else class="muted">签名 —</span>
             </template>
           </el-table-column>
+          <el-table-column label="确认" width="90" align="center">
+            <!--
+              KMS-012：双方各提交一条 `HMAC(K, session_id)`（proof），服务端只
+              **比较两条是否相等**、不去解 K。这里显示"x/2"；两个都交了但状态还
+              停在"接收方已解封"，说明要么证明不一致（两边 K 不同）、要么证据链
+              没走完（验签/解封的回执没齐）—— 两条下一步完全不同，所以只显示
+              计数、不猜原因。
+            -->
+            <template #default="{ row }">
+              <el-tag
+                size="small"
+                :type="confirmTag(row)"
+                effect="plain"
+              >{{ row.confirmedCount ?? 0 }}/2</el-tag>
+            </template>
+          </el-table-column>
           <el-table-column label="状态" width="130" align="center">
             <template #default="{ row }">
               <el-tag size="small" :type="statusTag(row.status)">{{ statusLabel(row.status) }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="120" align="center">
+          <el-table-column label="操作" width="170" align="center">
             <template #default="{ row }">
-              <!-- 只有**接收方**且还没建立时才有"处理"；发送方与已建立的会话显示"—" -->
+              <!-- 接收方且还没建立：走完整「处理」（取信 → 验签 → 解封 → 确认） -->
               <el-button
                 v-if="row.isRecipient && canProcess(row)"
                 link type="primary" size="small"
@@ -121,7 +143,24 @@
               >
                 处理
               </el-button>
-              <span v-else class="muted">—</span>
+              <!-- 双方都可提交确认（KMS-012）：发起方不必等接收方先处理完 -->
+              <el-button
+                v-else-if="canConfirm(row)"
+                link type="primary" size="small"
+                :loading="busySession === row.sessionId"
+                @click="handleConfirm(row)"
+              >
+                确认
+              </el-button>
+              <el-button
+                v-if="canClose(row)"
+                link type="danger" size="small"
+                :loading="busySession === row.sessionId"
+                @click="handleClose(row)"
+              >
+                关闭
+              </el-button>
+              <span v-if="!canProcess(row) && !canConfirm(row) && !canClose(row)" class="muted">—</span>
             </template>
           </el-table-column>
           <el-table-column label="过期时间" width="170">
@@ -154,8 +193,9 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
+  closeSelfSession,
   confirmSelfSession,
   getSelfNode,
   getSessionVersions,
@@ -167,8 +207,13 @@ import {
 import { cryptoProvider } from '@/utils/crypto/browser-provider.js'
 import { buildKeyRef } from '@/utils/crypto/key-ref.js'
 import {
+  sealSessionSecret,
+  listSessionSecrets,
+  removeSessionSecret
+} from '@/utils/crypto/node-key-store.js'
+import {
   checkRecoveredKeyHash,
-  nodeProof,
+  sessionProofFromStore,
   unwrapNodeEnvelope,
   verifyNodeEnvelope
 } from '@/utils/crypto/node-envelope.js'
@@ -200,14 +245,28 @@ const filter = reactive({ role: 'all', status: '', keyword: '', includeExpired: 
 const busySession = ref('')
 const progress = ref(null)
 
+/** 本机会话密钥库里有副本的会话 ID 集合（决定"确认"按钮的可用性）。 */
+const localKeySessions = ref(new Set())
+
+/** 终态：到了就不该再出现任何操作按钮。 */
+const TERMINAL = ['closed', 'expired', 'revoked']
+
 const typeLabel = (v) => SESSION_TYPES[v] || v || '-'
 const statusLabel = (v) => SESSION_STATUS[v] || v || '-'
 
 function statusTag(status) {
   if (status === 'established' || status === 'blockchain_recorded') return 'success'
-  if (status === 'expired' || status === 'revoked') return 'danger'
+  if (status === 'closed' || status === 'expired' || status === 'revoked') return 'danger'
   if (status === 'recipient_verified' || status === 'key_recovered') return 'primary'
   return 'warning'
+}
+
+function confirmTag(row) {
+  const count = Number(row.confirmedCount || 0)
+  if (row.status === 'established') return 'success'
+  if (count >= 2) return 'warning' // 两边都交了却没建立 —— 需要人去看
+  if (count === 1) return 'primary'
+  return 'info'
 }
 
 function countBy(status) {
@@ -228,7 +287,29 @@ const statusOptions = computed(() => {
 
 /** 还没走到终态的会话才需要"处理"（已建立/已关闭/过期/撤销都不必再动）。 */
 function canProcess(row) {
-  return !['established', 'blockchain_recorded', 'closed', 'expired', 'revoked'].includes(row.status)
+  return !['established', 'blockchain_recorded', ...TERMINAL].includes(row.status)
+}
+
+/**
+ * 能不能提交确认（KMS-012）。
+ *
+ * 判据是"还没建立、未到终态、且本机存着这把 K"——三者缺一不可：
+ *   * 已建立：没什么可确认的（服务端也会幂等回 ok，但按钮留着是噪音）；
+ *   * 终态：服务端明确不收"死后确认"（SESSION_TERMINAL）；
+ *   * 本机没有 K：算不出 proof。**不显示按钮**而不是让用户点了才报错 ——
+ *     但也不隐藏这条会话（它确实存在），页面在该列显示"—"，用户需要知道
+ *     要回原设备。
+ * 已经确认过的一方会重复提交（服务端 upsert，幂等），所以不区分"我交没交过"——
+ * 服务端返回的 confirmedCount 分不出是哪一方交的。
+ */
+function canConfirm(row) {
+  return !['established', 'blockchain_recorded', ...TERMINAL].includes(row.status)
+    && localKeySessions.value.has(row.sessionId)
+}
+
+/** 双方都可以关闭未到终态的会话。 */
+function canClose(row) {
+  return !TERMINAL.includes(row.status) && row.status !== 'blockchain_recorded'
 }
 
 function shortId(value) {
@@ -346,6 +427,13 @@ async function handleProcess(row) {
     }
     tracker.add('密钥自查', 'ok', hashCheck.detail)
 
+    // ---- 5.5 存进**本地会话密钥库**（KMS-012 / 计划 §7 阶段 4）----
+    // 存了之后：刷新页面仍能提交确认、关闭后能删；
+    // 不存的话这次确认提交完，本机就再也算不出 proof（而页面上看不出为什么）。
+    await sealSessionSecret(sessionId, payloadKey)
+    localKeySessions.value = new Set([...localKeySessions.value, sessionId])
+    tracker.add('保存会话密钥', 'ok', 'K 已存进本机会话密钥库（不上传服务端）')
+
     // ---- 6. 回报验签通过（服务端会独立复核一次再推进状态）----
     const verifyResp = await verifyEnvelope(entry.envelopeId)
     tracker.add('回报验签通过', 'ok',
@@ -356,19 +444,22 @@ async function handleProcess(row) {
     tracker.add('回报解封成功', 'ok', `会话状态 → ${recoverResp?.status}`)
 
     // ---- 8. 算 proof 并提交（对方提交后双方一致才算建立）----
-    const proof = await nodeProof({ payloadKey, sessionId })
+    // 用**库里那把**算，而不是手头这个变量：证明"存进去的那把"就是
+    // 之后所有确认要用的那一把（取错长度或存坏的库会被这条当场抓到）。
+    const proof = await sessionProofFromStore(sessionId)
     const confirmResp = await confirmSelfSession(sessionId, proof)
     tracker.add('提交持有证明', 'ok', confirmResp?.msg || '已提交')
 
+    const established = Boolean(confirmResp?.established) || confirmResp?.status === 'established'
     progress.value = {
       sessionId,
-      ok: Boolean(confirmResp?.established) || confirmResp?.status === 'established',
+      ok: established,
       steps: tracker.lists(),
-      message: confirmResp?.established
+      message: established
         ? '双方确认一致，会话已建立。'
         : '本机三步已如实回报；等待会话另一方确认 —— 双方 proof 一致才会提升为已建立。'
     }
-    ElMessage.success(confirmResp?.established ? '会话已建立' : '本机处理完成，等待对方确认')
+    ElMessage.success(established ? '会话已建立' : '本机处理完成，等待对方确认')
     await load()
   } catch (error) {
     // 失败时把已完成/失败的那几步如实留下（progress.steps 里最后一条是 fail）
@@ -403,6 +494,12 @@ function describeError(error) {
       return '只有该会话的接收方需要这两版密钥；当前节点不是接收方。'
     case 'SESSION_STATE_INVALID':
       return `这一步的顺序不对：${fallback}（请先完成前一步再重试）。`
+    case 'SESSION_TERMINAL':
+      return '会话已处于终态（已关闭/已过期/已撤销），不再接受确认或状态变更。要重新通信请重新分发。'
+    case 'NOT_SESSION_PARTY':
+      return '你不是这条会话的一方，无权操作。'
+    case 'PROOF_MISMATCH':
+      return '双方提交的持有证明不一致——两边解出的会话密钥不是同一把。请检查该会话的信封与算法，不要重试。'
     case 'SESSION_NOT_FOUND':
       return '会话不存在 —— 它可能刚被回收影响处理撤掉。列表已刷新。'
     case 'SIGNATURE_INVALID':
@@ -428,6 +525,77 @@ function describeError(error) {
   }
 }
 
+/**
+ * 提交确认（KMS-012）：双方各自在**本机**算 `HMAC(K, session_id)`，服务端只
+ * 比较两条是否相等 —— K 从不经过网络。
+ *
+ * 与「处理」流程里那一步共用同一个计算（`sessionProofFromStore`），
+ * 这里是发起方（或任何一方）单独补交确认的入口：发起方不必等接收方处理完，
+ * 分发完就能把自己的 proof 交上（服务端会记住，等证据齐了自动兑现）。
+ */
+async function handleConfirm(row) {
+  const sessionId = row.sessionId
+  busySession.value = sessionId
+  try {
+    const proof = await sessionProofFromStore(sessionId)
+    const resp = await confirmSelfSession(sessionId, proof)
+    const established = Boolean(resp?.established) || resp?.status === 'established'
+    if (established) {
+      ElMessage.success('双方确认一致，会话已建立')
+    } else if (resp?.reason === 'PROOF_MISMATCH') {
+      ElMessage.error(resp?.msg || '双方证明不一致')
+    } else {
+      ElMessage.info(resp?.msg || '已记录你的确认')
+    }
+    await load()
+  } catch (error) {
+    ElMessage.error(describeError(error))
+  } finally {
+    busySession.value = ''
+  }
+}
+
+/**
+ * 关闭会话（KMS-012）：**终态，不可恢复** —— 确认框里把这句话说清楚，
+ * 不做"点了才知道"。
+ *
+ * 顺序：先服务端关闭 → 成功后再删**本机**的会话密钥副本。反过来一旦关闭
+ * 请求失败，本机就再也算不出 proof，而服务端那边它还活着。
+ */
+async function handleClose(row) {
+  const sessionId = row.sessionId
+  try {
+    await ElMessageBox.confirm(
+      '关闭是终态：该会话不再接受确认或状态变更，也不会恢复。要重新通信需要重新分发。',
+      `关闭会话 ${sessionId}`,
+      { type: 'warning', confirmButtonText: '关 闭', cancelButtonText: '取 消' }
+    )
+  } catch {
+    return // 用户取消
+  }
+  busySession.value = sessionId
+  try {
+    const resp = await closeSelfSession(sessionId)
+    // 服务端已关闭 → 本机的密钥副本没有留存价值（留着只是多一份泄露面）。
+    try {
+      await removeSessionSecret(sessionId)
+      localKeySessions.value = new Set(
+        [...localKeySessions.value].filter((id) => id !== sessionId)
+      )
+    } catch (error) {
+      // 删本地失败**不影响**关闭结果（服务端已经关了），但要说出来：
+      // 用户以为"清干净了"而实际没有，是安全上最不该出现的错觉。
+      ElMessage.warning(`会话已关闭，但本机密钥副本删除失败：${error?.message || error}`)
+    }
+    ElMessage.success(resp?.msg || '会话已关闭（终态）')
+    await load()
+  } catch (error) {
+    ElMessage.error(describeError(error))
+  } finally {
+    busySession.value = ''
+  }
+}
+
 async function load() {
   loading.value = true
   try {
@@ -444,6 +612,18 @@ async function load() {
 
     const res = await listSelfSessions({ includeExpired: filter.includeExpired })
     all.value = Array.isArray(res?.items) ? res.items : []
+
+    // 本机会话密钥库里有副本的会话（决定"确认"按钮的可用性）——
+    // 只列摘要，不含任何密钥字节。
+    try {
+      const local = await listSessionSecrets()
+      localKeySessions.value = new Set((local || []).map((item) => item.sessionId))
+    } catch (error) {
+      // 本地库读不出来不是致命错误（页面仍能看会话），但要让用户知道
+      // "确认"按钮为什么不见了。
+      localKeySessions.value = new Set()
+      ElMessage.warning(`本地会话密钥库读取失败：${error?.message || error}`)
+    }
   } catch (error) {
     ElMessage.error(error?.message || '加载会话失败')
     all.value = []

@@ -653,6 +653,13 @@ def create_node_distribution(sender: Node, receiver: Node, *,
         batch_id,
     )
 
+    # KMS-012：把**这条分发对应的会话**一并回给调用方。发起方要拿它做两件事：
+    #   1. 把本机那把 K 存进本地会话密钥库（KMS-012 的"本地保存"那条）；
+    #   2. 提交自己的持有证明（确认）—— 会话 ID 是 proof 的消息，
+    #      让调用方从批次号去拼（`{batch}-n{pk}`）等于把命名约定泄露给每个调用方，
+    #      拼错的表现是"确认提交了、对方却永远等不到"。
+    session = SessionKey.objects.filter(session_id=f'{batch_id}-n{receiver.id}').first()
+
     return {
         'batch': batch,
         'batch_id': batch_id,
@@ -669,6 +676,10 @@ def create_node_distribution(sender: Node, receiver: Node, *,
         'signing_key': signing_key,
         'signature_verified': True,
         'session_count': session_count,
+        # KMS-012：这条分发建出来的会话（发起方据此保存 K 并提交确认）。
+        # 取不到时如实为 None —— 旧用户腿路径不建"节点到节点会话"的那种情形。
+        'session_id': session.session_id if session else None,
+        'session_status': session.status if session else None,
         'chain_hash': chain_hash,
         'expires_at': expires_at,
     }

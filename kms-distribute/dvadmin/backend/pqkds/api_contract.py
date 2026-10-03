@@ -274,10 +274,29 @@ SESSION_STATUS_CHOICES: Tuple[Tuple[str, str], ...] = (
 #: 为什么要把这个集合写出来，而不是在各接口里 `if status == ...`：
 #: 分散判断必然漏。最危险的一条是 `initiated → established`：
 #: 少了它，一条请求就能跳过"验签 + 解封 + 双方确认"全部证据。
+#:
+#: ⚠️ KMS-012 扩了一条语义：**关闭（`closed`）从每个非终态都可到达**，
+#:    而不只是从 `established`。理由：
+#:      * 关闭是**放弃动作**、不产生任何信任主张（它不让人相信会话已建立），
+#:        所以放开它不会给出任何"跳过证据"的捷径 —— 与
+#:        `initiated → established` 那种"伪装成证据齐全"的边性质完全不同；
+#:      * 计划 §6.3 的状态图把 closed/expired/revoked 画在同一层（三个终态），
+#:        KMS-002 首版只给 established 留了 closed，实际效果是
+#:        "一条没走完的会话**没法主动放弃**，只能等过期" —— 而设备丢失、
+#:        对方长期不处理这类场景里，"主动关闭、留下明确的终态记录"才是
+#:        用户要做的事（过期是时钟触发的，不是人的决定）。
+#:    改这条边要连带更新：本表、`node_session_close` 的 allow_from、
+#:    会话页的关闭按钮可用性、以及 `doc` 里 KMS-012 的关闭记录。
 SESSION_TRANSITIONS: Dict[str, frozenset] = {
-    SESSION_INITIATED: frozenset({SESSION_RECIPIENT_VERIFIED, SESSION_EXPIRED, SESSION_REVOKED}),
-    SESSION_RECIPIENT_VERIFIED: frozenset({SESSION_KEY_RECOVERED, SESSION_EXPIRED, SESSION_REVOKED}),
-    SESSION_KEY_RECOVERED: frozenset({SESSION_ESTABLISHED, SESSION_EXPIRED, SESSION_REVOKED}),
+    SESSION_INITIATED: frozenset({
+        SESSION_RECIPIENT_VERIFIED, SESSION_CLOSED, SESSION_EXPIRED, SESSION_REVOKED,
+    }),
+    SESSION_RECIPIENT_VERIFIED: frozenset({
+        SESSION_KEY_RECOVERED, SESSION_CLOSED, SESSION_EXPIRED, SESSION_REVOKED,
+    }),
+    SESSION_KEY_RECOVERED: frozenset({
+        SESSION_ESTABLISHED, SESSION_CLOSED, SESSION_EXPIRED, SESSION_REVOKED,
+    }),
     SESSION_ESTABLISHED: frozenset({SESSION_CLOSED, SESSION_EXPIRED, SESSION_REVOKED}),
     # 终态：不再迁出。会话关闭后要重新通信就重新分发 ——
     # 允许"关闭→established"等于让关闭变成可撤销的装饰。

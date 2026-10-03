@@ -1,9 +1,10 @@
 /**
  * KMS-011 验收：**接收节点取信封、本机验签与解封**（计划 §7 阶段 4 的前两条）。
+ * KMS-012 扩展：**双方确认与 established 状态机**（第三条，阶段 4 出口检查）。
  *
  * 判据为什么是这几个动作，而不是"接口返回 200"
  * ------------------------------------------
- * 本阶段的主体会把会话从 `initiated` 推到 `key_recovered`，而**每一步都能
+ * 本阶段的主体会把会话从 `initiated` 推到 `established`，而**每一步都能
  * 在失败的情况下返回 200**：
  *
  *   * "接收方验签通过" ≠ "它真的验了"。服务端能独立复核（本脚本第 4 节
@@ -11,20 +12,22 @@
  *     且**状态不动** —— 这一条是"验签的失败方向必须是拒绝"的可执行形式。
  *   * "解封成功" ≠ "解出来的 K 是对的"。所以第 8 节把解出的 16 字节
  *     `sha256(K)` 与信封里的 `key_hash` 声明**逐字比对**，并且真算
- *     `HMAC(K, session_id)` 与做 Demo 侧（发送方）比对 —— 双方 proof 一致
- *     才会把会话提升为 established。证明对不上时**必须不提升**。
+ *     `HMAC(K, session_id)` 与发送方那把比对（三方逐字节相同）。
  *   * "状态推进了" ≠ "随便一跳"。第 6 节先把**顺序打乱**（没验签就回报解封）
- *     要求 `SESSION_STATE_INVALID`，再按正确顺序走通。少了这一条，
- *     "状态机在跑"与"状态随便写"分不出来。
+ *     要求 `SESSION_STATE_INVALID`，再按正确顺序走通。KMS-012 起
+ *     `confirm` 也必须查表：第 6 节让 A 先交一笔确认（不许推进状态），
+ *     第 8.5 节让**双方确认齐、证据链却不完整**（不许建立，`blockedBy` 指出来）。
+ *   * "关闭"是终态：第 8.5 节关掉一条会话，再确认必须被拒（`SESSION_TERMINAL`），
+ *     另一方重复关闭是幂等 ok（原因/时间不被改写）。
  *   * "服务端没拿到 SM4" 不是口头承诺：第 9 节拿本机那把 K 的 hex/base64
  *     在库里逐表搜，必须一处都搜不到（计划 §2.1）。
  *
  * 与其它脚本的关系
  * ---------------
  * `verify-node-distribution.mjs`（KMS-008/009/010）验的是**发送侧**：
- * 按指定版本封装、签名、服务端验签。本脚本接力验**接收侧**：
- * 取信 → 验签 → 解封 → 证明 → 建立。两边的"指定版本"必须**是同一版** ——
- * 第 3 节把它作为断言（会话行记的两版 = 分发时实际用的两版）。
+ * 按指定版本封装、签名、服务端验签。本脚本接力验**接收侧**（取信 → 验签 →
+ * 解封）与**会话闭环**（双方确认 → established / 关闭）。两边的"指定版本"
+ * 必须是**同一版** —— 第 3 节把它作为断言（会话行记的两版 = 分发时实际用的两版）。
  *
  * ⚠️ 会**建真节点、写真数据**，只在本地验证环境跑。结尾 11 节自建自清。
  * ⚠️ 服务端代码打进镜像：改了后端不重建，第 1 节的部署探针先失败 —— 刻意如此。
@@ -72,7 +75,8 @@ info('看起来像十几个逻辑缺陷，实际只是一次没重建镜像。')
 for (const [label, path, method] of [
   ['POST /node-self/sessions/<sid>/versions/', '/node-self/sessions/probe-not-a-session/versions/', 'POST'],
   ['POST /node-self/envelopes/<id>/verify/', '/node-self/envelopes/1/verify/', 'POST'],
-  ['POST /node-self/envelopes/<id>/recover/', '/node-self/envelopes/1/recover/', 'POST']
+  ['POST /node-self/envelopes/<id>/recover/', '/node-self/envelopes/1/recover/', 'POST'],
+  ['POST /node-self/sessions/<sid>/close/', '/node-self/sessions/probe-not-a-session/close/', 'POST']
 ]) {
   const res = await api(PQKDS, path, { method })
   check(`★ ${label} 已部署（不是 404/405）`, res.status !== 404 && res.status !== 405,
@@ -273,7 +277,7 @@ info('（封装只保证"只有我能解"，不保证"是谁发给我的"）。'
 info('做法：先证明服务端那份实现也能验过同一封信（跨语言一致），')
 info('再让浏览器用返回的公钥验 —— 两边结论必须同为"通过"。')
 
-const { verifyNodeEnvelope: verifyLocally } =
+const { verifyNodeEnvelope: verifyLocally, unwrapNodeEnvelope, checkRecoveredKeyHash, nodeProof } =
   await import('../src/utils/crypto/node-envelope.js')
 
 const localVerify = await verifyLocally({
@@ -409,6 +413,19 @@ check('★★ 先解封后验签 → SESSION_STATE_INVALID，且状态仍是 ini
   && sessionStatus(sessionId) === 'initiated',
   `${recoverFirst.body?.data?.error_code} status=${sessionStatus(sessionId)} msg=${recoverFirst.body?.msg}`)
 
+// KMS-012：**确认可以先于验签/解封提交** —— 且不误触发建立。
+// 让 A（发送方）此刻就交确认：会话状态必须仍是 initiated（状态机不放行），
+// 确认数变成 1/2。这一条把"提交与建立解耦、但建立受证据门限"钉在正路上。
+const proofEarlyA = await nodeProof({ payloadKey, sessionId })
+const earlyConfirmA = await api(PQKDS, `/node-self/sessions/${sessionId}/confirm/`, {
+  method: 'POST', token: nodeA.token, body: { proof: proofEarlyA }
+})
+check('★★ KMS-012：发送方先交确认（1/2）→ 记录成功但**不建立**，状态仍是 initiated',
+  isOk(earlyConfirmA.body) && earlyConfirmA.body?.data?.established === false
+  && earlyConfirmA.body?.data?.confirmedBy === 1
+  && sessionStatus(sessionId) === 'initiated',
+  `established=${earlyConfirmA.body?.data?.established} confirmedBy=${earlyConfirmA.body?.data?.confirmedBy} 库内=${sessionStatus(sessionId)}`)
+
 // 非收件人：C 来回报 → 403 NOT_ENVELOPE_RECIPIENT
 const verifyAsOther = await api(PQKDS, `/node-self/envelopes/${envelopeId}/verify/`, {
   method: 'POST', token: nodeC.token
@@ -448,6 +465,8 @@ check('★ 重复回报"验签通过" → 幂等成功（advanced=false），状
   && sessionStatus(sessionId) === 'recipient_verified',
   `advanced=${verifyAgain.body?.data?.advanced} 库内=${sessionStatus(sessionId)}`)
 
+// KMS-011 口径不变：解封这一步**执行后**再看状态，若双方确认早已齐
+// （第 6 节那两笔交了）且一致 → 这一刻兑现为 established。
 const recoverResp = await api(PQKDS, `/node-self/envelopes/${envelopeId}/recover/`, {
   method: 'POST', token: nodeB.token
 })
@@ -455,6 +474,9 @@ check('★ 回报解封成功 → 会话进 key_recovered（库内状态）',
   isOk(recoverResp.body) && recoverResp.body?.data?.advanced === true
   && sessionStatus(sessionId) === 'key_recovered',
   `resp.status=${recoverResp.body?.data?.status} 库内=${sessionStatus(sessionId)}`)
+check('★ 此刻只有 A 交过确认（1/2）→ 解封**不**触发建立（补提升是条件性的）',
+  recoverResp.body?.data?.established === false,
+  `established=${recoverResp.body?.data?.established}`)
 
 check('响应如实标注"解封是节点声明"（服务端不持有 K，不能独立验证这一步）',
   String(recoverResp.body?.data?.note || '').includes('节点回报'),
@@ -467,8 +489,10 @@ title('8. ★★ 解出的 K 与发送方那把是同一把：sha256 自查 + HM
 info('这是"解封成功"的唯一硬判据。只断言"解出 16 字节"会让"解错了一把"')
 info('（例如按物化列而不是指定版本解封）照样通过。')
 
-const { unwrapNodeEnvelope, checkRecoveredKeyHash, nodeProof } =
-  await import('../src/utils/crypto/node-envelope.js')
+// ⚠️ 本节要用的四个函数在**第 4 节开头**已经一次性解构过
+//    （`verifyLocally` / `unwrapNodeEnvelope` / `checkRecoveredKeyHash` /
+//    `nodeProof`）—— 同一个模块不重复声明：ESM 的 `const` 重名会直接
+//    抛 SyntaxError，而报错位置在加载期，看起来与"改了什么"毫无关系。
 
 const recovered = await unwrapNodeEnvelope({
   provider: cryptoProvider,
@@ -486,30 +510,32 @@ const hashCheck = await checkRecoveredKeyHash(recovered, envEntry.envelope)
 check('★★ 自查：解出 K 的 sha256 与信封里 key_hash 声明一致',
   hashCheck.ok === true, hashCheck.detail)
 
-// 双方 proof：B 用解出的 K 算，A 用它自己那把 K 算 —— 必须相同
+// 双方 proof：B 用解出的 K 算，A 用它自己那把 K 算 —— 必须相同。
+// ⚠️ A 那侧在本脚本里是"稍早交过一笔"（§6 的 1/2）：这里再算一次必须
+//    逐字节相同 —— upsert 会覆盖它，若两次算出不同的值，第二笔就会把
+//    第一笔改坏，而现象是"明明同一把 K 却建立不了"。
 const proofB = await nodeProof({ payloadKey: recovered, sessionId })
 const proofA = await nodeProof({ payloadKey, sessionId })
-check('★★ 双方 HMAC proof 一致（B 解出的 K 与 A 发出的 K 是同一把）',
-  proofB === proofA && proofB.length === 64,
-  `B=${proofB.slice(0, 16)}… A=${proofA.slice(0, 16)}…`)
+check('★★ 双方 HMAC proof 一致（B 解出的 K 与 A 发出的 K 是同一把，且与 A 早先那笔逐字相同）',
+  proofB === proofA && proofB === proofEarlyA && proofB.length === 64,
+  `B=${proofB.slice(0, 16)}… A=${proofA.slice(0, 16)}… A早先=${proofEarlyA.slice(0, 16)}…`)
 
-// 顺序反了：未解封就确认？此时已经是 key_recovered，先测别的——
-// 先让 B 提交确认（一方），状态不变
+// 此时 A 已确认（§6）、B 还没交 → 补交 B 这一笔，双方齐且一致。
 const confirmB = await api(PQKDS, `/node-self/sessions/${sessionId}/confirm/`, {
   method: 'POST', token: nodeB.token, body: { proof: proofB }
 })
-check('一方确认后**不建立**（等待对方），状态保持 key_recovered',
-  isOk(confirmB.body) && confirmB.body?.data?.established === false
-  && sessionStatus(sessionId) === 'key_recovered',
+check('★★ KMS-012：第二笔确认到达的那一刻，会话建立（`key_recovered → established`，读库核对）',
+  isOk(confirmB.body) && confirmB.body?.data?.established === true
+  && sessionStatus(sessionId) === 'established',
   `established=${confirmB.body?.data?.established} 库内=${sessionStatus(sessionId)}`)
 
-const confirmA = await api(PQKDS, `/node-self/sessions/${sessionId}/confirm/`, {
+// 已建立的会话再确认：幂等回 ok，不产生第三条记录
+const confirmAgain = await api(PQKDS, `/node-self/sessions/${sessionId}/confirm/`, {
   method: 'POST', token: nodeA.token, body: { proof: proofA }
 })
-check('★★ 双方确认一致 → 会话变成 established（读库核对）',
-  isOk(confirmA.body) && confirmA.body?.data?.established === true
-  && sessionStatus(sessionId) === 'established',
-  `established=${confirmA.body?.data?.established} 库内=${sessionStatus(sessionId)}`)
+check('★ 已建立再确认 → 幂等回 ok（不报错、不重复建立）',
+  isOk(confirmAgain.body) && confirmAgain.body?.data?.established === true,
+  `msg=${confirmAgain.body?.msg}`)
 
 // ⚠️ 子查询：`session_id` 是业务字符串，确认表里**没有**这个列（它外键到
 //    `SessionKey` 的整数主键）。一开始按 `session_id=` 查恒返回 0 行，
@@ -518,8 +544,204 @@ const confirmRows = sqlScalar(
   `SELECT COUNT(*) FROM ${CONFIRM_TABLE} `
   + `WHERE session_id=(SELECT id FROM ${SESSION_TABLE} WHERE session_id='${sessionId}');`
 ) || '0'
-check('确认记录是**双方各一条**（不是一遍遍覆盖同一条）',
+check('确认记录是**双方各一条**（不是一遍遍覆盖同一条，也不是每确认一次加一条）',
   confirmRows === '2', `confirmations=${confirmRows}`)
+
+// ---------------------------------------------------------------------------
+// 8.5 ★★ KMS-012：第二对会话 —— 证据不齐不建立、关闭是终态
+// ---------------------------------------------------------------------------
+title('8.5 ★★ 证据门限与关闭：`initiated → established` 直跳被拒；关闭是终态')
+info('另做一次真实分发（同一对节点、同一把 KYBER 公钥）：这次让**双方都把确认交齐**、')
+info('但都不走验签/解封 —— 两笔 proof 一致也**不许**建立（状态机不放行），')
+info('再关掉它验证终态语义。')
+
+const payloadKey2 = generatePayloadKey()
+const batch2 = newBatchId()
+const expiresAt2 = new Date(Date.now() + 2 * 3600 * 1000).toISOString()
+const built2 = await buildNodeEnvelope({
+  provider: cryptoProvider,
+  payloadKey: payloadKey2,
+  wrapping: KYBER,
+  recipientPublicKeyHex: keys.B[KYBER].publicKey,
+  batchId: batch2,
+  senderNodeId: nodeA.nodeId,
+  receiverNodeId: nodeB.nodeId,
+  recipientKeyId: keys.B[KYBER].keyId,
+  recipientKeyVersion: 1,
+  expiresAt: expiresAt2
+})
+const signature2 = await signNodeEnvelope(cryptoProvider, keys.A.FALCON.keyRef, built2.envelope)
+const dist2 = await api(PQKDS, '/node-self/distributions/', {
+  method: 'POST',
+  token: nodeA.token,
+  body: {
+    receiverNodeId: nodeB.nodeId,
+    protectionAlgorithm: KYBER,
+    recipientKeyId: keys.B[KYBER].keyId,
+    recipientKeyVersion: 1,
+    falconKeyId: keys.A.FALCON.keyId,
+    falconKeyVersion: 1,
+    batchId: batch2,
+    expiresAt: expiresAt2,
+    envelope: built2.envelope,
+    signature: signature2,
+    keyHash: built2.keyHash
+  }
+})
+check('★ KMS-012：分发回执带**这条分发对应的会话 ID**（发起方据此存 K 并确认，不必拼命名约定）',
+  isOk(dist2.body) && Boolean(dist2.body?.data?.sessionId)
+  && dist2.body?.data?.sessionStatus === 'initiated',
+  `sessionId=${dist2.body?.data?.sessionId} status=${dist2.body?.data?.sessionStatus}`)
+
+const sessionId2 = dist2.body?.data?.sessionId || ''
+const env2Rows = JSON.parse(sqlScalar(
+  `SELECT encrypted_key_data FROM ${POOL_TABLE} WHERE pool_id='${batch2}' LIMIT 1;`
+) || '{}')
+
+// A 交确认（它手里有 K）
+const proof2A = await nodeProof({ payloadKey: payloadKey2, sessionId: sessionId2 })
+const conf2A = await api(PQKDS, `/node-self/sessions/${sessionId2}/confirm/`, {
+  method: 'POST', token: nodeA.token, body: { proof: proof2A }
+})
+// B 本机解出 K（**不走 verify/recover 回执**）后交确认
+const recovered2 = await unwrapNodeEnvelope({
+  provider: cryptoProvider, keyRef: keys.B[KYBER].keyRef, envelope: env2Rows
+})
+check('夹具：B 能从第二封信封里解出与 A 相同的那把 K（两笔 proof 会一致）',
+  Buffer.from(recovered2).equals(Buffer.from(payloadKey2)),
+  `B ${Buffer.from(recovered2).toString('hex').slice(0, 12)}… A ${Buffer.from(payloadKey2).toString('hex').slice(0, 12)}…`)
+const proof2B = await nodeProof({ payloadKey: recovered2, sessionId: sessionId2 })
+const conf2B = await api(PQKDS, `/node-self/sessions/${sessionId2}/confirm/`, {
+  method: 'POST', token: nodeB.token, body: { proof: proof2B }
+})
+check('★★ 双方确认齐且一致（2/2），但**证据链不完整** → 不建立，`blockedBy=SESSION_STATE_INVALID`',
+  isOk(conf2A.body) && isOk(conf2B.body)
+  && conf2B.body?.data?.confirmedBy === 2
+  && conf2B.body?.data?.established === false
+  && conf2B.body?.data?.blockedBy === 'SESSION_STATE_INVALID'
+  && sessionStatus(sessionId2) === 'initiated',
+  `confirmedBy=${conf2B.body?.data?.confirmedBy} established=${conf2B.body?.data?.established} `
+  + `blockedBy=${conf2B.body?.data?.blockedBy} 库内=${sessionStatus(sessionId2)}`)
+
+const sessionsMid = await api(PQKDS, '/node-self/sessions/', { token: nodeA.token })
+const rowMid = (sessionsMid.body?.data?.items || []).find((item) => item.sessionId === sessionId2)
+check('★ 会话列表的 confirmedCount 如实为 2（页面显示"2/2"而不是"已建立"）',
+  rowMid?.confirmedCount === 2 && rowMid?.status === 'initiated',
+  `confirmedCount=${rowMid?.confirmedCount} status=${rowMid?.status}`)
+
+// 关闭：发起方关掉这条没走完的会话（从这里起是终态）
+const closeByA = await api(PQKDS, `/node-self/sessions/${sessionId2}/close/`, {
+  method: 'POST', token: nodeA.token
+})
+check('★★ 关闭成功 → 状态进 closed（终态，读库核对）',
+  isOk(closeByA.body) && closeByA.body?.data?.advanced === true
+  && sessionStatus(sessionId2) === 'closed',
+  `advanced=${closeByA.body?.data?.advanced} 库内=${sessionStatus(sessionId2)}`)
+
+const confirmAfterClose = await api(PQKDS, `/node-self/sessions/${sessionId2}/confirm/`, {
+  method: 'POST', token: nodeB.token, body: { proof: proof2B }
+})
+check('★★ 关闭后再确认 → SESSION_TERMINAL（终态不再接受确认）',
+  confirmAfterClose.body?.data?.error_code === 'SESSION_TERMINAL'
+  && sessionStatus(sessionId2) === 'closed',
+  `${confirmAfterClose.body?.data?.error_code} 库内=${sessionStatus(sessionId2)}`)
+
+const closeAgain = await api(PQKDS, `/node-self/sessions/${sessionId2}/close/`, {
+  method: 'POST', token: nodeB.token
+})
+check('★ 另一方重复关闭 → 幂等回 ok（advanced=false），终态的原因/时间不被改写',
+  isOk(closeAgain.body) && closeAgain.body?.data?.advanced === false
+  && sessionStatus(sessionId2) === 'closed',
+  `advanced=${closeAgain.body?.data?.advanced} 库内=${sessionStatus(sessionId2)}`)
+
+const closeAsOther = await api(PQKDS, `/node-self/sessions/${sessionId2}/close/`, {
+  method: 'POST', token: nodeC.token
+})
+check('★ 非会话方关闭 → 403 NOT_SESSION_PARTY',
+  closeAsOther.body?.code === 403
+  && closeAsOther.body?.data?.error_code === 'NOT_SESSION_PARTY',
+  `code=${closeAsOther.body?.code} error_code=${closeAsOther.body?.data?.error_code}`)
+
+// ---------------------------------------------------------------------------
+// 8.6 ★★ 双方各持不同的 K → proof 不一致 → 不提升，且如实报告
+// ---------------------------------------------------------------------------
+title('8.6 ★★ 双方证明不一致（各持不同的 K）→ 不建立，服务端如实报告')
+info('构造法（roadmap §3 判据）：第三次真实分发，A 用真 K 交确认，')
+info('B 故意用**另一把 K** 交确认 —— 模拟"一方手里的 K 不是这一批的"。')
+info('这种情形下"两笔都在库里"，但与"证据链不完整"是**两码事**：')
+info('一个要继续等/继续做，一个必须去查（可能信封或算法搞混、也可能有人伪造）。')
+
+const payloadKey3 = generatePayloadKey()
+const batch3 = newBatchId()
+const expiresAt3 = new Date(Date.now() + 2 * 3600 * 1000).toISOString()
+const built3 = await buildNodeEnvelope({
+  provider: cryptoProvider,
+  payloadKey: payloadKey3,
+  wrapping: KYBER,
+  recipientPublicKeyHex: keys.B[KYBER].publicKey,
+  batchId: batch3,
+  senderNodeId: nodeA.nodeId,
+  receiverNodeId: nodeB.nodeId,
+  recipientKeyId: keys.B[KYBER].keyId,
+  recipientKeyVersion: 1,
+  expiresAt: expiresAt3
+})
+const signature3 = await signNodeEnvelope(cryptoProvider, keys.A.FALCON.keyRef, built3.envelope)
+const dist3 = await api(PQKDS, '/node-self/distributions/', {
+  method: 'POST',
+  token: nodeA.token,
+  body: {
+    receiverNodeId: nodeB.nodeId,
+    protectionAlgorithm: KYBER,
+    recipientKeyId: keys.B[KYBER].keyId,
+    recipientKeyVersion: 1,
+    falconKeyId: keys.A.FALCON.keyId,
+    falconKeyVersion: 1,
+    batchId: batch3,
+    expiresAt: expiresAt3,
+    envelope: built3.envelope,
+    signature: signature3,
+    keyHash: built3.keyHash
+  }
+})
+const sessionId3 = dist3.body?.data?.sessionId || ''
+check('夹具：第三次分发成功且带会话 ID', isOk(dist3.body) && Boolean(sessionId3),
+  `sessionId=${sessionId3}`)
+
+const proof3A = await nodeProof({ payloadKey: payloadKey3, sessionId: sessionId3 })
+const conf3A = await api(PQKDS, `/node-self/sessions/${sessionId3}/confirm/`, {
+  method: 'POST', token: nodeA.token, body: { proof: proof3A }
+})
+// B 交的是**另一把 K** 的证明（不是这一批的载荷密钥）—— 模拟"双方手里的 K
+// 不是同一把"。⚠️ 用生成器的 `generatePayloadKey`（随机 16 字节），
+// 而不是 `nodeProof` 出错：要的就是"合法的 proof、只是 K 不同"。
+const wrongKey = generatePayloadKey()
+const proof3BWrong = await nodeProof({ payloadKey: wrongKey, sessionId: sessionId3 })
+check('夹具：B 手里那把 K 与 A 的不同（两笔 proof 必然不一致）',
+  proof3BWrong !== proof3A, `A=${proof3A.slice(0, 12)}… B=${proof3BWrong.slice(0, 12)}…`)
+const conf3B = await api(PQKDS, `/node-self/sessions/${sessionId3}/confirm/`, {
+  method: 'POST', token: nodeB.token, body: { proof: proof3BWrong }
+})
+check('★★ 两笔确认齐但证明不一致 → 不建立，如实报 reason=PROOF_MISMATCH（**不是** blockedBy）',
+  isOk(conf3A.body) && isOk(conf3B.body)
+  && conf3B.body?.data?.confirmedBy === 2
+  && conf3B.body?.data?.established === false
+  && conf3B.body?.data?.reason === 'PROOF_MISMATCH'
+  && sessionStatus(sessionId3) === 'initiated',
+  `confirmedBy=${conf3B.body?.data?.confirmedBy} established=${conf3B.body?.data?.established} `
+  + `reason=${conf3B.body?.data?.reason} 库内=${sessionStatus(sessionId3)}`)
+
+const mismatchRows = sqlScalar(
+  `SELECT COUNT(*) FROM ${CONFIRM_TABLE} `
+  + `WHERE session_id=(SELECT id FROM ${SESSION_TABLE} WHERE session_id='${sessionId3}');`
+) || '0'
+const distinctProofs = sqlScalar(
+  `SELECT COUNT(DISTINCT proof) FROM ${CONFIRM_TABLE} `
+  + `WHERE session_id=(SELECT id FROM ${SESSION_TABLE} WHERE session_id='${sessionId3}');`
+) || '0'
+check('★ 库里确实是**两条不同 proof**（不是同一笔被覆盖成两条）',
+  mismatchRows === '2' && distinctProofs === '2',
+  `confirmations=${mismatchRows} distinctProofs=${distinctProofs}`)
 
 // ---------------------------------------------------------------------------
 // 9. ★ 服务端全程没有拿到 SM4（计划 §2.1）
@@ -616,5 +838,6 @@ info(`本次真建的节点：${nodeA.nodeId} / ${nodeB.nodeId} / ${nodeC.nodeId
 info('证据都在上面：会话行关联两版密钥（逐字）、接收方本机跨语言验签（含篡改/错公钥拒绝）、')
 info('状态机顺序守卫（先解封被拒、非收件人 403）、验签/解封状态落库与幂等、')
 info('解出 K 与发送方逐字节相同 + sha256 自查 + 双方 proof 一致 → established、')
-info('以及"服务端库里搜不到 K 明文"这条不变量。')
+info('KMS-012：确认先交不误建 / 证据不齐 blockedBy / 双方各持不同 K → PROOF_MISMATCH 不提升 /')
+info('关闭是终态（关后确认 SESSION_TERMINAL、重复关闭幂等）、以及"服务端库里搜不到 K 明文"。')
 finish()

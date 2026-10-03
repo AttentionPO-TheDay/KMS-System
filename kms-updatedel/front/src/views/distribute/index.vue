@@ -158,6 +158,16 @@
               <!-- ⚠️ 存证没成功**如实说**，不与"分发成功"混成一句 ——
                    分发本身已经成立（信封落库、接收方能取），缺的是审计那一半。 -->
               <p v-else class="muted">链上存证未成功（分发本身已完成；审计缺口需要重试存证）。</p>
+              <!-- KMS-012：本地会话密钥与"下一步在哪" -->
+              <p v-if="result.sessionId && result.keyStored">
+                会话 <code>{{ result.sessionId }}</code> 已建立（initiated）；本机已保存这把会话密钥的副本，
+                你可以在「会话管理」里提交持有证明（确认），等对方处理完之后双方确认一致即建立。
+              </p>
+              <p v-else-if="result.sessionId" class="warn">
+                ⚠️ 本机**没能**保存会话密钥副本（{{ result.keyStoreError }}）——
+                分发本身已完成，但你这侧将无法提交确认。请把这条报给维护者。
+              </p>
+              <p v-else class="muted">本次没有建立节点到节点会话（没有对应的"待确认"）。</p>
             </div>
           </el-alert>
 
@@ -237,6 +247,7 @@ import {
 } from '@/services/user-distribution-api'
 import { cryptoProvider } from '@/utils/crypto/browser-provider.js'
 import { buildKeyRef } from '@/utils/crypto/key-ref.js'
+import { sealSessionSecret } from '@/utils/crypto/node-key-store.js'
 import {
   buildNodeEnvelope,
   generatePayloadKey,
@@ -504,7 +515,26 @@ async function handleDistribute() {
       signatureVerified: Boolean(data?.signatureVerified),
       falconKeyId: data?.falconKeyId || falconKey.value.keyId,
       falconKeyVersion: data?.falconKeyVersion ?? falconKey.value.keyVersion,
-      localKeyHash: keyHash
+      localKeyHash: keyHash,
+      // KMS-012：这条分发对应的会话 + 本机那把 K 的落库结果。
+      sessionId: data?.sessionId || '',
+      sessionStatus: data?.sessionStatus || '',
+      keyStored: false,
+      keyStoreError: ''
+    }
+    // KMS-012（计划 §7 阶段 4：「解封得到 SM4 后保存到本地会话密钥库」）：
+    // 发起方这把 K 是它自己生成的，同样要**留在本机** —— 会话双方各自提交
+    // `HMAC(K, session_id)`，发起方不存 K 就永远确认不了（刷新一次即失联，
+    // 而页面上看不出为什么）。存失败**如实显示**，不吞掉：
+    // 那不是"分发失败"（信封已经发出去、服务端已登记），而是"本机少了一条
+    // 后续要用的材料"，用户需要知道。
+    if (result.value.sessionId) {
+      try {
+        await sealSessionSecret(result.value.sessionId, payloadKey)
+        result.value.keyStored = true
+      } catch (error) {
+        result.value.keyStoreError = String(error?.message || error)
+      }
     }
     ElMessage.success('分发完成')
     await loadBatches()
@@ -619,6 +649,10 @@ onMounted(async () => {
 
 .muted {
   color: var(--kms-text-secondary);
+}
+
+.warn {
+  color: var(--kms-warning-strong, #ff7d00);
 }
 
 .mb16 {

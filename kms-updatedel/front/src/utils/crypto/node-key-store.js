@@ -57,10 +57,17 @@ const DB_NAME = 'kms-node-keystore'
 //    v2：新增 STORE_DEVICE_KEYS（设备认证私钥的 CryptoKey 对象，见 device-credential.js）。
 //    v3：keyRef 统一为 `node/{nodeId}/{算法}/{keyId}/{版本}`（KMS-003），
 //        并在升级事务里把 v2 的旧格式记录就地迁移（见 migrateLegacyRefs）。
-const DB_VERSION = 3
+//    v4：新增 STORE_SESSION_KEYS（会话密钥 K，KMS-012 的"解封后保存到本地
+//        会话密钥库"）。它与 keys 用同一套"保护密钥加密后存字节"的形态，
+//        但**不共用 keys**：keys 的记录都要能被 parseKeyRef 解析成
+//        node/设备引用，而会话材料的主键是会话 ID —— 塞进 keys 会被
+//        canonicalRefForLookup 拒（或更糟：被当成人造 ref 存进去、
+//        永远查不出来）。
+const DB_VERSION = 4
 const STORE_META = 'meta'
 const STORE_KEYS = 'keys'
 const STORE_DEVICE_KEYS = 'deviceKeys'
+const STORE_SESSION_KEYS = 'sessionKeys'
 
 const META_PROTECTOR = 'protector'
 const META_DEVICE = 'deviceId'
@@ -216,6 +223,12 @@ function openDb() {
         // 两种形态混在一个 store 里，读取方要先判断类型才能决定怎么解 ——
         // 那是"看起来能用、出错时极难定位"的设计。
         db.createObjectStore(STORE_DEVICE_KEYS, { keyPath: 'keyRef' })
+      }
+      if (!db.objectStoreNames.contains(STORE_SESSION_KEYS)) {
+        // KMS-012：会话密钥 K（SM4）的**本机副本**。形态与 keys 相同
+        // （保护密钥 AES-GCM 封装后存字节），主键是会话 ID。
+        // 它与 keys 分开的理由见文首 v4 那段：会话材料没有 keyRef。
+        db.createObjectStore(STORE_SESSION_KEYS, { keyPath: 'sessionId' })
       }
       if (event.oldVersion < 3) {
         // 迁移必须用升级事务自己的 objectStore 请求完成 —— 见 migrateLegacyRefs
@@ -624,6 +637,96 @@ export async function assertProtectorNotExportable() {
     return true
   }
   return false
+}
+
+// ---------------------------------------------------------------------------
+// 会话密钥（KMS-012）：解封得到 / 分发产出的 K 的**本机副本**
+// ---------------------------------------------------------------------------
+// 计划 §7 阶段 4 的原文是「解封得到 SM4 后保存到本地会话密钥库，不上传 SM4」——
+// 这个 store 就是那句话的落点。它同时服务两侧：
+//   * 接收方：解封成功后存 K，之后每次确认在本地算 HMAC proof；
+//   * 发送方：分发成功后存这把 K（它就是自己生成的），提交确认时同样在本地算。
+//
+// ⚠️ 服务端那一半是"看不到 K"（不变量），这一半是"K 留在本机、跨页面刷新
+//    仍在"（可用性）。两者缺一不可：只在内存里存 K 的话，刷新一次就再也
+//    提交不了确认，而页面上没有任何一处会说得出为什么。
+//
+// ⚠️ 与 keys 同一个保护密钥（`getOrCreateProtector`，不可导出）。
+//    不要为了"方便调试"另开一个可导出的保护或明文存 —— 那等于把整库的优势
+//    一次性抹掉，而代码看不出区别（该函数上方写着同一条纪律）。
+
+/**
+ * 保存会话密钥。`payloadKey` 必须是 16 字节的 SM4 载荷密钥。
+ *
+ * ⚠️ 长度在这里就拦：存错长度（例如把 32 字节的共享秘密当 K 存了）不会报错，
+ *    但之后算出来的 proof 与对方恒不一致 —— 表现是"证明不一致"，
+ *    看起来像两边拿错了密钥。所以**存的时候就判**。
+ */
+export async function sealSessionSecret(sessionId, payloadKey) {
+  const id = String(sessionId ?? '').trim()
+  if (!id) {
+    throw new Error('sealSessionSecret：会话 ID 不能为空')
+  }
+  const bytes = payloadKey instanceof Uint8Array ? payloadKey : new Uint8Array(payloadKey || [])
+  if (bytes.length !== 16) {
+    throw new Error(`sealSessionSecret：会话密钥必须是 16 字节 SM4（收到 ${bytes.length} 字节）`)
+  }
+  const protector = await getOrCreateProtector()
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const sealed = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, protector, bytes)
+  await tx(STORE_SESSION_KEYS, 'readwrite', (store) => req(store.put({
+    sessionId: id,
+    iv,
+    sealed,
+    createdAt: new Date().toISOString(),
+  })))
+  return { sessionId: id, bytes: bytes.length }
+}
+
+/** 读回会话密钥明文（本机）。没有该会话或解密失败时抛错 —— 不返回半截内容。 */
+export async function unsealSessionSecret(sessionId) {
+  const id = String(sessionId ?? '').trim()
+  const record = await tx(STORE_SESSION_KEYS, 'readonly', (store) => req(store.get(id)))
+  if (!record) {
+    throw new Error(`本地会话密钥库里没有 ${id} 的记录（换过设备或清过站点数据？）`)
+  }
+  const protector = await getOrCreateProtector()
+  try {
+    const plain = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: record.iv }, protector, record.sealed
+    )
+    return new Uint8Array(plain)
+  } catch {
+    throw new Error(`本地会话密钥库中的 ${id} 解密失败：保护密钥不匹配或数据已被改动`)
+  }
+}
+
+/** 本机是否有该会话的密钥副本。 */
+export async function hasSessionSecret(sessionId) {
+  const id = String(sessionId ?? '').trim()
+  const record = await tx(STORE_SESSION_KEYS, 'readonly', (store) => req(store.get(id)))
+  return Boolean(record)
+}
+
+/** 列出本机持有的会话密钥摘要（**不含任何密钥字节**，仅供界面显示）。 */
+export async function listSessionSecrets() {
+  const all = await tx(STORE_SESSION_KEYS, 'readonly', (store) => req(store.getAll()))
+  return (all || []).map((record) => ({
+    sessionId: record.sessionId,
+    createdAt: record.createdAt,
+  }))
+}
+
+/**
+ * 删除一条会话密钥（会话关闭后调用）。
+ *
+ * ⚠️ 调用时机在**服务端关闭成功之后**：反过来先删本地再关服务端，一旦关闭
+ *    请求失败，本机就再也算不出 proof、也再也确认不了这条会话 ——
+ *    而服务端那边它还活着。
+ */
+export async function removeSessionSecret(sessionId) {
+  const id = String(sessionId ?? '').trim()
+  await tx(STORE_SESSION_KEYS, 'readwrite', (store) => req(store.delete(id)))
 }
 
 /**

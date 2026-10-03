@@ -5,7 +5,8 @@
     POST /node-self/sessions/<sid>/versions/      这条会话该用哪两版密钥（KMS-011）
     POST /node-self/envelopes/<id>/verify/        回执：我在这台设备上验签通过（KMS-011）
     POST /node-self/envelopes/<id>/recover/       回执：我在这台设备上解封成功（KMS-011）
-    POST /node-self/sessions/<sid>/confirm/       提交"我已恢复 K"的证明
+    POST /node-self/sessions/<sid>/confirm/       提交"我已恢复 K"的证明（KMS-012 起走状态机）
+    POST /node-self/sessions/<sid>/close/         关闭会话（终态，不可恢复）
 
 这几件事为什么必须一起做
 ------------------------
@@ -24,6 +25,13 @@ KMS-011 补的是 ① 与 ②的**回执**：解封发生在接收节点的浏�
 `recipient_verified` / `key_recovered`（`SESSION_TRANSITIONS` 里那两条边
 此前**没有任何写入点**）。推进只走状态机的合法边 —— 先 `recover` 后
 `verify` 会被拒，因为 `initiated → key_recovered` 不是一条允许的边。
+
+KMS-012 补的是 ③与"建立"这一步的**门**：`confirm` 不再直接写
+`established`，而是经 `_maybe_establish` 走 `SESSION_TRANSITIONS`
+（唯一能到 established 的边是 `key_recovered → established`）——
+证明可以**随时提交、顺序独立**，但"建立"必须等验签与解封的回执都到齐；
+终态会话不再接受确认（`SESSION_TERMINAL`）。另补 `close`（双方可关、
+终态不可恢复）与会话列表的双方确认数。
 
 ⚠️ 回执是**节点的声明**，与 confirm 的 proof 是同一性质：服务端无法独立
    验证"它真的解开了"。真正起作用的是后面双方 proof 的相互匹配 ——
@@ -51,7 +59,7 @@ import json
 import logging
 import re
 
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -257,6 +265,15 @@ def node_sessions(request, identity):
         queryset = queryset.exclude(status__in=('expired', 'revoked'))
 
     limit = min(int(request.GET.get('limit') or 200), 500)
+    page = list(queryset[:limit])
+    # KMS-012：双方确认数（"x/2"）。一条聚合查询取全部页内会话的计数 ——
+    # 逐行查会 N+1，而列表页的会话数本来就可能上百。
+    counts = dict(
+        SessionKeyConfirmation.objects
+        .filter(session__in=page)
+        .values_list('session_id')
+        .annotate(n=Count('id'))
+    )
     items = [
         {
             'sessionId': s.session_id,
@@ -279,8 +296,12 @@ def node_sessions(request, identity):
             # 显示"处理（取信→验签→解封）"还是"等待对方处理"——
             # 而不是让用户点了才发现 403。
             'isRecipient': s.node2_id == node.id,
+            # KMS-012：双方确认数（0..2）。页面显示"x/2 已确认"；
+            # 两个都确认但状态还是 key_recovered，说明证明不一致或状态机没放行，
+            # 页面据此提示去查而不是干等。
+            'confirmedCount': int(counts.get(s.id, 0)),
         }
-        for s in queryset[:limit]
+        for s in page
     ]
     return _ok({'items': items, 'total': len(items)})
 
@@ -643,11 +664,27 @@ def node_envelope_recover(request, envelope_pk, identity):
                           error_code=exc.code)
         advanced = False
 
+    # KMS-012：双方确认可以**先于**这一步提交（发起方分发完就能确认、
+    # 接收方也可以先交证明再回来解封）。那两笔确认一直在库里等着 ——
+    # 这里补一次提升机会，让"证据齐了"立刻兑现，而不是要用户再点一次确认。
+    #
+    # ⚠️ 只在这里补，不在 verify 里补：合法的建立路径是
+    #    `key_recovered → established`，而 verify → recipient_verified 时
+    #    状态机本来就还不允许（也**不该**允许 —— 那会让"没解封也建立"成真）。
+    establish_state = 'waiting'
+    try:
+        establish_state, _ = _maybe_establish(session)
+    except Exception as exc:  # noqa: BLE001
+        # 补一次提升是**尽力而为**：它失败了不该让"解封已登记"变成一次 500。
+        logger.warning('会话 %s 解封后补提升失败（不影响解封登记）: %s', session.session_id, exc)
+
     return _ok({
         'envelopeId': record.pk,
         'sessionId': session.session_id,
         'status': session.status,
         'advanced': advanced,
+        # 补提升的结果如实回报：established 表示双方确认早就齐了、这一刻兑现。
+        'established': establish_state == 'established',
         # 口径提示（给页面看）：这一步是节点的声明，安全性来自后面的双方 proof。
         'note': '服务端不持有会话密钥，本状态依据的是节点回报；真正的建立条件是双方 proof 一致',
     }, msg='解封成功已登记' if advanced else '这条会话此前已解封，本次未做改动')
@@ -665,22 +702,131 @@ def _session_of_batch(batch_id: str, node: Node):
     return SessionKey.objects.filter(session_id=f'{batch_id}-n{node.id}').first()
 
 
+def _confirmation_state(session):
+    """双方的确认状态：`(count, proofs_equal)`。
+
+    两个数分开返回而不是合并成一个布尔：调用方对"只有一方确认"与
+    "两方确认但证明不一致"的**文案与处置完全不同**（前者等对方，
+    后者是真问题），合并后必然要在别处重新拆开 —— 那正是分散判断的开始。
+    """
+    confirmations = list(SessionKeyConfirmation.objects.filter(session=session))
+    if len(confirmations) < 2:
+        return len(confirmations), None
+    return len(confirmations), len({c.proof for c in confirmations}) == 1
+
+
+def _maybe_establish(session):
+    """双方证明已齐且一致时，按状态机把会话提升为 `established`。
+
+    返回 `(state, detail)`，state ∈ {'established', 'waiting', 'mismatch', 'state'}：
+      * `waiting`   —— 只有一方确认（或还没有）；
+      * `mismatch`  —— 两方确认了但 proof 不同（两边持有的 K 不是同一把）；
+      * `state`     —— 证明齐了，但会话还没走到 `key_recovered`（验签/解封的回执
+                       还没齐）—— 状态机不允许跳过，如实拒绝提升；
+      * `established` —— 提升成功（或本来就已建立）。
+
+    ⚠️ 后三种都**不是错误**：confirm 本身是一次合法的提交，只是"建立"这个
+       动作还不到时候。调用方按各自上下文给文案，不要把 'state' 报成 500/400 ——
+       用户没做错什么，缺的是另一个端点上的两步回执。
+
+    ⚠️ 提升只走 `SESSION_TRANSITIONS` 里 `key_recovered → established` 这一条边
+       （KMS-012 的核心）：`initiated → established` 的直跳在这里被拒，
+       不再依赖"顺序对了就不会发生"。
+    """
+    count, proofs_equal = _confirmation_state(session)
+    if count < 2:
+        return 'waiting', f'已确认 {count}/2'
+    if not proofs_equal:
+        logger.warning(
+            '会话 %s 双方确认证明不一致（各自持有的 K 不同）', session.session_id,
+        )
+        return 'mismatch', '双方证明不一致'
+    if session.status == C.SESSION_ESTABLISHED:
+        return 'established', '早已建立'
+    try:
+        _advance_session(session, C.SESSION_ESTABLISHED,
+                         allow_from=(C.SESSION_KEY_RECOVERED,))
+    except C.ContractError as exc:
+        # 状态机还没走到 key_recovered：证明齐了也不能建。
+        logger.info('会话 %s 双方确认已齐，但状态机不允许提升：%s', session.session_id, exc.message)
+        return 'state', exc.message
+    logger.info('会话 %s 双方确认一致 → established', session.session_id)
+    return 'established', ''
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+@require_kms_user
+def node_session_close(request, session_id, identity):
+    """关闭会话（KMS-012 / §16.4）。**终态，不可恢复**。
+
+    双方都可以关闭：发起方放弃一次没建立起来的会话、或任一方结束通信，
+    都是正常动作。关闭后要再通信只能**重新分发** —— 这条口径必须写进
+    响应与页面文案：`SESSION_CLOSED` 在 `SESSION_TRANSITIONS` 里没有出边。
+
+    ⚠️ 会话密钥的**本地副本**由调用方（页面）在关闭成功后自行删除 ——
+       服务端不知道谁的本机存了什么，替它删是做不到的；能保证的是
+       这条会话此后不接受任何确认或状态变更。
+    """
+    node = _find_node(identity)
+    if node is None:
+        return _error('当前账号未关联任何节点', 403)
+
+    session = SessionKey.objects.filter(session_id=session_id).first()
+    if session is None:
+        return _error(f'会话不存在：{session_id}', 404, error_code=C.ERR_SESSION_NOT_FOUND)
+    if node.id not in (session.node1_id, session.node2_id):
+        return _error('你不是这条会话的一方，无权关闭', 403, error_code=C.ERR_NOT_SESSION_PARTY)
+
+    if session.status in C.SESSION_TERMINAL_STATUSES:
+        # 已经是终态（关闭/过期/撤销）—— 幂等回 ok 但**不改任何字段**：
+        # 重试一次关闭不该失败，但"它是什么时候因为什么进终态的"不能被改写。
+        return _ok({
+            'sessionId': session.session_id,
+            'status': session.status,
+            'advanced': False,
+        }, msg=f'会话已处于终态（{session.status}），本次未做改动')
+
+    try:
+        advanced = _advance_session(
+            session, C.SESSION_CLOSED,
+            allow_from=(C.SESSION_INITIATED, C.SESSION_RECIPIENT_VERIFIED,
+                        C.SESSION_KEY_RECOVERED, C.SESSION_ESTABLISHED),
+        )
+    except C.ContractError as exc:
+        return _error(exc.message, C.ERROR_HTTP_STATUS.get(exc.code, 400), error_code=exc.code)
+
+    return _ok({
+        'sessionId': session.session_id,
+        'status': session.status,
+        'advanced': advanced,
+        'note': '关闭是终态：该会话不再接受确认或状态变更；要重新通信请重新分发',
+    }, msg='会话已关闭（终态）')
+
+
 @csrf_exempt
 @require_http_methods(['POST'])
 @require_kms_user
 def node_session_confirm(request, session_id, identity):
-    """提交"我已恢复会话密钥"的证明，双方一致则把会话提升为 established。
+    """提交"我已恢复会话密钥"的证明；双方一致**且状态机允许**时才提升为 established。
 
     请求体：`{"proof": "<HMAC-SHA256(K, session_id) 的十六进制>"}`
 
-    流程：
-      1. 校验该节点确实是这条会话的一方（否则第三个人也能来"确认"）；
-      2. 记录（或更新）本节点的证明；
-      3. 若双方证明**都已提交且相等** → 提升为 established。
+    流程（KMS-012 起）：
+      1. 终态（closed/expired/revoked）直接拒 —— 不收"死后确认"；
+      2. 校验该节点确实是这条会话的一方（否则第三个人也能来"确认"）；
+      3. 记录（或更新）本节点的证明；
+      4. 双方证明**都已提交且相等**时，按 `SESSION_TRANSITIONS` 尝试提升 ——
+         唯一能到 established 的边是 `key_recovered → established`。
 
-    ⚠️ 证明不相等时**不提升、也不报错**，而是如实返回"等待对方"或
-       "双方证明不一致"。后者是真问题（两边持有的 K 不同），
-       但它既可能是封装算法搞混，也可能是有人伪造 ——
+    ⚠️ 顺序独立、但**提升不跳过证据**：证明可以随时提交（revoke 之后、
+       解封之前都行），可"建立"必须等验签与解封两件回执都到齐。
+       KMS-011 之前这里直接写 `status='established'` ——
+       `initiated → established` 的直跳靠"顺序对了就不会发生"堵着；
+       现在由状态机表拒绝，响应里如实给出 `blockedBy`。
+
+    ⚠️ 证明不相等时**不提升、也不报错**（`mismatch`）：那是真问题
+       （两边持有的 K 不同），但它既可能是封装算法搞混，也可能是伪造 ——
        这里不猜原因，只把事实说清楚，让人去查。
     """
     node = _find_node(identity)
@@ -702,13 +848,23 @@ def node_session_confirm(request, session_id, identity):
 
     session = SessionKey.objects.filter(session_id=session_id).first()
     if session is None:
-        return _error(f'会话不存在：{session_id}', 404)
+        return _error(f'会话不存在：{session_id}', 404, error_code=C.ERR_SESSION_NOT_FOUND)
+
+    # 终态：不再接受任何确认。放在身份校验**之前**还是之后都有道理 ——
+    # 选之前，是因为"这条会话已经死了"对任何调用方都是同一个答复，
+    # 而先答 403 会把注意力引向"我是不是没权限"。
+    if session.status in C.SESSION_TERMINAL_STATUSES:
+        return _error(
+            f'会话已处于终态（{session.status}），不再接受确认',
+            C.ERROR_HTTP_STATUS.get(C.ERR_SESSION_TERMINAL, 409),
+            error_code=C.ERR_SESSION_TERMINAL,
+        )
 
     # 只有会话双方能确认。少了这一条，任何登录用户都能对别人的会话"确认"，
     # 而它提交的证明必然与真实一方对不上 —— 于是表现为"双方证明不一致"，
     # 把一次越权伪装成一次故障。所以先挡在这里。
     if node.id not in (session.node1_id, session.node2_id):
-        return _error('你不是这条会话的一方，无权确认', 403)
+        return _error('你不是这条会话的一方，无权确认', 403, error_code=C.ERR_NOT_SESSION_PARTY)
 
     SessionKeyConfirmation.objects.update_or_create(
         session=session,
@@ -720,39 +876,38 @@ def node_session_confirm(request, session_id, identity):
         },
     )
 
-    confirmations = list(SessionKeyConfirmation.objects.filter(session=session))
-    if len(confirmations) < 2:
-        return _ok({
-            'sessionId': session_id,
-            'status': session.status,
-            'confirmedBy': len(confirmations),
-            'established': False,
-        }, msg='已记录你的确认；等待会话另一方确认')
+    state, detail = _maybe_establish(session)
+    confirmed_by = _confirmation_state(session)[0]
 
-    # 双方都在了：比较证明
-    proofs = {c.proof for c in confirmations}
-    if len(proofs) > 1:
-        logger.warning(
-            '会话 %s 双方确认证明不一致（各自持有的 K 不同）: %s',
-            session_id, [(c.node_id, c.proof[:12]) for c in confirmations]
-        )
+    if state == 'established':
         return _ok({
             'sessionId': session_id,
             'status': session.status,
-            'confirmedBy': len(confirmations),
+            'confirmedBy': confirmed_by,
+            'established': True,
+        }, msg='双方确认一致，会话已建立' if detail != '早已建立' else '会话已建立（无需重复确认）')
+    if state == 'mismatch':
+        return _ok({
+            'sessionId': session_id,
+            'status': session.status,
+            'confirmedBy': confirmed_by,
             'established': False,
+            'reason': C.ERR_PROOF_MISMATCH,
         }, msg='双方确认已提交但**证明不一致**：两边解出的会话密钥不是同一把，请检查该会话的信封与算法')
-
-    if session.status == 'established':
+    if state == 'state':
+        # 证明齐了、也一致，但证据链不完整（验签/解封的回执没到）——
+        # **不提升**，把卡在哪一步如实说出来（`blockedBy` 可编程判断）。
         return _ok({
-            'sessionId': session_id, 'status': session.status,
-            'confirmedBy': len(confirmations), 'established': True,
-        }, msg='会话已建立（无需重复确认）')
+            'sessionId': session_id,
+            'status': session.status,
+            'confirmedBy': confirmed_by,
+            'established': False,
+            'blockedBy': C.ERR_SESSION_STATE_INVALID,
+        }, msg=f'确认已记录，但暂不能建立：{detail}（需要接收方先完成验签与解封）')
 
-    session.status = 'established'
-    session.save(update_fields=['status'])
-    logger.info('会话 %s 双方确认一致 → established', session_id)
     return _ok({
-        'sessionId': session_id, 'status': 'established',
-        'confirmedBy': len(confirmations), 'established': True,
-    }, msg='双方确认一致，会话已建立')
+        'sessionId': session_id,
+        'status': session.status,
+        'confirmedBy': confirmed_by,
+        'established': False,
+    }, msg='已记录你的确认；等待会话另一方确认')

@@ -34,6 +34,7 @@ from .node_session_views import (
     node_envelope_recover,
     node_envelope_verify,
     node_envelopes,
+    node_session_close,
     node_session_confirm,
     node_session_versions,
     node_sessions,
@@ -90,6 +91,9 @@ urlpatterns = [
     path('node-self/sessions/', node_sessions, name='node-self-sessions'),
     path('node-self/sessions/<str:session_id>/confirm/', node_session_confirm,
          name='node-self-session-confirm'),
+    # KMS-012：关闭（终态）。双方可关；关闭后不再接受确认或状态变更。
+    path('node-self/sessions/<str:session_id>/close/', node_session_close,
+         name='node-self-session-close'),
     # KMS-011：接收方取信封的两条操作（§6.5 的第 ①② 条）。
     # `versions/` 只回"这条会话该用哪两版密钥"（发送方 Falcon 公钥 + 接收方
     # 那一版），是接收方本机验签/解封的入参；`verify` / `recover` 是它做完

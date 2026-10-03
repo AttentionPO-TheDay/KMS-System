@@ -284,6 +284,20 @@ export function confirmSelfSession(sessionId, proof) {
   ).then(unwrap)
 }
 
+/**
+ * 关闭会话（KMS-012 / §16.4）。**终态，不可恢复** —— 要重新通信只能重新分发。
+ *
+ * 双方都可以关；关闭后该会话不再接受确认或状态变更
+ * （再确认会拿到 `SESSION_TERMINAL`）。页面在关闭成功后应删除本机的会话
+ * 密钥副本（`removeSessionSecret`）—— 服务端不知道谁的本机存了什么。
+ *
+ * ⚠️ 顺序：**先服务端关闭、后删本地**。反过来一旦关闭请求失败，本机就再也
+ *    算不出 proof，而服务端那边会话还活着。
+ */
+export function closeSelfSession(sessionId) {
+  return http.post(`/node-self/sessions/${encodeURIComponent(sessionId)}/close/`).then(unwrap)
+}
+
 // ---------------------------------------------------------------------------
 // 设备凭据认证（文档 §3 激活 / §5 登录）
 // ---------------------------------------------------------------------------

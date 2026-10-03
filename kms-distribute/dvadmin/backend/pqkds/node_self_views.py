@@ -800,6 +800,11 @@ def node_self_distributions(request, identity):
             # 空串 = 存证未成功（链不可用等）。**不隐藏**：
             # 前端据此如实显示"已分发，但存证未成功"，而不是混成一句"成功"。
             'chainHash': result['chain_hash'] or '',
+            # KMS-012：这条分发对应的会话（发起方据此把 K 存进本地会话密钥库，
+            # 并提交自己的持有证明）。为 None 表示本次没有建出会话 ——
+            # 页面如实不显示"待确认"，而不是给一个点了会 404 的按钮。
+            'sessionId': result.get('session_id'),
+            'sessionStatus': result.get('session_status'),
             # KMS-010：验签真实发生了，且这一条只有**验过**才可能被回。
             # 失败在服务层就抛 `SIGNATURE_INVALID` 了，走不到这里 ——
             # 所以它不是"声明"，是"这一步已经过去了"。

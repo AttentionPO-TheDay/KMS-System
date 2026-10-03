@@ -138,3 +138,20 @@ export async function nodeProof({ payloadKey, sessionId }) {
   const signature = await crypto.subtle.sign('HMAC', hmacKey, textEncoder.encode(String(sessionId)))
   return toHex(new Uint8Array(signature))
 }
+
+/**
+ * 从**本地会话密钥库**取 K 并算持有证明（KMS-012）。
+ *
+ * 这是"确认"按钮两侧共用的那一段：接收方解封后、发送方分发后都把 K 存进了
+ * 本地会话密钥库（`sealSessionSecret`），确认时在这里取出来算 HMAC ——
+ * K 从不经过网络，服务端只收到 proof。
+ *
+ * ⚠️ 本机没有该会话的密钥时**抛错而不是返回空串**：那是"换过设备"这类
+ *    真实处境，页面要如实告诉用户回原设备处理，而不是提交一个必然对不上的
+ *    证明、让对方看到"证明不一致"（看起来像对方有问题）。
+ */
+export async function sessionProofFromStore(sessionId) {
+  const { unsealSessionSecret } = await import('./node-key-store.js')
+  const payloadKey = await unsealSessionSecret(sessionId)
+  return nodeProof({ payloadKey, sessionId })
+}
