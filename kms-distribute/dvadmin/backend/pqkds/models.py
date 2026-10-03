@@ -4,6 +4,18 @@ from dvadmin.utils.models import CoreModel, table_prefix
 import json
 import hashlib
 from typing import Dict, Any
+
+# 冻结契约（KMS-002）。models 只从这里取**取值**，不取任何业务逻辑 ——
+# api_contract 不 import 任何业务模块，所以这里不会形成循环引用。
+from .api_contract import (
+    KEY_STATUS_ACTIVE,
+    KEY_STATUS_CHOICES,
+    KEY_STATUS_EXPIRED,
+    KEY_STATUS_PENDING,
+    KEY_STATUS_REVOKED,
+    key_status_allows_new_work,
+    key_status_allows_unwrap,
+)
 class SystemParameters(CoreModel):
     name = models.CharField(max_length=100, unique=True, verbose_name="参数名称", help_text="系统参数名称")
     n = models.IntegerField(verbose_name="安全参数n", help_text="Falcon安全参数n")
@@ -258,6 +270,28 @@ class Node(CoreModel):
     )
     blockchain_synced = models.BooleanField(default=False, verbose_name="是否同步到区块链", help_text="节点信息是否已同步到区块链")
     blockchain_sync_time = models.DateTimeField(null=True, blank=True, verbose_name="同步时间", help_text="节点同步到区块链的时间")
+
+    # --- 长期密钥版本的便利读法（KMS-004）---
+    # 只读；**不要**在这里加写入方法 —— 写入的唯一入口是 `node_key_registry`，
+    # 它负责双写 `Node.<算法>_public_key` 与降级旧版本这两件必须一起发生的事。
+    def current_long_term_key(self, algorithm: str):
+        """取该算法当前生产中的版本（status=ACTIVE）。没有则返回 None。
+
+        ⚠️ 别的算法名写法（`kyber_kem` / `cl-falcon` / `falcon_lattice`）会先
+           经 `canonical_algorithm` 归一 —— 调用方不必自己清洗拼写。
+        """
+        from .api_contract import canonical_algorithm
+        return self.long_term_keys.filter(
+            algorithm=canonical_algorithm(algorithm), status=KEY_STATUS_ACTIVE,
+        ).first()
+
+    def long_term_key_versions(self, algorithm: str):
+        """该算法的全部版本，新的在前（供"版本历史"页面用）。"""
+        from .api_contract import canonical_algorithm
+        return self.long_term_keys.filter(
+            algorithm=canonical_algorithm(algorithm),
+        ).order_by('-key_version')
+
     class Meta:
         verbose_name = "节点"
         verbose_name_plural = "节点"
@@ -531,6 +565,180 @@ class NodeKeyVersion(CoreModel):
         db_table = f"{table_prefix}pqkds_node_key_versions"
     def __str__(self):
         return f"{self.node.name} - Kyber v{self.kyber_version}, Falcon v{self.falcon_version}"
+
+class NodeLongTermKey(CoreModel):
+    """节点的长期密钥版本记录（计划 §6.1 / KMS-004）。
+
+    为什么不能继续只用 `Node` 上那几列
+    ---------------------------------
+    `Node` 用 `kyber_public_key` / `gm_public_key` / `sscl_public_key` /
+    `falcon_sign_public_key` 四个 TextField 表达"这个节点有哪些长期密钥"。
+    这套表达缺三样东西，而三样都是计划明确要求的：
+
+      * **版本** —— 轮换后旧公钥被覆盖，历史信封引用的那一版**再也查不回来**。
+        而信封验签必须按"签名时那版公钥"验，不是按当前公钥；
+      * **状态** —— `Node.status` 是**节点**的状态（active/pending/disabled），
+        表达不了"这一把已回收"。此前只能靠把列清空来表达，而清空同时抹掉审计线索；
+      * **归属与有效期** —— `expires_at` / `revoked_at` / `device_id` 无处可放。
+
+    与 `NodeKeyVersion` 的关系
+    -------------------------
+    `NodeKeyVersion` 是 OneToOne(Node)、只有 kyber/falcon 两个版本号和两个哈希，
+    是上一轮的半成品：连 SM2/SSCL 都没有，也存不下公钥本身（历史版本更是无从谈起）。
+    本模型取代它。`NodeKeyVersion` 保留为只读历史 —— 迁移 0016 不碰它，
+    因为它表达的是"当前版本号"，而当前版本号可以从本表 status=ACTIVE 的行推出。
+
+    与 `Node.*_public_key` 的关系（**重要，别搞反**）
+    ----------------------------------------------
+    那四列**不删**，继续作为"当前生产版本"的加速读路径（大量既有代码直接
+    `node.kyber_public_key` 取值，改遍所有读点收益只是少一处冗余）。
+    本表是唯一事实来源，那四列是它的物化视图，由 `node_key_registry` 的登记
+    路径保证同步。长期双写，不是临时过渡 —— 见 doc/kms-callsite-inventory.md §六。
+    """
+
+    node = models.ForeignKey(
+        Node, on_delete=models.CASCADE, related_name='long_term_keys',
+        verbose_name="所属节点",
+    )
+    #: 逻辑密钥标识。新建密钥产生新 key_id；**更新保留 key_id 只递增版本** ——
+    #: 这是"更新"与"新建"在数据上的唯一区别（计划 §6.1）。
+    key_id = models.CharField(max_length=64, db_index=True, verbose_name="密钥标识")
+    key_version = models.PositiveIntegerField(default=1, verbose_name="密钥版本")
+    algorithm = models.CharField(
+        max_length=20,
+        choices=[(a, a) for a in ('SM2', 'SSCL', 'KYBER', 'FALCON')],
+        verbose_name="算法",
+        help_text="SM2 / SSCL / KYBER 可保护 SM4；FALCON 只签名",
+    )
+    status = models.CharField(
+        max_length=20, choices=list(KEY_STATUS_CHOICES), default=KEY_STATUS_PENDING,
+        db_index=True, verbose_name="状态",
+    )
+    #: **`status` 的派生列**，不是独立状态：status=ACTIVE 时等于 algorithm，
+    #: 其余情况为 NULL。存在的唯一目的是让下面那条唯一约束真的生效。
+    #:
+    #: 为什么不用「部分唯一索引」（`UniqueConstraint(condition=Q(status='ACTIVE'))`）：
+    #: 本项目跑在 **MySQL** 上，而 MySQL 不支持部分索引。Django 遇到不支持的
+    #: 后端时 `_create_unique_sql()` 直接 return None —— **不报错、不建索引**，
+    #: 只在 `makemigrations` 的输出里看不出任何异常。也就是说那条约束会看起来
+    #: 写在代码里、实际上从不存在，而"同一节点同一算法最多一个 ACTIVE"这条
+    #: 不变量就只剩应用层判断 —— 并发下必然双双通过。
+    #:
+    #: 换个不依赖后端特性的写法：MySQL（与 SQLite/PostgreSQL）的唯一索引都
+    #: **忽略 NULL**，所以 (node, active_slot) 上的普通唯一约束的效果恰好是
+    #: "每个节点每种算法最多一行非 NULL" —— 正是要的那条规则。
+    #:
+    #: 由 `save()` 自动派生，调 `.update()` 的路径（见 node_key_registry）必须
+    #: 自己带上它。
+    active_slot = models.CharField(
+        max_length=20, null=True, blank=True, default=None, editable=False,
+        verbose_name="生产槽位", help_text="status=ACTIVE 时为算法名，否则 NULL",
+    )
+    public_key = models.TextField(verbose_name="公钥", help_text="公开量，可自由落库与展示")
+    #: 公钥摘要，64 位十六进制 sha256。摘要算的是**存储形式的字符串**（Kyber 是
+    #: base64、其余是小写 hex），不是解码后的字节 —— 因为不同编码的同一把密钥
+    #: 字节相同而摘要不同，用存储形式才能保证"同一行永远同一摘要"。
+    public_key_hash = models.CharField(max_length=64, verbose_name="公钥SHA256")
+    security_level = models.CharField(
+        max_length=20, blank=True, default='', verbose_name="安全级别",
+        help_text="Kyber: 512/768/1024；Falcon: 512/1024；SM2/SSCL: sm2p256v1",
+    )
+    #: 私钥所在设备。与 `Node.key_device_id` 同源，但按**每个密钥版本**记录 ——
+    #: 换了设备后重新生成的那一版属于新设备，旧版本仍属于旧设备。
+    device_id = models.CharField(
+        max_length=128, blank=True, default='', verbose_name="私钥所在设备",
+        help_text="生成并持有该版本私钥的设备标识；换设备后新版本记新设备",
+    )
+    effective_at = models.DateTimeField(null=True, blank=True, verbose_name="生效时间")
+    expires_at = models.DateTimeField(null=True, blank=True, verbose_name="过期时间")
+    revoked_at = models.DateTimeField(null=True, blank=True, verbose_name="回收时间")
+    revoked_reason = models.CharField(max_length=255, blank=True, default='', verbose_name="回收原因")
+    #: 迁移 0016 回填的行。与 status=LEGACY 是**两件事**：
+    #: `legacy=True` 表示"这行来自旧列的回填"，`status=LEGACY` 表示
+    #: "来源不明、不可用于解封"。回填出来的**当前生产版本**是 legacy=True 但
+    #: status=ACTIVE —— 把它标成 LEGACY 状态会让现网正在用的节点立刻不可用。
+    legacy = models.BooleanField(default=False, verbose_name="回填的历史记录")
+    legacy_source = models.CharField(
+        max_length=64, blank=True, default='', verbose_name="回填来源列",
+        help_text="从 Node 的哪一列回填而来；新登记路径写的行为空",
+    )
+
+    class Meta:
+        verbose_name = "节点长期密钥"
+        verbose_name_plural = "节点长期密钥"
+        db_table = f"{table_prefix}pqkds_node_long_term_keys"
+        ordering = ['node_id', 'algorithm', '-key_version']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['node', 'algorithm', 'key_id', 'key_version'],
+                name='pqkds_ltk_uniq_node_alg_id_ver',
+            ),
+            # 计划 §6.1「同一节点、同一算法最多一个生产中的主版本」。
+            # 靠 `active_slot`（status 的派生列，ACTIVE 时为算法名、否则 NULL）
+            # 而不是部分唯一索引 —— 见 active_slot 字段上的注释：MySQL 不支持
+            # 部分索引，Django 会**静默跳过**那条约束。
+            models.UniqueConstraint(
+                fields=['node', 'active_slot'],
+                name='pqkds_ltk_uniq_active_per_node_alg',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['node', 'algorithm', 'status'], name='pqkds_ltk_node_alg_status'),
+            models.Index(fields=['expires_at'], name='pqkds_ltk_expires_at'),
+        ]
+
+    def save(self, *args, **kwargs):
+        """落库前派生 `active_slot`，使它与 `status` 不可能脱节。
+
+        放在 `save()` 里而不是各调用点，是因为脱节的后果是**唯一约束静默失效**：
+        status 改成 RETIRED 而 active_slot 仍是 'KYBER' 时，下一次登记会撞唯一约束
+        （表现为"莫名其妙登记不上"）；反过来 status=ACTIVE 而 active_slot 为 NULL 时，
+        约束根本拦不住第二个 ACTIVE（表现为"同一算法两把在产"）。两种都不会报错。
+        """
+        self.active_slot = self.algorithm if self.status == KEY_STATUS_ACTIVE else None
+        update_fields = kwargs.get('update_fields')
+        if update_fields is not None:
+            update_fields = set(update_fields)
+            if 'status' in update_fields or 'algorithm' in update_fields:
+                update_fields.add('active_slot')
+            kwargs['update_fields'] = update_fields
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.node.node_id}/{self.algorithm}/{self.key_id}/v{self.key_version}({self.status})"
+
+    @property
+    def is_expired(self) -> bool:
+        """是否已过期。状态被显式标成 EXPIRED、或过期时间已到。"""
+        if self.status == KEY_STATUS_EXPIRED:
+            return True
+        return bool(self.expires_at and self.expires_at <= timezone.now())
+
+    @property
+    def allows_new_work(self) -> bool:
+        """能否用于**新**封装 / 新签名 / 新预分配。"""
+        return key_status_allows_new_work(self.status) and not self.is_expired
+
+    @property
+    def allows_unwrap(self) -> bool:
+        """能否用于解开**已存在**的信封。
+
+        ⚠️ 与 `allows_new_work` 的差集就是"回收后禁止新分发"这句话：
+            RETIRED / EXPIRED 允许解旧信封，但不允许产生新信封。
+        """
+        return key_status_allows_unwrap(self.status) and not self.is_expired
+
+    @property
+    def fingerprint(self) -> str:
+        """公钥摘要，形如 `sha256:abcd…`。信封引用公钥版本时用它做对账。"""
+        return f"sha256:{self.public_key_hash}"
+
+    def mark_revoked(self, reason: str = '') -> None:
+        """就地标记回收（不落库，由调用方 save）。"""
+        self.status = KEY_STATUS_REVOKED
+        self.revoked_at = timezone.now()
+        self.revoked_reason = (reason or '')[:255]
+
 class PreDistributedKey(CoreModel):
     """基于格的安全密钥预分配 - 密钥池模型"""
     ALGORITHM_CHOICES = [

@@ -18,6 +18,10 @@ from .sm4_crypto import (
     PayloadCipher,
     SM4Crypto,
 )
+# 长期密钥的落库走唯一写入入口（KMS-004）—— 不在这里直接 setattr 公钥列。
+# 那个模块负责"NodeLongTermKey 记一行"与"Node 物化视图列同步"必须一起发生。
+from . import api_contract as C
+from .node_key_registry import REGISTRABLE_ALGORITHMS, register_public_key
 
 logger = logging.getLogger(__name__)
 
@@ -385,21 +389,6 @@ class NodeService:
             'sys_user_id': user_id,
         }
 
-    #: 算法 → (主公钥列, 需要一并写入的其它公钥列)
-    #:
-    #: ⚠️ Falcon 同时写两列是**过渡期的刻意选择**，不是笔误：
-    #:   `falcon_sign_public_key` 是签名路径真正读的那一列
-    #:   （`envelope_signature._decode_falcon_public_key`），
-    #:   而 `falcon_public_key` 仍被 ACTIVE 判定与 `_node_payload` 的就绪位读着。
-    #:   放弃 CL-Falcon 之后每个节点只有**一对** Falcon 密钥，两列指向同一把；
-    #:   等下一阶段把旧的 CL-Falcon 列清掉时再收敛为一列。
-    _PUBLIC_KEY_COLUMNS = {
-        'KYBER': ('kyber_public_key', []),
-        'SM2': ('gm_public_key', []),
-        'SSCL': ('sscl_public_key', []),
-        'FALCON': ('falcon_sign_public_key', ['falcon_public_key']),
-    }
-
     def store_node_public_key(self, algorithm: str, public_key: str,
                               security_level: str = None,
                               device_id: str = None) -> Dict[str, Any]:
@@ -418,14 +407,23 @@ class NodeService:
            放行的后果很具体：这个节点会持有一套它**打不开**的密钥 ——
            新设备没有私钥，旧设备又不该再被使用。而问题要等到
            "某个信封解不开"时才暴露，那时已经很难追到根因。
+
+        ⚠️ 算法名**只认** SM2 / SSCL / KYBER / FALCON 四个规范写法，不接受
+           `falcon_lattice` / `CL-FALCON` 这类历史别名。此处刻意不用
+           `canonical_algorithm` 归一（也不做 `CL-` 前缀剥离）：那些写法指的是
+           CL-Falcon **格材料**，与标准 NIST Falcon 不兼容 —— 收下来就会被当成
+           可用签名公钥登记，之后验签永远失败，且看不出为什么。宁可不认，不可误认。
         """
         import base64 as _b64
 
-        name = str(algorithm or '').strip().upper().replace('CL-', '')
-        if name not in self._PUBLIC_KEY_COLUMNS:
+        name = str(algorithm or '').strip().upper()
+        if name not in REGISTRABLE_ALGORITHMS:
             return {
                 'success': False,
-                'message': f'不支持的算法：{algorithm}（可选 {"/".join(self._PUBLIC_KEY_COLUMNS)}）',
+                'message': (
+                    f'不支持的算法：{algorithm}'
+                    f'（可选 {"/".join(REGISTRABLE_ALGORITHMS)}）'
+                ),
             }
 
         value = str(public_key or '').strip()
@@ -454,7 +452,6 @@ class NodeService:
         if adopts_device:
             self.node.key_device_id = reported
 
-        column, extra_columns = self._PUBLIC_KEY_COLUMNS[name]
         if name == 'KYBER':
             try:
                 raw = bytes.fromhex(value)
@@ -470,20 +467,37 @@ class NodeService:
         else:
             stored = value.lower()
 
-        setattr(self.node, column, stored)
-        for column_name in extra_columns:
-            setattr(self.node, column_name, stored)
+        # --- 落库：交给唯一写入入口（KMS-004） ---
+        # 它负责两件必须一起发生的事：新表记一行（带版本与状态）、
+        # `Node.<算法>_public_key` 物化视图同步（Falcon 还要一并写镜像列）。
+        # 同一把公钥重复上报是**无操作** —— 本页每次进入都会重报四套，
+        # 不幂等的话每进一次页面就凭空轮换一次密钥版本。
+        try:
+            register_public_key(
+                self.node,
+                algorithm=name,
+                public_key=stored,
+                security_level=str(security_level or '').strip(),
+                device_id=reported or bound,
+                activate=True,
+            )
+        except C.ContractError as exc:
+            logger.warning('节点 %s 登记 %s 公钥被拒：%s', self.node_id, name, exc)
+            return {'success': False, 'message': exc.message, 'code': exc.code}
 
-        fields = [column, *extra_columns]
+        # --- Node 上还有两个**节点级**的便利字段（不属于长期密钥表） ---
+        # 安全级别写入只对 KYBER / FALCON 有意义：给 SM2/SSCL 传级别是误用，
+        # 而旧实现会把它写进 `falcon_security_level`（因为除 KYBER 外都落到那里）。
+        level_field = {'KYBER': 'kyber_security_level', 'FALCON': 'falcon_security_level'}.get(name)
+        fields = []
         if adopts_device:
             fields.append('key_device_id')
-        if security_level:
-            level_field = 'kyber_security_level' if name == 'KYBER' else 'falcon_security_level'
-            if hasattr(self.node, level_field):
-                setattr(self.node, level_field, str(security_level).strip())
-                fields.append(level_field)
+        if security_level and level_field:
+            setattr(self.node, level_field, str(security_level).strip())
+            fields.append(level_field)
+        if fields:
+            self.node.save(update_fields=fields)
 
-        self.node.save(update_fields=fields)
         logger.info('节点 %s 登记 %s 公钥（长度 %d）', self.node_id, name, len(stored))
         return {'success': True, 'algorithm': name, 'message': f'{name} 公钥已登记'}
 
