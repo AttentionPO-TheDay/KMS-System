@@ -198,6 +198,7 @@ def register_public_key(
     activate: bool = True,
     legacy: bool = False,
     legacy_source: str = '',
+    _via_rotate: bool = False,
 ) -> NodeLongTermKey:
     """登记一把长期公钥。**这是唯一的写入入口。**
 
@@ -259,6 +260,44 @@ def register_public_key(
                 existing.save(update_fields=touched + ['update_datetime'])
             return existing
 
+    # ⚠️ 显式 keyId，且该 keyId 在本节点本算法**已有别的版本**时，这里其实是在给
+    #    一把已存在的逻辑密钥加版本 —— 那是 rotate 的语义，必须走
+    #    `rotate_public_key` 的三道校验（回收终态 / 生产槽位归属 / 逐版递增）。
+    #
+    #    登记口放行会造成两种**静默**坏结果（都是判据②③要防的）：
+    #      * 已回收的 keyId 被重新置为 ACTIVE —— 审计里那一行带着 `revoked_at`，
+    #        业务上却又能用了；回收是终态这件事只在前端和 rotate 口成立；
+    #      * 把当前在产那把降级、换成调用方指定的另一把，而请求返回"已登记" ——
+    #        请求方看不出自己刚刚换掉了生产版本。
+    #
+    #    为什么能确认调用方是"加版本"而不是"新登记"：走到这里说明
+    #    (kid, version) 这一行**不存在**（存在时上面已在 224-234 行返回或抛错），
+    #    而同一个 kid 的**其它版本**存在。
+    #
+    # ⚠️ `_via_rotate` 不是"跳过校验"，是"校验已经做过了"。
+    #
+    #    上一条判断**无法从参数本身推断出调用方是谁**：`rotate_public_key` 落库时
+    #    正是转调本函数，它出现时必然"同 kid 已有别的版本"—— 与上面要拦的那种
+    #    绕过，在库里的样子**一模一样**。存储层只能由调用方声明意图：
+    #      * `_via_rotate=False`（默认，也是唯一的外部取值）—— 调用方是登记口或
+    #        直接调用方，它没跑过那三道校验，所以这里拦；
+    #      * `_via_rotate=True` —— 只有 `rotate_public_key` 会传，它在转调之前
+    #        已经校验过回收终态、生产槽位归属与逐版递增。
+    #
+    #    曾经这里只写了"同 kid 已有别的版本"，本意是拦登记口，实际把 rotate
+    #    自己的每一次合法更新也拦下了：4 组自测同时失败，报的还是"请走 rotate"，
+    #    看起来像调用方用错了。要删掉 `_via_rotate` 之前先想清楚 —— 删掉它，
+    #    登记口就能复活已回收的密钥、把在产那把换成调用方手里那把。
+    if kid and not _via_rotate and NodeLongTermKey.objects.filter(
+        node=node, algorithm=name, key_id=kid,
+    ).exists():
+        raise C.ContractError(
+            f'{name} 密钥 {kid} 已登记过；要增加版本请走 rotate（rotate=true）——'
+            f'登记路径不做回收终态、生产槽位与逐版递增的校验，'
+            f'从这里加版本会绕过它们',
+            code=C.ERR_KEY_VERSION_MISMATCH,
+        )
+
     if not kid:
         kid = new_key_id(node, name)
 
@@ -288,12 +327,42 @@ def register_public_key(
     return row
 
 
+def _as_version(raw) -> int:
+    """版本号只接受**整数**或纯数字字符串。**不做 `int()` 兜底**。
+
+    `int(1.9)→1`、`int(True)→1` 都是"调用方以为说的是 X、实际记下的是 Y"，
+    而版本号正是 keyRef 的末段与信封要引用的东西 —— 错一位不报错，
+    只是从此找不到密钥。规则与 `node_service.store_node_public_key` 一致；
+    那里校验的是 HTTP 入参，这里守的是本函数的入参（可能有直接调用方）。
+    """
+    if isinstance(raw, bool) or raw is None:
+        raise C.ContractError(
+            f'keyVersion 应为 ≥1 的整数：{raw!r}', code=C.ERR_INVALID_PARAMETER,
+        )
+    if isinstance(raw, int):
+        value = raw
+    else:
+        text = str(raw).strip()
+        if not text.isdigit():
+            raise C.ContractError(
+                f'keyVersion 应为 ≥1 的整数：{raw!r}', code=C.ERR_INVALID_PARAMETER,
+            )
+        value = int(text)
+    if value < 1:
+        raise C.ContractError(
+            f'keyVersion 应为 ≥1 的整数：{raw!r}', code=C.ERR_INVALID_PARAMETER,
+        )
+    return value
+
+
 @transaction.atomic
 def rotate_public_key(
     node: Node,
     *,
     algorithm: str,
     public_key: str,
+    key_id: str,
+    key_version,
     security_level: str = '',
     device_id: str = '',
     effective_at=None,
@@ -305,33 +374,112 @@ def rotate_public_key(
     key_version" —— 更新不是"又生成了一把新密钥"，是"同一把密钥的新版本"。
     这个区别决定了历史信封能不能被追溯回它用的那一版。
 
-    找不到当前版本时退化为新建（首次登记），因为对调用方来说
-    "更新一个还没有的密钥"和"登记它"是同一件事。
+    `key_id` 与 `key_version` **都必填**（KMS-006）
+    ----------------------------------------------
+    计划 §6.1："所有请求显式携带版本；不允许依赖'当前最新版本'的隐式行为"。
+    早先这里是"取该算法最新的一行、版本 +1"，正是被禁止的隐式行为，而且
+    有三个具体坏结果，**一个都不报错**：
+
+      * 该算法最新一行若已 REVOKED，会在回收记录之上再叠一个 ACTIVE 版本，
+        把终态盖掉；
+      * 调用方手里的 keyId 与服务端在产那把不同时（换过设备、两次更新
+        并发），会把**另一把**密钥降级、把手里这把扶正 —— 生产版本被换掉，
+        而请求本身返回成功（阶段 2 判据②要防的就是这个）；
+      * 节点已在本地按某个版本号封存了新私钥，服务端若另算一个版本号，
+        两边对同一个 keyRef 的记账就此分叉 —— 分叉的表现是"密钥在、查不到"。
+
+    所以版本由**调用方**给出（节点本地先封存、再上报，见更新页与
+    `verify-keyupdate-rotate.mjs`），本函数只做三项校验：
+
+      1. `key_id` 必须是本节点该算法**已登记过**的（否则 KEY_NOT_FOUND：
+         调用方以为登记过、实际没成功，正是要它回到"先登记"那一步）；
+      2. 已回收的 keyId 不能更新（KEY_REVOKED —— 回收是终态，否则审计里
+         它带着 `revoked_at`、业务上却又能用，两个说法只有一个是真的）；
+      3. 版本必须落在该 keyId 现有最新版本的 `+1`（正常更新）或等于最新
+         版本（**重试**：上一次可能已落库而响应丢了，交给
+         `register_public_key` 按公钥摘要判"无操作"还是真的版本冲突）。
+
+    通过校验后交给 `register_public_key(activate=True)`：它在一个事务里把旧
+    ACTIVE 降级、把新版本置为 ACTIVE、并同步 `Node.<算法>_public_key`。
+    这三件事要么一起发生、要么一件都不发生 —— 阶段 2 判据③
+    "任一步失败不得把服务端标成 ACTIVE"就落在这个原子块上。
     """
     name = _assert_registrable(algorithm)
     material = str(public_key or '').strip()
     if not material:
         raise C.ContractError('公钥为空', code=C.ERR_INVALID_PARAMETER)
 
-    current = NodeLongTermKey.objects.filter(
-        node=node, algorithm=name,
-    ).order_by('-key_version', '-id').first()
+    kid = _validate_key_id(key_id)
+    if not kid:
+        raise C.ContractError(
+            '更新必须显式携带 keyId：服务端不再替你推断"要更新哪一把"——'
+            '推断可能更新到与本机不同的那把密钥上，而请求会成功',
+            code=C.ERR_INVALID_PARAMETER,
+        )
+    version = _as_version(key_version)
 
-    if current is None:
-        return register_public_key(
-            node, algorithm=name, public_key=material,
-            security_level=security_level, device_id=device_id,
-            effective_at=effective_at, expires_at=expires_at,
+    latest = (NodeLongTermKey.objects
+              .filter(node=node, algorithm=name, key_id=kid)
+              .order_by('-key_version', '-id').first())
+    if latest is None:
+        raise C.ContractError(
+            f'{name} 密钥 {kid} 在本节点没有登记记录，无法更新；请先登记公钥',
+            code=C.ERR_KEY_NOT_FOUND,
+        )
+    if latest.status == C.KEY_STATUS_REVOKED:
+        raise C.ContractError(
+            f'{name} 密钥 {kid} 已回收（终态），不能更新；'
+            '要恢复服务请在本机生成新的逻辑密钥（新 keyId）后重新登记',
+            code=C.ERR_KEY_REVOKED,
         )
 
+    # 生产槽位归属：该算法在产的那把必须**就是**本次要更新的 keyId。
+    # 不是的话，这次"更新"会把它降级，生产版本被换成调用方手里那把 ——
+    # 而当前在产那把可能是本机刚生成的新密钥、也可能属于另一台设备。
+    active = NodeLongTermKey.objects.filter(
+        node=node, algorithm=name, status=C.KEY_STATUS_ACTIVE,
+    ).first()
+    if active is not None and active.key_id != kid:
+        raise C.ContractError(
+            f'{name} 当前生产版本是 {active.key_id} v{active.key_version}，'
+            f'不是请求要更新的 {kid}；请刷新后基于生产版本再更新',
+            code=C.ERR_KEY_VERSION_MISMATCH,
+        )
+
+    if version == latest.key_version:
+        # 重试路径：上一次更新可能已经落库、只是响应没有到达。
+        # 公钥摘要相同 → `register_public_key` 返回已有行（无操作）；
+        # 摘要不同 → 同 (keyId, 版本) 两把公钥，是真冲突，报版本不符。
+        pass
+    elif version == latest.key_version + 1:
+        pass
+    elif version < latest.key_version:
+        raise C.ContractError(
+            f'{name} 密钥 {kid} 已有 v{latest.key_version}，请求的 v{version} 更旧；'
+            '版本只增不减，请刷新后基于最新版本再更新',
+            code=C.ERR_KEY_VERSION_MISMATCH,
+        )
+    else:
+        raise C.ContractError(
+            f'{name} 密钥 {kid} 当前最新是 v{latest.key_version}，'
+            f'请求的 v{version} 跨过了 v{latest.key_version + 1}；'
+            '版本必须逐版递增 —— 跳跃会让中间版本在历史里凭空消失',
+            code=C.ERR_KEY_VERSION_MISMATCH,
+        )
+
+    # `_via_rotate=True` 是这个标志**唯一**的传值点：上面那三道校验刚刚在本函数里跑完，
+    # 接下来这一步只是落库。不传的话 `register_public_key` 会把每一次合法更新都判成
+    # "登记口试图给已有 keyId 加版本" —— 它拿到的参数与那种绕过**长得一模一样**
+    # （见那里的说明），分辨不出来只能由调用方声明。
     return register_public_key(
         node, algorithm=name, public_key=material,
-        key_id=current.key_id,
-        key_version=current.key_version + 1,
-        security_level=security_level or current.security_level,
+        key_id=kid,
+        key_version=version,
+        security_level=security_level or latest.security_level,
         device_id=device_id,
         effective_at=effective_at,
         expires_at=expires_at,
+        _via_rotate=True,
     )
 
 

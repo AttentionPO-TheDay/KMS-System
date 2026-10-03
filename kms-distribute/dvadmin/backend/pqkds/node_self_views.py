@@ -46,6 +46,7 @@ from .node_permission import (
     require_capability,
 )
 from .user_distribution_views import require_kms_user
+from .kms_service_client import record_chain_event
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +109,35 @@ def _error(msg, code=400, error_code=None):
 def _iso(value):
     """时间戳按 ISO 下发；空值一律 None（前端据此显示"—"而不是 1970）。"""
     return value.isoformat() if value else None
+
+
+def _as_bool(value, field: str = 'rotate') -> bool:
+    """严格布尔解析。**不做真值猜测**。
+
+    只认 `True`/`False` 与 `'true'`/`'false'`/`'1'`/`'0'`（去空白、不分大小写）；
+    字段缺省（None / ''）算 False。**出现但认不出**的值直接报错。
+
+    为什么不容错：这个标志决定的是"生成新密钥"还是"更新同一把密钥"，
+    两条路的落库完全不同。把认不出的值猜成 False，最坏的结果是一次更新
+    被当成新登记（多出一个 keyId）；猜成 True，最坏的结果是**生产版本被
+    换掉而请求返回成功**。两个方向都不该由服务端"猜"，要么调用方说清楚，
+    要么拒绝 —— 拒绝的代价只是一次重试。
+    """
+    if value is None or value == '':
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in ('true', '1'):
+        return True
+    if text in ('false', '0'):
+        return False
+    raise C.ContractError(
+        f'{field} 应为布尔值（true/false），收到 {value!r}',
+        code=C.ERR_INVALID_PARAMETER,
+    )
 
 
 #: 对外暴露的初始化状态。内部 status 有 registered/kyber_uploaded/... 多个中间态，
@@ -235,9 +265,13 @@ def node_self_keys(request, identity):
             生成页要按算法显示"服务端现在记的是哪一把、上一版是什么"，
             在此之前这个信息只能从 `Node.<算法>_public_key` 那一列反推 ——
             那是物化视图，只有一个值，答不出历史。
-    POST —— 登记一个算法的公钥。私钥在节点浏览器产生并留在那里，
+    POST —— 登记或**更新**一个算法的公钥。私钥在节点浏览器产生并留在那里，
             服务端只收公钥 —— 这是本接口与旧「服务端生成四套密钥」路径的根本
             区别（旧路径见 `initialize_base_keys` 的说明）。
+            `rotate: true` 表示"同一把逻辑密钥（同 keyId）的新版本"，即更新
+            （更新页与 `verify-keyupdate-rotate.mjs` 走这条）；此时 keyId 与
+            keyVersion 必须一起给出，服务端不替调用方推断版本。缺省 false 是
+            "这是我当前的公钥"：初始化页重报、生成页登记新密钥都走它。
 
     ⚠️ 两个方法**共用一条路由**：Django 里同一 path 写两条 `path()` 条目，
        第二条永远不会被匹配到（第一条先命中）—— 那种"接口加了但没生效"
@@ -279,6 +313,13 @@ def node_self_keys(request, identity):
     if not algorithm or not public_key:
         return _error('缺少 algorithm 或 publicKey')
 
+    # 更新意图（KMS-006）。默认 False = "这是我当前的公钥"（登记/幂等重报）。
+    # 认不出的值一律拒绝而不是猜 —— 猜错的方向恰好是最坏的那个（见 _as_bool）。
+    try:
+        rotate = _as_bool(payload.get('rotate'))
+    except C.ContractError as exc:
+        return _error(exc.message, error_code=exc.code)
+
     try:
         service = NodeService(node.node_id)
         result = service.store_node_public_key(
@@ -290,6 +331,7 @@ def node_self_keys(request, identity):
             # 吞成"没提供"，于是服务端**静默**按 v1 登记 —— 节点本地是 v0 的
             # 记账、服务端是 v1，两边都不报错。0 应当走到下面被拒。
             key_version=payload.get('keyVersion', payload.get('key_version')),
+            rotate=rotate,
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception('节点 %s 登记公钥异常', node.node_id)
@@ -308,6 +350,31 @@ def node_self_keys(request, identity):
         )
 
     node.refresh_from_db()
+
+    # 计划 §7 阶段 2 判据④：更新事件进审计与链上。
+    #
+    # ⚠️ 位置在事务**之外**（`store_node_public_key` 里的原子块已提交）：
+    #    存证失败不该回滚一次已经成立的更新 —— 密钥已经换好、旧版本已经降级，
+    #    那些事实不因为链上少一条记录而改变。`record_chain_event` 失败只返回
+    #    None 并记日志（旁路增强），所以这里拿到的是"空"而不是异常。
+    chain_tx = ''
+    if result.get('rotated'):
+        chain_tx = record_chain_event(
+            'KEY_UPDATED',
+            # 用 NodeLongTermKey 的整数主键作链上 keyId（见 store_node_public_key
+            # 的返回说明）：链上接口只收整数，字符串 key_id 会被解析失败吞成
+            # "存证未成功"。非空 nodeId 把它与分发事件的 Java keyId 区分开。
+            int(result.get('key_pk') or 0),
+            int(result.get('key_version') or 0),
+            node.node_id,
+            # 上链只传摘要，不传公开材料本身（少写一点，链上就少暴露一点）。
+            str(result.get('public_key_hash') or ''),
+        ) or ''
+        if chain_tx:
+            logger.info('节点 %s 更新存证已上链: keyId=%s v%s tx=%s',
+                        node.node_id, result.get('key_id'),
+                        result.get('key_version'), chain_tx)
+
     return _ok(
         {
             'node': _node_payload(node),
@@ -317,6 +384,10 @@ def node_self_keys(request, identity):
             'keyId': result.get('key_id'),
             'keyVersion': result.get('key_version'),
             'keyStatus': result.get('status'),
+            # 与分发响应同一口径（`chainHash`，见 user_distribution_views）：
+            # 回哈希而不是布尔值。拿不到哈希时页面能如实说"已更新，但存证未成功"，
+            # 而不是把两者混为一谈 —— 审计缺口必须是**可见的**。
+            'chainHash': chain_tx,
         },
         msg=result.get('message') or '公钥已登记',
     )

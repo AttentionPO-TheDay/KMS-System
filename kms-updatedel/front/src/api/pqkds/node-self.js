@@ -23,9 +23,26 @@ import http, { unwrap } from '@/api/pqkds/http'
 export const NODE_SELF_ERR = Object.freeze({
   /** 上报公钥的这台设备与节点已绑定的设备不是同一台 */
   DEVICE_MISMATCH: 'DEVICE_MISMATCH',
-  /** 同一个 keyId 报了不同的版本 / 版本倒退 */
+  /**
+   * 版本对不上。三种触发，**下一步各不相同**，页面要按 msg 分辨而不是一律"重试"：
+   *   * 同 (keyId, 版本) 已有另一把公钥（真冲突）；
+   *   * 更新时版本倒退或跨版跳跃（只允许 = 最新 或 逐版 +1）；
+   *   * 更新的 keyId 不是本算法当前生产那把 —— 放行就会把在产版本换成别的，
+   *     而请求返回成功（阶段 2 判据②要防的正是这个）。
+   */
   KEY_VERSION_MISMATCH: 'KEY_VERSION_MISMATCH',
-  /** 参数非法（含 keyId 带空白、版本非 ≥1 整数等） */
+  /**
+   * 更新目标在本节点**没有**登记记录：调用方以为登记过、实际没成功
+   * （或 keyId 报错了）。处置是回到"先登记"，不是重试更新。
+   */
+  KEY_NOT_FOUND: 'KEY_NOT_FOUND',
+  /**
+   * 更新目标**已回收**（终态）。回收后不能再更新 —— 否则审计里它带着
+   * `revoked_at`、业务上却又能用，两个说法只有一个是真的。
+   * 要恢复服务得在本机生成**新的 keyId** 后重新登记。
+   */
+  KEY_REVOKED: 'KEY_REVOKED',
+  /** 参数非法（含 keyId 带空白、版本非 ≥1 整数、rotate 认不出的值等） */
   INVALID_PARAMETER: 'INVALID_PARAMETER',
   /** 算法名不在白名单（历史别名 `falcon_lattice` 之类会被拒） */
   ALGORITHM_NOT_ALLOWED: 'ALGORITHM_NOT_ALLOWED'
@@ -61,6 +78,17 @@ export function getSelfNode() {
  *   （业务码 409）。那是可处置的状态，不是参数错。
  * @param {string} [keyId] 节点本地铸的 keyId（原样上报，服务端不做 trim/归一）。
  * @param {number} [keyVersion] 与本地 keyRef 同一版本号。
+ * @param {boolean} [rotate] **更新**（KMS-006）：`true` = "同一把逻辑密钥的新版本"，
+ *   缺省/`false` = "这是我当前的公钥"（登记，或重复上报的幂等无操作）。
+ *
+ *   ⚠️ `rotate: true` 时 `keyId` 与 `keyVersion` **缺一不可**，而且 `keyVersion`
+ *      必须是**本机已经封存好的那一版**（keyRef 末段就是它）。服务端不替调用方
+ *      算版本：算出来的那一版与本地封存的可能不是同一个，于是本机多出一把永远
+ *      用不上的私钥、而生产版本指向的 keyRef 在本机查不到 —— 两个失败都不报错。
+ *
+ *   ⚠️ 版本只允许"等于最新（重试）"或"逐版 +1"。回退、跨版、未登记、已回收都会被拒，
+ *      分别对应 `KEY_VERSION_MISMATCH` / `KEY_NOT_FOUND` / `KEY_REVOKED`；
+ *      另有一个"非生产的 keyId"也报 `KEY_VERSION_MISMATCH`（见 NODE_SELF_ERR 的说明）。
  */
 export function registerSelfNodePublicKey(
   algorithm,
@@ -68,7 +96,8 @@ export function registerSelfNodePublicKey(
   securityLevel,
   deviceId,
   keyId,
-  keyVersion
+  keyVersion,
+  rotate
 ) {
   const payload = { algorithm, publicKey, securityLevel, deviceId }
   // 只在这两个字段**真的有值**时带上：显式传 `keyId: undefined` 会被
@@ -78,6 +107,12 @@ export function registerSelfNodePublicKey(
   if (keyVersion !== undefined && keyVersion !== null && keyVersion !== '') {
     payload.keyVersion = keyVersion
   }
+  // ⚠️ 只在**真的要更新**时才带这个字段。另外两个调用点（`views/nodeInit` 的旧式
+  //    无 keyId 路径、`views/generate/create` 的六参数位置参数调用）不传它，
+  //    请求体必须一字不变 —— KMS-005 的验收脚本按逐字节比对走生成页那条路径。
+  //    服务端缺省即 False，显式带 false 与不带是同一语义，没必要多写一个字段；
+  //    而传 `rotate: undefined` 虽会被 JSON.stringify 丢掉，读代码的人却要多想一层。
+  if (rotate === true) payload.rotate = true
   return http.post('/node-self/keys/', payload).then(unwrap)
 }
 

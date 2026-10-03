@@ -6,8 +6,8 @@ import zlib
 from typing import Dict, Any
 from functools import wraps
 from django.utils import timezone
-from django.db import transaction, connection
-from .models import Node, SessionKey, FalconKeyPair
+from django.db import transaction, connection, IntegrityError
+from .models import Node, SessionKey, FalconKeyPair, NodeLongTermKey
 from .optimized_keygen_service import OptimizedKeygenService
 from .blockchain_service import BlockchainService
 from .node_blockchain_upload_service import NodeBlockchainUploadService
@@ -21,7 +21,7 @@ from .sm4_crypto import (
 # 长期密钥的落库走唯一写入入口（KMS-004）—— 不在这里直接 setattr 公钥列。
 # 那个模块负责"NodeLongTermKey 记一行"与"Node 物化视图列同步"必须一起发生。
 from . import api_contract as C
-from .node_key_registry import REGISTRABLE_ALGORITHMS, register_public_key
+from .node_key_registry import REGISTRABLE_ALGORITHMS, register_public_key, rotate_public_key
 
 logger = logging.getLogger(__name__)
 
@@ -393,7 +393,8 @@ class NodeService:
                               security_level: str = None,
                               device_id: str = None,
                               key_id: str = None,
-                              key_version=None) -> Dict[str, Any]:
+                              key_version=None,
+                              rotate: bool = False) -> Dict[str, Any]:
         """登记一个算法的**公钥**（文档 §4.4）。
 
         这是节点初始化的新入口：私钥在节点浏览器产生并留在那里，
@@ -431,6 +432,15 @@ class NodeService:
             一起在节点侧重新生成（计划 §7 阶段 1 判据④）；
           * **不给 keyId** —— 调用方的意思是"这是我当前的公钥"（初始化页每次
             进入都会重报四套）：按公钥摘要幂等，同一把重复上报是无操作。
+
+        `rotate`（KMS-006 新增）
+        ----------------------
+        `rotate=True` 表示**更新**：同一把逻辑密钥（同 keyId）的新版本，
+        交给 `node_key_registry.rotate_public_key` 落地 —— 它会校验 keyId
+        已登记、未回收、且就是当前生产那把，版本只允许"逐版递增"或
+        "等于最新（重试）"。此时 keyId 与 keyVersion **缺一不可**：
+        节点已经在本地按这个版本号封存了新私钥（keyRef 的末段就是它），
+        服务端另算一个版本号会让两边记账分叉，而分叉不报错。
         """
         import base64 as _b64
 
@@ -510,20 +520,77 @@ class NodeService:
         # `Node.<算法>_public_key` 物化视图同步（Falcon 还要一并写镜像列）。
         # 同一把公钥重复上报是**无操作** —— 本页每次进入都会重报四套，
         # 不幂等的话每进一次页面就凭空轮换一次密钥版本。
+        #
+        # 两条路径按**调用方的意图**分（不是按参数长得像什么分）：
+        #   * rotate=False（默认）—— "这是我当前的公钥"：按公钥摘要幂等；
+        #   * rotate=True          —— "同一把密钥的新版本"：keyId 必须已登记、
+        #     版本逐版递增、且该 keyId 就是当前生产那把（见 rotate_public_key）。
+        if rotate and (not key_id or version is None):
+            # 缺一不可。只给 keyId 时服务端能算出"下一版"，但算出来的那一版
+            # 与节点本地已封存的可能不是同一个 —— 于是本机多出一把永远用不上的
+            # 私钥，而生产版本指向的 keyRef 在本机查不到。两个失败都不报错。
+            return {
+                'success': False,
+                'code': C.ERR_INVALID_PARAMETER,
+                'message': '更新（rotate）必须同时提供 keyId 与 keyVersion；'
+                           '节点本地已按该版本封存了新私钥，服务端不能另算版本号',
+            }
+        # 这一版**本来是就存在**吗？只有调用前查一次才知道 —— 落库之后，一次真更新
+        # 与一次重试（同 keyId 同版本同公钥）在库里长得一模一样。
+        #
+        # 为什么要分辨：判据④ 的存证与页面文案都必须挂在"真的变了"上。重试走的是
+        # `rotate_public_key` 的幂等分支（返回已有行、**什么都不改**），若照旧按调用方
+        # 的意图报 `rotated=True`，一次更新会在链上留下**两条** KEY_UPDATED，其中一条
+        # 什么都没改；页面还会说"已更新"，而用户其实什么都没更新。审计宁可少一条，
+        # 不能多一条假记录。
+        #
+        # ⚠️ 响应丢失后的重试是**设计内**的恢复路径（页面靠本机已封存的 v+1 复用），
+        #    不是异常路径，所以这条分支会被真实走到。
+        retry_same_version = bool(rotate) and NodeLongTermKey.objects.filter(
+            node=self.node, algorithm=name, key_id=key_id, key_version=version,
+        ).exists()
         try:
-            row = register_public_key(
-                self.node,
-                algorithm=name,
-                public_key=stored,
-                key_id=key_id,
-                key_version=version or 1,
-                security_level=str(security_level or '').strip(),
-                device_id=reported or bound,
-                activate=True,
-            )
+            if rotate:
+                row = rotate_public_key(
+                    self.node,
+                    algorithm=name,
+                    public_key=stored,
+                    key_id=key_id,
+                    key_version=version,
+                    security_level=str(security_level or '').strip(),
+                    device_id=reported or bound,
+                )
+            else:
+                row = register_public_key(
+                    self.node,
+                    algorithm=name,
+                    public_key=stored,
+                    key_id=key_id,
+                    key_version=version or 1,
+                    security_level=str(security_level or '').strip(),
+                    device_id=reported or bound,
+                    activate=True,
+                )
         except C.ContractError as exc:
-            logger.warning('节点 %s 登记 %s 公钥被拒：%s', self.node_id, name, exc)
+            logger.warning('节点 %s %s %s 公钥被拒：%s',
+                           self.node_id, '更新' if rotate else '登记', name, exc)
             return {'success': False, 'message': exc.message, 'code': exc.code}
+        except IntegrityError:
+            # 并发：两个请求基于同一在产版本同时提交 latest+1，都通过了（下面那三道
+            # 检查全是未加锁的读），后者撞 `pqkds_ltk_uniq_node_alg_id_ver`。
+            #
+            # 数据没坏（事务回滚，唯一约束兜住了），坏的是**出口**：默认处理会逃到
+            # 接口层的兜底 except，HTTP 200 + `code=500`，msg 里是 MySQL 的原始
+            # duplicate-entry 文本 —— 连表名索引名一起回给调用方，而调用方拿到的
+            # 不是一个可编程处理的错误码，只能去匹配那句英文。
+            logger.warning('节点 %s %s %s 公钥撞唯一约束（同一版本被并发登记）',
+                           self.node_id, '更新' if rotate else '登记', name)
+            return {
+                'success': False,
+                'message': f'{name} 这一版刚被另一次请求登记了（并发更新同一版本）；'
+                           f'刷新后基于当前生产版本重做即可',
+                'code': C.ERR_KEY_VERSION_MISMATCH,
+            }
 
         # --- Node 上还有两个**节点级**的便利字段（不属于长期密钥表） ---
         # 安全级别写入只对 KYBER / FALCON 有意义：给 SM2/SSCL 传级别是误用，
@@ -538,17 +605,41 @@ class NodeService:
         if fields:
             self.node.save(update_fields=fields)
 
-        logger.info('节点 %s 登记 %s 公钥（长度 %d）', self.node_id, name, len(stored))
+        logger.info('节点 %s %s %s 公钥（长度 %d）',
+                    self.node_id, '更新' if rotate else '登记', name, len(stored))
+        if retry_same_version:
+            # 只有 rotate 路径可能进这里：这一版在调用前就存在。落库没变，
+            # 所以回传的 rotated 必须是 False（接口层据此不再补一条存证）。
+            message = (f'{name} 公钥已是 v{row.key_version}，本次未做改动'
+                       f'（上一次更新已经生效）')
+        elif rotate:
+            message = f'{name} 公钥已更新为 v{row.key_version}'
+        else:
+            message = f'{name} 公钥已登记'
         return {
             'success': True,
             'algorithm': name,
-            'message': f'{name} 公钥已登记',
+            'message': message,
             # 回传**落库后**的 keyId/版本：节点据此核对"服务端记下的 id 就是
             # 我本地铸的那个"。两边不一致时若只在各自界面显示，会一直看不出来 ——
             # 而 keyRef 一旦对不上，就是"密钥在、查不到"。
             'key_id': row.key_id,
             'key_version': row.key_version,
             'status': row.status,
+            # 下面三个只给**接口层**用，不进 HTTP 响应：
+            #   * key_pk —— 这行在 `NodeLongTermKey` 里的整数主键。链上接口
+            #     （Java `/internal/lifecycle/chain/event`）只收整数 keyId，而
+            #     字符串 key_id 是本侧的标识，两者不是同一个 id 空间；用整数
+            #     主键作句柄，靠**非空 nodeId** 与分发事件的 Java keyId 区分。
+            #     ⚠️ 不要"顺手修正"成字符串 key_id —— 链上那一侧会解析失败，
+            #        而失败被 `record_chain_event` 吞成"存证未成功"。
+            #   * public_key_hash —— 上链只传**摘要**，不传公开材料本身。
+            #   * rotated —— 接口层据此决定要不要补一条 KEY_UPDATED 存证。
+            'key_pk': row.pk,
+            'public_key_hash': row.public_key_hash,
+            # 接口层据此决定要不要补一条 KEY_UPDATED 存证。**不是** `bool(rotate)`：
+            # 重试（同版本同公钥）走幂等分支、库里什么都没变，再补一条存证就是假记录。
+            'rotated': bool(rotate) and not retry_same_version,
         }
 
     def initialize_base_keys(self) -> Dict[str, Any]:

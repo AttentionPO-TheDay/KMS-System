@@ -33,6 +33,21 @@ KMS-005 追加两组（keyId / 版本 —— 密钥身份的两段文本）
      与 keyId 相反，版本号 strip 之后收敛（两边最终都渲染成 `/1`），
      这个不对称是刻意的，别"顺手统一"。
 
+KMS-006 追加两组（更新：显式身份与回收终态）
+==========================================
+  7. 更新（`rotate_public_key`）必须**显式携带** keyId 与 keyVersion ——
+     计划 §6.1 禁止"依赖当前最新版本的隐式行为"。老的"取最新一行 +1"
+     有三个都不报错的坏结果：回收终态被叠上新版本、**别的 keyId 被降级**
+     （生产版本被换掉而请求成功）、服务端算出的版本与节点本地已封存的分叉。
+     三类仍在的拒绝（KEY_NOT_FOUND / KEY_REVOKED / KEY_VERSION_MISMATCH）
+     各自对应其中一种。
+  8. 任何被拒的更新都不得留下半行、不得改动生产版本与物化视图 ——
+     这是阶段 2 判据②③（"旧版本不能被误当成当前生产版本"、
+     "任一步失败不得把服务端标成 ACTIVE"）在存储层的可执行形式。
+     接口层（`store_node_public_key(rotate=True)`）另要保证**缺一不可**：
+     只给 keyId 时服务端能算出"下一版"，但算出的那一版与节点本地
+     已按 keyRef 封存的可能不是同一个，两边都不报错。
+
 **它必须跑在 dvadmin3-django 容器里**（要 Django 环境与数据库）：
 
     docker cp "backend/pqkds/node_key_registry.py"      dvadmin3-django:/backend/pqkds/
@@ -258,8 +273,12 @@ def test_rotation_demotes_previous(node):
     results.append(_report('旧公钥仍保留在审计行里（版本可回溯）',
                            v1.public_key == v1_material))
 
+    # 更新（KMS-006）：版本由调用方显式给出，服务端不再"取最新一行 +1"。
+    # v1/v2 是两次**独立生成**（各自铸了新 keyId），这里要更新的正是 v2 这把 ——
+    # 更新必须落在 v2 的身份上，而不是"碰巧最新"那一行。
     v3_material = _b64_key(1184)
-    v3 = R.rotate_public_key(node, algorithm='KYBER', public_key=v3_material)
+    v3 = R.rotate_public_key(node, algorithm='KYBER', public_key=v3_material,
+                             key_id=v2.key_id, key_version=v2.key_version + 1)
     v2.refresh_from_db()
     results.append(_report(
         '更新保留 key_id 并递增 key_version（计划 §6.1）',
@@ -379,7 +398,9 @@ def test_require_usable_key_error_codes(node):
         R.require_usable_key(node, 'SM2').pk == v1.pk,
     ))
 
-    v2 = R.rotate_public_key(node, algorithm='SM2', public_key=_hex_pub('cd'))
+    # 更新（KMS-006）：同 keyId 的新版本，身份与版本都由调用方显式给出。
+    v2 = R.rotate_public_key(node, algorithm='SM2', public_key=_hex_pub('cd'),
+                             key_id=v1.key_id, key_version=v1.key_version + 1)
     results.append(_report(
         '轮换后默认取新版本',
         R.require_usable_key(node, 'SM2').pk == v2.pk,
@@ -744,6 +765,320 @@ def test_store_node_public_key_forwards_identity(node):
     return all(results)
 
 
+# ---------------------------------------------------------------------------
+# 十一、更新（rotate）：显式身份、三类拒绝、被拒即不落库（KMS-006）
+# ---------------------------------------------------------------------------
+
+def test_rotate_requires_explicit_identity(node):
+    """阶段 2 判据①②在存储层的可执行形式。
+
+    每一条拒绝都对应旧实现"取该算法最新一行、版本 +1"的一种**静默**坏结果：
+    回收终态被叠上新版本、别的 keyId 被降级（生产版本被换掉而请求成功）、
+    服务端算出的版本与节点本地已封存的分叉。所以这里不只断言"被拒"，
+    还断言**被拒之后库里没有任何变化** —— 拒绝本身也可能留下半行。
+    """
+    results = []
+
+    # --- A. 正常更新：同 keyId、版本 +1，旧版本 RETIRED，生产版本切换 ---
+    v1_material = _hex_pub('ab')
+    v1 = R.register_public_key(node, algorithm='SM2', public_key=v1_material)
+    v2_material = _hex_pub('cd')
+    v2 = R.rotate_public_key(node, algorithm='SM2', public_key=v2_material,
+                             key_id=v1.key_id, key_version=v1.key_version + 1)
+    v1.refresh_from_db()
+    fresh = Node.objects.get(pk=node.pk)
+    results.append(_report(
+        '更新保留 key_id、版本递增（判据①）',
+        v2.key_id == v1.key_id and v2.key_version == v1.key_version + 1,
+        f'{v2.key_id} v{v1.key_version}→v{v2.key_version}',
+    ))
+    results.append(_report(
+        '上一版降级 RETIRED 且让出 active_slot（不占着唯一约束）',
+        v1.status == C.KEY_STATUS_RETIRED and v1.active_slot is None,
+        f'status={v1.status} slot={v1.active_slot!r}',
+    ))
+    results.append(_report(
+        '旧版本不再被任何读路径当成生产版本（判据②）：新版本是唯一 ACTIVE，'
+        '物化视图指向新公钥',
+        v2.status == C.KEY_STATUS_ACTIVE and fresh.gm_public_key == v2_material
+        and NodeLongTermKey.objects.filter(node=node, algorithm='SM2',
+                                           status=C.KEY_STATUS_ACTIVE).count() == 1,
+        f'gm_public_key={fresh.gm_public_key[:10]}…',
+    ))
+    results.append(_report('"要新工作"取到的就是新版本',
+                           R.require_usable_key(node, 'SM2').pk == v2.pk))
+
+    # --- B. 版本 = 最新：重试路径。同公钥 → 无操作；异公钥 → 真冲突 ---
+    before = NodeLongTermKey.objects.filter(node=node, algorithm='SM2').count()
+    same = R.rotate_public_key(node, algorithm='SM2', public_key=v2_material,
+                               key_id=v1.key_id, key_version=v2.key_version)
+    after = NodeLongTermKey.objects.filter(node=node, algorithm='SM2').count()
+    results.append(_report(
+        '重试（同版本同公钥）是无操作：返回同一行、不叠版本',
+        same.pk == v2.pk and before == after == 2, f'{before} → {after}',
+    ))
+    ok, detail = _rejects(C.ERR_KEY_VERSION_MISMATCH, R.rotate_public_key, node,
+                          algorithm='SM2', public_key=_hex_pub('ef'),
+                          key_id=v1.key_id, key_version=v2.key_version,
+                          needle='同名覆盖')
+    results.append(_report('重试（同版本不同公钥）是冲突，不是静默覆盖', ok, detail))
+
+    # --- C. 版本回退：只增不减 ---
+    ok, detail = _rejects(C.ERR_KEY_VERSION_MISMATCH, R.rotate_public_key, node,
+                          algorithm='SM2', public_key=_hex_pub('12'),
+                          key_id=v1.key_id, key_version=v2.key_version - 1,
+                          needle='更旧')
+    results.append(_report('版本回退被拒（旧版本号不能重开）', ok, detail))
+
+    # --- D. 跨版：必须逐版递增，否则中间版本在历史里凭空消失 ---
+    ok, detail = _rejects(C.ERR_KEY_VERSION_MISMATCH, R.rotate_public_key, node,
+                          algorithm='SM2', public_key=_hex_pub('12'),
+                          key_id=v1.key_id, key_version=v2.key_version + 2,
+                          needle='逐版递增')
+    results.append(_report('跨过中间版本被拒（必须逐版递增）', ok, detail))
+
+    # --- E. keyId 未登记：调用方以为登记过、实际没成功 ---
+    ok, detail = _rejects(C.ERR_KEY_NOT_FOUND, R.rotate_public_key, node,
+                          algorithm='SM2', public_key=_hex_pub('12'),
+                          key_id='never-registered', key_version=2,
+                          needle='无法更新')
+    results.append(_report('未登记的 keyId → KEY_NOT_FOUND（退回"先登记"那一步）',
+                           ok, detail))
+
+    # --- F. 身份与版本缺失 / 非法：拒绝，不替调用方推断、不做 int() 兜底 ---
+    ok, detail = _rejects(C.ERR_INVALID_PARAMETER, R.rotate_public_key, node,
+                          algorithm='SM2', public_key=_hex_pub('12'), key_id='',
+                          key_version=2, needle='不再替你推断')
+    results.append(_report('缺 keyId 被拒（不推断"要更新哪一把"）', ok, detail))
+    for bad in (None, True, 1.9, '二', 0, -1, '1.5'):
+        ok, detail = _rejects(C.ERR_INVALID_PARAMETER, R.rotate_public_key, node,
+                              algorithm='SM2', public_key=_hex_pub('12'),
+                              key_id=v1.key_id, key_version=bad,
+                              needle='keyVersion')
+        results.append(_report(f'非法版本被拒（不做 int() 兜底）：{bad!r}', ok, detail))
+
+    # --- G. 判据③：以上全部被拒之后，一行都没多、生产版本没被改过 ---
+    active = NodeLongTermKey.objects.filter(node=node, algorithm='SM2',
+                                            status=C.KEY_STATUS_ACTIVE).first()
+    fresh = Node.objects.get(pk=node.pk)
+    results.append(_report(
+        '全部被拒之后：仍只有两行、生产版本还是 v2、物化视图未动',
+        NodeLongTermKey.objects.filter(node=node, algorithm='SM2').count() == 2
+        and active is not None and active.pk == v2.pk
+        and fresh.gm_public_key == v2_material,
+        f'count={NodeLongTermKey.objects.filter(node=node, algorithm="SM2").count()} '
+        f'active=v{getattr(active, "key_version", None)}',
+    ))
+    return all(results)
+
+
+# ---------------------------------------------------------------------------
+# 十二、接口层 rotate=True 与回收终态（`POST /node-self/keys/` 走的这条）
+# ---------------------------------------------------------------------------
+
+def test_store_node_public_key_rotate(node):
+    """`rotate=True` 的两种失败形态与回收终态，全部断言到库。
+
+    "缺一不可"不是形式要求：节点已经在本地按那个版本号封存了新私钥
+    （keyRef 末段就是它），服务端另算一个版本号会让两边对同一个 keyRef
+    的记账分叉 —— 分叉不报错，表现是"密钥在、查不到"。
+    """
+    results = []
+    svc = NodeService(node.node_id)
+
+    # --- A. rotate=True 但缺 keyId / 缺 keyVersion：拒绝，且不落库 ---
+    material = _hex_pub('ab')
+    first = svc.store_node_public_key('SM2', material, device_id='dev-R')
+    kid = first.get('key_id')
+    results.append(_report('先走登记路径种一行（拿到服务端回传的 keyId）',
+                           first.get('success') is True and bool(kid), str(kid)))
+
+    no_id = svc.store_node_public_key('SM2', _hex_pub('cd'), device_id='dev-R',
+                                      rotate=True, key_version=2)
+    results.append(_report(
+        'rotate=True 缺 keyId → 参数错误（不推断更新哪一把）',
+        no_id.get('success') is False and no_id.get('code') == C.ERR_INVALID_PARAMETER,
+        str(no_id.get('message'))[:60],
+    ))
+    no_version = svc.store_node_public_key('SM2', _hex_pub('cd'), device_id='dev-R',
+                                           rotate=True, key_id=kid)
+    results.append(_report(
+        'rotate=True 缺 keyVersion → 参数错误（服务端不另算版本号）',
+        no_version.get('success') is False
+        and no_version.get('code') == C.ERR_INVALID_PARAMETER,
+        str(no_version.get('message'))[:60],
+    ))
+    results.append(_report(
+        '两次被拒都没有落库、物化视图未动',
+        NodeLongTermKey.objects.filter(node=node, algorithm='SM2').count() == 1
+        and Node.objects.get(pk=node.pk).gm_public_key == material,
+    ))
+
+    # --- B. rotate=True 正常更新：回传 rotated 与链上要用的整数句柄 ---
+    v2 = svc.store_node_public_key('SM2', _hex_pub('cd'), device_id='dev-R',
+                                   rotate=True, key_id=kid, key_version=2)
+    row = NodeLongTermKey.objects.filter(node=node, algorithm='SM2',
+                                         key_version=2).first()
+    results.append(_report(
+        '更新成功：keyId 不变、版本 2 落库并与回传一致',
+        v2.get('success') is True and row is not None
+        and v2.get('key_id') == kid and row.key_id == kid
+        and v2.get('key_version') == 2 and row.key_version == 2,
+        f"回传 v{v2.get('key_version')}",
+    ))
+    results.append(_report(
+        '回传 rotated=True 且 key_pk / public_key_hash 指向刚落的这一行'
+        '（接口层据此补 KEY_UPDATED 存证）',
+        v2.get('rotated') is True and v2.get('key_pk') == row.pk
+        and v2.get('public_key_hash') == row.public_key_hash,
+        f"pk={v2.get('key_pk')}",
+    ))
+    results.append(_report(
+        '登记路径的 rotated 是 False（不产生更新存证）',
+        first.get('rotated') is False and first.get('key_pk') is not None,
+    ))
+
+    # --- B2. 重试（同版本同公钥）是幂等的，且**不能**再报一次"已更新" ---
+    # "响应丢失后刷新重试"是设计内的恢复路径，不是异常路径，所以这一支会被真实走到。
+    # 若仍报 rotated=True，接口层会补第二条 KEY_UPDATED —— 一次更新在链上留下两条
+    # 存证，其中一条什么都没改；页面还会说"已更新为 v2"，而库里根本没变。
+    again = svc.store_node_public_key('SM2', _hex_pub('cd'), device_id='dev-R',
+                                      rotate=True, key_id=kid, key_version=2)
+    results.append(_report(
+        '重试（同版本同公钥）不报 rotated、不说"已更新"（链上不补假存证）',
+        again.get('success') is True and again.get('rotated') is False
+        and again.get('key_pk') == row.pk
+        and '未做改动' in str(again.get('message')),
+        str(again.get('message'))[:64],
+    ))
+
+    # --- C. 回收是终态：不能靠"更新"复活 ---
+    R.revoke_public_key(NodeLongTermKey.objects.get(pk=row.pk), '自测：回收终态')
+    ok, detail = _rejects(C.ERR_KEY_REVOKED, R.rotate_public_key, node,
+                          algorithm='SM2', public_key=_hex_pub('ef'),
+                          key_id=kid, key_version=3, needle='已回收')
+    results.append(_report('已回收的 keyId 不能更新 → KEY_REVOKED（终态）', ok, detail))
+    results.append(_report(
+        '回收后物化视图已清空，且没有被"更新"重新填回来',
+        Node.objects.get(pk=node.pk).gm_public_key == '',
+    ))
+
+    # --- D. 生产槽位归属：该算法在产的是**别的** keyId 时，拒绝更新手里这把 ---
+    # 形态就是"换过设备 / 两次更新并发"：按老实现（最新一行 +1）会把在产那把
+    # 降级、把手里这把扶正 —— 生产版本被换掉，而请求返回成功。
+    old = R.register_public_key(node, algorithm='KYBER', public_key=_b64_key(1184))
+    prod_material = _b64_key(1184)
+    prod = R.register_public_key(node, algorithm='KYBER', public_key=prod_material)
+    ok, detail = _rejects(C.ERR_KEY_VERSION_MISMATCH, R.rotate_public_key, node,
+                          algorithm='KYBER', public_key=_b64_key(1184),
+                          key_id=old.key_id, key_version=2,
+                          needle='不是请求要更新的')
+    results.append(_report(
+        '更新一把非生产的 keyId → KEY_VERSION_MISMATCH（否则在产那把会被换掉）',
+        ok, detail,
+    ))
+    kyber_active = NodeLongTermKey.objects.filter(
+        node=node, algorithm='KYBER', status=C.KEY_STATUS_ACTIVE).first()
+    results.append(_report(
+        '被拒之后：生产版本仍是原来那把、物化视图未动、没有多出半行',
+        kyber_active is not None and kyber_active.pk == prod.pk
+        and Node.objects.get(pk=node.pk).kyber_public_key == prod_material
+        and NodeLongTermKey.objects.filter(node=node, algorithm='KYBER').count() == 2,
+    ))
+    return all(results)
+
+
+def test_register_path_cannot_add_version(node):
+    """登记口不能给一把**已存在**的 keyId 加版本 —— 那是 rotate 的语义。
+
+    ---- 这是复核查出来的绕过口 ----
+
+    节点侧 `/node-self/keys/` 自 KMS-005 起就接收 `keyId` 与 `keyVersion`。只要
+    **不带** `rotate`，请求就走 `register_public_key`，而它不做回收终态、生产槽位
+    归属、逐版递增这三道校验 —— 那三道只在 `rotate_public_key` 里。于是同一个端点
+    有两种行为，取决于一个布尔字段，两种静默坏结果都回来了：
+
+      * 已回收的 keyId 可以被"登记"复活 —— 审计里那一行还带着 `revoked_at`，
+        业务上却又能用；"回收是终态"只在前端和 rotate 口成立。
+      * 在产那把可以被降级、换成调用方指定的另一把，而请求返回"已登记" ——
+        调用方看不出自己刚把生产版本换掉了（判据②的失败形态）。
+
+    所以登记口必须**拒绝**，而不是替调用方猜意图：猜成"加版本"就等于放行上面两种，
+    猜成"新登记"等于丢弃调用方写的版本号。
+    """
+    results = []
+    svc = NodeService(node.node_id)
+
+    # --- A. 不带 keyId 的正常登记（KMS-005 生成页走的就是这条）必须照常可用 ---
+    first = svc.store_node_public_key('SM2', _hex_pub('11'), device_id='dev-N')
+    kid = first.get('key_id')
+    results.append(_report(
+        '不带 keyId 的正常登记仍可用（守卫没有误伤 KMS-005 那条路）',
+        first.get('success') is True and bool(kid), str(kid),
+    ))
+
+    # --- B. 同 keyId + 同版本 + 同公钥的重报仍是幂等无操作 ---
+    # 节点初始化页每次进入都会把四套公钥重报一遍，不幂等的话每进一次页面就
+    # 凭空轮换一次密钥。这条是本次守卫**最可能误伤**的地方，必须显式钉住。
+    again = svc.store_node_public_key('SM2', _hex_pub('11'), device_id='dev-N',
+                                      key_id=kid, key_version=1)
+    results.append(_report(
+        '同 keyId + 同版本 + 同公钥的重报仍是幂等（初始化页每次进页面都做）',
+        again.get('success') is True and again.get('key_id') == kid,
+    ))
+
+    # --- C. 带 keyId + 更大版本、但不带 rotate → 想加版本，拒绝并指路 ---
+    add_version = svc.store_node_public_key('SM2', _hex_pub('22'), device_id='dev-N',
+                                            key_id=kid, key_version=2)
+    results.append(_report(
+        '登记口给已有 keyId 加版本 → 拒绝，且消息指路 rotate',
+        add_version.get('success') is False
+        and add_version.get('code') == C.ERR_KEY_VERSION_MISMATCH
+        and 'rotate' in str(add_version.get('message')),
+        str(add_version.get('message'))[:70],
+    ))
+
+    # --- D. 通过登记口换生产版本：必须换不掉 ---
+    other = R.register_public_key(node, algorithm='KYBER', public_key=_b64_key(1184))
+    prod_material = _b64_key(1184)
+    prod = R.register_public_key(node, algorithm='KYBER', public_key=prod_material)
+    swap = svc.store_node_public_key('KYBER', _b64_key(1184), device_id='dev-N',
+                                     key_id=other.key_id, key_version=2)
+    kyber_active = NodeLongTermKey.objects.filter(
+        node=node, algorithm='KYBER', status=C.KEY_STATUS_ACTIVE).first()
+    results.append(_report(
+        '登记口换不掉生产版本：在产那把没被降级、物化列没动、没多出半行',
+        swap.get('success') is False and kyber_active is not None
+        and kyber_active.pk == prod.pk
+        and Node.objects.get(pk=node.pk).kyber_public_key == prod_material
+        and NodeLongTermKey.objects.filter(node=node, algorithm='KYBER').count() == 2,
+        str(swap.get('message'))[:70],
+    ))
+
+    # --- E. 已回收的 keyId 不能靠登记口复活 ---
+    R.revoke_public_key(
+        NodeLongTermKey.objects.filter(node=node, algorithm='SM2', key_id=kid)
+        .order_by('-key_version').first(),
+        '自测：回收终态',
+    )
+    revive = svc.store_node_public_key('SM2', _hex_pub('33'), device_id='dev-N',
+                                       key_id=kid, key_version=2)
+    results.append(_report(
+        '已回收的 keyId 不能靠登记口复活（否则"回收是终态"只在一条路径上成立）',
+        revive.get('success') is False
+        and Node.objects.get(pk=node.pk).gm_public_key == '',
+        str(revive.get('message'))[:70],
+    ))
+
+    # --- F. 全部被拒之后：库里没有任何多余的行 ---
+    sm2_rows = NodeLongTermKey.objects.filter(node=node, algorithm='SM2').count()
+    results.append(_report(
+        '全部被拒之后：SM2 仍只有被回收的那一行',
+        sm2_rows == 1, f'count={sm2_rows}',
+    ))
+    return all(results)
+
+
 def _main():
     print("== KMS-004 长期密钥登记不变量自测 ==\n")
 
@@ -761,6 +1096,9 @@ def _main():
         ("接口层：归一化与设备一致性", test_store_node_public_key_endpoint),
         ("keyId 不做任何静默更正", test_key_id_is_not_silently_corrected),
         ("接口层：keyId / 版本转发与新逻辑密钥", test_store_node_public_key_forwards_identity),
+        ("更新：显式身份、三类拒绝与失败不落库", test_rotate_requires_explicit_identity),
+        ("接口层：rotate 与回收终态、生产槽位归属", test_store_node_public_key_rotate),
+        ("登记口不能给已有 keyId 加版本", test_register_path_cannot_add_version),
     ]
 
     failed = []
