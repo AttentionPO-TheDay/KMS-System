@@ -65,7 +65,7 @@ for (const [algo, opts] of ALGOS) {
     `server=${up.body?.data?.keyId} local=${generated.keyId}`)
 }
 const totalMs = Date.now() - t0
-info(`四套生成+上报总耗时 ${totalMs}ms（页面文案写的是"约 2~5 秒"，需与实测相符）`)
+info(`四套生成+上报总耗时 ${totalMs}ms（页面文案写的是"整体通常在数秒内完成"，需与实测相符）`)
 
 const fin = await api(PQKDS, '/node-self/init/', { method: 'POST', token: session.token })
 check('收尾成功', isOk(fin.body), `${fin.body?.msg || ''}`)
