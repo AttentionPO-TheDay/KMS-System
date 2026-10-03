@@ -276,9 +276,11 @@ async function handleInit() {
       // Kyber 变体：与既有节点保持一致用 768（NIST 3 级）。
       // 变体由公钥长度**自描述**（服务端按长度推断），所以两边不必预先约定。
       const options = algo === 'KYBER' ? { variant: 768 } : {}
-      const keyRef = `node-${node.value.nodeId}-${algo}`
+      // 页面不再自己拼 keyRef —— 交给格式模块按
+      // `node/{nodeId}/{algorithm}/{keyId}/{version}` 生成。
+      // 手拼的 ref 拼错不会报错，只会让私钥在「本机有没有」的检查里消失。
       progress.value.push(`正在生成 ${item.label}…`)
-      const generated = await cryptoProvider.generate(algo, { keyRef, ...options })
+      const generated = await cryptoProvider.generate(algo, { nodeId: node.value.nodeId, ...options })
       progress.value.push(`正在登记 ${item.label} 公钥…`)
       await registerSelfNodePublicKey(
         algo,

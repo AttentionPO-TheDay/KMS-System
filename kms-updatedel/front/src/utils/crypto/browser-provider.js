@@ -29,6 +29,17 @@
 // 否则只能在浏览器里靠肉眼观察，而密码学路径最不能靠肉眼。
 import { CryptoProvider, normalizeAlgorithm } from './provider.js'
 import { inspectNodeKeys, listSecrets, removeSecret, sealSecret, unsealSecret, hasSecret } from './node-key-store.js'
+// KMS-003：keyRef 的格式由 key-ref.js 独占定义 —— 本模块只**使用**它，绝不自己拼。
+// 之所以要收口：手拼的 ref 即使拼错也不会当场报错，只会让私钥在"本机有没有该节点的
+// 材料"的检查里悄悄消失（`inspectNodeKeys` 按规范分段匹配），而私钥其实还躺在库里。
+import {
+  buildKeyRef,
+  mintKeyId,
+  parseKeyRef,
+  KeyRefError,
+  ERR_INVALID_PARAMETER,
+  ERR_KEY_VERSION_MISMATCH
+} from './key-ref.js'
 
 // ---------------------------------------------------------------------------
 // 惰性加载重依赖
@@ -102,16 +113,30 @@ export class BrowserCryptoProvider extends CryptoProvider {
   /**
    * 生成一份新的密钥材料。私密部分落本地密钥库，返回公开量与引用。
    *
+   * ⚠️ keyRef **不由本方法拼**，而是交给 `key-ref.js` 生成规范格式
+   *    （`node/{nodeId}/{algorithm}/{keyId}/{version}`）。页面与 provider 都不许手拼：
+   *    拼错不会当场报错，只会让私钥在"本机有没有该节点的材料"的检查里消失 ——
+   *    `inspectNodeKeys` 是按规范分段匹配的，届时已很难追到原因。
+   *
    * @param {string} algorithm
-   * @param {object} [options]
-   * @param {string} [options.keyRef]  指定引用（不给则自动生成）
+   * @param {object} options
+   * @param {string} options.nodeId   必填（KMS-003：本地密钥必须挂在具体节点下）
+   * @param {string} [options.keyId]  指定 keyId（不给则按节点+算法铸一个新的）
+   * @param {number} [options.version] 版本号（默认 1）
    * @param {number} [options.variant] Kyber 变体（512/768/1024，默认 768）
-   * @param {number} [options.version]
    */
   async generate(algorithm, options = {}) {
     const name = normalizeAlgorithm(algorithm)
-    const keyRef = options.keyRef || `${name.toLowerCase()}-${crypto.randomUUID?.() || Date.now()}`
-    const version = options.version || 1
+    const nodeId = String(options.nodeId || '').trim()
+    if (!nodeId) {
+      throw new KeyRefError('本地密钥必须挂在具体节点下（缺少 nodeId）', ERR_INVALID_PARAMETER)
+    }
+    // 旧实现在这里用 `${算法}-${randomUUID}` 兜底出一个 ref —— 那正是
+    // "ref 不由格式模块产生"的漏洞：它看上去能用，却过不了规范格式的检查。
+    // 已删除，不再保留任何手拼路径。
+    const keyId = options.keyId ? String(options.keyId) : mintKeyId(nodeId, name)
+    const version = Number(options.version || 1)
+    const keyRef = buildKeyRef({ nodeId, algorithm: name, keyId, version })
 
     if (name === 'KYBER') {
       const variant = options.variant || 768
@@ -123,7 +148,7 @@ export class BrowserCryptoProvider extends CryptoProvider {
       const [pk, sk] = kyber[names.k]()
       const publicKey = toHex(pk)
       await sealSecret(keyRef, { algorithm: name, secret: toHex(sk), publicKey, version })
-      return { publicKey, keyRef, algorithm: name, variant }
+      return { publicKey, keyRef, keyId, nodeId, version, algorithm: name, variant }
     }
 
     if (name === 'FALCON') {
@@ -131,7 +156,7 @@ export class BrowserCryptoProvider extends CryptoProvider {
       const kp = falcon.falcon512.keygen()
       const publicKey = toHex(kp.publicKey)
       await sealSecret(keyRef, { algorithm: name, secret: toHex(kp.secretKey), publicKey, version })
-      return { publicKey, keyRef, algorithm: name, variant: 512 }
+      return { publicKey, keyRef, keyId, nodeId, version, algorithm: name, variant: 512 }
     }
 
     if (name === 'SM2' || name === 'SSCL') {
@@ -140,16 +165,58 @@ export class BrowserCryptoProvider extends CryptoProvider {
       const { SM2 } = await import('gm-crypto')
       const { publicKey, privateKey } = SM2.generateKeyPair()
       await sealSecret(keyRef, { algorithm: name, secret: String(privateKey).toLowerCase(), publicKey, version })
-      return { publicKey, keyRef, algorithm: name }
+      return { publicKey, keyRef, keyId, nodeId, version, algorithm: name }
     }
 
     throw new Error(`不支持的算法：${algorithm}`)
   }
 
-  /** 把已有材料纳入本地密钥库（用于无证书合成后的 d_A、或从密钥文件导入） */
-  async importSecret(keyRef, { algorithm, secret, publicKey = '', version = 1 }) {
-    await sealSecret(keyRef, { algorithm: normalizeAlgorithm(algorithm), secret, publicKey, version })
-    return { keyRef, algorithm: normalizeAlgorithm(algorithm) }
+  /**
+   * 把已有材料纳入本地密钥库（用于无证书合成后的 d_A、或从密钥文件导入）。
+   *
+   * KMS-003 起 ref 必须是规范格式（`node/{nodeId}/{algorithm}/{keyId}/{version}`），
+   * 且算法与版本以 **ref 为准**：调用方显式传了与 ref 冲突的值就直接抛错 ——
+   * 静默采纳任意一方，都会把"记录按 ref 找得到、按算法/版本却对不上"的不一致
+   * 留到运行期才现形。设备凭据（`node-{id}-device-auth`）不是长期密钥，不能从这里导入。
+   */
+  async importSecret(keyRef, { algorithm, secret, publicKey = '', version }) {
+    const parsed = parseKeyRef(keyRef)
+    if (!parsed || parsed.kind !== 'node') {
+      throw new KeyRefError(
+        `只能导入挂在节点下的长期密钥（node/{nodeId}/{algorithm}/{keyId}/{version}），收到：${keyRef}。` +
+          '设备凭据不是长期密钥，不能走这里',
+        ERR_INVALID_PARAMETER
+      )
+    }
+    if (algorithm) {
+      const name = normalizeAlgorithm(algorithm)
+      if (name !== parsed.algorithm) {
+        throw new KeyRefError(
+          `导入的算法与 keyRef 不一致：keyRef 是 ${parsed.algorithm}，调用方传的是 ${name}`,
+          ERR_INVALID_PARAMETER
+        )
+      }
+    }
+    // 未传 version 时用 ref 里的版本（不设 `= 1` 默认值，否则"没传"与"传 1"分不开，
+    // ref 版本不是 1 时会被误判成冲突）
+    if (version !== undefined && version !== null && Number(version) !== parsed.version) {
+      throw new KeyRefError(
+        `导入的版本与 keyRef 不一致：keyRef 是 ${parsed.version}，调用方传的是 ${version}`,
+        ERR_KEY_VERSION_MISMATCH
+      )
+    }
+    // 算法与版本一律取 ref 的派生值，不取调用方传的 —— 两边说法不一时以 ref 为准
+    const sealed = await sealSecret(keyRef, { algorithm: parsed.algorithm, secret, publicKey, version: parsed.version })
+    // 返回**落库后的** ref（sealSecret 会把别名文本重建为规范文本）：调用方拿
+    // 返回值去 hasKey/sign/decapsulate 才找得到。返回入参那份，遇到 `kyber_kem`
+    // 这类可解析但非规范的写法就会静默查不到 —— 而那正是本任务要根除的模式。
+    return {
+      keyRef: sealed.keyRef,
+      nodeId: parsed.nodeId,
+      keyId: parsed.keyId,
+      version: parsed.version,
+      algorithm: parsed.algorithm
+    }
   }
 
   /** 用 keyRef 的私钥签名。返回**附加格式**（与服务端 NIST 包装一致），可直接上链/入库。 */

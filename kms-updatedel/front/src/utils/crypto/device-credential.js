@@ -37,21 +37,23 @@ import {
   removeSecret,
   sealSecret,
   unsealSecret,
-} from './node-key-store'
+} from './node-key-store.js'
+// KMS-003：设备引用的格式（`node-{id}-device-auth` / `...-pub`）与算法常量
+// 统一由 key-ref.js 定义 —— 本模块不再各存一份，避免两边定义漂移。
+import { DEVICE_AUTH_ALGORITHM, DEVICE_PUB_SUFFIX, buildDeviceRef, parseDeviceRef } from './key-ref.js'
 
-/** 与 `node_auth_views.DEVICE_AUTH_ALGORITHM` 必须一致，改一处要改两处 */
-export const DEVICE_AUTH_ALGORITHM = 'ECDSA-P256'
+/**
+ * 与 `node_auth_views.DEVICE_AUTH_ALGORITHM` 必须一致，改一处要改两处。
+ * 定义已收口到 key-ref.js；这里保留同名导出，`store/modules/user.js` 仍在用。
+ */
+export { DEVICE_AUTH_ALGORITHM }
 
-/** 设备公钥的 JWK 以一个独立 keyRef 明文存一份，供"不解封就列出"用 */
-const PUBLIC_JWK_SUFFIX = '-pub'
-
-/** 每个节点的设备凭据 keyRef。与四套基础密钥同一命名空间、同一前缀规则。 */
+/** 每个节点的设备凭据 keyRef。格式由 key-ref.js 定义（`node-{id}-device-auth`）。 */
 export function deviceKeyRef(nodeId) {
-  const id = String(nodeId || '').trim()
-  if (!id) {
-    throw new Error('缺少节点编号：设备凭据必须挂在具体节点下')
-  }
-  return `node-${id}-device-auth`
+  // ⚠️ 这个字符串**逐字节**决定已激活的浏览器能否登录 ——
+  //    已激活设备存的、登录时找的都是它，差一个字符 = 所有老设备登录不上。
+  //    所以只委托格式模块，本文件绝不自己拼。
+  return buildDeviceRef(nodeId)
 }
 
 /**
@@ -133,7 +135,7 @@ export async function signChallenge(nodeId, challenge) {
  * 列出本机**已激活**的节点编号（供登录页的「已激活节点」列表）。
  *
  * 从 `node-{id}-device-auth` 记录里反推节点编号 —— 这条 keyRef 的命名规则
- * 与 `keyRefFor` 一致，是唯一需要解析的地方。
+ * 由 `key-ref.js` 定义，这里是唯一需要解析它的地方（用 `parseDeviceRef`）。
  */
 export async function listActivatedNodes() {
   try {
@@ -145,8 +147,10 @@ export async function listActivatedNodes() {
     const refs = await listDeviceKeyRefs()
     const ids = new Set()
     for (const ref of refs) {
-      const match = /^node-(.+)-device-auth$/.exec(ref)
-      if (match) ids.add(match[1])
+      // 用格式模块解析，等价于原来的 /^node-(.+)-device-auth$/：
+      // `pub === true` 的是 `...-device-auth-pub`（公钥副本），不是设备身份本身，跳过。
+      const parsed = parseDeviceRef(ref)
+      if (parsed && !parsed.pub) ids.add(parsed.nodeId)
     }
     const out = []
     for (const id of ids) {
@@ -191,7 +195,7 @@ export async function removeDeviceKey(nodeId) {
   const keyRef = deviceKeyRef(nodeId)
   await removeDeviceKeyPair(keyRef)
   try {
-    await removeSecret(keyRef + PUBLIC_JWK_SUFFIX)
+    await removeSecret(keyRef + DEVICE_PUB_SUFFIX)
   } catch {
     // 已经不存在也算删成功 —— 幂等
   }
@@ -208,7 +212,7 @@ export async function removeDeviceKey(nodeId) {
 // （它是这座库的唯一 schema 所有者，见那里的 DB_VERSION 注释）。
 
 async function storePublicJwk(keyRef, jwk) {
-  await sealSecret(keyRef + PUBLIC_JWK_SUFFIX, {
+  await sealSecret(keyRef + DEVICE_PUB_SUFFIX, {
     algorithm: DEVICE_AUTH_ALGORITHM,
     // 公开量：放进 secret 字段只是为了让记录形状与其它记录一致，
     // 它本身没有任何保密要求（JWK 本来就是发给服务端的那份）。
@@ -219,9 +223,14 @@ async function storePublicJwk(keyRef, jwk) {
 
 async function readPublicJwk(keyRef) {
   try {
-    const sealed = await unsealSecret(keyRef + PUBLIC_JWK_SUFFIX)
-    const text = typeof sealed?.secret === 'string' ? sealed.secret : ''
-    return text ? JSON.parse(text) : null
+    const sealed = await unsealSecret(keyRef + DEVICE_PUB_SUFFIX)
+    // ⚠️ 原来这里写的是 `typeof sealed?.secret === 'string' ? sealed.secret : ''`，
+    //    但 `unsealSecret` 返回的是**明文 Uint8Array**，不是 `{secret}` 记录对象 ——
+    //    该条件永远为假，于是"明文那份"永远读不回来，一直靠
+    //    `getDevicePublicKeyJwk` 从 CryptoKey 重新导出的兜底路径才没坏。
+    //    现在按字节解码再 JSON.parse；解析失败说明记录不是 JWK，退回 null 走兜底。
+    const text = new TextDecoder().decode(sealed)
+    return JSON.parse(text)
   } catch {
     return null
   }

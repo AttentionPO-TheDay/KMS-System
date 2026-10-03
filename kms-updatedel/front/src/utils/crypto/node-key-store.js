@@ -6,6 +6,13 @@
  * 节点**自己的**私密材料：Kyber / Falcon 私钥、SM2 / SSCL 的秘密份额 `u`。
  * 这些材料**只在节点侧产生和使用，永不上传** KMS / KGC。
  *
+ * 引用格式（KMS-003）
+ * ------------------
+ * 库里每条记录的 keyRef 一律是 `node/{nodeId}/{算法}/{keyId}/{版本}`；
+ * 拼接/解析**只在 `key-ref.js`**（后端 api_contract.py 指定的前端对应物）——
+ * 本文件不自己拼字符串，只在封存时校验、查询时按段精确相等过滤。
+ * v3 升级会把 v2 的旧格式 ref 就地迁移（见 `migrateLegacyRefs`）。
+ *
  * 为什么不放 localStorage
  * ----------------------
  * 原先的 `store/modules/keyring.js` 把 `d_A` **明文**写进 localStorage，
@@ -30,6 +37,17 @@
  *    而**不是**从服务器恢复私钥）。
  */
 
+import { ALGORITHMS, normalizeAlgorithm } from './provider.js'
+import {
+  buildKeyRef,
+  parseKeyRef,
+  KeyRefError,
+  ERR_INVALID_PARAMETER,
+  ERR_KEY_VERSION_MISMATCH,
+  ERR_KEY_LOCAL_MISSING,
+  DEVICE_AUTH_ALGORITHM
+} from './key-ref.js'
+
 const DB_NAME = 'kms-node-keystore'
 // ⚠️ 本模块是这座 IndexedDB 的**唯一 schema 所有者**。
 //    别的模块（如 device-credential.js）只通过本模块的导出读写同一个库，
@@ -37,7 +55,9 @@ const DB_NAME = 'kms-node-keystore'
 //    触发 VersionError，表现为"本地密钥库打不开"，且只在某些加载顺序下出现。
 //    要新增 object store 就在这里加，并把版本号 +1。
 //    v2：新增 STORE_DEVICE_KEYS（设备认证私钥的 CryptoKey 对象，见 device-credential.js）。
-const DB_VERSION = 2
+//    v3：keyRef 统一为 `node/{nodeId}/{算法}/{keyId}/{版本}`（KMS-003），
+//        并在升级事务里把 v2 的旧格式记录就地迁移（见 migrateLegacyRefs）。
+const DB_VERSION = 3
 const STORE_META = 'meta'
 const STORE_KEYS = 'keys'
 const STORE_DEVICE_KEYS = 'deviceKeys'
@@ -45,10 +65,131 @@ const STORE_DEVICE_KEYS = 'deviceKeys'
 const META_PROTECTOR = 'protector'
 const META_DEVICE = 'deviceId'
 
-/** 私密材料在库里的形状：`{ keyRef, algorithm, version, deviceId, publicKey, iv, sealed, createdAt }` */
+/** 私密材料在库里的形状：`{ keyRef, algorithm, version, deviceId, publicKey, iv, sealed, createdAt, nodeId, keyId, kind, migrated }` */
 const textEncoder = new TextEncoder()
 
+/**
+ * 本机没有私钥时给调用方的处置提示。与后端
+ * `api_contract.ERROR_HINTS[ERR_KEY_LOCAL_MISSING]` 是同一句话 —— 改一处要改两处，
+ * 否则同一个错误在前端说"重新初始化"、在后端说"联系管理员"，而实际情况只有一个。
+ */
+const LOCAL_MISSING_HINT = '本机没有这把密钥的私钥。按设计私钥只在生成它的那台设备上、不从服务器恢复 —— 请改回原设备，或在本机重新初始化并回收旧密钥。'
+
+// 历史引用格式（v2 及以前）：`node-{id}-{ALGO}`，用 `-` 分隔、无版本段。
+// ⚠️ 算法尾巴必须允许数字：SM2 以 `2` 结尾，写成 `[A-Za-z]+` 会漏掉它，
+//    而漏掉的表现是"这条记录没被迁移"——不报错，只是它永远匹配不上新格式查询。
+const LEGACY_REF_RE = /^node-(.+)-([A-Za-z0-9]+)$/
+
 let dbPromise = null
+
+/** 6 位小写 hex（迁移生成的 keyId 后缀）。 */
+function randomSuffix() {
+  return [...crypto.getRandomValues(new Uint8Array(3))]
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
+}
+
+/**
+ * 把 v2 的旧格式 keyRef 就地迁移成统一格式（KMS-003）。
+ *
+ * ⚠️⚠️ 这里**绝对不能用 `tx()` / `req()`，也不能 async/await 起新事务**。
+ *    本函数在 `onupgradeneeded` 里被调用，此时 versionchange 事务尚未提交；
+ *    IndexedDB 会把任何新事务排在它后面，而升级回调又在等新事务 —— 双向等待
+ *    直接死锁，表现是"打开密钥库时浏览器卡住"。只允许用**升级事务自己**的
+ *    `transaction.objectStore(...)`，并且只在 onsuccess 回调里链下一个请求：
+ *    请求链不断，事务就还活着，全部读写都在这一个事务里完成。
+ *
+ * 迁移规则（幂等）：
+ *   * 已能按新格式解析（parseKeyRef 返回 node kind）→ 跳过，重复运行不再改；
+ *   * 旧格式且算法尾巴能归一到白名单 → 换 ref（`-legacy-` + 6 位随机 hex）；
+ *   * 设备 ref（`node-{id}-device-auth[-pub]`，尾巴是 auth/pub）与无法解析的
+ *     垃圾 → **原样不动**。设备 ref 那条 JWK 副本是登录凭据的一部分，绝不能碰。
+ *
+ * 为什么是"迁移"而不是"解密重封"：只改 keyRef/元数据字段，`iv`/`sealed`/
+ * `deviceId`/`publicKey`/`createdAt` 逐字节保留 —— 密文从未被解过、再封一次，
+ * 所以解出的私钥还是同一把（子进程验收里会真的 unseal 验证这一点）。
+ */
+function migrateLegacyRefs(transaction) {
+  const store = transaction.objectStore(STORE_KEYS)
+  const request = store.getAll()
+  request.onerror = () => {
+    // 读不到就不能猜着迁移；旧记录保持原样（之后查不到，但数据不丢）。
+    console.warn('[NodeKeyStore] 旧 keyRef 迁移读取失败，本次未迁移：', request.error?.message || request.error)
+  }
+  request.onsuccess = () => {
+    const records = request.result || []
+    // 已有 ref 快照，做冲突兜底；迁移一条就换一条，保证判断基于迁移后的真实状态。
+    const taken = new Set(records.map((r) => String(r.keyRef || '')))
+    let migratedCount = 0
+    for (const record of records) {
+      const oldRef = String(record.keyRef || '')
+      // 已经是新格式 → 幂等跳过（"迁移跑了第二次"走的正是这条）。
+      if (parseKeyRef(oldRef)?.kind === 'node') {
+        continue
+      }
+      const match = LEGACY_REF_RE.exec(oldRef)
+      if (!match) {
+        continue
+      }
+      const nodeId = match[1]
+      const algorithm = normalizeAlgorithm(match[2])
+      if (!ALGORITHMS.includes(algorithm)) {
+        continue // 尾巴不是算法名 → 设备 ref 或垃圾，原样不动
+      }
+      const rawVersion = Number(record.version)
+      const version = Number.isInteger(rawVersion) && rawVersion >= 1 ? rawVersion : 1
+      const safeNode = String(nodeId).replace(/[^A-Za-z0-9_.-]/g, '-')
+      let newRef = ''
+      let newKeyId = ''
+      let buildError = null
+      // 冲突兜底：候选撞上已有 ref 就换随机后缀重试。极少发生，但发生了也
+      // 绝不能覆盖别人 —— `put` 撞同一个 keyRef 是**静默覆盖**，那才是真丢记录。
+      for (let attempt = 0; attempt < 5 && !newRef; attempt++) {
+        const candidateKeyId = `${safeNode}-${algorithm}-legacy-${randomSuffix()}`
+        let candidateRef = ''
+        try {
+          candidateRef = buildKeyRef({ nodeId, algorithm, keyId: candidateKeyId, version })
+        } catch (error) {
+          // nodeId 含 `/` 之类构不成合法新 ref 的历史记录：告警后留旧格式。
+          // 它的密文还能解，只是新查询找不到 —— 但"丢了"比"找不到"严重得多。
+          buildError = error
+          break
+        }
+        if (!taken.has(candidateRef)) {
+          newRef = candidateRef
+          newKeyId = candidateKeyId
+        }
+      }
+      if (!newRef) {
+        console.warn(
+          `[NodeKeyStore] 旧 ref ${oldRef} 未能迁移，记录保留原样：` +
+          (buildError ? buildError.message : '候选 ref 连续冲突')
+        )
+        continue
+      }
+      // delete + put 在同一个升级事务里：中途失败整体回滚，不会出现
+      // "旧的删了、新的没写"的半截状态。
+      store.delete(oldRef)
+      store.put({
+        ...record,
+        keyRef: newRef,
+        nodeId,
+        keyId: newKeyId,
+        algorithm,
+        kind: 'node',
+        version,
+        migrated: true,
+        migratedFrom: oldRef
+      })
+      taken.delete(oldRef)
+      taken.add(newRef)
+      migratedCount += 1
+    }
+    if (migratedCount > 0) {
+      console.info(`[NodeKeyStore] 已迁移 ${migratedCount} 条旧格式 keyRef 到 node/{nodeId}/{算法}/{keyId}/{版本}`)
+    }
+  }
+}
 
 function openDb() {
   if (dbPromise) {
@@ -60,7 +201,7 @@ function openDb() {
       return
     }
     const request = indexedDB.open(DB_NAME, DB_VERSION)
-    request.onupgradeneeded = () => {
+    request.onupgradeneeded = (event) => {
       const db = request.result
       if (!db.objectStoreNames.contains(STORE_META)) {
         db.createObjectStore(STORE_META, { keyPath: 'k' })
@@ -76,8 +217,33 @@ function openDb() {
         // 那是"看起来能用、出错时极难定位"的设计。
         db.createObjectStore(STORE_DEVICE_KEYS, { keyPath: 'keyRef' })
       }
+      if (event.oldVersion < 3) {
+        // 迁移必须用升级事务自己的 objectStore 请求完成 —— 见 migrateLegacyRefs
+        // 顶部那段死锁说明。这里**不要** await 任何东西。
+        migrateLegacyRefs(request.transaction)
+      }
     }
-    request.onsuccess = () => resolve(request.result)
+    // 升级失败的原因可能是"别的标签页还开着旧连接"：此时 open 请求既不成功也不
+    // 失败，**静默挂起**，页面表现成"密钥库打不开"、连报错都没有。运行旧包的
+    // 标签页没有下面的让位处理，只能靠用户关掉 —— 所以这里至少把原因说出来。
+    request.onblocked = () => {
+      console.warn(
+        '[NodeKeyStore] 本地密钥库升级被本站点其它已打开的页面占用。请关闭其它标签页 —— ' +
+        '它们关闭后升级会自动继续（期间本页的密钥库操作会一直等待，不会失败）。'
+      )
+    }
+    request.onsuccess = () => {
+      const db = request.result
+      // 让位处理：别的标签页要升级库时，主动关闭本连接并丢弃缓存，本页下次操作
+      // 会按新版本重开。不让位的话，对方的升级会被本连接静默阻塞（见上）。
+      // 中途正在跑的事务会中止并在调用方那里报错一次 —— IndexedDB 事务是原子的，
+      // 不会留下半截数据。
+      db.onversionchange = () => {
+        db.close()
+        dbPromise = null
+      }
+      resolve(db)
+    }
     request.onerror = () => reject(new Error(`打开本地密钥库失败：${request.error?.message || '未知错误'}`))
   })
   return dbPromise
@@ -154,20 +320,109 @@ async function getDeviceId() {
 }
 
 /**
+ * 把一条库内记录转成对外的摘要（**不含任何私密材料**）。
+ *
+ * `listSecrets` 与 `requireLocalKey` 共用它，保证"单行形状"只有一处定义 ——
+ * 两处各映射一遍，迟早一个多一个字段，而调用方看到的是"有时有有时没有"。
+ */
+function toSummary(record) {
+  const parsed = parseKeyRef(record.keyRef)
+  const nodeRef = parsed?.kind === 'node' ? parsed : null
+  return {
+    keyRef: record.keyRef,
+    algorithm: record.algorithm,
+    version: record.version,
+    deviceId: record.deviceId,
+    publicKey: record.publicKey,
+    createdAt: record.createdAt,
+    // 迁移前的记录（或迁移被跳过的）可能没有这些字段：能从 ref 推的就推出来，
+    // 推不出来的给稳定默认值。上层拿到的形状必须一致。
+    nodeId: record.nodeId || parsed?.nodeId || '',
+    keyId: record.keyId !== undefined && record.keyId !== null ? record.keyId : (nodeRef?.keyId ?? null),
+    kind: record.kind || parsed?.kind || '',
+    migrated: record.migrated === true,
+    migratedFrom: record.migratedFrom || ''
+  }
+}
+
+/**
  * 把一份私密材料加密后写入密钥库。
  *
- * @param {string} keyRef        逻辑引用（调用方用来再取回；建议用 key_id 或节点内唯一名）
+ * 引用**必须**能按规范格式解析（`node/{nodeId}/{算法}/{keyId}/{版本}`，或设备 ref）：
+ * 旧格式 `node-N1-KYBER`、裸名 `probe-1` 直接拒绝；别名文本（`kyber_kem`、大小写
+ * 混杂）按解析结果**重建为规范文本落库** —— 存原样会让"写的那串"与"查的那串"
+ * 只要有一处不一致就静默失配。
+ * 封存即校验：node ref 的 algorithm/version **以 ref 为唯一权威** ——
+ * 调用方显式传了不一致的值就抛 `KeyRefError`。既不"以参数为准"，也不
+ * "悄悄纠正"：静默纠正会让调用方以为写入的是 A、实际是 B，
+ * 之后版本检查报错还找不到原因。
+ *
+ * @param {string} keyRef  规范引用。旧格式 `node-N1-KYBER`、裸名 `probe-1` 一律拒绝；
+ *   别名文本可解析但会按解析结果重建后落库，不会存成第二份拼写
  * @param {object} input
- * @param {string} input.algorithm 算法名
+ * @param {string} [input.algorithm] 算法名；node ref 可省略（从 ref 派生），给了就必须与 ref 一致
  * @param {Uint8Array|string} input.secret 私密材料本体（字节或 hex/base64 文本）
  * @param {string} [input.publicKey] 对应公钥 —— **公开量，明文存**，便于不解封就能列出
- * @param {number} [input.version]
+ * @param {number} [input.version] 版本；node ref 可省略（从 ref 派生），给了就必须与 ref 一致
  * @returns {Promise<object>} 落库后的记录（**不含明文**）
  */
-export async function sealSecret(keyRef, { algorithm, secret, publicKey = '', version = 1 }) {
-  if (!keyRef) {
-    throw new Error('缺少 keyRef：本地密钥库的每条记录都必须能被再取回')
+export async function sealSecret(keyRef, { algorithm, secret, publicKey = '', version } = {}) {
+  const ref = String(keyRef ?? '')
+  const parsed = parseKeyRef(ref)
+  if (!parsed) {
+    throw new KeyRefError(`不是规范的本地密钥引用：${ref}（应为 node/{nodeId}/{算法}/{keyId}/{版本}）`)
   }
+  // version 的默认值刻意**不是** 1 而是"未传"：否则 ref 里写着 v3、调用方
+  // 没传 version 时会被默认的 1 判成冲突，而正确语义是"从 ref 派生"。
+  let resolvedAlgorithm = ''
+  let resolvedVersion = 1
+  if (parsed.kind === 'node') {
+    if (algorithm != null && String(algorithm).trim() !== '') {
+      const given = normalizeAlgorithm(algorithm)
+      if (given !== parsed.algorithm) {
+        throw new KeyRefError(
+          `算法与 ref 冲突：ref 是 ${parsed.algorithm}，调用方传的是 ${given}（ref 是唯一权威，不要传与 ref 不符的算法）`
+        )
+      }
+    }
+    if (version !== undefined && version !== null) {
+      const given = Number(version)
+      if (!Number.isInteger(given) || given < 1) {
+        throw new KeyRefError(`版本号必须是 ≥1 的整数：${version}`)
+      }
+      if (given !== parsed.version) {
+        throw new KeyRefError(
+          `版本与 ref 冲突：ref 是 v${parsed.version}，调用方传的是 v${given}（同一 keyId 的版本以 ref 为准）`,
+          ERR_KEY_VERSION_MISMATCH
+        )
+      }
+    }
+    resolvedAlgorithm = parsed.algorithm
+    resolvedVersion = parsed.version
+  } else {
+    // 设备命名空间：算法名不归一化、不进白名单 —— 设备凭据是独立体系，
+    // 别把 ECDSA-P256 之外的能力焊死（见 key-ref.js 的文件头）。
+    resolvedAlgorithm = String(algorithm || DEVICE_AUTH_ALGORITHM).toUpperCase()
+    if (version !== undefined && version !== null) {
+      const given = Number(version)
+      if (!Number.isInteger(given) || given < 1) {
+        throw new KeyRefError(`版本号必须是 ≥1 的整数：${version}`)
+      }
+      resolvedVersion = given
+    }
+  }
+
+  // ref 的**语义**由 parseKeyRef 唯一确定，但**文本形态**可能是别名写法
+  // （`kyber_kem`、大小写混杂）。若原样存文本，写进去的是这一串、之后按规范
+  // ref 查的是另一串 —— 记录其实存在却报 KEY_LOCAL_MISSING，又回到"存得进、
+  // 查不到"的静默失配（独立复核用探针实测过）。所以 node ref 一律按解析结果
+  // 重建规范文本落库；「ref 是唯一权威」不受影响 —— 各字段仍全部取自 ref。
+  // 设备 ref 是**字节契约**（已激活浏览器的登录凭据），原样保留、绝不重建。
+  const canonicalRef = parsed.kind === 'node' ? buildKeyRef(parsed) : ref
+  if (parsed.kind === 'node' && canonicalRef !== ref) {
+    console.info(`[NodeKeyStore] keyRef 文本已规范化后落库：${ref} → ${canonicalRef}`)
+  }
+
   const bytes = typeof secret === 'string' ? textEncoder.encode(secret) : secret
   if (!bytes || !bytes.length) {
     throw new Error('私密材料为空，拒绝写入 —— 存一条空记录只会让"为什么解不开"变成一个查不出来的问题')
@@ -179,14 +434,20 @@ export async function sealSecret(keyRef, { algorithm, secret, publicKey = '', ve
   const deviceId = await getDeviceId()
 
   const record = {
-    keyRef: String(keyRef),
-    algorithm: String(algorithm || '').toUpperCase(),
-    version: Number(version) || 1,
+    keyRef: canonicalRef,
+    algorithm: resolvedAlgorithm,
+    version: resolvedVersion,
     deviceId,
     publicKey: String(publicKey || ''),
     iv,
     sealed,
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    // 以下四个字段是 KMS-003 的记录身份信息：查询（inspectNodeKeys /
+    // requireLocalKey）按 kind + nodeId 精确相等过滤，不再做任何后缀匹配。
+    nodeId: parsed.nodeId,
+    keyId: parsed.kind === 'node' ? parsed.keyId : null,
+    kind: parsed.kind,
+    migrated: false
   }
   await tx(STORE_KEYS, 'readwrite', (store) => req(store.put(record)))
   // 返回值刻意**不带 sealed/iv 之外的任何东西**也只是形式；
@@ -195,15 +456,40 @@ export async function sealSecret(keyRef, { algorithm, secret, publicKey = '', ve
 }
 
 /**
+ * 把**查询/删除**入参规范成库内实际存的文本 —— 与 `sealSecret` 的落库规则同一条。
+ *
+ * 为什么读侧也要做：写侧把可解析的别名文本重建为规范文本落库之后，读/删侧若仍按
+ * 入参原文 `store.get`，就会出现反方向的"存得进、同一串查不到"——
+ * `sealSecret('node/N1/kyber_kem/k/1', …)` 成功，而用**同一别名文本**回读为 false、
+ * `removeSecret` 静默 no-op（第二轮独立复核实测）。所以：
+ *   - 可解析的 node ref → 按解析结果重建规范文本（与写入落在同一文本上）；
+ *   - 设备 ref → 原样（`node-{id}-device-auth[-pub]` 是字节契约，绝不重建）；
+ *   - 解析不出的（旧格式 / 裸名 / 垃圾）→ 与写入侧一样抛 `KeyRefError`。
+ *     静默返回"没有这条记录"、静默不删，会把调用方的拼写错误伪装成"密钥不在本机"。
+ */
+function canonicalRefForLookup(keyRef) {
+  const ref = String(keyRef ?? '')
+  const parsed = parseKeyRef(ref)
+  if (!parsed) {
+    throw new KeyRefError(`不是规范的本地密钥引用：${ref}（应为 node/{nodeId}/{算法}/{keyId}/{版本}）`)
+  }
+  return parsed.kind === 'node' ? buildKeyRef(parsed) : ref
+}
+
+/**
  * 取回并解密一份私密材料。
  *
+ * 入参与 `sealSecret` 同一套接受规则（见 `canonicalRefForLookup`）：别名/零填充
+ * 版本这类可解析文本按规范文本查，设备 ref 原样，解析不出的抛 `KeyRefError`。
+ *
  * @returns {Promise<Uint8Array>} 明文
- * @throws 记录不存在、或解密失败（保护密钥换了 / 数据被改动）时抛出
+ * @throws 引用不合法、记录不存在、或解密失败（保护密钥换了 / 数据被改动）时抛出
  */
 export async function unsealSecret(keyRef) {
-  const record = await tx(STORE_KEYS, 'readonly', (store) => req(store.get(String(keyRef))))
+  const ref = canonicalRefForLookup(keyRef)
+  const record = await tx(STORE_KEYS, 'readonly', (store) => req(store.get(ref)))
   if (!record) {
-    throw new Error(`本地密钥库中没有 ${keyRef} 的记录`)
+    throw new Error(`本地密钥库中没有 ${ref} 的记录`)
   }
   const protector = await getOrCreateProtector()
   try {
@@ -216,31 +502,34 @@ export async function unsealSecret(keyRef) {
   } catch {
     // GCM 校验失败 → 要么保护密钥不是当初那把（用户清了元数据但没清记录），
     // 要么数据被改过。两种都不该"尽力而为"地返回半截内容。
-    throw new Error(`本地密钥库中的 ${keyRef} 解密失败：保护密钥不匹配或数据已被改动`)
+    throw new Error(`本地密钥库中的 ${ref} 解密失败：保护密钥不匹配或数据已被改动`)
   }
 }
 
-/** 该记录是否存在于本地密钥库 */
+/**
+ * 该记录是否存在于本地密钥库。
+ *
+ * 与 `sealSecret` 同一套接受规则（见 `canonicalRefForLookup`）：别名文本照样命中
+ * 规范记录；解析不出的参照旧抛 `KeyRefError` —— 静默返回 false 与"本机没有这把
+ * 密钥"不可区分，会让拼写错误伪装成"材料不在本机"。
+ */
 export async function hasSecret(keyRef) {
-  const record = await tx(STORE_KEYS, 'readonly', (store) => req(store.get(String(keyRef))))
+  const record = await tx(STORE_KEYS, 'readonly', (store) => req(store.get(canonicalRefForLookup(keyRef))))
   return Boolean(record)
 }
 
 /** 列出全部记录摘要（**不含任何私密材料**，用于界面展示与设备绑定判断） */
 export async function listSecrets() {
   const all = await tx(STORE_KEYS, 'readonly', (store) => req(store.getAll()))
-  return (all || []).map((r) => ({
-    keyRef: r.keyRef,
-    algorithm: r.algorithm,
-    version: r.version,
-    deviceId: r.deviceId,
-    publicKey: r.publicKey,
-    createdAt: r.createdAt
-  }))
+  return (all || []).map(toSummary)
 }
 
+/**
+ * 删除一条记录。入参按 `canonicalRefForLookup` 规范化 —— 否则用非规范文本删除
+ * 会**静默不删**（调用方以为清掉了，实际还在），这比报错更糟。
+ */
 export async function removeSecret(keyRef) {
-  await tx(STORE_KEYS, 'readwrite', (store) => req(store.delete(String(keyRef))))
+  await tx(STORE_KEYS, 'readwrite', (store) => req(store.delete(canonicalRefForLookup(keyRef))))
 }
 
 // ---------------------------------------------------------------------------
@@ -309,7 +598,13 @@ export async function listDeviceKeyRefs() {
 }
 
 /**
- * 清空整个密钥库（含保护密钥与设备标识）。
+ * 清空长期密钥材料：`keys` store（全部私密材料密文）+ `meta`（保护密钥与设备标识）。
+ *
+ * ⚠️ **刻意不清 `deviceKeys`**（设备凭据 / 登录身份），这不是遗漏：
+ *    * 它是登录凭据、不是分发密钥 —— 服务端仍登记着它的公钥，清掉它这台浏览器
+ *      就再也登录不上，要拿回登录能力得管理员重发激活凭证；
+ *    * "重置本地密钥材料"不该附带"把已激活设备变成登录不了"这个后果。
+ *    真要连设备身份一起抹掉（例如整机移交），单独调 `removeDeviceKeyPair`。
  *
  * ⚠️ 调用方必须清楚后果：清掉之后**本设备再也解不开**已分发的信封，
  *    且按 §4.4 的要求，**不从服务器恢复私钥** —— 只能重新初始化或轮换。
@@ -339,20 +634,93 @@ export async function assertProtectorNotExportable() {
  * 那种情况下本机**确实**有材料，只是不全 —— 与"新设备什么都没有"
  * 是两回事，处置也不同（前者续做，后者要重新初始化）。
  *
- * @param {string} nodeId 节点编号（前端生成密钥时用它拼 keyRef）
- * @returns {Promise<{present: boolean, algorithms: string[]}>}
+ * ⚠️ 过滤用 `kind === 'node' && nodeId === 精确相等`，**不再有任何后缀/子串匹配**。
+ *    旧实现是 `endsWith('-' + nodeId)`，对线上真实 ref（`node-{id}-{ALGO}`，
+ *    大写算法名、无版本）恒不命中且不报错 —— present 永远是 false；
+ *    而且 `-` 分隔下 node `A` 与 `A-B` 会互相串。新格式用 `/` 分段 + 精确相等，
+ *    这两类问题从根上没有了。
+ *
+ * @param {string} nodeId 节点编号
+ * @returns {Promise<{present: boolean, algorithms: string[], keys: object[]}>}
  */
 export async function inspectNodeKeys(nodeId) {
-  const suffix = `-${String(nodeId || '').trim()}`
-  if (!suffix.trim() || suffix === '-') {
-    return { present: false, algorithms: [] }
+  const id = String(nodeId ?? '').trim()
+  if (!id) {
+    return { present: false, algorithms: [], keys: [] }
   }
   const all = await listSecrets()
-  const mine = all.filter((r) => String(r.keyRef || '').endsWith(suffix))
+  const mine = all.filter((r) => r.kind === 'node' && r.nodeId === id)
+  const keys = mine.map((r) => ({
+    keyRef: r.keyRef,
+    nodeId: r.nodeId,
+    algorithm: r.algorithm,
+    keyId: r.keyId,
+    version: r.version,
+    publicKey: r.publicKey,
+    createdAt: r.createdAt,
+    migrated: r.migrated
+  }))
   return {
-    present: mine.length > 0,
-    algorithms: mine.map((r) => r.algorithm),
+    present: keys.length > 0,
+    algorithms: [...new Set(keys.map((k) => k.algorithm).filter(Boolean))].sort(),
+    keys
   }
 }
 
-export { getDeviceId, STORE_DEVICE_KEYS, DB_NAME }
+/**
+ * 取本机某把长期密钥的元信息；不存在或归属/算法/版本不符就抛**带错误码**的
+ * `KeyRefError`（计划 §7 阶段 1：「增加本地密钥存在性、算法、版本和节点归属检查」）。
+ *
+ * 为什么要有这个函数，而不是调用方自己 `listSecrets` 再挑一遍：判据必须只有
+ * 一份。四处各写"我再过滤一下"，每个调用点就会各松一点，而"松"在这里的表现
+ * 是静默用了不该用的密钥 —— 比如版本不符却拿旧版本算出了另一个会话密钥。
+ *
+ * 检查顺序：ref 形状 → 拒绝设备 ref → 节点归属 → 算法 → 版本 → 本机是否存在。
+ *
+ * @param {string} keyRef 规范引用
+ * @param {{nodeId?: string, algorithm?: string, version?: number}} [expect]
+ * @returns {Promise<object>} 与 `listSecrets` 单行同形状的元信息（不含 iv/sealed）
+ */
+export async function requireLocalKey(keyRef, { nodeId = '', algorithm = '', version = 0 } = {}) {
+  const ref = String(keyRef ?? '')
+  const parsed = parseKeyRef(ref)
+  if (!parsed) {
+    throw new KeyRefError(`不是规范的本地密钥引用：${ref}（应为 node/{nodeId}/{算法}/{keyId}/{版本}）`)
+  }
+  if (parsed.kind !== 'node') {
+    throw new KeyRefError(
+      `设备凭据不是可用的长期密钥：${ref}（设备凭据只用于对服务端挑战签名，不参与分发、解封或业务签名）`
+    )
+  }
+  if (nodeId && String(nodeId).trim() !== parsed.nodeId) {
+    throw new KeyRefError(
+      `节点归属不符：引用属于节点 ${parsed.nodeId}，调用方要求 ${String(nodeId).trim()}（不同节点的同名 keyId 不是同一把密钥）`
+    )
+  }
+  if (algorithm && normalizeAlgorithm(algorithm) !== parsed.algorithm) {
+    throw new KeyRefError(`算法不符：引用是 ${parsed.algorithm}，调用方要求 ${normalizeAlgorithm(algorithm)}`)
+  }
+  if (version) {
+    const given = Number(version)
+    if (!Number.isInteger(given) || given < 1) {
+      throw new KeyRefError(`版本号必须是 ≥1 的整数：${version}`)
+    }
+    if (given !== parsed.version) {
+      throw new KeyRefError(
+        `版本不符：引用是 v${parsed.version}，调用方要求 v${given}（版本不符必须重新生成/轮换，不能拿旧版本顶上）`,
+        ERR_KEY_VERSION_MISMATCH
+      )
+    }
+  }
+  // 查到这一步的 ref 已经过上面全部检查（parse 出的 node ref）。查库前重建规范
+  // 文本，与写侧落库规则同一口径 —— 否则别名/零填充版本（`kyber_kem`、`01`）
+  // 这类可解析文本会"记录在、查不到"，报一个误导性的 KEY_LOCAL_MISSING。
+  const lookupRef = buildKeyRef(parsed)
+  const record = await tx(STORE_KEYS, 'readonly', (store) => req(store.get(lookupRef)))
+  if (!record) {
+    throw new KeyRefError(`${LOCAL_MISSING_HINT}（引用：${lookupRef}）`, ERR_KEY_LOCAL_MISSING)
+  }
+  return toSummary(record)
+}
+
+export { getDeviceId, STORE_DEVICE_KEYS, DB_NAME, META_PROTECTOR as PROTECTOR_META_KEY }

@@ -56,12 +56,23 @@ const deviceA = await store.getDeviceId()
 check('本机（设备 A）有 deviceId', Boolean(deviceA), `deviceA=${deviceA.slice(0, 12)}…`)
 
 for (const [algo, opts] of [['SM2', {}], ['SSCL', {}], ['KYBER', { variant: 768 }], ['FALCON', {}]]) {
-  const kp = await cryptoProvider.generate(algo, { keyRef: `${NODE_ID}-${algo}`, ...opts })
+  const kp = await cryptoProvider.generate(algo, { nodeId: NODE_ID, ...opts })
   const up = await api('/node-self/keys/', { method: 'POST', token, body: {
     algorithm: algo, publicKey: kp.publicKey, deviceId: deviceA,
     securityLevel: opts.variant ? String(opts.variant) : undefined } })
   if (!isOk(up.body)) { console.log(`${algo} 上报失败: ${up.body?.msg}`); process.exit(1) }
 }
+
+// ★ 这条是 doc/kms-callsite-inventory.md §八已知风险「inspectNodeKeys() 恒返回
+//   '无本地密钥'」的直接反转，KMS-003 的验收点之一：四把钥匙刚生成完，
+//   本机就应当认得出来。若这里 present=false，说明 store 里记下的 ref 与
+//   生成时返回的 ref 对不上 —— "这台设备有材料"与"新设备"就再也分不开。
+const aKeys = await cryptoProvider.inspectNodeKeys(NODE_ID)
+const aList = (aKeys.algorithms || []).map((a) => String(a).toUpperCase())
+check('★ 本机认得刚生成的四套密钥（inspectNodeKeys 不再恒为空）',
+  aKeys.present === true && ['SM2', 'SSCL', 'KYBER', 'FALCON'].every((a) => aList.includes(a)),
+  `present=${aKeys.present} algorithms=${JSON.stringify(aKeys.algorithms)}`)
+
 const fin = await api('/node-self/init/', { method: 'POST', token })
 check('初始化完成', isOk(fin.body) && fin.body?.data?.node?.status === 'ACTIVE',
   `status=${fin.body?.data?.node?.status}`)
@@ -85,7 +96,7 @@ check('新设备拿到**不同**的 deviceId', deviceB && deviceB !== deviceA,
 const bKeys = await cryptoProvider.inspectNodeKeys(NODE_ID)
 check('★ 新设备本机没有任何该节点的密钥材料', bKeys.present === false, `algorithms=${JSON.stringify(bKeys.algorithms)}`)
 
-const kpB = await cryptoProvider.generate('KYBER', { keyRef: `${NODE_ID}-KYBER`, variant: 768 })
+const kpB = await cryptoProvider.generate('KYBER', { nodeId: NODE_ID, variant: 768 })
 const rejected = await api('/node-self/keys/', { method: 'POST', token, body: {
   algorithm: 'KYBER', publicKey: kpB.publicKey, deviceId: deviceB } })
 check('★★ 新设备上报公钥被拒', !isOk(rejected.body),
@@ -101,7 +112,7 @@ check('★ 设备一致时正常登记（幂等重试不被误拦）', isOk(okSa
 
 console.log('\n=== 5. 未上报 deviceId 时不做拦截（兼容旧调用方）===')
 const noDev = await api('/node-self/keys/', { method: 'POST', token, body: {
-  algorithm: 'SM2', publicKey: await (await cryptoProvider.generate('SM2', { keyRef: `${NODE_ID}-SM2b` })).publicKey } })
+  algorithm: 'SM2', publicKey: await (await cryptoProvider.generate('SM2', { nodeId: NODE_ID })).publicKey } })
 check('不带 deviceId 时不因设备检查失败', isOk(noDev.body),
   `code=${noDev.body?.code} msg=${String(noDev.body?.msg || '').slice(0, 50)}`)
 

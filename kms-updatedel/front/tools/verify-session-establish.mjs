@@ -87,14 +87,18 @@ for (const nid of [NODE_A, NODE_B]) {
   seq += 1
   if (!isOk(r.body)) { console.log(`建节点 ${nid} 失败:`, JSON.stringify(r.body).slice(0, 200)); process.exit(1) }
   const token = await login(ORIGIN, '/updatedel-api', nid, 'admin123')
+  // keyRef 一律取 generate 的返回值，按节点登记在**唯一这一处**（解封/签名都从
+  // 这里取）—— 手写串与 store 里的格式对不上时，报错只是"本机没有这把密钥"，
+  // 看起来像密钥丢了，其实是引用拼错。
+  nodes[nid] = { token, refs: {} }
   for (const [algo, opts] of [['SM2', {}], ['SSCL', {}], ['KYBER', { variant: 768 }], ['FALCON', {}]]) {
-    const kp = await cryptoProvider.generate(algo, { keyRef: `${nid}-${algo}`, ...opts })
+    const kp = await cryptoProvider.generate(algo, { nodeId: nid, ...opts })
+    nodes[nid].refs[algo] = kp.keyRef
     const up = await api(PQKDS, '/node-self/keys/', { method: 'POST', token, body: {
       algorithm: algo, publicKey: kp.publicKey, securityLevel: opts.variant ? String(opts.variant) : undefined } })
     if (!isOk(up.body)) { console.log(`${nid}/${algo} 上报失败: ${up.body?.msg}`); process.exit(1) }
   }
   await api(PQKDS, '/node-self/init/', { method: 'POST', token })
-  nodes[nid] = { token }
   const id = sql(`SELECT id FROM dvadmin_pqkds_nodes WHERE node_id='${nid}';`).trim()
   nodes[nid].id = Number(id)
 }
@@ -146,8 +150,9 @@ check('信封不含任何私钥字段',
 
 let recoveredKey = null
 try {
+  // ref 用生成 KYBER 时返回的那一把（nodes[NODE_B].refs.KYBER），不手写
   recoveredKey = await cryptoProvider.unwrapEnvelope(
-    envItem.wrappingAlgorithm, `${NODE_B}-KYBER`, envItem.envelope)
+    envItem.wrappingAlgorithm, nodes[NODE_B].refs.KYBER, envItem.envelope)
 } catch (e) { check('★ B 在本地解封', false, e.message) }
 if (recoveredKey) {
   check('★ B 在本地解封成功', true, `解出 ${recoveredKey.length} 字节`)

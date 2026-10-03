@@ -14,7 +14,8 @@
     "verify:session": "node tools/verify-session-establish.mjs",
     "verify:node-init-ui": "node tools/verify-node-init-ui.mjs",
     "verify:device-binding": "node tools/verify-device-binding.mjs",
-    "verify:keyupdate-rotate": "node tools/verify-keyupdate-rotate.mjs"
+    "verify:keyupdate-rotate": "node tools/verify-keyupdate-rotate.mjs",
+    "verify:key-ref": "node tools/verify-key-ref.mjs"
   },
   "repository": {
     "type": "git",

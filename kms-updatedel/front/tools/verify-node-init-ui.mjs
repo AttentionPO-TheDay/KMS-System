@@ -47,8 +47,8 @@ const ALGOS = [['SM2', {}], ['SSCL', {}], ['KYBER', { variant: 768 }], ['FALCON'
 const t0 = Date.now()
 for (const [algo, opts] of ALGOS) {
   const tGen = Date.now()
-  const keyRef = `node-${NODE_ID}-${algo}`
-  const generated = await cryptoProvider.generate(algo, { keyRef, ...opts })
+  // keyRef 由 generate 自己拼（规范格式），这里不再手写字符串
+  const generated = await cryptoProvider.generate(algo, { nodeId: NODE_ID, ...opts })
   const genMs = Date.now() - tGen
   check(`${algo} 本机生成`, Boolean(generated?.publicKey), `${generated.publicKey.length} hex 字符，耗时 ${genMs}ms`)
 

@@ -31,6 +31,12 @@ import { writeFileSync, unlinkSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
+// 规范化 keyRef 的构造只留这一个口子（节点段固定为 probe，与下面 generate 的
+// nodeId 一致）：格式再变（段名、大小写、版本位）只改这一行。
+// 手写的旧格式（如 `node-XXX-KYBER`）在 store 里查不到时，报错是
+// "本机没有这把密钥"，看起来像密钥丢了，其实是引用拼错。
+const kref = (algo, kid, v = 1) => `node/probe/${algo}/${kid}/${v}`
+
 const HERE = dirname(fileURLToPath(import.meta.url))
 
 const results = []
@@ -91,7 +97,7 @@ console.log('\n=== 0. SM4 单分组：GB/T 32907-2016 附录 A.1 向量 ===')
 // ===========================================================================
 console.log('\n=== 1. 密钥库：私密材料不以明文落库 ===')
 const SECRET_HEX = 'deadbeef0123456789abcdef0123456789abcdef0123456789abcdef01234567'
-await store.sealSecret('probe-1', { algorithm: 'KYBER', secret: SECRET_HEX, publicKey: 'aa'.repeat(16) })
+await store.sealSecret(kref('KYBER', 'probe-1'), { algorithm: 'KYBER', secret: SECRET_HEX, publicKey: 'aa'.repeat(16) })
 
 const db = await new Promise((resolve, reject) => {
   const request = indexedDB.open('kms-node-keystore')
@@ -117,7 +123,7 @@ check('★ IndexedDB 原始记录里搜不到私钥明文', !dumped.includes(SEC
 check('记录里确实有密文（不是根本没写进去）', (rawRecords[0]?.sealed?.byteLength || 0) > 0,
   `密文长度=${rawRecords[0]?.sealed?.byteLength}`)
 
-const restored = await store.unsealSecret('probe-1')
+const restored = await store.unsealSecret(kref('KYBER', 'probe-1'))
 check('取回后逐字节还原', new TextDecoder().decode(restored) === SECRET_HEX)
 
 console.log('\n=== 2. 保护密钥不可导出（防的是"密钥被带走"）===')
@@ -134,7 +140,7 @@ check('记录带上了 deviceId', rawRecords[0]?.deviceId === deviceId)
 
 console.log('\n=== 4. 失败要明确，不能返回空 ===')
 let threw = false
-try { await store.unsealSecret('never-created') } catch { threw = true }
+try { await store.unsealSecret(kref('KYBER', 'never-created')) } catch { threw = true }
 check('取不存在的引用抛错（而非返回空 buffer）', threw)
 
 // ===========================================================================
@@ -144,7 +150,7 @@ console.log('\n=== 5. Kyber：本地生成 → 服务端封装 → 本地解封 
 if (!dockerAvailable()) {
   check('★★ 服务端对打（Kyber）', false, 'docker 容器 dvadmin3-django 不可用 —— 该项未运行')
 } else {
-  const kb = await cryptoProvider.generate('KYBER', { keyRef: 'probe-kyber', variant: 768 })
+  const kb = await cryptoProvider.generate('KYBER', { nodeId: 'probe', keyId: 'probe-kyber', variant: 768 })
   check('公钥长度正确（Kyber-768 = 1184B）', kb.publicKey.length === 2368, `${kb.publicKey.length} hex 字符`)
 
   const out = runPy(`
@@ -164,21 +170,25 @@ print("SS:", binascii.hexlify(ss).decode())
     check('★★ 服务端接受该公钥并封装', false, out.trim().slice(0, 140))
   } else {
     check('服务端接受该公钥并封装', true)
-    const ssLocal = toHex(await cryptoProvider.decapsulate('KYBER', 'probe-kyber', fromHex(ctHex)))
+    const ssLocal = toHex(await cryptoProvider.decapsulate('KYBER', kb.keyRef, fromHex(ctHex)))
     check('★★ 共享密钥逐字节相同', ssLocal === ssServer,
       ssLocal === ssServer ? '' : `本地=${ssLocal.slice(0, 16)}… 服务端=${ssServer.slice(0, 16)}…`)
   }
 }
 
 console.log('\n=== 6. Falcon：本地签名 → 服务端验签 ===')
+// fb 提到 if 之外：§8 的 hasKey 要验的正是这里生成的那把。
+// 用返回值里的 keyRef 而不是再手写一个 —— 手写串与 store 对不上时，
+// hasKey 只会返回 false，看起来像"密钥没生成"，实际是引用拼错。
+let fb = null
 if (!dockerAvailable()) {
   check('★★ 服务端对打（Falcon）', false, 'docker 容器 dvadmin3-django 不可用 —— 该项未运行')
 } else {
-  const fb = await cryptoProvider.generate('FALCON', { keyRef: 'probe-falcon' })
+  fb = await cryptoProvider.generate('FALCON', { nodeId: 'probe', keyId: 'probe-falcon' })
   check('公钥长度正确（Falcon-512 = 897B）', fb.publicKey.length === 1794, `${fb.publicKey.length} hex 字符`)
 
   const msg = new TextEncoder().encode('verify-node-crypto ' + Date.now())
-  const sig = await cryptoProvider.sign('FALCON', 'probe-falcon', msg)
+  const sig = await cryptoProvider.sign('FALCON', fb.keyRef, msg)
   check('签名产出附加格式（长度 > 消息）', sig.length > msg.length, `${sig.length}B`)
 
   const out = runPy(`
@@ -203,17 +213,17 @@ print("MSG:", binascii.hexlify(bytes(out[:outlen.value])).decode() if r == 0 els
 
 console.log('\n=== 7. 本地 verify 不能只是"结构合法" ===')
 {
-  const fb = await cryptoProvider.generate('FALCON', { keyRef: 'probe-verify' })
+  const fb = await cryptoProvider.generate('FALCON', { nodeId: 'probe', keyId: 'probe-verify' })
   const msg = new TextEncoder().encode('probe-verify ' + Date.now())
-  const sig = await cryptoProvider.sign('FALCON', 'probe-verify', msg)
+  const sig = await cryptoProvider.sign('FALCON', fb.keyRef, msg)
   check('正确消息验签通过', (await cryptoProvider.verify('FALCON', fb.publicKey, sig, msg)) === true)
   // 若篡改后仍"验签通过"，说明 verify 只检查了结构而没绑消息 —— 等于没验。
   check('★ 篡改消息验签失败', (await cryptoProvider.verify('FALCON', fb.publicKey, sig, new TextEncoder().encode('tampered'))) === false)
 }
 
 console.log('\n=== 8. 设备绑定的判断基础 ===')
-check('本地持有刚生成的密钥', await cryptoProvider.hasKey('probe-falcon'))
-check('本地不持有的引用返回 false（新设备即此情形）', (await cryptoProvider.hasKey('never-created')) === false)
+check('本地持有刚生成的密钥', fb !== null && (await cryptoProvider.hasKey(fb.keyRef)))
+check('本地不持有的引用返回 false（新设备即此情形）', (await cryptoProvider.hasKey(kref('KYBER', 'never-created'))) === false)
 
 console.log('\n=== 9. SM4-GCM 与服务端 pycryptodome 双向互通 ===')
 if (!dockerAvailable()) {
