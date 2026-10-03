@@ -289,7 +289,14 @@ async function handleInit() {
         // 传**设备公钥指纹**而不是浏览器级 deviceId（改造前是后者）。
         // 服务端在节点激活时已把同一指纹写进 Node.key_device_id，
         // `store_node_public_key` 会比对两者；不一致会报"设备不一致"（业务码 409）。
-        deviceFingerprintValue.value
+        deviceFingerprintValue.value,
+        // ⚠️ KMS-005：**必须**把本地铸的 keyId/version 一并上报。
+        //    不传的话服务端会自己铸一个，两边各记一个 id、各自"成功"，
+        //    而本地 keyRef `node/{节点}/{算法}/{keyId}/{版本}` 里的那一段
+        //    与库里那行从此对不上 —— 「本机这把就是登记的那把」永远核不出来，
+        //    表现为换密钥时旧 private key 被静默复用（判据④要拦的正是它）。
+        generated.keyId,
+        generated.version
       )
     }
 

@@ -1,1216 +1,615 @@
 <template>
-  <section class="page generate-page">
-    <div class="generate-dashboard">
-      <nav class="inner-sidenav">
-        <div class="nav-item" :class="{ active: activeTab === 'generate' }" @click="activeTab = 'generate'">
-          <el-icon class="icon"><MagicStick /></el-icon> 密钥生成
-        </div>
-        <div class="nav-item" :class="{ active: activeTab === 'records' }" @click="activeTab = 'records'">
-          <el-icon class="icon"><TrendCharts /></el-icon> 历史记录
-        </div>
-        <div class="nav-item" :class="{ active: activeTab === 'params' }" @click="activeTab = 'params'">
-          <el-icon class="icon"><Setting /></el-icon> 参数查询
-        </div>
-      </nav>
-
-      <main class="inner-main-content">
-        <div v-show="activeTab === 'generate'" class="tab-pane">
-          <div class="summary-grid">
-      <article class="summary-card">
-        <span class="summary-label">当前用户</span>
-        <strong>{{ profile.userName || '未登录' }}</strong>
-        <small>{{ roleLevelText(profile.roleLevel) }}</small>
-      </article>
-      <article class="summary-card">
-        <span class="summary-label">生成能力</span>
-        <strong>证书无关 / 抗量子密钥</strong>
-        <small>支持 SM2 / SSCL / 抗量子签名密钥 / 抗量子封装密钥</small>
-      </article>
-      <article class="summary-card">
-        <span class="summary-label">本地私钥份额</span>
-        <strong>{{ localMaterial.privateKey ? '已生成' : '未生成' }}</strong>
-        <small>只在浏览器内保存，不会上传服务端</small>
-      </article>
-      <article class="summary-card">
-        <!--
-          P3 步骤 0b：把"密钥凭据"这件事显式呈现出来。
-          生成密钥后必须下载密钥文件并自行保存 —— 服务端只有 KGC 分片，
-          没有它就解不开分发过来的信封。
-        -->
-        <span class="summary-label">密钥凭据</span>
-        <strong>{{ keyring.size > 0 ? `已导入 ${keyring.size} 把` : '未导入' }}</strong>
-        <small class="keyring-line">
-          <key-file-import ref="keyFileImportRef" @imported="handleKeyFileImported" />
-        </small>
-      </article>
-    </div>
-
-    <el-card class="panel" shadow="never">
+  <div class="app-container gen-create">
+    <el-card shadow="never" class="gen-create__card">
       <template #header>
-        <div class="panel-head">
-          <div>
-            <h3>密钥生成</h3>
-</div>
+        <div class="gen-create__header">
+          <h2>密钥生成</h2>
+          <div class="gen-create__header-side">
+            <el-tag v-if="node.nodeId" type="info" size="small">{{ node.nodeId }}</el-tag>
+            <el-button size="small" :loading="loading" @click="load">刷新</el-button>
+          </div>
         </div>
       </template>
 
-      <div class="generate-layout">
-        <div class="generate-main generation-box">
-          <el-form ref="generateFormRef" :model="generateForm" :rules="generateRules" label-width="108px" class="generate-form">
-            <div class="form-grid two-col">
-              <el-form-item label="算法类型" prop="encrytType">
-                <el-select v-model="generateForm.encrytType" @change="handleEncrytTypeChange">
-                  <el-option label="无证书非对称加密" value="无证书非对称加密" />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="算法名称" prop="encrytName">
-                <el-select v-model="generateForm.encrytName" placeholder="请选择算法名称">
-                  <el-option v-for="option in encrytNameOptions" :key="option.value" :label="option.label" :value="option.value" />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="密钥名称" prop="keyName">
-                <el-input v-model="generateForm.keyName" maxlength="64" show-word-limit />
-              </el-form-item>
-              <el-form-item label="密钥用途" prop="keyUse">
-                <el-select v-model="generateForm.keyUse" placeholder="请选择密钥用途">
-                  <el-option v-for="option in keyUseOptions" :key="option.value" :label="option.label" :value="option.value" />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="所属域" prop="keyDomain">
-                <el-input v-model="generateForm.keyDomain" maxlength="64" placeholder="SSCL 默认 A" />
-              </el-form-item>
-              <el-form-item label="自动更新">
-                <el-switch v-model="generateForm.autoUpdateEnabled" />
-              </el-form-item>
-            </div>
-          </el-form>
-
-          <div class="action-row">
-            <el-button type="primary" :loading="submitting" @click="submitGenerate">提交生成</el-button>
-            <el-button @click="regenerateLocalMaterial">重新生成本地材料</el-button>
-            <el-button @click="resetGenerateForm">重置表单</el-button>
-          </div>
-        </div>
-
-        <aside class="material-card">
-          <div class="material-head">
-            <h3>本地材料</h3>
-            <el-tag :type="pqAlgorithms.includes(generateForm.encrytName) ? 'info' : 'success'">{{ pqAlgorithms.includes(generateForm.encrytName) ? 'PQ demo_generated' : '浏览器侧' }}</el-tag>
-          </div>
-<div v-if="pqAlgorithms.includes(generateForm.encrytName)" class="pq-mode-note">
-            <strong>当前 PQ 模式：demo_generated</strong>
-          </div>
-          <div v-else-if="!localMaterial.publicKey" style="display: flex; justify-content: center; padding: 40px 0;">
-            <el-button type="primary" plain @click="regenerateLocalMaterial">点击生成本地公私钥</el-button>
-          </div>
-          <template v-else>
-            <div class="material-item">
-              <span>生成时间</span>
-              <strong>{{ localMaterial.generatedAt || '-' }}</strong>
-            </div>
-            <div class="material-item full">
-              <span>本地部分公钥 uA</span>
-              <code>{{ localMaterial.publicKey || '-' }}</code>
-            </div>
-            <div class="material-item full">
-              <span>本地部分私钥 (浏览器侧生成且不在网络中传输)</span>
-              <code class="danger-text" style="color: var(--kms-danger-strong);">{{ maskedPrivateKey }}</code>
-            </div>
-            <div class="action-row compact">
-              <el-button text type="primary" @click="copyLocalMaterial">复制材料摘要</el-button>
-              <el-button text type="primary" @click="downloadLocalMaterial">下载材料</el-button>
-            </div>
-          </template>
-        </aside>
-      </div>
-
-      <p v-if="errorMessage" class="error-text">{{ errorMessage }}</p>
-    </el-card>
-        </div>
-
-        <div v-show="activeTab === 'records'" class="tab-pane">
-    <el-card class="panel" shadow="never">
-      <template #header>
-        <div class="panel-head">
-          <div>
-            <h3>生成记录</h3>
-</div>
-        </div>
-      </template>
-
-      <el-form :model="filters" inline label-width="88px" class="query-form" @submit.prevent>
-        <el-form-item label="用户 ID">
-          <el-input v-model="filters.userId" type="number" min="1" placeholder="按用户 ID 筛选" clearable @keyup.enter="handleSearchKeys" />
-        </el-form-item>
-        <el-form-item label="用户名">
-          <el-input v-model="filters.userName" placeholder="按用户名筛选" clearable @keyup.enter="handleSearchKeys" />
-        </el-form-item>
-        <el-form-item label="算法名称">
-          <el-input v-model="filters.encrytName" placeholder="SM2 / SSCL" clearable @keyup.enter="handleSearchKeys" />
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="handleSearchKeys">查询</el-button>
-          <el-button @click="resetFilters">重置</el-button>
-        </el-form-item>
-      </el-form>
-
-      <el-table v-loading="listLoading" :data="keys">
-        <el-table-column label="密钥 ID" prop="keyId" width="90" />
-        <el-table-column label="用户名" prop="userName" width="120" />
-        <el-table-column label="算法类型" prop="encrytType" min-width="140" />
-        <el-table-column label="算法名称" prop="encrytName" width="120" />
-        <el-table-column label="密钥名称" prop="keyName" min-width="160" />
-        <el-table-column label="密钥用途" prop="keyUse" min-width="160" show-overflow-tooltip />
-        <el-table-column label="自动更新" width="110">
-          <template #default="scope">
-            <el-tag :type="scope.row.autoUpdate === 'true' || scope.row.autoUpdate === '1' ? 'success' : 'info'">
-              {{ scope.row.autoUpdate === 'true' || scope.row.autoUpdate === '1' ? '已开启' : '未开启' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="链上状态" width="120">
-          <template #default="scope">
-            <el-tag :type="chainStatusType(scope.row.chainStatus)">{{ chainStatusText(scope.row.chainStatus) }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="创建时间" prop="creTime" width="180" />
-        <el-table-column label="操作" width="110" fixed="right">
-          <template #default="scope">
-            <el-button link type="primary" @click="showDetail(scope.row.keyId)">详情</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
-        </div>
-
-        <div v-show="activeTab === 'params'" class="tab-pane">
-    <el-card class="panel" shadow="never">
-      <template #header>
-        <div class="panel-head">
-          <div>
-            <h3>公共参数查询</h3>
-</div>
-        </div>
-      </template>
-
-      <el-form :model="paramForm" inline label-width="88px" class="query-form">
-        <el-form-item label="算法类型">
-          <el-select v-model="paramForm.encrytType" placeholder="请选择">
-            <el-option label="无证书非对称加密" value="无证书非对称加密" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="算法名称">
-          <el-select v-model="paramForm.encrytName" placeholder="请选择算法名称">
-            <el-option label="SM2" value="SM2" />
-            <el-option label="SSCL" value="SSCL" />
-          </el-select>
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="loadParams">查询公共参数</el-button>
-        </el-form-item>
-      </el-form>
-      <pre v-if="commonParams" class="json-block">{{ JSON.stringify(commonParams, null, 2) }}</pre>
-    </el-card>
-        </div>
-      </main>
-    </div>
-
-    <el-dialog v-model="resultOpen" title="本地最终结果" width="760px" append-to-body destroy-on-close>
-      <!--
-        这里的提示语已按 P3 步骤 0b 更新：
-        原来只说"刷新后无法恢复"，把保存私钥的责任全推给用户手抄。
-        现在有一个正式的**密钥文件**出口 —— 用户下载它，日后解密时再导入回来。
-      -->
+      <!-- 账号没关联节点：管理员账号，或数据异常。与「节点首次初始化」同一判据。 -->
       <el-alert
-        v-if="canExportKeyFile"
-        title="请下载密钥文件并妥善保存。这是日后解开分发信封的唯一凭据，刷新页面后无法再次生成。"
+        v-if="!loading && !mapped"
         type="warning"
         :closable="false"
         show-icon
-        class="mb16"
+        title="当前账号未关联任何节点"
+        description="密钥生成是节点的动作。请用节点账号登录，或在「节点管理」里创建节点后再由节点自行登录。"
       />
-      <el-alert
-        v-else
-        title="请立即保存用户侧私钥材料。刷新页面后将无法再次恢复。"
-        type="warning"
-        :closable="false"
-        show-icon
-        class="mb16"
-      />
-      <div class="detail-grid">
-        <p><strong>算法类型：</strong>{{ localResult.encrytType || '-' }}</p>
-        <p><strong>算法名称：</strong>{{ localResult.encrytName || '-' }}</p>
-        <p><strong>密钥名称：</strong>{{ localResult.keyName || '-' }}</p>
-        <p><strong>所属域：</strong>{{ localResult.keyDomain || '-' }}</p>
-        <p v-if="pqAlgorithms.includes(localResult.encrytName)" class="detail-span"><strong>PQ 模式：</strong>{{ localResult.pqMode || localResult.pq_mode || 'demo_generated' }}</p>
-        
-        <p v-if="!pqAlgorithms.includes(localResult.encrytName)" class="detail-span"><strong>用户公钥份额 uA：</strong>{{ localResult.uA || '-' }}</p>
-        <p v-if="!pqAlgorithms.includes(localResult.encrytName)" class="detail-span"><strong>用户私钥份额：</strong>{{ localResult.clientPrivateKey || '-' }}</p>
-        <p class="detail-span"><strong>服务端返回值：</strong>{{ localResult.keyValue || '-' }}</p>
-        <p v-if="localResult.partialKey" class="detail-span"><strong>部分私钥：</strong>{{ localResult.partialKey }}</p>
-        <p v-if="localResult.finalPublicKey" class="detail-span"><strong>最终公钥：</strong>{{ localResult.finalPublicKey }}</p>
-        <p v-if="localResult.finalPrivateKey" class="detail-span"><strong>最终私钥：</strong>{{ localResult.finalPrivateKey }}</p>
-        <p v-if="localResult.domainDa" class="detail-span"><strong>SSCL DA：</strong>{{ localResult.domainDa }}</p>
-      </div>
-      <template #footer>
-        <el-button @click="copyResultSummary">复制结果</el-button>
-        <el-button v-if="canExportKeyFile" type="warning" plain @click="exportKeyFile">
-          下载密钥文件
-        </el-button>
-        <el-button type="primary" @click="downloadResultSummary">下载结果</el-button>
-      </template>
-    </el-dialog>
 
-    <el-dialog v-model="detailOpen" title="生成详情" width="720px" append-to-body>
-      <div v-if="selectedKey" class="detail-grid">
-        <p><strong>密钥 ID：</strong>{{ selectedKey.keyId }}</p>
-        <p><strong>用户 ID：</strong>{{ selectedKey.userId }}</p>
-        <p><strong>用户名：</strong>{{ selectedKey.userName || '-' }}</p>
-        <p><strong>算法类型：</strong>{{ selectedKey.encrytType || '-' }}</p>
-        <p><strong>算法名称：</strong>{{ selectedKey.encrytName || '-' }}</p>
-        <p><strong>密钥名称：</strong>{{ selectedKey.keyName || '-' }}</p>
-        <p><strong>密钥用途：</strong>{{ selectedKey.keyUse || '-' }}</p>
-        <p><strong>所属域：</strong>{{ selectedKey.keyDomain || '-' }}</p>
-        <p><strong>链上状态：</strong>{{ chainStatusText(selectedKey.chainStatus) }}</p>
-        <p><strong>交易哈希：</strong>{{ selectedKey.chainHash || '-' }}</p>
-        <p><strong>区块高度：</strong>{{ selectedKey.blockHeight ?? '-' }}</p>
-        <p><strong>创建时间：</strong>{{ selectedKey.creTime || '-' }}</p>
-        <p><strong>更新时间：</strong>{{ selectedKey.updTime || '-' }}</p>
-        <p v-if="pqAlgorithms.includes(selectedKey.encrytName)" class="detail-span"><strong>PQ 模式：</strong>{{ selectedPqMode }}</p>
-        
-        <p class="detail-span"><strong>密钥值：</strong>{{ selectedKey.keyValue || '-' }}</p>
-      </div>
-    </el-dialog>
-  </section>
+      <template v-else>
+        <p class="gen-create__lead">
+          私钥在<strong>本机</strong>生成并留在本机，平台只收到<strong>公钥</strong>。
+          按算法独立生成 —— 用哪几种就生成哪几种，不要求四套成套。
+        </p>
+
+        <!-- 设备不一致**提前**说。等到用户点了生成、转完 Falcon 的几秒、
+             再吃一个 409 才知道，是最坏的顺序：他会以为生成坏了。
+             判据与 §4.4 一致：服务端已绑定设备指纹，而本机不是那一台。 -->
+        <el-alert
+          v-if="deviceWarning"
+          class="gen-create__device"
+          type="warning"
+          :closable="false"
+          show-icon
+          :title="deviceWarning.title"
+        >
+          <template #default>
+            <p>{{ deviceWarning.detail }}</p>
+          </template>
+        </el-alert>
+
+        <div class="gen-create__grid">
+          <div
+            v-for="c in cards"
+            :key="c.algorithm"
+            class="gen-create__algo"
+            :class="{ 'is-active': c.active, 'is-warn': c.reconcile && !c.reconcile.ok && c.reconcile.state !== RECONCILE.LOCAL_ONLY }"
+          >
+            <div class="gen-create__algo-head">
+              <span class="gen-create__algo-name">{{ c.label }}</span>
+              <el-tag v-if="c.active" :type="c.active.allowsNewWork ? 'success' : 'info'" size="small">
+                {{ c.active.statusLabel }}
+              </el-tag>
+              <el-tag v-else type="info" size="small" effect="plain">未登记</el-tag>
+            </div>
+            <p class="gen-create__algo-role">{{ c.role }}</p>
+
+            <dl class="gen-create__facts">
+              <div class="gen-create__fact">
+                <dt>平台登记</dt>
+                <dd v-if="c.active" class="mono">
+                  {{ c.active.keyId }} · v{{ c.active.keyVersion }}
+                  <span class="gen-create__fact-note">{{ usableText(c.active) }}</span>
+                </dd>
+                <dd v-else class="is-muted">—</dd>
+              </div>
+              <div class="gen-create__fact">
+                <dt>本机材料</dt>
+                <dd :class="c.localKey ? 'is-ok' : 'is-muted'">{{ c.localText }}</dd>
+              </div>
+            </dl>
+
+            <!-- 对账结论：把"登记成功了"与"这把真能用"分开说。
+                 四种不一致各有各的下一步，**不能合成一句"异常"** ——
+                 合成之后用户唯一能做的就是重新初始化，而那往往是错的。 -->
+            <el-alert
+              v-if="c.reconcile && c.reconcile.state === RECONCILE.LOCAL_MISSING"
+              class="gen-create__reconcile"
+              type="error"
+              :closable="false"
+              show-icon
+              title="平台记着这把公钥，本机却没有对应私钥"
+              description="该密钥是在另一台设备上生成的。本机解不开平台按它分发的信封 —— 需要在「节点首次初始化」里用本机重新生成并登记。"
+            />
+            <el-alert
+              v-else-if="c.reconcile && c.reconcile.state === RECONCILE.MISMATCH"
+              class="gen-create__reconcile"
+              type="error"
+              :closable="false"
+              show-icon
+              title="同一 keyId 下，本机公钥与平台记录不一致"
+              description="正常路径不会出现。请勿继续用它分发 —— 先确认本机密钥库是否被导入或被改写过。"
+            />
+            <el-alert
+              v-else-if="c.reconcile && c.reconcile.state === RECONCILE.SERVER_EMPTY_PK"
+              class="gen-create__reconcile"
+              type="info"
+              :closable="false"
+              show-icon
+              title="平台记录的公钥无法换算成可比对的形式"
+              description="可能是历史行（编码与当前口径不同）。登录服务器查该行原文，不要据本页判断它是否可用。"
+            />
+            <div v-else-if="c.reconcile && c.reconcile.state === RECONCILE.LOCAL_ONLY" class="gen-create__pending">
+              本机已生成，平台上<strong>没有</strong>登记 —— 点下面的按钮重新登记一次。
+            </div>
+            <div v-else-if="c.reconcile && c.reconcile.state === RECONCILE.MATCH" class="gen-create__match">
+              <el-icon><CircleCheck /></el-icon>
+              <span>本机这把公钥与平台记录逐字节相同</span>
+            </div>
+
+            <div v-if="selfTestOf(c)" class="gen-create__selftest" :class="selfTestOf(c).ok ? 'is-ok' : 'is-bad'">
+              {{ selfTestOf(c).ok ? '自检通过' : '自检未过' }}：{{ selfTestOf(c).detail }}
+            </div>
+
+            <div class="gen-create__algo-actions">
+              <el-select
+                v-if="c.algorithm === 'KYBER'"
+                v-model="kyberVariant"
+                size="small"
+                class="gen-create__variant"
+                :disabled="Boolean(generating)"
+              >
+                <el-option label="Kyber-512（NIST 1 级）" :value="512" />
+                <el-option label="Kyber-768（NIST 3 级）" :value="768" />
+                <el-option label="Kyber-1024（NIST 5 级）" :value="1024" />
+              </el-select>
+              <el-button
+                type="primary"
+                size="small"
+                :loading="generating === c.algorithm"
+                :disabled="Boolean(generating) && generating !== c.algorithm"
+                @click="handleGenerate(c)"
+              >
+                {{ generating === c.algorithm ? '生成中…' : (c.active ? '生成新密钥' : '生成并登记') }}
+              </el-button>
+              <el-button
+                v-if="selfTestKeyRef(c)"
+                size="small"
+                :loading="testing === selfTestKeyRef(c)"
+                :disabled="Boolean(testing)"
+                @click="runSelfTest(c.algorithm, selfTestKeyRef(c))"
+              >
+                自检
+              </el-button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 说明两条硬事实：换新密钥之后旧版本还在（信封要能解），以及本页不提供导出。 -->
+        <p class="gen-create__note">
+          平台已有在产版本时，再生成一把会把它<strong>降为「已被取代」</strong>：
+          不再用于新会话，但仍能解开按它分发的旧信封 —— 需要彻底作废请用「密钥更新与回收」。
+          私钥<strong>不提供导出</strong>：它只存在于本机加密密钥库，换机器只能重新生成一套。
+        </p>
+
+        <h3 class="gen-create__section-title">
+          本节点密钥对照
+          <span class="gen-create__section-note">
+            只列 {{ node.nodeId }} 的密钥 —— 同一浏览器上其它节点的材料不会出现在这里
+          </span>
+        </h3>
+        <el-table :data="rows" size="small" border class="gen-create__table">
+          <el-table-column label="算法" width="90">
+            <template #default="{ row }">{{ row.algorithm }}</template>
+          </el-table-column>
+          <el-table-column label="keyId" min-width="220">
+            <template #default="{ row }">
+              <span class="mono">{{ row.keyId || '（平台铸造）' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="版本" width="70">
+            <template #default="{ row }">v{{ row.version }}</template>
+          </el-table-column>
+          <el-table-column label="平台" width="150">
+            <template #default="{ row }">
+              <el-tag v-if="row.server" :type="row.server.allowsNewWork ? 'success' : 'info'" size="small">
+                {{ row.server.statusLabel }}
+              </el-tag>
+              <el-tag v-else type="warning" size="small" effect="plain">未登记</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="本机" width="100">
+            <template #default="{ row }">
+              <span :class="row.local ? 'is-ok' : 'is-muted'">{{ row.local ? '有私钥' : '无私钥' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="对账" min-width="160">
+            <template #default="{ row }">
+              <span :class="row.reconcile.ok ? 'is-ok' : 'is-bad'">{{ row.reconcile.text }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="公钥字节" width="90">
+            <template #default="{ row }">{{ row.publicKeyBytes || '—' }}</template>
+          </el-table-column>
+          <el-table-column label="登记时间" min-width="160">
+            <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="80" fixed="right">
+            <template #default="{ row }">
+              <el-button
+                v-if="row.local"
+                link
+                type="primary"
+                size="small"
+                :disabled="Boolean(testing)"
+                @click="runSelfTest(row.algorithm, row.local.keyRef)"
+              >
+                自检
+              </el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <p v-if="!loading && !rows.length" class="gen-create__empty">
+          这个节点还没有任何长期密钥。用上面的卡片生成第一把。
+        </p>
+      </template>
+    </el-card>
+  </div>
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+/**
+ * 密钥生成（菜单 9054，节点端 `/genzone/create`）。
+ *
+ * 这个页面在做什么
+ * ----------------
+ * 计划 §7 阶段 1：「生成页按算法独立生成，不强制四种算法成套生成；服务端只接收
+ * 公钥和公开元数据；节点初始化、后续生成、更新都使用同一套本地保存接口」。
+ *
+ * 所以本页的动作只有两个：**在本机生成**（`cryptoProvider.generate`，私钥落
+ * `NodeKeyStore`）与**把公钥登记到平台**（`POST /node-self/keys/`）。
+ * 没有任何一步会把私钥发出去，也**不提供导出** —— 这是阶段 1 判据②要看的。
+ *
+ * 为什么整页重写
+ * --------------
+ * 改造前这里是**用户腿**流程（`SM2.generateKeyPair()` → `createGenerateKey({uA})`
+ * 交给 generate-java 算部分私钥 → 前端合成 d_A → 导出密钥文件 → `useKeyringStore`
+ * 收进浏览器钥匙串）。那是"客户端密钥"的概念，与 §4.4「节点在本地生成并保管
+ * 长期密钥、服务端只收公钥」是两回事；两者混在一个页面里的表现是：
+ * 用户以为在给**节点**生成密钥，实际生成的是自己这把**用户**密钥。
+ *
+ * 数据来源
+ * --------
+ * - 平台侧：`GET /node-self/keys/`（本节点的全部长期密钥行，含历史版本）
+ * - 本机侧：`cryptoProvider.inspectNodeKeys(nodeId)`（加密 IndexedDB，**按 nodeId 过滤**）
+ * 两边的对账口径（配对三元组、公钥比较、五种结论的文案）收在
+ * `@/utils/crypto/node-key-compare`，本页只负责渲染。
+ *
+ * 为什么不按权限能力禁用按钮
+ * --------------------------
+ * `capabilities` 里有 `generate` 才允许生成，看着更严谨，但**现在不能这么做**：
+ * `node_self_views` 只在 `GET/POST /node-self/keys/` 上校验登录，**没有**校验
+ * `CAP_GENERATE`（`node_permission.require_capability` 全仓只有分发的
+ * `user_distribution_views` 在用）；而 `Node.permission_level` 默认 `'L1'`，
+ * 既有节点绝大多数就是 L1 且已初始化成功 —— 前端一加门禁，就会出现
+ * 「初始化页能生成、生成页不能」的自相矛盾。
+ * 真要收紧，应当先在后端登记路径上校验能力（届时前端读 `capabilities` 即可），
+ * 而不是在界面上单方面拦住用户。
+ */
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-// 统一使用 Element 图标，替代此前的 emoji（emoji 字形与配色随系统变化，观感不统一）
-import { MagicStick, TrendCharts, Setting } from '@element-plus/icons-vue'
-import { SM2 } from 'gm-crypto'
-import { BigInteger } from 'jsbn'
-import { weierstrass } from '@noble/curves/abstract/weierstrass.js'
-import { apiBases } from '@/config/api-bases'
-import { batchGetGenerateChainStatus, createGenerateKey, getCommonParams, getGenerateKey, listGenerateKeys } from '@/services/generate-api'
-import useUserStore from '@/store/modules/user'
-import { roleLevelText } from '@/utils/role'
-import { buildKeyFile, serializeKeyFile, suggestFileName } from '@/utils/key-file'
-import useKeyringStore from '@/store/modules/keyring'
-import KeyFileImport from '@/components/KeyFileImport/index.vue'
+import { CircleCheck } from '@element-plus/icons-vue'
+import {
+  getSelfNode,
+  listSelfNodeKeys,
+  registerSelfNodePublicKey,
+  NODE_SELF_ERR
+} from '@/api/pqkds/node-self'
+import {
+  RECONCILE,
+  activeServerKey,
+  compareNodeKeys,
+  findLocalKey,
+  reconcileRow
+} from '@/utils/crypto/node-key-compare.js'
+import { cryptoProvider } from '@/utils/crypto/browser-provider.js'
+import { deviceFingerprint, hasDeviceKey } from '@/utils/crypto/device-credential.js'
 
-const userStore = useUserStore()
-const keyring = useKeyringStore()
-const keyFileImportRef = ref(null)
+const loading = ref(true)
+const mapped = ref(false)
+const node = ref({})
 
-/** 导入成功后给一条反馈 —— 用户需要确认"哪把密钥现在能解开了" */
-function handleKeyFileImported(keyFile) {
-  ElMessage.success(`密钥 ${keyFile.key_id} 已可用于解密`)
-}
-const apiBase = apiBases.generateApi
-const curveOrder = new BigInteger('FFFFFFFEFFFFFFFFFFFFFFFFFFFFFFFF7203DF6B21C6052B53BBF40939D54123', 16)
-const sm2Curve = weierstrass({
-  p: BigInt('0xFFFFFFFEFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000FFFFFFFFFFFFFFFF'),
-  n: BigInt('0xFFFFFFFEFFFFFFFFFFFFFFFFFFFFFFFF7203DF6B21C6052B53BBF40939D54123'),
-  h: 1n,
-  a: BigInt('0xFFFFFFFEFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000FFFFFFFFFFFFFFFC'),
-  b: BigInt('0x28E9FA9E9D9F5E344D5A9E4BCF6509A7F39789F515AB8F92DDBCBD414D940E93'),
-  Gx: BigInt('0x32C4AE2C1F1981195F9904466A39C9948FE30BBFF2660BE1715A4589334C74C7'),
-  Gy: BigInt('0xBC3736A2F4F6779C59BDCEE36B692153D0A9877CC62A474002DF32E52139F0A0')
-})
+/** 平台登记的行（`GET /node-self/keys/` 原样） */
+const serverKeys = ref([])
+/** 本机密钥库里属于**这个节点**的材料 */
+const localKeys = ref([])
+const hasDeviceCredential = ref(false)
+const deviceFingerprintValue = ref('')
 
-const listLoading = ref(false)
-const submitting = ref(false)
-// 密钥文件导出中的状态（P3 步骤 0b）
-const exporting = ref(false)
-const detailOpen = ref(false)
-const resultOpen = ref(false)
-const generateFormRef = ref(null)
-const selectedKey = ref(null)
-const localResult = ref({})
-const keys = ref([])
-const commonParams = ref(null)
-const errorMessage = ref('')
-const activeTab = ref('generate')
-const encrytNameOptions = ref([])
-// 阶段 3（文档 §0.5/§9.4）：对外统一 Kyber / Falcon。
-// `CL-` 前缀（certificateless）是历史误称 —— 这两个算法不是无证书方案，
-// 它们的私钥与 KGC 份额协议无关（见 workbench 里各自的职责说明）。
-// 旧值仍在数组里，是为了让历史记录能正常归类显示；新选择一律产生新值。
-const pqAlgorithms = ['PQ_FALCON', 'PQ_KYBER', 'PQ_CERTIFICATELESS', 'PQ_CL_KYBER', 'PQ_CL_FALCON', 'CL-Kyber', 'CL-Falcon', 'Kyber', 'Falcon']
-const keyUseOptions = [
-  { label: '签名 / 验签', value: '签名 / 验签' },
-  { label: '密钥封装 / 解封装', value: '密钥封装 / 解封装' },
-  { label: '加密 / 解密', value: '加密 / 解密' },
-  { label: '密钥协商', value: '密钥协商' }
+/** 正在生成的算法名（同时只允许生成一个 —— 生成是重计算，并发只会更慢） */
+const generating = ref('')
+/** 正在自检的 keyRef */
+const testing = ref('')
+/** keyRef → {ok, detail}，自检结论。不持久化：自检是"此刻这把能不能用" */
+const selfTestResults = ref({})
+
+const kyberVariant = ref(768)
+
+const ALGO_META = [
+  {
+    algorithm: 'KYBER',
+    label: 'Kyber',
+    role: '密钥封装（KEM）：与其它节点协商共享秘密。抗量子，是节点腿的默认档位。'
+  },
+  {
+    algorithm: 'SSCL',
+    label: 'SSCL',
+    role: '国密无证书：封装 SM4 会话密钥。'
+  },
+  {
+    algorithm: 'SM2',
+    label: 'SM2',
+    role: '国密：封装 SM4 会话密钥。'
+  },
+  {
+    algorithm: 'FALCON',
+    label: 'Falcon',
+    role: '对分发消息签名与验签。签名算法，不做封装 —— 要封装请选 Kyber。'
+  }
 ]
 
-const profile = reactive({
-  userId: '',
-  userName: '',
-  roleLevel: null
-})
-
-const localMaterial = reactive({
-  publicKey: '',
-  privateKey: '',
-  generatedAt: ''
-})
-
-const filters = reactive({
-  userId: '',
-  userName: '',
-  encrytName: ''
-})
-
-const paramForm = reactive({
-  encrytType: '无证书非对称加密',
-  encrytName: 'SSCL'
-})
-
-const generateForm = reactive({
-  encrytType: '无证书非对称加密',
-  encrytName: 'SM2',
-  keyName: '',
-  keyUse: '',
-  keyDomain: 'A',
-  autoUpdateEnabled: false
-})
-
-const generateRules = {
-  encrytType: [{ required: true, message: '请选择算法类型', trigger: 'change' }],
-  encrytName: [{ required: true, message: '请选择算法名称', trigger: 'change' }],
-  keyName: [{ required: true, message: '请输入密钥名称', trigger: 'blur' }],
-  keyUse: [{ required: true, message: '请输入密钥用途', trigger: 'blur' }]
-}
-
-const maskedPrivateKey = computed(() => maskText(localMaterial.privateKey, 20))
-const selectedPqMode = computed(() => parsePqMode(selectedKey.value?.keyValue) || selectedKey.value?.pqMode || selectedKey.value?.pq_mode || 'demo_generated')
-
-watch(
-  () => ({
-    id: userStore.id,
-    name: userStore.name,
-    roleLevel: userStore.roleLevel,
-    token: userStore.token
-  }),
-  async (value) => {
-    profile.userId = value.id || ''
-    profile.userName = value.name || ''
-    profile.roleLevel = value.roleLevel
-    if (!value.token) {
-      keys.value = []
-      selectedKey.value = null
+// ---------------------------------------------------------------------------
+// 载入
+// ---------------------------------------------------------------------------
+async function load() {
+  loading.value = true
+  try {
+    const data = await getSelfNode()
+    mapped.value = Boolean(data?.mapped)
+    node.value = data?.node || {}
+    if (!mapped.value) {
+      serverKeys.value = []
+      localKeys.value = []
       return
     }
-  },
-  { immediate: true }
+
+    // 平台侧与本机侧**各取一次**，哪边失败就说哪边。
+    // 合成一次 try 的话，"平台读不到"会表现成"本机密钥全没了" —— 那会诱导
+    // 用户去重新生成（而私钥本来好好的）。
+    const [platform, local] = await Promise.allSettled([
+      listSelfNodeKeys(),
+      cryptoProvider.inspectNodeKeys(node.value.nodeId)
+    ])
+
+    if (platform.status === 'fulfilled') {
+      serverKeys.value = platform.value?.keys || []
+    } else {
+      serverKeys.value = []
+      ElMessage.error(`读取平台登记记录失败：${platform.reason?.message || platform.reason}`)
+    }
+
+    if (local.status === 'fulfilled') {
+      localKeys.value = local.value?.keys || []
+    } else {
+      // 密钥库不可用（隐私模式 / 浏览器禁用 IndexedDB）。此处**不能**当成
+      // "本机没有" —— 那会让人以为私钥丢了。列空表 + 明确报错。
+      localKeys.value = []
+      ElMessage.error(`读取本机密钥库失败：${local.reason?.message || local.reason}`)
+    }
+
+    try {
+      hasDeviceCredential.value = await hasDeviceKey(node.value.nodeId)
+      deviceFingerprintValue.value = await deviceFingerprint(node.value.nodeId)
+    } catch {
+      hasDeviceCredential.value = false
+      deviceFingerprintValue.value = ''
+    }
+  } catch (error) {
+    ElMessage.error(`读取节点信息失败：${error.message}`)
+  } finally {
+    loading.value = false
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 卡片：按算法对「平台在产的那一版」做对账
+// ---------------------------------------------------------------------------
+const cards = computed(() =>
+  ALGO_META.map((meta) => {
+    const active = activeServerKey(serverKeys.value, meta.algorithm)
+    const local = active
+      ? findLocalKey(localKeys.value, {
+          algorithm: meta.algorithm,
+          keyId: active.keyId,
+          version: active.keyVersion
+        })
+      : null
+    // 平台还没有这一算法的在产行时，比对的是"这一算法本机有没有材料"，
+    // 而不是某一对具体的行 —— 那种情况下结论只能是 LOCAL_ONLY。
+    const mine = localKeys.value.filter((k) => k.algorithm === meta.algorithm)
+    const reconcile = active
+      ? reconcileRow(active, local)
+      : (mine.length ? reconcileRow(null, mine[mine.length - 1]) : null)
+
+    return {
+      ...meta,
+      active,
+      localKey: local,
+      reconcile,
+      localText: local
+        ? `有（${local.keyRef}）`
+        : (mine.length
+            ? `有 ${mine.length} 把，但都不是平台在产的那一版`
+            : (meta.algorithm === 'KYBER' ? `无（将按 Kyber-${kyberVariant.value} 生成）` : '无'))
+    }
+  })
 )
 
-onMounted(async () => {
-  handleEncrytTypeChange(generateForm.encrytType)
-  await ensureProfile()
-  fillDefaultFilters()
-  await loadKeys()
-})
-
-async function ensureProfile() {
-  if (!userStore.token) {
-    return
-  }
-  if (!profile.userId || !profile.userName) {
-    try {
-      await userStore.getInfo()
-    } catch (error) {
-      errorMessage.value = error.message
-    }
-  }
-}
-
-function fillDefaultFilters() {
-  if (!filters.userId && profile.userId) {
-    filters.userId = String(profile.userId)
-  }
-  if (!filters.userName && profile.userName) {
-    filters.userName = profile.userName
-  }
-}
-
-function resetGenerateForm() {
-  generateForm.encrytType = '无证书非对称加密'
-  generateForm.encrytName = 'SM2'
-  generateForm.keyName = ''
-  generateForm.keyUse = ''
-  generateForm.keyDomain = 'A'
-  generateForm.autoUpdateEnabled = false
-  handleEncrytTypeChange(generateForm.encrytType)
-  generateFormRef.value?.clearValidate()
-}
-
-function handleEncrytTypeChange(value) {
-  if (value === '无证书非对称加密') {
-    encrytNameOptions.value = [
-      { label: 'SM2', value: 'SM2' },
-      { label: 'SSCL', value: 'SSCL' },
-      // 阶段 3：标签与取值都用 Kyber / Falcon，不再带 `CL-` 前缀。
-      // 用户看到的名称要与算法实际性质一致 —— 它们由标准 KeyGen 生成，
-      // 不是无证书方案，`CL-` 会误导人以为走 KGC 份额协议。
-      { label: 'Falcon（抗量子签名）', value: 'Falcon' },
-      { label: 'Kyber（抗量子封装）', value: 'Kyber' }
-    ]
-  } else {
-    encrytNameOptions.value = []
-  }
-  if (!encrytNameOptions.value.some((item) => item.value === generateForm.encrytName)) {
-    generateForm.encrytName = encrytNameOptions.value[0]?.value || ''
-  }
-}
-
-function regenerateLocalMaterial() {
-  const { publicKey, privateKey } = SM2.generateKeyPair()
-  localMaterial.publicKey = publicKey
-  localMaterial.privateKey = privateKey
-  localMaterial.generatedAt = new Date().toLocaleString('zh-CN', { hour12: false })
-}
-
-async function submitGenerate() {
-  errorMessage.value = ''
-  if (!generateFormRef.value) {
-    return
-  }
-
-  try {
-    await generateFormRef.value.validate()
-  } catch {
-    return
-  }
-
-  if (!profile.userId || !profile.userName) {
-    await ensureProfile()
-  }
-  if (!profile.userId || !profile.userName) {
-    errorMessage.value = '当前登录用户信息不完整，请刷新后重试。'
-    return
-  }
-  // 阶段 3（文档 §4.1）：**每次生成都必须用全新的 `u`**。
-  //
-  // 原实现是 `if (!localMaterial.publicKey) regenerateLocalMaterial()` ——
-  // 只在"本地材料为空"时才生成。后果是同一次页面会话里连续生成的多把密钥
-  // **复用同一个 u / uA**，表现为「不同 key_id，密码学材料却相同」：
-  //   * SM2  因 KGC 侧还有随机 w，材料仍会不同，掩盖了复用；
-  //   * SSCL 在相同 ID+uA+ms 下是**确定性**的，两次生成会得到完全一样的密钥。
-  // 而且历史数据里已经出现过「遗漏的 ua 被多把密钥共用」
-  // （见 kms-ops/mysql/init/24_reset_legacy_key_data.sql:12）。
-  //
-  // 目标语义：Generate Key-001→u1, Key-002→u2, Key-003→u3，
-  // **页面刷新与否不得改变密码学语义**。
-  if (!pqAlgorithms.includes(generateForm.encrytName)) {
-    regenerateLocalMaterial()
-  }
-
-  submitting.value = true
-  try {
-    const response = await createGenerateKey({
-      userId: Number(profile.userId),
-      userName: profile.userName,
-      encrytType: generateForm.encrytType,
-      encrytName: generateForm.encrytName,
-      keyName: normalizeText(generateForm.keyName),
-      keyUse: normalizeText(generateForm.keyUse),
-      keyDomain: normalizeText(generateForm.keyDomain) || 'A',
-      autoUpdate: generateForm.autoUpdateEnabled ? 'true' : 'false',
-      pqMode: pqAlgorithms.includes(generateForm.encrytName) ? 'demo_generated' : undefined,
-      uA: pqAlgorithms.includes(generateForm.encrytName) ? '' : localMaterial.publicKey,
-      ua: pqAlgorithms.includes(generateForm.encrytName) ? '' : localMaterial.publicKey,
-      operatorMetadata: {
-        user_id: Number(profile.userId),
-        user_name: profile.userName
-      }
-    })
-
-    const snapshot = response?.data || response
-    await handleSubmittedSnapshot(snapshot)
-    ElMessage.success('生成请求已提交，已同步展示本地结果摘要')
-    fillDefaultFilters()
-    await loadKeys()
-  } catch (error) {
-    errorMessage.value = error.message
-  } finally {
-    submitting.value = false
-  }
-}
-
-async function handleSubmittedSnapshot(snapshot) {
-  const result = {
-    ...snapshot,
-    keyDomain: snapshot?.keyDomain || generateForm.keyDomain,
-    pqMode: pqAlgorithms.includes(generateForm.encrytName) ? (parsePqMode(snapshot?.keyValue) || snapshot?.pqMode || snapshot?.pq_mode || 'demo_generated') : undefined,
-    uA: pqAlgorithms.includes(generateForm.encrytName) ? '' : localMaterial.publicKey,
-    clientPrivateKey: pqAlgorithms.includes(generateForm.encrytName) ? '' : localMaterial.privateKey
-  }
-
-  if (result?.keyValue && result?.encrytType === '无证书非对称加密') {
-    if (result.encrytName === 'SM2') {
-      enrichSm2Result(result)
-    } else if (result.encrytName === 'SSCL') {
-      await enrichSsclResult(result)
-    }
-  }
-
-  localResult.value = result
-  resultOpen.value = true
+/** 「这把还能干什么」由服务端下发的两个布尔量拼出，前端不另写状态表。 */
+function usableText(row) {
+  if (row.allowsNewWork) return '可用于新会话'
+  if (row.allowsUnwrap) return '仅可解开旧信封'
+  return '不可用'
 }
 
 // ---------------------------------------------------------------------------
-// 密钥文件导出（P3 步骤 0b）
+// 表格：平台行 ∪ 本机独有行（对账口径见 node-key-compare）
 // ---------------------------------------------------------------------------
-/**
- * 是否具备导出密钥文件的条件。
- *
- * 需要三样东西同时具备：算出了最终私钥 `d_a`、是 SM2/SSCL（格算法不走这条路，
- * 它们的私钥在服务端）、以及登录用户已知（文件里要写 user_id）。
- */
-const canExportKeyFile = computed(() => {
-  const result = localResult.value || {}
-  if (pqAlgorithms.includes(result.encrytName)) {
-    return false
-  }
-  return Boolean(result.finalPrivateKey && userStore.id)
-})
+const rows = computed(() =>
+  compareNodeKeys({ serverKeys: serverKeys.value, localKeys: localKeys.value })
+)
 
-/**
- * 解析这份结果对应的 `key_id`。
- *
- * 创建接口是"提交后异步入库"（经 Kafka），响应里拿不到 keyId，
- * 所以这里回查列表、按「密钥名称 + 算法」取**最新的一条**。
- * 带重试是因为 Kafka 落库与列表刷新之间有个时间窗。
- */
-async function resolveKeyIdFor(result) {
-  if (result?.keyId) {
-    return String(result.keyId)
-  }
-  const wantedName = normalizeText(result?.keyName)
-  for (let attempt = 0; attempt < 8; attempt++) {
-    try {
-      const data = await listGenerateKeys({ pageNum: 1, pageSize: 50 })
-      const rows = data?.rows || []
-      const hit = rows.find((row) => row.keyName === wantedName && row.encrytName === result.encrytName)
-      if (hit?.keyId) {
-        return String(hit.keyId)
-      }
-    } catch {
-      // 列表暂时查不到就继续重试；真正的失败在下面统一报出来
+// ---------------------------------------------------------------------------
+// 设备一致性提示
+// ---------------------------------------------------------------------------
+const deviceWarning = computed(() => {
+  const bound = String(node.value.keyDeviceId || '').trim()
+  // 服务端还没绑定设备 → 这台就是"第一台"，首次上报会把本机绑上去。
+  if (!bound) return null
+  if (!hasDeviceCredential.value) {
+    return {
+      title: '本机没有该节点的设备凭据',
+      detail: '该节点的密钥是在另一台设备上生成的，登记公钥会被平台按「设备不一致」拒绝。请改回原设备，或在「节点首次初始化」里用本机重新生成一套。'
     }
-    await new Promise((resolve) => setTimeout(resolve, 600))
+  }
+  // 私钥在，但公钥读不出来（记录损坏）。这与"换设备"不同：能做的只有重新激活。
+  if (!deviceFingerprintValue.value) {
+    return {
+      title: '本机的设备凭据读不出公钥',
+      detail: '该节点的设备私钥在，但对应的公钥记录损坏。登记公钥会被平台按「设备不一致」拒绝，需要重新激活该节点。'
+    }
+  }
+  if (deviceFingerprintValue.value !== bound) {
+    return {
+      title: '本机设备与平台绑定的不是同一台',
+      detail: '本机持有一个设备凭据，但与平台记录的不是同一台设备。登记公钥同样会被拒绝，请确认是否用过另一个浏览器配置或另一台机器。'
+    }
   }
   return null
+})
+
+// ---------------------------------------------------------------------------
+// 生成并登记
+// ---------------------------------------------------------------------------
+function selfTestOf(card) {
+  const ref = selfTestKeyRef(card)
+  return ref ? selfTestResults.value[ref] : null
+}
+
+/** 自检对象：优先平台在产那一版对应的本机材料；没有则用本机最新的一把。 */
+function selfTestKeyRef(card) {
+  if (card.localKey) return card.localKey.keyRef
+  const mine = localKeys.value.filter((k) => k.algorithm === card.algorithm)
+  return mine.length ? mine[mine.length - 1].keyRef : ''
 }
 
 /**
- * 生成并下载密钥文件，同时把它存进本机密钥环。
+ * 生成一把新密钥并登记公钥。
  *
- * 为什么要"同时存进密钥环"：下载是**持久凭据**（换浏览器也能恢复），
- * 而写入密钥环让当前浏览器立刻就能解密，不必马上走一次导入。
- * 两者不冲突 —— 密钥环丢了还能用文件恢复。
+ * ⚠️ **每次生成都铸一个新的 keyId**（`cryptoProvider.generate` 内部按
+ *    `mintKeyId(nodeId, algorithm)` 铸），所以平台侧是"新的一行"，旧行被降级为
+ *    RETIRED —— 这正是阶段 1 判据④要看的：新逻辑密钥**不复用**旧的 SM2/SSCL `u`。
+ *    如果这里复用旧 keyId，平台会走"同 keyId 同版本"的幂等分支原地返回，
+ *    界面显示"登记成功"而密钥其实没换。
+ *
+ * ⚠️ `keyId` / `keyVersion` **必须**转发 `generate()` 的返回值（节点本地 keyRef
+ *    里的那两段）。不转发的话服务端会自己铸一个 keyId 并"成功"落库 ——
+ *    两边各自正常，只是从此按引用找不到那把密钥。
  */
-async function exportKeyFile() {
-  const result = localResult.value || {}
-  if (!canExportKeyFile.value) {
-    ElMessage.warning('当前结果没有可导出的用户私钥')
-    return
-  }
-  exporting.value = true
+async function handleGenerate(card) {
+  if (generating.value) return
+  generating.value = card.algorithm
   try {
-    const keyId = await resolveKeyIdFor(result)
-    if (!keyId) {
-      ElMessage.error('还没能在密钥列表里找到这条记录（入库可能仍在进行），请稍后重试')
-      return
+    const options = { nodeId: node.value.nodeId }
+    if (card.algorithm === 'KYBER') options.variant = kyberVariant.value
+
+    const generated = await cryptoProvider.generate(card.algorithm, options)
+    const result = await registerSelfNodePublicKey(
+      card.algorithm,
+      generated.publicKey,
+      card.algorithm === 'KYBER' ? String(generated.variant) : undefined,
+      // 传**设备公钥指纹**（与激活时服务端写进 `Node.key_device_id` 的是同一个值），
+      // 不是浏览器级的随机串 —— 后者是自报身份，服务端验证不了。
+      deviceFingerprintValue.value,
+      generated.keyId,
+      generated.version
+    )
+
+    await load()
+
+    // 登记成功 = "平台收到了这把公钥"，不等于"这把真能用"。
+    // 两者分开报：生成页当场自检一次，把故障挡在第一次真实分发之前。
+    const check = await cryptoProvider.selfTest(card.algorithm, generated.keyRef)
+    selfTestResults.value = { ...selfTestResults.value, [generated.keyRef]: check }
+
+    const head = card.active
+      ? `${card.label} 新密钥已登记，旧的（${card.active.keyId}）已降为「已被取代」`
+      : `${card.label} 公钥已登记`
+    if (check.ok) {
+      ElMessage.success(`${head}；自检通过`)
+    } else {
+      ElMessage.warning(`${head}；但自检未过：${check.detail}`)
     }
-    const keyFile = await buildKeyFile({
-      keyId,
-      userId: userStore.id,
-      algorithm: result.encrytName,
-      privateShare: result.finalPrivateKey,
-      // P_A 不是秘密；带上它，导入时就能核对"这份私钥确实对应那把公钥"
-      publicKey: result.finalPublicKey || ''
-    })
-    downloadText(serializeKeyFile(keyFile), suggestFileName(keyFile))
-    await keyring.importKeyFile(keyFile)
-    ElMessage.success(`密钥文件已下载，并已存入本机密钥环（密钥 ${keyId}）`)
   } catch (error) {
-    ElMessage.error(`导出密钥文件失败：${error.message}`)
+    ElMessage.error(`${card.label} 生成/登记失败：${describeError(error)}`)
   } finally {
-    exporting.value = false
+    generating.value = ''
   }
 }
 
-function enrichSm2Result(result) {
-  const keyValue = safeJsonParse(result.keyValue)
-  if (!keyValue?.partialKey) {
-    return
-  }
-  const partialKey = new BigInteger(keyValue.partialKey, 16)
-  const clientPrivateKey = new BigInteger(localMaterial.privateKey, 16)
-  const finalPrivateKey = partialKey.add(clientPrivateKey).mod(curveOrder)
-
-  result.partialKey = keyValue.partialKey
-  result.finalPublicKey = keyValue.finalPublicKey || ''
-  if (isValidPrivateKey(finalPrivateKey)) {
-    result.finalPrivateKey = leftPad(finalPrivateKey.toString(16), 64)
-  }
-}
-
-async function enrichSsclResult(result) {
-  const keyValue = safeJsonParse(result.keyValue)
-  if (!keyValue?.SSCLKey) {
-    return
-  }
-
-  const params = await getCommonParams({
-    encrytType: result.encrytType,
-    encrytName: result.encrytName
-  })
-  const xIndex = parseIndexArray(params?.xIndex)
-  const yIndex = parseIndexArray(params?.yIndex)
-  const publicPoint = params?.PPub
-  if (!xIndex || !yIndex || !publicPoint) {
-    return
-  }
-
-  const share = keyValue.SSCLKey
-  const xHex = share.slice(2, 66)
-  const yHex = share.slice(66, 130)
-  const secret = getSecret(xIndex, yIndex, xHex, yHex, curveOrder)
-  const domainPrivate = secret.multiply(new BigInteger(xHex, 16)).mod(curveOrder)
-  const clientPrivate = new BigInteger(localMaterial.privateKey, 16)
-  const finalPrivate = clientPrivate.add(domainPrivate).mod(curveOrder)
-
-  result.partialKey = keyValue.SSCLKey
-  result.domainDa = sm2PointMultiply(publicPoint, leftPad(domainPrivate.toString(16), 64))
-  result.finalPublicKey = sm2PointMultiply(publicPoint, leftPad(finalPrivate.toString(16), 64))
-  result.finalPrivateKey = leftPad(finalPrivate.toString(16), 64)
-}
-
-async function loadKeys() {
-  errorMessage.value = ''
-  listLoading.value = true
+/** 自检：用本地这份材料真跑一轮往返。失败**不抛错**（`selfTest` 把失败当结论返回）。 */
+async function runSelfTest(algorithm, keyRef) {
+  if (!keyRef || testing.value) return
+  testing.value = keyRef
   try {
-    const data = await listGenerateKeys(filters)
-    const rows = data.rows || []
-    const chainStatusMap = await batchGetGenerateChainStatus(rows.map((item) => item.keyId))
-    keys.value = rows.map((item) => {
-      const latestChainStatus = chainStatusMap?.[item.keyId]
-      if (!latestChainStatus || typeof latestChainStatus !== 'object') {
-        return item
-      }
-      return {
-        ...item,
-        chainStatus: latestChainStatus.chainStatus ?? item.chainStatus,
-        chainHash: latestChainStatus.chainHash ?? item.chainHash,
-        blockHeight: latestChainStatus.blockHeight ?? item.blockHeight,
-        status: latestChainStatus.status ?? item.status
-      }
-    })
-  } catch (error) {
-    keys.value = []
-    errorMessage.value = error.message
+    const result = await cryptoProvider.selfTest(algorithm, keyRef)
+    selfTestResults.value = { ...selfTestResults.value, [keyRef]: result }
   } finally {
-    listLoading.value = false
+    testing.value = ''
   }
 }
 
 /**
- * 执行筛选查询。
- * 此前该按钮标签为「刷新」，与其它页面的「查询」不一致，容易被误解为仅重新加载；
- * 现统一为「查询」，并支持在输入框内回车触发。
+ * 把失败翻译成"下一步该做什么"。
+ *
+ * 分支**按错误码**，不按文案：`error.errorCode` 来自冻结契约
+ * （`api_contract.ERR_*`，经 `@/api/pqkds/http` 附在错误对象上），
+ * 文案改了也不会让分支走错。
  */
-function handleSearchKeys() {
-  errorMessage.value = ''
-  loadKeys()
-}
-
-function resetFilters() {
-  filters.userId = profile.userId ? String(profile.userId) : ''
-  filters.userName = profile.userName || ''
-  filters.encrytName = ''
-  loadKeys()
-}
-
-async function showDetail(keyId) {
-  errorMessage.value = ''
-  try {
-    const data = await getGenerateKey(keyId)
-    selectedKey.value = data.data || null
-    detailOpen.value = Boolean(selectedKey.value)
-  } catch (error) {
-    errorMessage.value = error.message
+function describeError(error) {
+  const message = error?.message || String(error)
+  switch (error?.errorCode) {
+    case NODE_SELF_ERR.DEVICE_MISMATCH:
+      return `${message}。本机不是该节点绑定的设备：请改回原设备，或在「节点首次初始化」里用本机重新生成一套`
+    case NODE_SELF_ERR.KEY_VERSION_MISMATCH:
+      return `${message}。本地记录的 keyId 与平台已有行冲突，请重新生成（不要手工指定 keyId）`
+    case NODE_SELF_ERR.ALGORITHM_NOT_ALLOWED:
+      return `${message}。平台只接受 SM2 / SSCL / KYBER / FALCON 四个规范名`
+    default:
+      return message
   }
 }
 
-async function loadParams() {
-  errorMessage.value = ''
-  if (!paramForm.encrytType || !paramForm.encrytName.trim()) {
-    errorMessage.value = '请先填写算法类型和算法名称。'
-    return
-  }
-  try {
-    commonParams.value = await getCommonParams(paramForm)
-  } catch (error) {
-    commonParams.value = null
-    errorMessage.value = error.message
-  }
+function formatTime(value) {
+  if (!value) return '—'
+  // 后端下发 ISO（`_iso`）。按本机时间展示，不换算时区 —— 与其它节点侧页面一致。
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-function copyLocalMaterial() {
-  copyText(`uA: ${localMaterial.publicKey}\nprivate_share: ${localMaterial.privateKey}`)
-}
-
-function downloadLocalMaterial() {
-  downloadText(`generated_at: ${localMaterial.generatedAt}\nuA: ${localMaterial.publicKey}\nprivate_share: ${localMaterial.privateKey}\n`, 'kms-user-local-material.txt')
-}
-
-function copyResultSummary() {
-  copyText(buildResultSummary())
-}
-
-function downloadResultSummary() {
-  downloadText(buildResultSummary(), 'kms-user-generate-result.txt')
-}
-
-function buildResultSummary() {
-  const result = localResult.value || {}
-  return [
-    `algorithm_type: ${result.encrytType || ''}`,
-    `algorithm_name: ${result.encrytName || ''}`,
-    `key_name: ${result.keyName || ''}`,
-    `key_domain: ${result.keyDomain || ''}`,
-    `pq_mode: ${result.pqMode || result.pq_mode || ''}`,
-    `uA: ${result.uA || ''}`,
-    `client_private_key: ${result.clientPrivateKey || ''}`,
-    `partial_key: ${result.partialKey || ''}`,
-    `final_public_key: ${result.finalPublicKey || ''}`,
-    `final_private_key: ${result.finalPrivateKey || ''}`,
-    `domain_da: ${result.domainDa || ''}`,
-    `server_key_value: ${result.keyValue || ''}`
-  ].join('\n')
-}
-
-function chainStatusText(status) {
-  return {
-    0: '待上链',
-    1: '已上链',
-    2: '上链失败',
-    '0': '待上链',
-    '1': '已上链',
-    '2': '上链失败'
-  }[status] || (status ?? '未知')
-}
-
-function chainStatusType(status) {
-  return {
-    0: 'info',
-    1: 'success',
-    2: 'danger',
-    '0': 'info',
-    '1': 'success',
-    '2': 'danger'
-  }[status] || 'info'
-}
-
-function getSecret(xIndex, yIndex, xHex, yHex, n) {
-  const xPoints = xIndex.map((value) => new BigInteger(value, 16))
-  xPoints.push(new BigInteger(xHex, 16))
-  const yPoints = yIndex.map((value) => new BigInteger(value, 16))
-  yPoints.push(new BigInteger(yHex, 16))
-
-  let secret = new BigInteger('0')
-  for (let i = 0; i < xPoints.length; i += 1) {
-    let numerator = new BigInteger('1')
-    let denominator = new BigInteger('1')
-    for (let j = 0; j < xPoints.length; j += 1) {
-      if (i !== j) {
-        numerator = numerator.multiply(xPoints[j].negate()).mod(n)
-        denominator = denominator.multiply(xPoints[i].subtract(xPoints[j]).mod(n)).mod(n)
-      }
-    }
-    secret = secret.add(yPoints[i].multiply(numerator).multiply(denominator.modInverse(n)).mod(n)).mod(n)
-  }
-  return secret.compareTo(new BigInteger('0')) < 0 ? secret.add(n) : secret
-}
-
-function sm2PointMultiply(hexPoint, hexScalar) {
-  if (!hexPoint || !hexPoint.startsWith('04')) {
-    throw new Error('点格式错误，必须以04开头')
-  }
-  const point = sm2Curve.fromHex(hexPoint)
-  point.assertValidity()
-  const result = point.multiply(BigInt(`0x${hexScalar}`))
-  result.assertValidity()
-  return result.toHex(false)
-}
-
-function isValidPrivateKey(value) {
-  return value.compareTo(new BigInteger('1')) > 0 && value.compareTo(curveOrder.subtract(new BigInteger('1'))) < 0
-}
-
-function parseIndexArray(value) {
-  if (!value) {
-    return null
-  }
-  if (Array.isArray(value)) {
-    return value
-  }
-  try {
-    return JSON.parse(value)
-  } catch {
-    return null
-  }
-}
-
-function safeJsonParse(value) {
-  try {
-    return JSON.parse(value)
-  } catch {
-    return null
-  }
-}
-
-function parsePqMode(keyValue) {
-  const parsed = safeJsonParse(keyValue)
-  return parsed?.pq_mode || parsed?.pqMode || parsed?.display?.pq_mode || ''
-}
-
-function leftPad(value, length) {
-  return String(value || '').padStart(length, '0')
-}
-
-function normalizeText(value) {
-  const text = value == null ? '' : String(value).trim()
-  return text === '' ? null : text
-}
-
-function maskText(value, keep) {
-  const text = value || ''
-  if (!text) {
-    return '-'
-  }
-  if (text.length <= keep * 2) {
-    return text
-  }
-  return `${text.slice(0, keep)}...${text.slice(-keep)}`
-}
-
-function copyText(text) {
-  navigator.clipboard.writeText(text).then(() => {
-    ElMessage.success('复制成功')
-  }).catch(() => {
-    ElMessage.error('复制失败，请手动复制')
-  })
-}
-
-function downloadText(text, filename) {
-  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = filename
-  link.click()
-  URL.revokeObjectURL(url)
-}
+onMounted(load)
 </script>
 
 <style scoped>
-/* 密钥环那一行里嵌着按钮，需要覆盖 summary-card 的 default 小字样式 */
-.keyring-line {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+.gen-create__card { max-width: 1180px; margin: 24px auto; }
+.gen-create__header { display: flex; align-items: center; justify-content: space-between; }
+.gen-create__header h2 { margin: 0; font-size: 18px; }
+.gen-create__header-side { display: flex; align-items: center; gap: 8px; }
+.gen-create__lead { margin: 0 0 16px; color: var(--kms-text-secondary, #606266); line-height: 1.7; }
+.gen-create__device { margin-bottom: 16px; }
+.gen-create__device p { margin: 6px 0 0; line-height: 1.7; }
+.gen-create__grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 12px; margin-bottom: 20px;
 }
-.generate-page {
-  display: grid;
-  gap: 16px;
+.gen-create__algo {
+  border: 1px solid var(--el-border-color, #dcdfe6); border-radius: 6px;
+  padding: 12px 14px; display: flex; flex-direction: column; gap: 8px;
 }
-
-.summary-grid,
-.profile-grid,
-.form-grid.two-col,
-.detail-grid,
-.generate-layout {
-  display: grid;
-  gap: 16px;
+.gen-create__algo.is-active { border-color: var(--el-color-success, #67c23a); }
+.gen-create__algo.is-warn { border-color: var(--el-color-danger, #f56c6c); }
+.gen-create__algo-head { display: flex; align-items: center; justify-content: space-between; }
+.gen-create__algo-name { font-weight: 600; }
+.gen-create__algo-role { margin: 0; font-size: 12px; color: var(--kms-text-secondary, #909399); line-height: 1.6; }
+.gen-create__facts { margin: 0; }
+.gen-create__fact { display: flex; gap: 8px; font-size: 12px; line-height: 1.9; }
+.gen-create__fact dt { color: var(--kms-text-secondary, #909399); flex: 0 0 60px; }
+.gen-create__fact dd { margin: 0; word-break: break-all; }
+.gen-create__fact-note { color: var(--kms-text-secondary, #909399); margin-left: 6px; }
+.gen-create__reconcile { margin: 4px 0; }
+.gen-create__pending { font-size: 12px; color: var(--el-color-warning, #e6a23c); line-height: 1.6; }
+.gen-create__match { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--el-color-success, #67c23a); }
+.gen-create__selftest { font-size: 12px; line-height: 1.6; word-break: break-all; }
+.gen-create__algo-actions { display: flex; align-items: center; gap: 8px; margin-top: auto; }
+.gen-create__variant { width: 170px; }
+.gen-create__note {
+  margin: 0 0 24px; padding: 10px 14px; border-radius: 6px;
+  background: var(--el-fill-color-light, #f5f7fa);
+  font-size: 13px; color: var(--kms-text-secondary, #606266); line-height: 1.8;
 }
-
-.summary-grid {
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-}
-
-.summary-card,
-.material-card {
-  padding: 24px;
-  border: 1px solid var(--kms-border);
-  border-radius: var(--kms-radius);
-  background: var(--kms-surface-1);
-  box-shadow: var(--kms-shadow-sm);
-  transition: box-shadow var(--kms-transition), border-color var(--kms-transition);
-}
-
-.summary-card:hover, .material-card:hover {
-  border-color: var(--kms-brand-border);
-  box-shadow: var(--kms-shadow-md);
-}
-
-.summary-card strong,
-.material-item strong {
-  display: block;
-  margin-top: 8px;
-  font-size: 20px;
-  color: var(--kms-text-primary);
-  font-weight: 600;
-}
-
-.summary-card small,
-.muted {
-  color: var(--kms-text-secondary);
-}
-
-.summary-label,
-.material-item span {
-  font-size: 14px;
-  color: var(--kms-text-secondary);
-}
-
-.generate-layout {
-  grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr);
-  align-items: start;
-}
-
-.generate-main {
-  min-width: 0;
-}
-
-.profile-grid,
-.form-grid.two-col,
-.detail-grid {
-  /* 320px 是按「108px 标签 + 控件最小宽度」定的下限，不是随手写的数：
-     原来写 220px，格子只有 220~240px 时控件（el-select 的 min-width 是 120px）
-     会被挤到标签下面一行；再叠加下面那条 margin-bottom:0，两行就直接压字
-     （用户截图里"算法类型"上压着"所属域"）。
-     显式给 row-gap 是第二道保险：万一将来某格内容变高，行与行也不会互相叠。 */
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  row-gap: 16px;
-}
-
-/* 控件宁可收缩，也不折到标签下面 —— 折行才是"塌陷"的起点 */
-.generate-form :deep(.el-form-item__content) {
-  flex-wrap: nowrap;
-  min-width: 0;
-}
-
-.profile-grid label {
-  display: grid;
-  gap: 6px;
-}
-
-.profile-grid input {
-  width: 100%;
-  padding: 12px 14px;
-  border: 1px solid var(--kms-border-strong);
-  border-radius: var(--kms-radius);
-  background: var(--kms-surface-1);
-  color: var(--kms-text-primary);
-  transition: all var(--kms-transition);
-}
-
-.profile-grid input:focus {
-  outline: none;
-  border-color: var(--kms-brand);
-  box-shadow: 0 0 0 2px var(--kms-brand-subtle);
-}
-
-.panel-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-}
-
-.generate-form {
-  margin-top: 16px;
-}
-
-.generate-form :deep(.el-form-item) {
-  margin-bottom: 0;
-}
-
-.material-head,
-.material-item {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.material-head {
-  align-items: center;
-  margin-bottom: 12px;
-}
-
-.material-item {
-  padding: 16px 0;
-  border-top: 1px solid var(--kms-border);
-  align-items: flex-start;
-  animation: fade-in 0.5s ease forwards;
-}
-
-.material-item.full {
-  display: grid;
-}
-
-.material-item code,
-.detail-span,
-.json-block {
-  word-break: break-all;
-}
-
-.pq-mode-note {
-  display: grid;
-  gap: 10px;
-  padding: 16px;
-  border: 1px solid var(--kms-info-border);
-  border-radius: var(--kms-radius);
-  background: var(--kms-info-subtle);
-  color: var(--kms-text-secondary);
-}
-
-.material-item code {
-  margin-top: 8px;
-  padding: 12px 14px;
-  border-radius: var(--kms-radius-sm);
-  background: var(--kms-surface-2);
-  border: 1px solid var(--kms-border);
-  color: var(--kms-text-primary);
-  font-family: var(--kms-font-mono);
-}
-
-.action-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 16px;
-}
-
-.action-row.compact {
-  margin-top: 12px;
-}
-
-.mb16 {
-  margin-top: 16px;
-}
-
-.generation-box {
-  padding: 24px;
-  border: 1px dashed var(--kms-border-strong);
-  border-radius: var(--kms-radius);
-  background: var(--kms-surface-2);
-}
-
-.json-block {
-  margin: 0;
-  padding: 20px;
-  border-radius: var(--kms-radius);
-  background: var(--kms-surface-2);
-  border: 1px solid var(--kms-border);
-  color: var(--kms-text-primary);
-  overflow-y: auto;
-  max-height: 400px;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  word-break: break-all;
-  font-family: var(--kms-font-mono);
-}
-
-.generate-dashboard {
-  display: flex;
-  gap: 24px;
-  align-items: flex-start;
-  margin-top: 20px;
-}
-
-.inner-sidenav {
-  width: 220px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  background: var(--kms-surface-1);
-  border: 1px solid var(--kms-border);
-  border-radius: var(--kms-radius);
-  padding: 12px;
-}
-
-.inner-sidenav .nav-item {
-  padding: 12px 16px;
-  border-radius: var(--kms-radius-sm);
-  cursor: pointer;
-  color: var(--kms-text-secondary);
-  transition: all var(--kms-transition);
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-weight: 500;
-}
-
-.inner-sidenav .nav-item:hover {
-  background: var(--kms-surface-3);
-  color: var(--kms-text-primary);
-}
-
-.inner-sidenav .nav-item.active {
-  background: var(--kms-brand-subtle);
-  color: var(--kms-brand-text);
-  border: 1px solid var(--kms-brand-border);
-}
-
-.inner-sidenav .icon {
-  font-size: 18px;
-}
-
-.inner-main-content {
-  flex-grow: 1;
-  min-width: 0;
-}
-
-.tab-pane {
-  animation: fade-in 0.3s ease-out;
-}
-
-@keyframes fade-in {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-/* 两列布局（左表单 + 右「本地材料」）在中等宽度会互相挤：
- * 侧栏最小 320px，留给表单的不到 400px，而表单每格本身最少也要 320px，
- * 于是侧栏文字直接压到表单控件上（1024px 实测）。
- * 1200px 以下改为上下堆叠 —— 原来的断点是 960px，够不着这个区间。
- */
-@media (max-width: 1200px) {
-  .generate-layout {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 960px) {
-  .generate-dashboard {
-    flex-direction: column;
-  }
-  .inner-sidenav {
-    width: 100%;
-    flex-direction: row;
-    overflow-x: auto;
-  }
-  .generate-layout {
-    grid-template-columns: 1fr;
-  }
-}
+.gen-create__section-title { margin: 0 0 12px; font-size: 15px; }
+.gen-create__section-note { margin-left: 8px; font-size: 12px; font-weight: 400; color: var(--kms-text-secondary, #909399); }
+.gen-create__table { margin-bottom: 12px; }
+.gen-create__empty { margin: 0; color: var(--kms-text-secondary, #909399); font-size: 13px; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.is-ok { color: var(--el-color-success, #67c23a); }
+.is-bad { color: var(--el-color-danger, #f56c6c); }
+.is-muted { color: var(--kms-text-secondary, #909399); }
 </style>

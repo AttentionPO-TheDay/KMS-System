@@ -56,6 +56,15 @@ export const ERR_KEY_VERSION_MISMATCH = 'KEY_VERSION_MISMATCH'
 export const ERR_INVALID_PARAMETER = 'INVALID_PARAMETER'
 
 /**
+ * keyId 的长度上限。
+ *
+ * **与后端同一个数字、同一处上限**：`node_key_registry._KEY_ID_MAX_LEN`
+ * （也是 `NodeLongTermKey.key_id` 列宽，后端 `new_key_id` 按它截短节点号）。
+ * 改一处必须改两处 —— 前端铸的 id 超限时服务端会拒，而本地私钥**已经**落库。
+ */
+export const KEY_ID_MAX_LEN = 64
+
+/**
  * 带错误码的引用错误。
  *
  * 调用方按 `err.code` 处置（与后端错误码同一套取值），**不要去匹配文案** ——
@@ -206,15 +215,29 @@ export function parseDeviceRef(ref) {
  *
  * ⚠️ keyId 里**不能出现 `/`**：ref 按 `/` 切段，切错不报错、只是找不到密钥。
  *    替换规则已保证这一点（`/` 不在白名单字符里，会被换成 `-`）。
+ *
+ * ⚠️ **长度上限 64 也要一起镜像**（后端 `_validate_key_id` 的上限，
+ *    列宽即此）。不截断的后果是一条**走不出去的死路**：
+ *    `Node.node_id` 允许 64 字符，节点号一长，这里铸出的 keyId 就超过 64，
+ *    而调用方是**先**把私钥写进本地密钥库、**再**拿 keyId 去登记 ——
+ *    服务端以 `ERR_INVALID_PARAMETER` 拒绝（报错只说"长度 1~64"，不提节点号），
+ *    本地却已经躺着一把永远登记不上的私钥。
+ *    截的只是**可读部分**，算法名与随机后缀完整保留，唯一性不受影响
+ *    （与后端同一取舍：宁可少一点可读性，也不能让 id 与本地引用对不上）。
  */
 export function mintKeyId(nodeId, algorithm) {
   const name = normalizeAlgorithm(algorithm)
   if (!ALGORITHMS.includes(name)) {
     throw new KeyRefError(`不认识的算法：${algorithm}（允许：${ALGORITHMS.join('、')}）`)
   }
-  const safeNode = String(nodeId ?? '').replace(ID_SAFE_RE, '-')
+  let safeNode = String(nodeId ?? '').replace(ID_SAFE_RE, '-')
   const hex = [...crypto.getRandomValues(new Uint8Array(4))]
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('')
+  // 与后端逐字同式：两处名字长度 + 两个连字符之外，全留给节点号。
+  const room = KEY_ID_MAX_LEN - name.length - hex.length - 2
+  if (safeNode.length > room) {
+    safeNode = safeNode.slice(0, Math.max(room, 1))
+  }
   return `${safeNode}-${name}-${hex}`
 }

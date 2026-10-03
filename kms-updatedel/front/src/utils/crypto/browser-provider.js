@@ -28,7 +28,7 @@
 // 这样本模块才能被验证脚本直接 import 进 Node 跑（见 `_probe-provider.mjs`），
 // 否则只能在浏览器里靠肉眼观察，而密码学路径最不能靠肉眼。
 import { CryptoProvider, normalizeAlgorithm } from './provider.js'
-import { inspectNodeKeys, listSecrets, removeSecret, sealSecret, unsealSecret, hasSecret } from './node-key-store.js'
+import { inspectNodeKeys, listSecrets, removeSecret, requireLocalKey, sealSecret, unsealSecret, hasSecret } from './node-key-store.js'
 // KMS-003：keyRef 的格式由 key-ref.js 独占定义 —— 本模块只**使用**它，绝不自己拼。
 // 之所以要收口：手拼的 ref 即使拼错也不会当场报错，只会让私钥在"本机有没有该节点的
 // 材料"的检查里悄悄消失（`inspectNodeKeys` 按规范分段匹配），而私钥其实还躺在库里。
@@ -79,6 +79,25 @@ export const fromHex = (hex) => {
 }
 
 /**
+ * 把"字节的任意一种常见形态"归一成 `Uint8Array`，不是字节就返回 null。
+ *
+ * 为什么需要它：密码学库回的东西形态不统一 —— 实测 Kyber 的 `Encrypt768`
+ * 返回的是**普通数字数组**（1088 个元素），Falcon 那边是 Uint8Array，
+ * 服务端来的又是 hex/base64 文本。而 `decapsulate` 原先只认
+ * `Uint8Array` 与 hex 串两种，于是 `decapsulate(encapsulate(...))`
+ * 这条**自检赖以成立的往返**把数字数组送进了 `fromHex`，
+ * 报"不是合法的十六进制串" —— 这句话读起来像"密钥不对"，
+ * 排查方向会被带偏到密钥材料本身（实测自检里就是这个现象）。
+ */
+export const toBytes = (value) => {
+  if (value instanceof Uint8Array) return value
+  if (value instanceof ArrayBuffer) return new Uint8Array(value)
+  if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+  if (Array.isArray(value)) return Uint8Array.from(value)
+  return null
+}
+
+/**
  * base64 → hex。
  *
  * 信封里的二进制字段是 base64（服务端 `wrappers.py` 用 `base64.b64encode`），
@@ -96,7 +115,20 @@ function b64ToHex(value) {
 
 //: Kyber 变体。**变体由公钥长度自描述**（服务端 `wrappers.py` 的 pk_len_map 同口径），
 //: 所以两边不必预先约定 —— 但生成时要选一个，默认 768（NIST 3 级）。
-const KYBER_VARIANTS = { 512: { k: 'KeyGen512', dec: 'Decrypt512' }, 768: { k: 'KeyGen768', dec: 'Decrypt768' }, 1024: { k: 'KeyGen1024', dec: 'Decrypt1024' } }
+const KYBER_VARIANTS = {
+  512: { k: 'KeyGen512', enc: 'Encrypt512', dec: 'Decrypt512' },
+  768: { k: 'KeyGen768', enc: 'Encrypt768', dec: 'Decrypt768' },
+  1024: { k: 'KeyGen1024', enc: 'Encrypt1024', dec: 'Decrypt1024' }
+}
+
+//: 公钥字节数 → 变体。`decapsulate` 按**私钥**长度推断（1632/2400/3168），
+//: 这里按**公钥**长度（800/1184/1568）—— 两张表是同一件事的两面，不要合并成一张
+//: "按长度推断"的表：两者的长度集合不相交，合并后一旦有人传错一侧（拿公钥去解封装），
+//: 会得到一个"看起来算过了"的错误结果。
+//:
+//: 导出给**展示**用（密钥历史页按字节数标出 Kyber 变体）：变体对不上是
+//: "封装出来的密文对方解不开"的直接线索，而它在界面上只表现为一个字节数。
+export const KYBER_PK_LENGTHS = { 800: 512, 1184: 768, 1568: 1024 }
 
 function kyberNames(variant) {
   const entry = KYBER_VARIANTS[variant]
@@ -266,7 +298,9 @@ export class BrowserCryptoProvider extends CryptoProvider {
     }
     const kyber = await loadKyber()
     const skBytes = await this._secretBytes(keyRef)
-    const ct = ciphertext instanceof Uint8Array ? ciphertext : fromHex(ciphertext)
+    // 密文可能是字节（`encapsulate` 的返回值）或 hex 文本（信封里的形式）——
+    // 前者要能直接回传进来，`decapsulate(encapsulate(...))` 才是成立的往返。
+    const ct = toBytes(ciphertext) || fromHex(ciphertext)
     // 变体按**私钥长度**推断：服务端 `wrappers.py:325` 是同一口径
     // （sk 长度 → 512/768/1024），两边不必预先约定。
     const variant = { 1632: 512, 2400: 768, 3168: 1024 }[skBytes.length]
@@ -275,6 +309,159 @@ export class BrowserCryptoProvider extends CryptoProvider {
     }
     const names = kyberNames(variant)
     return kyber[names.dec](ct, skBytes)
+  }
+
+  /**
+   * Kyber 封装：公钥 → `(密文, 共享密钥)`。发送节点在**收件方公钥**上做这一步。
+   *
+   * 与 `decapsulate` 是一对：`decapsulate(encapsulate().ciphertext)` 必须还原出
+   * **逐字节相同**的共享密钥。这是本仓库对 Kyber 的唯一判据 —— round-3 与
+   * ML-KEM 的错误组合**不会报错**，只会安静地返回另一串长度完全正确的字节。
+   *
+   * 变体由**公钥长度**推断（与 `decapsulate` 按私钥长度推断同一口径，
+   * 服务端 `wrappers.py` 亦同）。
+   *
+   * @param {string} algorithm 只有 KYBER 有真正的封装原语，见下
+   * @param {string|Uint8Array} publicKey 十六进制或原始字节
+   * @returns {Promise<{ciphertext: Uint8Array, sharedSecret: Uint8Array, algorithm: string, variant: number}>}
+   */
+  async encapsulate(algorithm, publicKey) {
+    const name = normalizeAlgorithm(algorithm)
+    // Falcon 是**签名**算法，没有封装原语。历史实现把它当保护算法用
+    // （`falcon_lattice` = "用 Falcon 公钥封装 SM4"），那是本计划 §3 点名否定的
+    // 概念错误 —— 签名密钥无法生成共享秘密，硬凑出来的"封装"既不安全也无从验证。
+    // 这里明确拒绝并说明该用什么，而不是"能算出个数就返回"。
+    if (name === 'FALCON') {
+      throw new Error(
+        'Falcon 是签名算法，没有封装原语：要用密钥封装请改选 KYBER，' +
+          'FALCON 只用于签名与验签（历史 falcon_lattice 的做法已被否定）'
+      )
+    }
+    if (name !== 'KYBER') {
+      throw new Error(
+        `encapsulate 暂只支持 KYBER，收到：${algorithm}。` +
+          'SM2 / SSCL 的节点腿走**信封加密**（对载荷本身加密），不是 KEM —— 那一步归 KMS-009。'
+      )
+    }
+    const kyber = await loadKyber()
+    const pk = toBytes(publicKey) || fromHex(publicKey)
+    const variant = KYBER_PK_LENGTHS[pk.length]
+    if (!variant) {
+      throw new Error(
+        `无法从公钥长度推断 Kyber 变体：${pk.length} 字节（期望 800 / 1184 / 1568）`
+      )
+    }
+    const names = kyberNames(variant)
+    // Encrypt 返回 [ciphertext, sharedSecret]，与 KeyGen 一样**不收变体参数**。
+    // ⚠️ 且**不保证是 Uint8Array**（Kyber 这边实测是普通数字数组）——返回前
+    //    统一字节化，否则调用方按声明类型用（`decapsulate` 再解回来）会踩空。
+    const [ct, shared] = kyber[names.enc](pk)
+    const ciphertext = toBytes(ct)
+    const sharedSecret = toBytes(shared)
+    if (!ciphertext || !sharedSecret) {
+      throw new Error('Kyber 封装返回了认不出的字节形态（期望 Uint8Array / ArrayBuffer / 数字数组）')
+    }
+    return { ciphertext, sharedSecret, algorithm: name, variant }
+  }
+
+  /**
+   * 自检：用**本地这份材料**真跑一轮加解密/签名验证。
+   *
+   * 为什么不能只检查形状
+   * --------------------
+   * 密钥库里躺着的材料可能是上一代格式、别的算法、或与登记的公钥**不成对**
+   * 的一份（换设备、手工导入、迁移残留都会造成）。这三种情况长度对得上、
+   * 字段齐全、"看起来是好的"，只有真正用一次才现形。而现形的时机若是
+   * 第一次真实分发，代价是别人的会话 —— 所以生成页当场验一次。
+   *
+   * 各算法的验法
+   * ------------
+   * - **KYBER**：`encapsulate`（用登记的公钥）→ `decapsulate`（用本地私钥），
+   *   两边共享秘密必须**逐字节**相等。这一条同时覆盖"公钥与私钥成对"与
+   *   "实现版本正确"。
+   * - **FALCON**：签名 → 用登记公钥验签，并比对还原出的消息。
+   * - **SM2 / SSCL**：用 gm-crypto 加密、再用**本仓库自己的** `sm2-envelope.js`
+   *   解开。刻意不两边都用 gm-crypto —— 那样只证明"gm-crypto 自洽"，而线上
+   *   解信封走的是仓库那一份实现，两者一旦不一致，自检会绿、线上却解不开。
+   *
+   * 失败**不抛错**：它是结论的一种（"这把不能用"），不是调用错误。
+   * 抛错会让调用方把"材料坏了"与"参数写错了"混在一起处理。
+   *
+   * @param {string} algorithm
+   * @param {string} keyRef
+   * @returns {Promise<{ok: boolean, detail: string}>}
+   */
+  async selfTest(algorithm, keyRef) {
+    const name = normalizeAlgorithm(algorithm)
+    try {
+      // `requireLocalKey` 顺带把 ref 形状、节点归属、算法、版本全查一遍 ——
+      // 自检的输入本身也要是规范的，否则"测过了"测的是别的东西。
+      const summary = await requireLocalKey(keyRef, { algorithm: name })
+      const publicKey = String(summary.publicKey || '')
+
+      if (name === 'KYBER') {
+        if (!publicKey) {
+          return { ok: false, detail: '本地记录里没有公钥，无法验证私钥是否正确（重新生成一次）' }
+        }
+        const { ciphertext, sharedSecret, variant } = await this.encapsulate('KYBER', publicKey)
+        const recovered = await this.decapsulate('KYBER', keyRef, ciphertext)
+        if (toHex(recovered) !== toHex(sharedSecret)) {
+          return {
+            ok: false,
+            detail: '封装与解封装得到的共享秘密不一致：本地私钥与登记的公钥不是一对（解封会失败）'
+          }
+        }
+        return {
+          ok: true,
+          detail: `Kyber-${variant} 封装/解封装往返一致（共享秘密 ${sharedSecret.length} 字节逐字节相同）`
+        }
+      }
+
+      if (name === 'FALCON') {
+        if (!publicKey) {
+          return { ok: false, detail: '本地记录里没有公钥，无法验签（重新生成一次）' }
+        }
+        const message = textEncoder.encode(`kms-selftest-${Date.now()}`)
+        const signature = await this.sign('FALCON', keyRef, message)
+        const passed = await this.verify('FALCON', publicKey, signature, message)
+        return passed
+          ? { ok: true, detail: 'Falcon 签名 / 验签往返一致（含还原消息比对）' }
+          : { ok: false, detail: '签名能产生但验签不过：本地私钥与登记的公钥不是一对' }
+      }
+
+      if (name === 'SM2' || name === 'SSCL') {
+        if (!publicKey) {
+          return { ok: false, detail: '本地记录里没有公钥，无法加密验证（重新生成一次）' }
+        }
+        const { SM2 } = await import('gm-crypto')
+        const { decryptEnvelope } = await import('../sm2-envelope.js')
+        const probe = `kms-selftest-${Date.now()}`
+        // ⚠️ gm-crypto 的 `encrypt` 返回的是 **ArrayBuffer**，且其中的 C1
+        //     **不带 `04` 未压缩点前缀**（实测：hex 长度比国标格式少 2 个字符）。
+        //     直接当密文用会被 `decryptEnvelope` 判"C1 不是未压缩点"——
+        //     而后者的报错听起来像"密钥不对"，很容易查错方向。这里补回前缀。
+        const raw = SM2.encrypt(probe, publicKey)
+        const ciphertext = '04' + toHex(new Uint8Array(raw))
+        const plain = decryptEnvelope({ algorithm: 'sm2', ciphertext }, await this._secretHex(keyRef))
+        const text = new TextDecoder().decode(plain)
+        if (text !== probe) {
+          return { ok: false, detail: `解出的明文与原文不符（得到 ${text.length} 字节）` }
+        }
+        return {
+          ok: true,
+          detail: `${name} 加密 / 生产解密路径往返一致（经 sm2-envelope.js 解开）`
+        }
+      }
+
+      return { ok: false, detail: `自检不认识算法：${algorithm}` }
+    } catch (error) {
+      return { ok: false, detail: `自检失败：${error?.message || error}` }
+    }
+  }
+
+  /** 读回私密材料的 **hex 文本**（SM2/SSCL 的解密路径要的是 hex 标量，不是字节） */
+  async _secretHex(keyRef) {
+    return new TextDecoder().decode(await unsealSecret(keyRef))
   }
 
   async hasKey(keyRef) {

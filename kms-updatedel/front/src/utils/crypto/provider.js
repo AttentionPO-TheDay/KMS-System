@@ -80,6 +80,43 @@ export class CryptoProvider {
     throw new Error(`${this.constructor.name} 未实现 decapsulate`)
   }
 
+  /**
+   * 封装（Kyber）：用**公钥**产生 `(ciphertext, sharedSecret)`。
+   *
+   * 与 `decapsulate` 成对。发送节点在**收件方公钥**上做这一步，
+   * 收件节点用自己的私钥解开 —— 公钥是公开量，所以这里收的是 publicKey
+   * 而不是 keyRef（与 `verify` 同一口径）。
+   *
+   * 返回的 `sharedSecret` 是**原始字节**，怎么用由调用方决定
+   * （分发流程按既有口径取前 16 字节当 SM4 的 KEK）。
+   *
+   * @param {string} algorithm
+   * @param {string} publicKey
+   * @returns {Promise<{ciphertext: Uint8Array, sharedSecret: Uint8Array, algorithm: string}>}
+   */
+  async encapsulate(algorithm, publicKey) { // eslint-disable-line no-unused-vars
+    throw new Error(`${this.constructor.name} 未实现 encapsulate`)
+  }
+
+  /**
+   * 自检：**用这份材料真的做一轮加解密/签名验证**，而不是"看着是好的"。
+   *
+   * 存在理由是密钥库里躺着的材料可能是**上一代格式**或**别的算法**的：
+   * 长度对得上、字段齐全、但用起来才失败。生成页在"当前生产版本"旁边
+   * 显示自检结论，就是为了把"登记成功了"与"这把真能用"分开 ——
+   * 两者混为一谈时，故障要等到真正分发时才现形（那时已经是别人的会话）。
+   *
+   * 实现必须**只用本地材料**：任何"拿去问服务端"的做法都会在离线/服务端
+   * 不可达时给出误导性的失败。
+   *
+   * @param {string} algorithm
+   * @param {string} keyRef
+   * @returns {Promise<{ok: boolean, detail: string}>} 不抛错 —— 失败是结论的一种
+   */
+  async selfTest(algorithm, keyRef) { // eslint-disable-line no-unused-vars
+    throw new Error(`${this.constructor.name} 未实现 selfTest`)
+  }
+
   /** 解开一个分发信封（SM2 / SSCL / Kyber），返回其中的载荷密钥 */
   async unwrapEnvelope(algorithm, keyRef, envelope) { // eslint-disable-line no-unused-vars
     throw new Error(`${this.constructor.name} 未实现 unwrapEnvelope`)

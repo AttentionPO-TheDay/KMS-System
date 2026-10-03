@@ -118,7 +118,10 @@ const CAPABILITY_LABELS = {
   query: '查询',
   generate: '密钥生成',
   distribute: '密钥分发',
-  update: '更新',
+  // ⚠️ 键必须是后端 `node_permission.CAP_ROTATE` 的值 `rotate`。
+  // 写成 `update` 的表现是：L3 节点这边**永远**显示"更新：未授权"
+  // （granted 里有 rotate，但没有 update 这个键），而界面上看不出任何异常。
+  rotate: '更新',
   revoke: '回收'
 }
 

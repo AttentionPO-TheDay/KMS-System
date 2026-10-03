@@ -32,6 +32,28 @@ export const SUCCESS_CODES = [200, 2000]
 
 const http = axios.create({ baseURL: pqkdsBaseURL, timeout: 60000 })
 
+/**
+ * 造一个带业务码的错误再抛。
+ *
+ * 为什么不能只抛 message
+ * ----------------------
+ * 节点自助命名空间里**失败的种类是有意义的**：设备不一致
+ * （`api_contract.ERR_DEVICE_MISMATCH`）是**可处置**的状态 —— 用户该做的是
+ * "换回原设备"或"重新初始化"，与"参数写错了"要走的下一步完全不同。
+ * 只留 message 的话，调用方就只剩"匹配文案"这一条路，而文案一改，
+ * 分支会**静默**走错，不会有任何一处报错。
+ *
+ * 两个字段的分工（都在 Error 上，所以 `error.message` 的既有用法不受影响）：
+ *   * `businessCode` —— 信封里的 `code`（200 / 409 / …），沿用各命名空间既有口径；
+ *   * `errorCode`    —— 冻结契约里的 `api_contract.ERR_*`，可编程判断用。
+ */
+function fail(message, { businessCode, errorCode } = {}) {
+  const error = new Error(message)
+  if (businessCode !== undefined && businessCode !== null) error.businessCode = businessCode
+  if (errorCode) error.errorCode = errorCode
+  return error
+}
+
 http.interceptors.request.use((config) => {
   // 带上管理端令牌：分发模块的多数接口现在不校验，但 /admin/* 会校验，
   // 带上不亏，将来收紧也不用改前端。
@@ -47,16 +69,23 @@ http.interceptors.response.use(
     if (!body || typeof body !== 'object' || !('code' in body)) return body
     if (SUCCESS_CODES.includes(body.code)) return body
     const msg = body.msg || body.message || `分发模块返回 code=${body.code}`
-    return Promise.reject(new Error(msg))
+    // `data.error_code`：node-self 命名空间的失败体形状（见 `node_self_views._error`）
+    return Promise.reject(fail(msg, { businessCode: body.code, errorCode: body.data?.error_code }))
   },
   (error) => {
+    const body = error?.response?.data
     const detail =
-      error?.response?.data?.msg ||
-      error?.response?.data?.message ||
-      error?.response?.data?.detail ||
+      body?.msg ||
+      body?.message ||
+      body?.detail ||
       error?.message ||
       '请求失败'
-    return Promise.reject(new Error(detail))
+    return Promise.reject(fail(detail, {
+      // HTTP 状态码（真实状态的那套接口）与信封里的 code 都留着：
+      // 前者是传输层的结论，后者是业务层的，两者都要能拿到才好判断。
+      businessCode: body?.code ?? error?.response?.status,
+      errorCode: body?.data?.error_code || body?.error_code
+    }))
   }
 )
 

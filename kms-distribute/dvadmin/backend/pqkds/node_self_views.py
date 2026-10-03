@@ -2,6 +2,8 @@
 """节点自助接口（阶段 2）。
 
     GET  /node-self/          我在 KMS 里对应的节点（含初始化状态）
+    GET  /node-self/keys/     本节点已登记的长期密钥（含历史版本，供页面与服务端对账）
+    POST /node-self/keys/     登记一个算法的公钥（私钥永不上行）
     POST /node-self/init/     节点首次登录后初始化四套基础密钥
 
 为什么是"自助"
@@ -22,14 +24,18 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
+import re
 
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
-from .models import Node
+from . import api_contract as C
+from .models import Node, NodeLongTermKey
 from .node_service import NodeService
 from .node_permission import (
     CAP_GENERATE,
@@ -43,13 +49,65 @@ from .user_distribution_views import require_kms_user
 
 logger = logging.getLogger(__name__)
 
+#: 状态码 → 中文。**只此一份**：`api_contract.KEY_STATUS_CHOICES` 是冻结契约里的状态表，
+#: 前端另抄一份就会漂移，而漂移只表现为文案对不上，不会有任何一处报错。
+_STATUS_LABELS = dict(C.KEY_STATUS_CHOICES)
+
+_HEX_RE = re.compile(r'[0-9a-fA-F]+')
+
+
+def _public_key_hex(record) -> str:
+    """公钥的**比对形式**：一律小写 hex，与节点本地密钥库里的记录同形。
+
+    为什么要转换而不原样下发
+    ------------------------
+    存储形式按算法分两种（见 `node_service.store_node_public_key`：Kyber 存
+    **base64**，其余存 hex），而节点本地一律是 hex。生成页要拿服务端这把与
+    本机那把**逐字节**比对，若原样下发存储形式，**Kyber 会恒定"对不上"**——
+    它的表现是"服务端记的不是你本机那把"，看着像密钥被换过或本机被人动过，
+    实际只是编码不同。这类假警报比不报警更糟：用户会去重新初始化。
+
+    转不动时返回空串（**不猜**）：页面据此显示"服务端记录无法比对"，
+    那才是实情。返回一段看起来像公钥的东西会被拿去比对，且永远不相等。
+    """
+    raw = str(record.public_key or '').strip()
+    if not raw:
+        return ''
+    if record.algorithm != 'KYBER':
+        return raw.lower()
+    # 先认 hex 再认 base64，顺序不能反：hex 的字母表是 base64 的子集，
+    # 一段 hex 串往往也能被 base64 解码（得到的是另一串字节，且不报错）。
+    if _HEX_RE.fullmatch(raw):
+        return raw.lower()
+    try:
+        return base64.b64decode(raw, validate=True).hex()
+    except (binascii.Error, ValueError):
+        logger.warning('节点 %s 的 Kyber 公钥既不是 hex 也不是 base64，无法比对', record.node_id)
+        return ''
+
 
 def _ok(data=None, msg='操作成功'):
     return JsonResponse({'code': 200, 'msg': msg, 'data': data})
 
 
-def _error(msg, code=400):
-    return JsonResponse({'code': code, 'msg': msg, 'data': None}, status=200)
+def _error(msg, code=400, error_code=None):
+    """本命名空间的错误响应：HTTP 恒 200，业务码在 `code`。
+
+    `error_code` 是可编程的 `api_contract.ERR_*`（如 `KEY_VERSION_MISMATCH`），
+    放在 `data` 里。**不换约定** —— 把 `code` 改成字符串会静默破坏所有既有
+    调用方对 `code === 200` 的判断（见 doc/kms-callsite-inventory.md §七）。
+    "哪一种失败"必须可编程区分，所以按那份文档的兼容决定往 `data` 里**加**字段，
+    而不是改 `code` 的类型。
+    """
+    return JsonResponse(
+        {'code': code, 'msg': msg, 'data': {'error_code': error_code} if error_code else None},
+        status=200,
+    )
+
+
+def _iso(value):
+    """时间戳按 ISO 下发；空值一律 None（前端据此显示"—"而不是 1970）。"""
+    return value.isoformat() if value else None
 
 
 #: 对外暴露的初始化状态。内部 status 有 registered/kyber_uploaded/... 多个中间态，
@@ -92,6 +150,60 @@ def _node_payload(node: Node) -> dict:
     }
 
 
+def _long_term_key_payload(k: NodeLongTermKey) -> dict:
+    """一行长期密钥 → 页面需要的形状。逐行调用，公钥只换算一次。"""
+    public_key = _public_key_hex(k)
+    return {
+        'algorithm': k.algorithm,
+        'keyId': k.key_id,
+        'keyVersion': k.key_version,
+        'status': k.status,
+        # 状态文案与「这把还能干什么」都由服务端下发，取自 `api_contract`。
+        # 前端**不另写一份**中文表与可用性判断：两份必然漂移，而漂移的表现是
+        # "界面写着生产中、实际已被取代"—— 用户据此做的判断全是错的，
+        # 且没有任何一处会报错。
+        'statusLabel': _STATUS_LABELS.get(k.status, k.status),
+        'allowsNewWork': k.allows_new_work,
+        'allowsUnwrap': k.allows_unwrap,
+        'securityLevel': k.security_level,
+        'deviceId': k.device_id,
+        # 公钥是公开量，可以自由下发。给的是**比对形式**（小写 hex）：
+        # 页面拿它与本机密钥库里的 `publicKey` 逐字节比，判断
+        # "服务端记的那把，是不是我本机这把"。两者同形是这段比对能成立的
+        # 前提，编码换算（Kyber 的 base64↔hex）收在 `_public_key_hex` 里。
+        'publicKey': public_key,
+        'publicKeyHash': k.public_key_hash,
+        # 字节数而非字符串长度，也不是截断值：字节数才能与 Kyber 变体
+        # （800/1184/1568）对上；截断后的串看起来仍像一把公钥、会被拿去比对，
+        # 而它永远比不相等。要完整正文用上面那个字段。
+        'publicKeyBytes': len(public_key) // 2,
+        'legacy': k.legacy,
+        'legacySource': k.legacy_source,
+        'effectiveAt': _iso(k.effective_at),
+        'expiresAt': _iso(k.expires_at),
+        'revokedAt': _iso(k.revoked_at),
+        'revokedReason': k.revoked_reason,
+        'createdAt': _iso(k.create_datetime),
+        'updatedAt': _iso(k.update_datetime),
+    }
+
+
+def _long_term_keys_payload(node: Node, limit: int = 200) -> list:
+    """本节点长期密钥的全部行，新的在前 —— 供生成页做「本地 vs 服务端」对账。
+
+    刻意**不过滤状态**：页面要能显示"上一版已被取代""这一版已回收"。
+    只回 ACTIVE 的话，用户看到的是"我的密钥凭空少了一把"，而不是"它被换掉了"。
+
+    排序用 `-id` 而不是 `-key_version`：跨 key_id 比版本号没有意义
+    （旧密钥的 v3 可能比新密钥的 v1 更早登记），与 `node_key_registry.require_usable_key`
+    同一口径。
+    """
+    rows = (NodeLongTermKey.objects
+            .filter(node=node)
+            .order_by('algorithm', '-id')[:limit])
+    return [_long_term_key_payload(k) for k in rows]
+
+
 def _find_node(identity) -> Node | None:
     """把登录身份映射到节点。取不到返回 None（由调用方给出明确错误）。"""
     user_id = identity.get('userId')
@@ -114,20 +226,34 @@ def node_self(request, identity):
 
 
 @csrf_exempt
-@require_http_methods(['POST'])
+@require_http_methods(['GET', 'POST'])
 @require_kms_user
 def node_self_keys(request, identity):
-    """登记一个算法的**公钥**（文档 §4.4）。
+    """本节点已登记的长期密钥：GET 取列表 / POST 登记公钥（文档 §4.4）。
 
-    私钥在节点浏览器产生并留在那里，服务端只收公钥 —— 这是本接口与旧
-    「服务端生成四套密钥」路径的根本区别（旧路径见 `initialize_base_keys` 的说明）。
+    GET  —— 列出 `NodeLongTermKey` 的全部行（含被取代/已回收的历史版本）。
+            生成页要按算法显示"服务端现在记的是哪一把、上一版是什么"，
+            在此之前这个信息只能从 `Node.<算法>_public_key` 那一列反推 ——
+            那是物化视图，只有一个值，答不出历史。
+    POST —— 登记一个算法的公钥。私钥在节点浏览器产生并留在那里，
+            服务端只收公钥 —— 这是本接口与旧「服务端生成四套密钥」路径的根本
+            区别（旧路径见 `initialize_base_keys` 的说明）。
 
-    ⚠️ 入口处显式拒绝私钥样式的字段名：与其信任调用方，不如在入口挡一道。
+    ⚠️ 两个方法**共用一条路由**：Django 里同一 path 写两条 `path()` 条目，
+       第二条永远不会被匹配到（第一条先命中）—— 那种"接口加了但没生效"
+       不报任何错，只会 405。所以在这里按 method 分派。
+
+    ⚠️ POST 入口处显式拒绝私钥样式的字段名：与其信任调用方，不如在入口挡一道。
        一旦私钥进来，它就已经落进服务端日志与请求记录，**撤不回来**。
     """
     node = _find_node(identity)
     if node is None:
         return _error('当前账号未关联任何节点，无法登记密钥', 403)
+
+    if request.method == 'GET':
+        # 读自己的状态在停用后也应当可用：停用的是"产生新密钥"的能力。
+        return _ok({'nodeId': node.node_id, 'keys': _long_term_keys_payload(node)})
+
     if _public_status(node) == 'DISABLED':
         return _error('该节点已被停用，无法登记密钥', 403)
 
@@ -159,6 +285,11 @@ def node_self_keys(request, identity):
             algorithm, public_key,
             payload.get('securityLevel') or payload.get('security_level'),
             payload.get('deviceId') or payload.get('device_id'),
+            key_id=payload.get('keyId') or payload.get('key_id'),
+            # ⚠️ 用 `.get(..., default)` 而不是 `or`：`keyVersion: 0` 会被 `or`
+            # 吞成"没提供"，于是服务端**静默**按 v1 登记 —— 节点本地是 v0 的
+            # 记账、服务端是 v1，两边都不报错。0 应当走到下面被拒。
+            key_version=payload.get('keyVersion', payload.get('key_version')),
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception('节点 %s 登记公钥异常', node.node_id)
@@ -168,13 +299,27 @@ def node_self_keys(request, identity):
         # 设备不一致是**可处置**的状态（重新初始化 / 换回原设备），
         # 不是参数错。用一个专门的业务码把它与普通参数错误分开，
         # 好让前端能给出对应的操作入口，而不是只弹一句红字。
+        # `error_code` 是 `api_contract.ERR_*`（keyId 冲突、版本不符、参数非法……），
+        # 前端按它分支，不要去匹配 msg 文案。
         return _error(
             result.get('message') or '登记公钥失败',
             409 if result.get('device_mismatch') else 400,
+            error_code=result.get('code'),
         )
 
     node.refresh_from_db()
-    return _ok({'node': _node_payload(node)}, msg=result.get('message') or '公钥已登记')
+    return _ok(
+        {
+            'node': _node_payload(node),
+            # 回传落库后的身份：节点据此核对"服务端记下的就是我本地那把"。
+            # 只在成功时给，失败时 data 里是 error_code（两种形状不会混）。
+            'algorithm': result.get('algorithm'),
+            'keyId': result.get('key_id'),
+            'keyVersion': result.get('key_version'),
+            'keyStatus': result.get('status'),
+        },
+        msg=result.get('message') or '公钥已登记',
+    )
 
 
 @csrf_exempt
@@ -182,24 +327,25 @@ def node_self_keys(request, identity):
 @require_kms_user
 def node_self_init(request, identity):
     """
-    节点首次登录后初始化四套基础密钥：Kyber / SSCL / SM2 / Falcon。
+    节点首次初始化的**收尾**：校验四套基础公钥齐备，然后把节点置为 ACTIVE。
 
-    幂等：已 ACTIVE 的节点直接返回，不重复生成。
-    失败：保持 PENDING_INIT，允许再次调用重试（四套必须全成才算完成）。
+    ⚠️ 本接口**不生成任何密钥**（职责已在 §4.4 阶段一改掉，但这段 docstring
+       直到 KMS-005 才跟上）。四套密钥由节点浏览器本地生成、逐个经
+       `POST /node-self/keys/` 上报；这里只做"四套齐了吗"的判定与状态收尾。
+       早先这里在服务端生成并落库四套**私钥**，还与文档 §0/§4「私钥留在节点侧」
+       直接冲突 —— 实测 `dvadmin_pqkds_nodes` 里曾存着 Falcon 私钥 1.43MB。
+       相应地也不再是 15~25 秒的长任务（那个耗时来自 Falcon 生成），
+       现在的耗时只来自收尾时的一次上链请求。
 
-    ⚠️ 耗时：Falcon 占大头，整体约 15~25 秒。调用方必须显示 loading 并抑制重复提交。
+    幂等：已 ACTIVE 的节点直接返回，不重复处理。
+    失败：保持 PENDING_INIT，允许补齐缺的公钥后再次调用（四套必须全成才算完成）。
 
-    ⚠️⚠️ 这里**不能**用 `transaction.atomic()` 包裹 —— 2026-09-27 实测踩过：
-    `node_service.generate_falcon_keys_v2()` 在 Falcon 长耗时计算**前会主动
-    `connection.close()`**（`node_service.py:1022`，本意是避免 Falcon-1024 矩阵
-    乘法期间 MySQL 空闲断连）。而事务内的 `close()` 会**丢弃整个未提交事务**：
-    Kyber 与国密是在 Falcon 之前写的，连接一关全部丢失，只有 Falcon 在重连后
-    新写的部分留了下来。表现是「接口返回 success、status=ACTIVE，
-    但库里只有 Falcon，Kyber/国密全空」——比直接报错危险得多。
-
-    不加事务不会失去正确性：初始化本来就是**非事务性**的长任务，
-    一致性靠"四套全成才置 ACTIVE"这条判定保证；中途失败保持 PENDING_INIT，
-    节点可以再次登录重试。
+    ⚠️ **不要**用 `transaction.atomic()` 包裹。历史原因（
+    `generate_falcon_keys_v2()` 在长耗时计算前主动 `connection.close()`，
+    事务内关连接会丢弃整个未提交事务，表现为"接口返回 success 但库里只留下一半"）
+    已随密钥生成搬走而消失；现在的原因是**收尾里有一次外部的上链请求**
+    （`upload_node_registration`）—— 把网络调用包进事务会一直占着连接，
+    且上链失败会把已经正确的状态一起回滚。上链失败只记日志，不影响初始化结论。
     """
     node = _find_node(identity)
     if node is None:

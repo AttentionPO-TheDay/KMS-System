@@ -1,343 +1,428 @@
 <template>
-  <div class="app-container">
-    <el-form :model="queryParams" ref="queryRef" :inline="true" v-show="showSearch" label-width="68px">
-      <el-form-item label="用户ID" prop="userId">
-        <el-input v-model="queryParams.userId" placeholder="请输入用户ID" clearable @keyup.enter="handleQuery" />
-      </el-form-item>
-      <el-form-item label="用户名" prop="userName">
-        <el-input v-model="queryParams.userName" placeholder="请输入用户名" clearable @keyup.enter="handleQuery" />
-      </el-form-item>
-      <el-form-item label="算法名称" prop="encrytName">
-        <el-input v-model="queryParams.encrytName" placeholder="请输入加密算法名称" clearable @keyup.enter="handleQuery" />
-      </el-form-item>
-      <el-form-item label="密钥名称" prop="keyName">
-        <el-input v-model="queryParams.keyName" placeholder="请输入密钥名称" clearable @keyup.enter="handleQuery" />
-      </el-form-item>
-      <el-form-item>
-        <el-button type="primary" icon="Search" @click="handleQuery">搜索</el-button>
-        <el-button icon="Refresh" @click="resetQuery">重置</el-button>
-      </el-form-item>
-    </el-form>
-
-    <el-row :gutter="10" class="mb8">
-      <el-col :span="1.5">
-        <el-button type="primary" plain icon="Plus" @click="handleAdd">新增</el-button>
-      </el-col>
-      <right-toolbar v-model:showSearch="showSearch" @queryTable="getList"></right-toolbar>
-    </el-row>
-
-    <el-table v-loading="loading" :data="keymanageList">
-      <el-table-column label="密钥ID" align="center" prop="keyId" />
-      <el-table-column label="用户ID" align="center" prop="userId" />
-      <el-table-column label="用户名" align="center" prop="userName" />
-      <el-table-column label="加密算法类型" align="center" prop="encrytType" min-width="150" />
-      <el-table-column label="加密算法名称" align="center" prop="encrytName" width="120" />
-      <el-table-column label="密钥名称" align="center" prop="keyName" min-width="160" />
-      <el-table-column label="密钥用途" align="center" prop="keyUse" min-width="180" show-overflow-tooltip />
-      <el-table-column label="所属域" align="center" prop="keyDomain" width="100" />
-      <el-table-column label="更新时间" align="center" prop="updTime" width="160" />
-      <el-table-column label="密钥状态" align="center" prop="status" width="100">
-        <template #default="scope">
-          <el-tag :type="statusTagType(scope.row.status)">{{ statusText(scope.row.status) }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="存证状态" align="center" prop="chainStatus" width="100">
-        <template #default="scope">
-          <el-tag :type="chainStatusTagType(scope.row.chainStatus)">{{ chainStatusText(scope.row.chainStatus) }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" align="center" width="220">
-        <template #default="scope">
-          <el-button v-if="scope.row.chainStatus == '1'" link type="primary" icon="Link" @click="handleViewChain(scope.row)">凭证</el-button>
-          <el-button link type="primary" icon="View" @click="handleViewDetails(scope.row)">详情</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
-
-    <pagination v-show="total > 0" :total="total" v-model:page="queryParams.pageNum" v-model:limit="queryParams.pageSize" @pagination="getList" />
-
-    <el-dialog title="新增生成历史" v-model="open" width="640px" append-to-body>
-      <el-form ref="historyRef" :model="form" :rules="rules" label-width="110px">
-        <el-form-item label="选择用户" prop="userId">
-          <el-select v-model="form.userId" placeholder="请选择用户" filterable @change="handleUserChange">
-            <el-option v-for="user in userList" :key="user.userId" :label="`${user.userName} (ID: ${user.userId})`" :value="user.userId" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="加密算法类型" prop="encrytType">
-          <el-select v-model="form.encrytType" placeholder="请选择加密算法类型" @change="handleEncrytTypeChange">
-            <el-option label="无证书非对称加密" value="无证书非对称加密" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="加密算法名称" prop="encrytName">
-          <el-select v-model="form.encrytName" placeholder="请选择加密算法名称">
-            <el-option v-for="option in encrytNameOptions" :key="option.value" :label="option.label" :value="option.value" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="密钥名称" prop="keyName">
-          <el-input v-model="form.keyName" maxlength="64" />
-        </el-form-item>
-        <el-form-item label="密钥用途" prop="keyUse">
-          <el-input v-model="form.keyUse" maxlength="128" />
-        </el-form-item>
-        <el-form-item label="所属域" prop="keyDomain">
-          <el-input v-model="form.keyDomain" maxlength="32" />
-        </el-form-item>
-        <el-form-item label="密钥状态" prop="status">
-          <el-select v-model="form.status" placeholder="请选择密钥状态">
-            <el-option label="正常" value="0" />
-            <el-option label="冻结" value="1" />
-            <el-option label="轮换" value="2" />
-            <el-option label="回收" value="3" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="存证状态" prop="chainStatus">
-          <el-select v-model="form.chainStatus" placeholder="请选择存证状态">
-            <el-option label="排队中" value="0" />
-            <el-option label="已上链" value="1" />
-            <el-option label="失败" value="2" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="交易哈希" prop="chainHash">
-          <el-input v-model="form.chainHash" maxlength="128" placeholder="已上链时可填写" />
-        </el-form-item>
-        <el-form-item label="区块高度" prop="blockHeight">
-          <el-input-number v-model="form.blockHeight" :min="1" :controls="false" style="width: 100%" />
-        </el-form-item>
-        <el-form-item label="密钥值" prop="keyValue">
-          <el-input v-model="form.keyValue" type="textarea" :rows="4" placeholder="可选，不填则自动生成占位历史值" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button type="primary" @click="submitForm">确 定</el-button>
-        <el-button @click="cancel">取 消</el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog title="密钥详细信息" v-model="detailOpen" width="720px" append-to-body destroy-on-close>
-      <div class="detail-container">
-        <el-descriptions :column="2" border>
-          <el-descriptions-item label="密钥ID"><el-tag type="info">{{ detailInfo.keyId }}</el-tag></el-descriptions-item>
-          <el-descriptions-item label="密钥名称">{{ detailInfo.keyName }}</el-descriptions-item>
-          <el-descriptions-item label="用户ID">{{ detailInfo.userId }}</el-descriptions-item>
-          <el-descriptions-item label="用户名">{{ detailInfo.userName }}</el-descriptions-item>
-          <el-descriptions-item label="算法类型">{{ detailInfo.encrytType }}</el-descriptions-item>
-          <el-descriptions-item label="算法名称">{{ detailInfo.encrytName }}</el-descriptions-item>
-          <el-descriptions-item label="密钥用途">{{ detailInfo.keyUse }}</el-descriptions-item>
-          <el-descriptions-item label="所属域">{{ detailInfo.keyDomain || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="创建时间">{{ detailInfo.creTime }}</el-descriptions-item>
-          <el-descriptions-item label="更新时间">{{ detailInfo.updTime }}</el-descriptions-item>
-        </el-descriptions>
-        <div class="key-content-box">
-          <div class="key-item">
-            <span class="key-label">密钥值:</span>
-            <div class="key-value-block">{{ detailInfo.keyValue || '无数据' }}</div>
+  <div class="app-container gen-history">
+    <el-card shadow="never" class="gen-history__card">
+      <template #header>
+        <div class="gen-history__header">
+          <h2>密钥历史</h2>
+          <div class="gen-history__header-side">
+            <el-tag v-if="node.nodeId" type="info" size="small">{{ node.nodeId }}</el-tag>
+            <el-button size="small" :loading="loading" @click="load">刷新</el-button>
           </div>
         </div>
-      </div>
+      </template>
+
+      <el-alert
+        v-if="!loading && !mapped"
+        type="warning"
+        :closable="false"
+        show-icon
+        title="当前账号未关联任何节点"
+        description="密钥历史是节点的账本。请用节点账号登录。"
+      />
+
+      <template v-else>
+        <p class="gen-history__lead">
+          这里是<strong>平台登记的</strong>本节点长期密钥，含被取代、已回收的历史版本。
+          私钥不在本表、也不在服务端 —— 它是本机生成的，只存在于本机加密密钥库。
+          「本机材料」一列说的是<strong>当前这台浏览器</strong>有没有对应的私钥。
+        </p>
+
+        <!-- 换了设备 / 清过站点数据：本页最要紧的一条结论。
+             不提示的话，表格里每行都写着"平台有、本机无私钥"，用户只会以为页面坏了。 -->
+        <el-alert
+          v-if="foreignDevice"
+          class="gen-history__alert"
+          type="warning"
+          :closable="false"
+          show-icon
+          title="平台上有本节点的密钥，本机却没有任何一把私钥"
+          description="这说明密钥是在另一台设备（或另一个浏览器配置）上生成的 —— 本机解不开平台按它们分发的信封。请改回原设备；确实换机了就在「节点首次初始化」里用本机重新生成并登记一套。"
+        />
+
+        <!-- 后端一次最多回 200 行且没有分页参数。到顶时**必须**说出来：
+             不说的话页面看起来"就这些"，而少掉的那些是更早的版本。 -->
+        <el-alert
+          v-if="possiblyTruncated"
+          class="gen-history__alert"
+          type="info"
+          :closable="false"
+          show-icon
+          :title="`只显示了最近 ${SERVER_ROW_LIMIT} 条`"
+          description="本节点登记过的密钥行数达到接口上限，更早的版本没有列出来。需要完整历史请直接查服务端 dvadmin_pqkds_node_long_term_keys 表。"
+        />
+
+        <el-form inline class="gen-history__filter" @submit.prevent>
+          <el-form-item label="算法">
+            <el-select v-model="algoFilter" clearable placeholder="全部" class="gen-history__filter-select">
+              <el-option v-for="a in algorithmOptions" :key="a" :label="a" :value="a" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="状态">
+            <el-select v-model="statusFilter" clearable placeholder="全部" class="gen-history__filter-select">
+              <el-option v-for="o in statusOptions" :key="o.value" :label="o.label" :value="o.value" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="keyId">
+            <el-input v-model="keyword" clearable placeholder="包含匹配" style="width: 200px" />
+          </el-form-item>
+          <el-form-item>
+            <el-button @click="resetFilters">重置</el-button>
+          </el-form-item>
+        </el-form>
+
+        <p class="gen-history__summary">
+          共 {{ rows.length }} 条<template v-if="filtered.length !== rows.length">，筛出 {{ filtered.length }} 条</template>
+          · 在产 {{ activeCount }} 条
+          · 本机持 {{ localCount }} 条
+          <span v-if="attentionCount" class="is-bad">· 对账异常 {{ attentionCount }} 条</span>
+        </p>
+
+        <el-table v-loading="loading" :data="filtered" size="small" border class="gen-history__table">
+          <el-table-column label="算法" width="92" prop="algorithm" />
+          <el-table-column label="keyId" min-width="210" show-overflow-tooltip>
+            <template #default="{ row }">
+              <span class="mono">{{ row.keyId || '（未记录）' }}</span>
+              <el-tag v-if="row.server?.legacy" size="small" type="warning" effect="plain" class="gen-history__legacy">历史导入</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="版本" width="70">
+            <template #default="{ row }">v{{ row.version }}</template>
+          </el-table-column>
+          <el-table-column label="状态" width="110">
+            <template #default="{ row }">
+              <el-tag v-if="row.server" :type="statusTagType(row.server.status)" size="small">
+                {{ row.server.statusLabel }}
+              </el-tag>
+              <el-tag v-else type="warning" size="small" effect="plain">未登记</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="可用性" width="130">
+            <template #default="{ row }">{{ usableText(row) }}</template>
+          </el-table-column>
+          <el-table-column label="本机材料" width="100">
+            <template #default="{ row }">
+              <span :class="row.local ? 'is-ok' : 'is-muted'">{{ row.local ? '有私钥' : '无私钥' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="对账" min-width="150">
+            <template #default="{ row }">
+              <span :class="row.reconcile.ok ? 'is-ok' : 'is-bad'">{{ row.reconcile.text }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="公钥体积" width="130">
+            <template #default="{ row }">{{ keySizeText(row) }}</template>
+          </el-table-column>
+          <el-table-column label="绑定设备" min-width="150" show-overflow-tooltip>
+            <template #default="{ row }">
+              <span class="mono">{{ row.server?.deviceId || '—' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="登记时间" width="160">
+            <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="80" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" size="small" @click="openDetail(row)">详情</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <p v-if="!loading && !filtered.length" class="gen-history__empty">
+          {{ rows.length ? '没有符合筛选条件的密钥。' : '这个节点还没有登记过任何长期密钥。到「密钥生成」页生成第一把。' }}
+        </p>
+      </template>
+    </el-card>
+
+    <el-dialog title="密钥详情" v-model="detailOpen" width="780px" append-to-body destroy-on-close>
+      <template v-if="detail">
+        <el-descriptions :column="2" border>
+          <el-descriptions-item label="算法">{{ detail.algorithm }}</el-descriptions-item>
+          <el-descriptions-item label="版本">v{{ detail.version }}</el-descriptions-item>
+          <el-descriptions-item label="keyId"><span class="mono">{{ detail.keyId || '（未记录）' }}</span></el-descriptions-item>
+          <el-descriptions-item label="平台状态">
+            <el-tag v-if="detail.server" :type="statusTagType(detail.server.status)" size="small">
+              {{ detail.server.statusLabel }}
+            </el-tag>
+            <el-tag v-else type="warning" size="small" effect="plain">平台未登记</el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="可用性">{{ usableText(detail) }}</el-descriptions-item>
+          <el-descriptions-item label="安全级别">{{ detail.server?.securityLevel || '—' }}</el-descriptions-item>
+          <el-descriptions-item label="公钥体积">{{ keySizeText(detail) }}</el-descriptions-item>
+          <el-descriptions-item label="公钥摘要">
+            <span class="mono">{{ detail.server?.publicKeyHash || '—' }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="绑定设备">
+            <span class="mono">{{ detail.server?.deviceId || '—' }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="登记时间">{{ formatTime(detail.createdAt) }}</el-descriptions-item>
+          <el-descriptions-item label="生效时间">{{ formatTime(detail.server?.effectiveAt) }}</el-descriptions-item>
+          <el-descriptions-item label="失效时间">{{ formatTime(detail.server?.expiresAt) }}</el-descriptions-item>
+          <el-descriptions-item label="回收时间">{{ formatTime(detail.server?.revokedAt) }}</el-descriptions-item>
+          <el-descriptions-item label="回收原因">{{ detail.server?.revokedReason || '—' }}</el-descriptions-item>
+          <el-descriptions-item label="历史来源" :span="2">
+            {{ detail.server?.legacy ? (detail.server.legacySource || '由旧路径导入（非节点本地生成）') : '节点本地生成' }}
+          </el-descriptions-item>
+        </el-descriptions>
+
+        <div class="gen-history__reconcile-box">
+          <div class="gen-history__reconcile-head">
+            <span class="gen-history__reconcile-title">本机对账</span>
+            <span :class="detail.reconcile.ok ? 'is-ok' : 'is-bad'">{{ detail.reconcile.text }}</span>
+          </div>
+          <p class="gen-history__reconcile-body">
+            <template v-if="detail.local">
+              本机密钥库里有对应的私钥，引用为 <span class="mono">{{ detail.local.keyRef }}</span>。
+            </template>
+            <template v-else>
+              本机密钥库里<strong>没有</strong>对应的私钥。
+            </template>
+            <template v-if="!detail.reconcile.ok"> 该结论的处置方式见「密钥生成」页对应算法的卡片。</template>
+          </p>
+        </div>
+
+        <div class="gen-history__pk-box">
+          <div class="gen-history__pk-label">公钥（十六进制）</div>
+          <div class="gen-history__pk-value">{{ detail.server?.publicKey || detail.local?.publicKey || '（无）' }}</div>
+          <p class="gen-history__pk-note">
+            公钥是公开量，可以自由展示。私钥<strong>不在本页</strong>，也不在服务端 ——
+            本页与后端接口都不提供私钥读取或导出。
+          </p>
+        </div>
+      </template>
       <template #footer>
         <el-button type="primary" @click="detailOpen = false">关 闭</el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog title="区块链存证详情" v-model="chainOpen" width="600px" append-to-body>
-      <el-descriptions :column="1" border>
-        <el-descriptions-item label="交易哈希 (TxHash)">
-          <span style="word-break: break-all;">{{ chainData.chainHash || '-' }}</span>
-        </el-descriptions-item>
-        <el-descriptions-item label="区块高度 (Block)"><el-tag effect="dark">{{ chainData.blockHeight || '-' }}</el-tag></el-descriptions-item>
-        <el-descriptions-item label="最新版本 (Version)"><el-tag type="info">v{{ chainData.version || 1 }}</el-tag></el-descriptions-item>
-        <el-descriptions-item label="上链时间">{{ chainData.updTime || '刚刚' }}</el-descriptions-item>
-      </el-descriptions>
-      <template #footer>
-        <el-button type="primary" @click="chainOpen = false">关 闭</el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
-<script setup name="KeyGenerateHistory">
-import { addHistoryRecord, listKeymanage } from '@/api/generate/keymanage'
-import { listNonAdminUsers } from '@/api/system/user'
+<script setup name="NodeKeyHistory">
+/**
+ * 密钥历史（菜单 9011，节点端 `/genzone/history`）。
+ *
+ * 改造前后是两件事
+ * ----------------
+ * 改造前这里是**用户腿**的「生成历史」：数据来自 `listKeymanage`（`keymanage` 模型，
+ * 列是 userId / userName / encrytName / keyValue …），还带一个「新增」弹窗，
+ * 让人**手工把密钥值贴进表单**写库（`form.keyValue` 是 textarea 明文）。
+ * 那与 §4.4「私钥在节点本地生成并保管、服务端只收公钥」直接冲突 ——
+ * 一个把私钥当业务数据填写和展示的页面。
+ *
+ * 现在它是**只读**的：数据来自 §4.4 的唯一事实来源 `NodeLongTermKey`
+ * （`GET /node-self/keys/`），本机侧读加密密钥库（`inspectNodeKeys`），
+ * 两边按 `@/utils/crypto/node-key-compare` 的口径对账。
+ * **没有新增入口，也没有任何写私钥的路径** —— 密钥只能由「密钥生成」页在
+ * 本机产生，这一页只负责把事情说清楚。
+ *
+ * 为什么不链到「密钥更新与回收」
+ * ------------------------------
+ * 那个页面（菜单 5000，`parent_id=9410`）是**用户腿**的 `keyupdate`，
+ * 操作的是 `keymanage` 模型里的用户密钥，与本页这些节点长期密钥**不是同一批实体**。
+ * 链过去会让人以为在处置节点密钥，实际动的是另一套数据，且两边都不会报错。
+ *
+ * 关于筛选
+ * --------
+ * 后端这个 GET **不读任何 query**（见 `@/api/pqkds/node-self.js` 的说明），
+ * 一律返回本节点全部行。所以筛选在本地做，选项从**已载入的数据**里派生 ——
+ * 写死一份算法/状态清单就会在服务端新增状态时静默漏掉。
+ */
+import { computed, onMounted, ref } from 'vue'
+import { ElMessage } from 'element-plus'
+import { getSelfNode, listSelfNodeKeys } from '@/api/pqkds/node-self'
+import { compareNodeKeys } from '@/utils/crypto/node-key-compare.js'
+import { cryptoProvider, KYBER_PK_LENGTHS } from '@/utils/crypto/browser-provider.js'
 
-const { proxy } = getCurrentInstance()
-const keymanageList = ref([])
-const userList = ref([])
-const encrytNameOptions = ref([])
-const open = ref(false)
+/**
+ * 后端 `_long_term_keys_payload(node, limit=200)` 的条数上限，**与后端同改**。
+ * 它只是用来在到顶时提醒"可能被截断"，不参与分页。
+ */
+const SERVER_ROW_LIMIT = 200
+
+/** 本机独有行在「状态」筛选里的伪取值（它们没有平台状态）。 */
+const UNREGISTERED = '__unregistered__'
+
+/**
+ * 状态 → 标签颜色。**只有颜色**是前端的：文案一律用服务端下发的 `statusLabel`
+ * （`api_contract.KEY_STATUS_CHOICES`）。前端再写一份中文表，漂移的表现就是
+ * "界面写着正常、实际已被取代"，而没有任何一处会报错。
+ */
+const STATUS_TAG_TYPE = { ACTIVE: 'success', PENDING: 'warning', REVOKED: 'danger' }
+
 const loading = ref(true)
-const showSearch = ref(true)
-const total = ref(0)
+const mapped = ref(false)
+const node = ref({})
+const serverKeys = ref([])
+const localKeys = ref([])
+
+const algoFilter = ref('')
+const statusFilter = ref('')
+const keyword = ref('')
+
 const detailOpen = ref(false)
-const detailInfo = ref({})
-const chainOpen = ref(false)
-const chainData = ref({})
+const detail = ref(null)
 
-const data = reactive({
-  queryParams: {
-    pageNum: 1,
-    pageSize: 10,
-    userId: null,
-    userName: null,
-    encrytType: null,
-    encrytName: null,
-    keyName: null
-  },
-  form: {
-    userId: null,
-    userName: null,
-    encrytType: '无证书非对称加密',
-    encrytName: null,
-    keyName: null,
-    keyUse: null,
-    keyDomain: 'A',
-    status: '0',
-    chainStatus: '0',
-    chainHash: null,
-    blockHeight: null,
-    keyValue: null
-  },
-  rules: {
-    userId: [{ required: true, message: '请选择用户', trigger: 'change' }],
-    encrytType: [{ required: true, message: '请选择加密算法类型', trigger: 'change' }],
-    encrytName: [{ required: true, message: '请选择加密算法名称', trigger: 'change' }],
-    keyName: [{ required: true, message: '请输入密钥名称', trigger: 'blur' }],
-    keyUse: [{ required: true, message: '请输入密钥用途', trigger: 'blur' }]
-  }
-})
-
-const { queryParams, form, rules } = toRefs(data)
-
-function getList() {
+async function load() {
   loading.value = true
-  listKeymanage(queryParams.value).then(response => {
-    keymanageList.value = response.rows || []
-    total.value = response.total || 0
-  }).finally(() => {
-    loading.value = false
-  })
-}
-
-function handleQuery() {
-  queryParams.value.pageNum = 1
-  getList()
-}
-
-function resetQuery() {
-  proxy.resetForm('queryRef')
-  handleQuery()
-}
-
-function reset() {
-  form.value = {
-    userId: null,
-    userName: null,
-    encrytType: '无证书非对称加密',
-    encrytName: null,
-    keyName: null,
-    keyUse: null,
-    keyDomain: 'A',
-    status: '0',
-    chainStatus: '0',
-    chainHash: null,
-    blockHeight: null,
-    keyValue: null
-  }
-  handleEncrytTypeChange(form.value.encrytType)
-  proxy.resetForm('historyRef')
-}
-
-function handleAdd() {
-  reset()
-  listNonAdminUsers().then(response => {
-    userList.value = response.data || []
-    open.value = true
-  })
-}
-
-function cancel() {
-  open.value = false
-  reset()
-}
-
-function handleUserChange(userId) {
-  const matched = userList.value.find(item => item.userId === userId)
-  form.value.userName = matched?.userName || null
-}
-
-function handleEncrytTypeChange(value) {
-  if (value === '无证书非对称加密') {
-    encrytNameOptions.value = [
-      { label: 'SM2', value: 'SM2' },
-      { label: 'SSCL', value: 'SSCL' }
-    ]
-  } else {
-    encrytNameOptions.value = []
-  }
-  form.value.encrytName = null
-}
-
-function submitForm() {
-  proxy.$refs.historyRef.validate(valid => {
-    if (!valid) {
+  try {
+    const data = await getSelfNode()
+    mapped.value = Boolean(data?.mapped)
+    node.value = data?.node || {}
+    if (!mapped.value) {
+      serverKeys.value = []
+      localKeys.value = []
       return
     }
 
-    const payload = {
-      ...form.value,
-      keyName: normalizeText(form.value.keyName),
-      keyUse: normalizeText(form.value.keyUse),
-      keyDomain: normalizeText(form.value.keyDomain) || 'A',
-      chainHash: normalizeText(form.value.chainHash),
-      keyValue: normalizeText(form.value.keyValue)
+    // 两边各取一次、各报各的错：合成一个 try 会让"平台读不到"表现成
+    // "本机密钥全没了"，而后者会诱导用户去重新生成（私钥本来好好的）。
+    const [platform, local] = await Promise.allSettled([
+      listSelfNodeKeys(),
+      cryptoProvider.inspectNodeKeys(node.value.nodeId)
+    ])
+
+    if (platform.status === 'fulfilled') {
+      serverKeys.value = platform.value?.keys || []
+    } else {
+      serverKeys.value = []
+      ElMessage.error(`读取平台登记记录失败：${platform.reason?.message || platform.reason}`)
     }
 
-    addHistoryRecord(payload).then(() => {
-      proxy.$modal.msgSuccess('生成历史新增成功')
-      open.value = false
-      getList()
-    })
+    if (local.status === 'fulfilled') {
+      localKeys.value = local.value?.keys || []
+    } else {
+      localKeys.value = []
+      ElMessage.error(`读取本机密钥库失败：${local.reason?.message || local.reason}`)
+    }
+  } catch (error) {
+    ElMessage.error(`读取节点信息失败：${error.message}`)
+  } finally {
+    loading.value = false
+  }
+}
+
+/** 平台行 ∪ 本机独有行。本机独有的那些必须列出来，否则它们对用户是隐形的。 */
+const rows = computed(() =>
+  compareNodeKeys({ serverKeys: serverKeys.value, localKeys: localKeys.value })
+)
+
+const algorithmOptions = computed(() => [...new Set(rows.value.map((r) => r.algorithm))].sort())
+
+const statusOptions = computed(() => {
+  const seen = new Map()
+  let hasLocalOnly = false
+  for (const row of rows.value) {
+    if (row.server) seen.set(row.server.status, row.server.statusLabel)
+    else hasLocalOnly = true
+  }
+  const options = [...seen].map(([value, label]) => ({ value, label }))
+  // 本机未登记的行没有任何平台状态，但**筛"全部"时它在**：
+  // 不给它一个选项，用户按状态筛过一遍就再也看不到它了。
+  if (hasLocalOnly) options.push({ value: UNREGISTERED, label: '平台未登记' })
+  return options
+})
+
+const filtered = computed(() =>
+  rows.value.filter((row) => {
+    if (algoFilter.value && row.algorithm !== algoFilter.value) return false
+    if (statusFilter.value) {
+      const status = row.server ? row.server.status : UNREGISTERED
+      if (status !== statusFilter.value) return false
+    }
+    if (keyword.value) {
+      const wanted = keyword.value.trim().toLowerCase()
+      if (wanted && !String(row.keyId || '').toLowerCase().includes(wanted)) return false
+    }
+    return true
   })
-}
+)
 
-function handleViewDetails(row) {
-  detailInfo.value = row
-  detailOpen.value = true
-}
+const activeCount = computed(() => rows.value.filter((r) => r.server?.allowsNewWork).length)
+const localCount = computed(() => rows.value.filter((r) => r.local).length)
+/** 需要人来处置的行数：`reconcile.ok` 只在"两边都有且逐字节相同"时为真。 */
+const attentionCount = computed(() => rows.value.filter((r) => !r.reconcile.ok).length)
+const foreignDevice = computed(
+  () => !loading.value && mapped.value && serverKeys.value.length > 0 && localKeys.value.length === 0
+)
+const possiblyTruncated = computed(() => serverKeys.value.length >= SERVER_ROW_LIMIT)
 
-function handleViewChain(row) {
-  chainData.value = row
-  chainOpen.value = true
-}
-
-function normalizeText(value) {
-  const text = value == null ? '' : String(value).trim()
-  return text === '' ? null : text
-}
-
-function statusText(status) {
-  return { '0': '正常', '1': '冻结', '2': '轮换', '3': '回收' }[String(status)] || (status ?? '未知')
+function resetFilters() {
+  algoFilter.value = ''
+  statusFilter.value = ''
+  keyword.value = ''
 }
 
 function statusTagType(status) {
-  return { '0': 'success', '1': 'warning', '2': 'info', '3': 'danger' }[String(status)] || 'info'
+  return STATUS_TAG_TYPE[status] || 'info'
 }
 
-function chainStatusText(status) {
-  return { '0': '排队中', '1': '已上链', '2': '失败' }[String(status)] || (status ?? '未知')
+/** 「还能干什么」由服务端下发的两个布尔量拼出，前端不另写可用性判据。 */
+function usableText(row) {
+  if (!row.server) return '—'
+  if (row.server.allowsNewWork) return '可用于新会话'
+  if (row.server.allowsUnwrap) return '仅可解开旧信封'
+  return '不可用'
 }
 
-function chainStatusTagType(status) {
-  return { '0': 'info', '1': 'success', '2': 'danger' }[String(status)] || 'info'
+/**
+ * 公钥体积。Kyber 的变体由**公钥长度**自描述（800/1184/1568），
+ * 所以这里顺手把变体标出来 —— 变体对不上是"封装出来的密文对方解不开"
+ * 的直接线索，而它在界面上只表现为一个字节数。
+ */
+function keySizeText(row) {
+  const bytes = row.publicKeyBytes
+  if (!bytes) return '—'
+  if (row.algorithm === 'KYBER') {
+    const variant = KYBER_PK_LENGTHS[bytes]
+    return variant ? `${bytes} B（Kyber-${variant}）` : `${bytes} B（变体未知）`
+  }
+  return `${bytes} B`
 }
 
-reset()
-getList()
+function openDetail(row) {
+  detail.value = row
+  detailOpen.value = true
+}
+
+function formatTime(value) {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+onMounted(load)
 </script>
 
 <style scoped>
-.detail-container { padding: 0 10px }
-.key-content-box { background-color: #f8f9fa; border-radius: 4px; padding: 15px; margin-top: 10px; border: 1px solid #ebeef5 }
-.key-item { margin-bottom: 15px }
-.key-label { display: block; font-weight: bold; color: #606266; margin-bottom: 5px; font-size: 14px }
-.key-value-block { background-color: #282c34; color: #abb2bf; padding: 10px; border-radius: 4px; font-family: Consolas, Monaco, monospace; font-size: 13px; word-break: break-all; white-space: pre-wrap }
+.gen-history__card { max-width: 1320px; margin: 24px auto; }
+.gen-history__header { display: flex; align-items: center; justify-content: space-between; }
+.gen-history__header h2 { margin: 0; font-size: 18px; }
+.gen-history__header-side { display: flex; align-items: center; gap: 8px; }
+.gen-history__lead { margin: 0 0 16px; color: var(--kms-text-secondary, #606266); line-height: 1.7; }
+.gen-history__alert { margin-bottom: 12px; }
+.gen-history__filter { margin-bottom: 4px; }
+.gen-history__filter-select { width: 160px; }
+.gen-history__summary { margin: 0 0 12px; font-size: 13px; color: var(--kms-text-secondary, #606266); }
+.gen-history__table { margin-bottom: 12px; }
+.gen-history__legacy { margin-left: 6px; }
+.gen-history__empty { margin: 0; color: var(--kms-text-secondary, #909399); font-size: 13px; }
+.gen-history__reconcile-box {
+  margin-top: 12px; padding: 10px 14px; border-radius: 6px;
+  background: var(--el-fill-color-light, #f5f7fa);
+}
+.gen-history__reconcile-head { display: flex; gap: 12px; align-items: baseline; }
+.gen-history__reconcile-title { font-weight: 600; font-size: 13px; }
+.gen-history__reconcile-body { margin: 6px 0 0; font-size: 13px; line-height: 1.7; color: var(--kms-text-secondary, #606266); }
+.gen-history__pk-box { margin-top: 12px; }
+.gen-history__pk-label { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.gen-history__pk-value {
+  background: #282c34; color: #abb2bf; padding: 10px; border-radius: 4px;
+  font-family: Consolas, Monaco, monospace; font-size: 12px;
+  word-break: break-all; max-height: 180px; overflow: auto;
+}
+.gen-history__pk-note { margin: 8px 0 0; font-size: 12px; color: var(--kms-text-secondary, #909399); line-height: 1.7; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.is-ok { color: var(--el-color-success, #67c23a); }
+.is-bad { color: var(--el-color-danger, #f56c6c); }
+.is-muted { color: var(--kms-text-secondary, #909399); }
 </style>

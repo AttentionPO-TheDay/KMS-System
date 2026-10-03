@@ -391,7 +391,9 @@ class NodeService:
 
     def store_node_public_key(self, algorithm: str, public_key: str,
                               security_level: str = None,
-                              device_id: str = None) -> Dict[str, Any]:
+                              device_id: str = None,
+                              key_id: str = None,
+                              key_version=None) -> Dict[str, Any]:
         """登记一个算法的**公钥**（文档 §4.4）。
 
         这是节点初始化的新入口：私钥在节点浏览器产生并留在那里，
@@ -413,6 +415,22 @@ class NodeService:
            `canonical_algorithm` 归一（也不做 `CL-` 前缀剥离）：那些写法指的是
            CL-Falcon **格材料**，与标准 NIST Falcon 不兼容 —— 收下来就会被当成
            可用签名公钥登记，之后验签永远失败，且看不出为什么。宁可不认，不可误认。
+
+        `key_id` / `key_version`（KMS-005 新增）
+        --------------------------------------
+        节点在本地铸 keyId（`key-ref.js` 的 `mintKeyId`，形状与后端
+        `node_key_registry.new_key_id` 一致），登记时把**同一个** id 报上来，
+        服务端按它落库。两边这段字符串必须逐字节相同：keyRef 是
+        `node/{nodeId}/{算法}/{keyId}/{版本}`，节点按它找私钥、服务端按它找信封。
+        所以这里**不做任何更正**（不 trim、不改大小写、不补前缀）—— 静默更正会让
+        服务端记录成 A、节点本地是 B，而两处各自都"看起来对"。
+
+        语义按 keyId 分两种，由 `node_key_registry.register_public_key` 落地：
+          * **给了新 keyId** —— 这是一次"生成新密钥"：旧版本降级 RETIRED，
+            新行升为 ACTIVE。这条路径不会复用旧 SM2/SSCL 的 `u`，因为 u 与私钥
+            一起在节点侧重新生成（计划 §7 阶段 1 判据④）；
+          * **不给 keyId** —— 调用方的意思是"这是我当前的公钥"（初始化页每次
+            进入都会重报四套）：按公钥摘要幂等，同一把重复上报是无操作。
         """
         import base64 as _b64
 
@@ -420,6 +438,7 @@ class NodeService:
         if name not in REGISTRABLE_ALGORITHMS:
             return {
                 'success': False,
+                'code': C.ERR_ALGORITHM_NOT_ALLOWED,
                 'message': (
                     f'不支持的算法：{algorithm}'
                     f'（可选 {"/".join(REGISTRABLE_ALGORITHMS)}）'
@@ -428,7 +447,25 @@ class NodeService:
 
         value = str(public_key or '').strip()
         if not value:
-            return {'success': False, 'message': '公钥为空'}
+            return {'success': False, 'code': C.ERR_INVALID_PARAMETER, 'message': '公钥为空'}
+
+        # keyVersion：只接受整数或纯数字字符串。**不用 int() 兜底** ——
+        # int(1.9) 会静默变成 1、int(True) 变成 1，都是"调用方以为存的是 X、
+        # 实际存的是 Y"。版本号是信封要引用的东西（key_ref 的末段），
+        # 错一位不是报错，是找不到密钥。
+        version = None
+        if key_version not in (None, ''):
+            raw_version = str(key_version).strip()
+            if not raw_version.isdigit() or int(raw_version) < 1:
+                return {
+                    'success': False,
+                    'code': C.ERR_INVALID_PARAMETER,
+                    'message': f'keyVersion 应为 ≥1 的整数：{key_version!r}',
+                }
+            # 这里 strip 是安全的、且与 keyId 的口径不同：版本是**数值**，
+            # 两边最终都按 int 重新渲染成 `/1`，' 1 ' 与 '1' 收敛到同一个文本。
+            # keyId 是不透明文本，原样比对，所以那边连空白都不许有。
+            version = int(raw_version)
 
         # --- 设备一致性检查（见 docstring 末段） ---
         reported = str(device_id or '').strip()
@@ -441,6 +478,7 @@ class NodeService:
             return {
                 'success': False,
                 'device_mismatch': True,
+                'code': C.ERR_DEVICE_MISMATCH,
                 'message': (
                     '该节点的密钥已与另一台设备绑定。当前设备上没有对应私钥，'
                     '因此它无法解开平台已分发给该节点的任何信封。'
@@ -473,10 +511,12 @@ class NodeService:
         # 同一把公钥重复上报是**无操作** —— 本页每次进入都会重报四套，
         # 不幂等的话每进一次页面就凭空轮换一次密钥版本。
         try:
-            register_public_key(
+            row = register_public_key(
                 self.node,
                 algorithm=name,
                 public_key=stored,
+                key_id=key_id,
+                key_version=version or 1,
                 security_level=str(security_level or '').strip(),
                 device_id=reported or bound,
                 activate=True,
@@ -499,7 +539,17 @@ class NodeService:
             self.node.save(update_fields=fields)
 
         logger.info('节点 %s 登记 %s 公钥（长度 %d）', self.node_id, name, len(stored))
-        return {'success': True, 'algorithm': name, 'message': f'{name} 公钥已登记'}
+        return {
+            'success': True,
+            'algorithm': name,
+            'message': f'{name} 公钥已登记',
+            # 回传**落库后**的 keyId/版本：节点据此核对"服务端记下的 id 就是
+            # 我本地铸的那个"。两边不一致时若只在各自界面显示，会一直看不出来 ——
+            # 而 keyRef 一旦对不上，就是"密钥在、查不到"。
+            'key_id': row.key_id,
+            'key_version': row.key_version,
+            'status': row.status,
+        }
 
     def initialize_base_keys(self) -> Dict[str, Any]:
         """节点首次初始化的**收尾**（文档 §3.1 / §4.4）。

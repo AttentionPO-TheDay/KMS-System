@@ -69,6 +69,37 @@ _MIRROR_COLUMNS: Dict[str, Tuple[str, ...]] = {
 
 _ID_SAFE = re.compile(r'[^A-Za-z0-9_.-]')
 
+#: keyId 的字符合集与长度上限。与前端 `key-ref.js` 的可接受集合一致
+#: （`node/{nodeId}/{算法}/{keyId}/{版本}` 的 keyId 段），也与模型列宽一致。
+_KEY_ID_RE = re.compile(r'[A-Za-z0-9_.-]{1,64}')
+_KEY_ID_MAX_LEN = 64
+
+
+def _validate_key_id(raw) -> str:
+    """校验调用方**显式给出**的 keyId。空值表示"未提供"，由本模块铸一个新的。
+
+    ⚠️ 刻意**拒绝而不 trim**：本地 keyRef 的 keyId 段就是调用方给的原文
+       （`key-ref.js` 的 `requireRefPart` 同样拒绝首尾空白）。这里若静默
+       `strip()`，服务端记录的 keyId 与节点本地的引用会变成两个不同的 id ——
+       而两处各自"看起来都对"，只有等到按引用找密钥时才现形。
+    """
+    text = str(raw if raw is not None else '')
+    if not text:
+        return ''
+    if text != text.strip():
+        raise C.ContractError(
+            'keyId 首尾不能有空白（不做静默更正：本地 keyRef 用的是原文，'
+            'trim 会让服务端记录与节点本地引用指向两个不同的 id）',
+            code=C.ERR_INVALID_PARAMETER,
+        )
+    if not _KEY_ID_RE.fullmatch(text):
+        raise C.ContractError(
+            f'keyId 只允许字母、数字与 _ . -，长度 1~{_KEY_ID_MAX_LEN}：{text!r}。'
+            '尤其不能含 "/" —— keyRef 按 / 切段，切错段不报错，只会找不到密钥',
+            code=C.ERR_INVALID_PARAMETER,
+        )
+    return text
+
 
 def hash_public_key(public_key: str) -> str:
     """公钥摘要（sha256 十六进制）。
@@ -95,7 +126,15 @@ def new_key_id(node: Node, algorithm: str) -> str:
             f'{algorithm!r} 不能登记为长期密钥（允许：{"、".join(REGISTRABLE_ALGORITHMS)}）'
         )
     safe_node = _ID_SAFE.sub('-', str(node.node_id or node.pk))
-    return f'{safe_node}-{name}-{uuid.uuid4().hex[:8]}'
+    suffix = uuid.uuid4().hex[:8]
+    # 列宽就是 64（与 `_validate_key_id` 同一上限）：节点编号很长时整串会超，
+    # 超了在 MySQL 严格模式下是插入报错、在非严格模式下是静默截断 ——
+    # 后者更糟（截断后的 keyId 与节点本地引用不再相等）。所以在这里收口：
+    # 截的只是**可读部分**，随机后缀与算法名完整保留，唯一性不受影响。
+    room = _KEY_ID_MAX_LEN - len(name) - len(suffix) - 2
+    if len(safe_node) > room:
+        safe_node = safe_node[:max(room, 1)]
+    return f'{safe_node}-{name}-{suffix}'
 
 
 def _assert_registrable(algorithm: str) -> str:
@@ -179,7 +218,7 @@ def register_public_key(
 
     digest = hash_public_key(material)
     version = int(key_version or 1)
-    kid = (key_id or '').strip()
+    kid = _validate_key_id(key_id)
 
     if kid:
         existing = NodeLongTermKey.objects.filter(
