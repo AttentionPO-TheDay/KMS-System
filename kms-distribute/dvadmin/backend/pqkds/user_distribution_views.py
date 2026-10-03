@@ -38,9 +38,11 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
+from . import api_contract as C
 from . import kms_service_client as kms
 from .envelope_signature import ciphertext_digest, sign_envelope, verify_envelope
 from .models import DistributionBatch, Node, PreDistributedKey, SessionKey, UserKeyEnvelope, UserNodeAuthorization
+from .node_key_registry import require_usable_key
 from .sm4_crypto import PAYLOAD_ALGORITHM_SM4, PayloadCipher
 from .wrappers import (
     NODE_DEFAULT_WRAPPING,
@@ -650,6 +652,29 @@ def distribute_to_user(request, identity):
         logger.info('分发批次 %s：发起用户 %s 未映射到节点，信封将不含签名',
                     batch_id, user_id)
 
+    # 签名闸门（KMS-007）：在读 `sender_node.falcon_sign_private_key` 之前，
+    # 先问**事实来源**（`NodeLongTermKey`）这把 FALCON 密钥还能不能用于新工作。
+    #
+    # 不做这一步会怎样：回收**不会清空** `falcon_sign_private_key` 这一列
+    # （`revoke_public_key` 只清公钥列，私钥列全仓只在 node_service 写入），
+    # 所以下面那个 `if sender_node.falcon_sign_private_key:` 判据在回收之后
+    # **依然为真** —— 分发票照样用一把已被回收的私钥签名，信封落库、验签通过，
+    # 全程没有任何一处报错；只有事后翻 `NodeLongTermKey` 才知道这把早已不该再用。
+    # 这正是"看起来成功、实际违反安全策略"的失败，比抛错难查得多。
+    #
+    # ⚠️ 仍然在列非空时才判：从未生成过签名密钥的节点既有行为是"不签名、
+    #    分发照常"（上一行的日志就是这么写的），不能因为本闸门把它变成拒绝。
+    #    但"列里有材料"而登记表说不可用时，必须拒绝 —— 那才是回收后的情形。
+    # 错误码走本文件既有的 `_error` 出口：`message` 里带上 `exc.code`
+    # （`code` 字段保持数字状态码，见该函数的约定）。
+    if sender_node is not None and sender_node.falcon_sign_private_key:
+        try:
+            require_usable_key(sender_node, 'FALCON')
+        except C.ContractError as exc:
+            logger.error('分发被拒：发送方 %s 的 FALCON 密钥不可用 code=%s err=%s',
+                         sender_node.node_id, exc.code, exc.message)
+            return _error(f'{exc.code}：{exc.message}', exc.http_status)
+
     envelopes: List[UserKeyEnvelope] = []
     node_records: List[PreDistributedKey] = []
     node_results: List[Dict[str, Any]] = []
@@ -736,6 +761,38 @@ def distribute_to_user(request, identity):
                 # 因此这里**绝不能**再 generate_key() 一次 —— 那会让两条腿各持一把 K，
                 # 表面上"两边都能解开"，实际双方谁也解不开对方发的消息。
                 for node in node_map.values():
+                    # 节点腿闸门（KMS-007）：在 `wrap_for_node(...)` 读物化列
+                    # （`kyber_public_key` / `gm_public_key` / `sscl_public_key`）之前，
+                    # 先判这把长期密钥还能不能用于**新信封**。
+                    #
+                    # 不做这一步会怎样：回收确实会清空物化列，于是 `wrap_for_node`
+                    # 抛 `WrapperError` 被当作"单节点失败"吞掉 —— 但清空只发生在
+                    # 被回收的那把**原本是 ACTIVE** 时（`revoke_public_key` 的分支）。
+                    # 一旦行不是 ACTIVE（过期、被降级、或回收路径被绕过），列里仍是
+                    # 死材料，封装**照样成功**，批次显示成功、节点却永远解不开，
+                    # 而所有日志都只有"成功"。
+                    #
+                    # ⚠️ 算法取自本处实际使用的 `node_wrapping`（kyber_kem / gm_sm2 /
+                    #    gm_sscl），不是写死 KYBER：用户选了国密封装时去查 Kyber
+                    #    等于查了一把不相干的密钥，该拒的不拒。
+                    # ⚠️ 封装材料仍从 `wrap_for_node` 原有的物化列取 ——
+                    #    物化列与登记行在 FALCON 上并不等价（`falcon_public_key`
+                    #    装的是 CL-Falcon 遗留材料），换来源会静默换算法。
+                    # 闸门返回的登记行**顺手留下**：它就是下面回填
+                    # `long_term_key_id/version` 用的那一行（KMS-007 D3），
+                    # 不另查一次库 —— 两次查询之间可能发生轮换，
+                    # 回填的引用会与实际封装用的材料对不上。
+                    try:
+                        long_term_key = require_usable_key(node, node_wrapping)
+                    except C.ContractError as exc:
+                        # 保持"单节点失败不拖垮整批、批次记 partial"的既有行为，
+                        # 但错误码必须原样带上：`KEY_REVOKED` 被压成一句"封装失败"
+                        # 就与"公钥格式不对"无法区分，运维只能去猜，而处置完全不同
+                        # （换密钥 vs 修数据）。
+                        logger.warning('批次 %s 节点 %s 长期密钥不可用：%s %s',
+                                       batch_id, node.node_id, exc.code, exc.message)
+                        failed.append(f'{node.node_id}: {exc.code} {exc.message}')
+                        continue
                     try:
                         node_envelope, _ = wrap_for_node(payload_key, node, node_wrapping)
                     except WrapperError as exc:
@@ -766,6 +823,15 @@ def distribute_to_user(request, identity):
                             key_hash=key_hash,
                             status='distributed',
                             expires_at=expires_at,
+                            # KMS-007 D3：这一腿用该节点哪把长期密钥封的。
+                            # ⚠️ 本状态（'distributed'）眼下**不在**
+                            # `revoke_pool_items_for_key` 的失效范围内
+                            # （它只动 READY/RESERVED）；节点腿信封的回收处置
+                            # 由取信封入口的闸门负责（`node_session_views`
+                            # 里判登记表，已回收即拒发）。回填是为了让
+                            # "哪把密钥封的这一腿"有据可查。
+                            long_term_key_id=long_term_key.key_id,
+                            long_term_key_version=long_term_key.key_version,
                         )
                     )
 

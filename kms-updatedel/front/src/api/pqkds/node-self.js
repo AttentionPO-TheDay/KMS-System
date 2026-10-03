@@ -138,6 +138,44 @@ export function listSelfNodeKeys() {
 }
 
 /**
+ * 回收本节点的一把长期密钥（KMS-007）。
+ *
+ * ⚠️ `algorithm` / `keyId` / `keyVersion` **三者都必须给出**，而且是列表行上的原值。
+ *    `keyId` 与 `keyVersion` 缺一不可：服务端**不接受**"取最新一把"的隐式行为
+ *    （KMS-006 定下的纪律）——替调用方挑版本，挑中的那一版与页面上显示的可能
+ *    不是同一个，而两边都不会报错。`algorithm` 同理**不再由服务端推断**：
+ *    服务端查找的那一行是 `(节点, 算法, keyId, 版本)` 四元组，而 keyId 只是一段
+ *    不透明文本，跨算法**没有**唯一性保证（同一台机器上两把不同算法的密钥
+ *    可能碰巧同名）。少传一个字段不会退化成"全算法搜一遍"，只会被明确拒掉 ——
+ *    那正是我们要的：宁可拒绝，也不要猜错算法撤掉另一把。
+ *    列表页本来就逐行渲染了算法名，原样带回来即可。
+ *
+ * ⚠️ 回收是**终态**：该版本此后不能更新，也不能用于新分发/新签名/新预分配/
+ *    新会话。回收入口还会处置受影响的对象（未消费池项、已建立会话），
+ *    并把处理结果放在响应的 `impact` 里。
+ *
+ * 响应 `data` 形状（与后端线约定）：`{ revoked, impact: { poolItems, sessions } }`。
+ * **影响面计数必须在页面上如实显示**，不能吞成一句"回收成功" ——
+ * "密钥已回收、池项/会话却还活着"与"接口说一切正常"是同一类静默错误，
+ * 正是 KMS-007 要消灭的。
+ *
+ * 失败形状与其它 node-self 接口一致：HTTP 恒 200，成败看 `code`；
+ * 失败原因在 `error.errorCode`（`api_contract.ERR_*`），判断必须用它。
+ *
+ * @param {string} algorithm  列表行原样带来的算法（如 'KYBER' / 'FALCON'）
+ * @param {string} keyId      列表行原样带来的 keyId
+ * @param {number} keyVersion 列表行原样带来的版本（服务端下发的是数字）
+ * @param {string} reason     回收原因，会写进 revokedReason
+ */
+export function revokeSelfNodePublicKey(algorithm, keyId, keyVersion, reason) {
+  // 四个字段都**原样转发**，不在这里做 Number()/String() 归一：
+  // 把认不出的版本转成 NaN，JSON 会把它序列化成 null —— 服务端读到的就是
+  // "未提供版本"，一个编程错误会伪装成一次合法的缺版本请求，定位信息在
+  // 本地就丢掉了。该拒绝的让服务端用明确错误码拒绝。
+  return http.post('/node-self/keys/revoke/', { algorithm, keyId, keyVersion, reason }).then(unwrap)
+}
+
+/**
  * 首次登录后的初始化**收尾**。
  *
  * ⚠️ §4.4 起本接口**不再生成密钥** —— 它只校验四套公钥是否齐备，

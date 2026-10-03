@@ -20,7 +20,7 @@ from .user_distribution_views import (
     user_symmetric_keys,
 )
 # 阶段 2：节点自助（首次登录后的密钥初始化）。身份取自令牌自省，见该模块 docstring。
-from .node_self_views import node_self, node_self_init, node_self_keys
+from .node_self_views import node_self, node_self_init, node_self_keys, node_self_revoke_key
 # §6.5：节点取自己的信封 + 提交「我已恢复 K」的证明
 # §10.10：节点自己的会话列表（服务端按外键隔离，见该函数的 docstring）
 from .node_session_views import node_envelopes, node_session_confirm, node_sessions
@@ -61,6 +61,12 @@ urlpatterns = [
     # §4.4：节点侧生成密钥后**只上传公钥**。必须与 init 分开 ——
     # 先逐个登记四套公钥，再由 init 收尾置 ACTIVE（见 node_service 的说明）。
     path('node-self/keys/', node_self_keys, name='node-self-keys'),
+    # KMS-007：节点侧「密钥回收」菜单的落点。改的是 `NodeLongTermKey` 那一行，
+    # 并连带失效依赖它的池项与会话；在此之前那个菜单删的是另一个服务的
+    # `keymanage` 旧行，长期密钥原样不动（见该 view 的 docstring）。
+    # ⚠️ 路径与 `node-self/keys/` 不同（后者无通配段，不会吃掉这条），
+    #    但同样必须排在 router 之前。
+    path('node-self/keys/revoke/', node_self_revoke_key, name='node-self-key-revoke'),
     path('node-self/init/', node_self_init, name='node-self-init'),
     # §6.5：节点取**自己那腿**信封并在本地解封（服务端不代解、也没有私钥），
     # 再提交「我已恢复 K」的证明；双方证明一致即提升为 established。

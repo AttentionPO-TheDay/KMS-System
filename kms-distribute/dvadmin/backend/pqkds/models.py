@@ -811,6 +811,31 @@ class PreDistributedKey(CoreModel):
         null=True, blank=True, verbose_name="来源密钥ID",
         help_text="用户所选非对称密钥的 kms.keymanage.key_id（逻辑引用，不建跨库外键）",
     )
+    # --- KMS-007：记住"这一项是用哪把长期密钥封的" ---
+    # 池项里的密文是用**某一把具体版本**的长期公钥封的。那把密钥一旦被回收，
+    # 这一项就永远解不开了 —— 但在补齐这两列之前，表里**没有任何字段**记得住
+    # 是哪一把：`algorithm` / `wrapping_algorithm` 只到算法家族（kyber_kem /
+    # falcon_lattice），`source_key_id` 指的是**另一个库**的旧模型，只管用户腿。
+    #
+    # 后果是回收任何一个算法的一把密钥时，只能按 `node_id` 把该节点**全部**
+    # READY/RESERVED 池项一次清空 —— 包括用其它仍然有效的算法封的那些。
+    # 而 `revoke_pool_items_for_key(node_id, key_id, version)` 的签名收着
+    # `key_id`/`version` 两个参数、日志里也逐字印着它们，读日志的人会以为
+    # 它是精确失效的。**参数进不了查询，是因为数据本来就不在表里。**
+    #
+    # ⚠️ 两列都可空，且**历史行一律为 NULL**：迁移不回填（回填只能靠猜，
+    #    而猜错的后果是"回收时漏掉本该失效的池项"，静默留下一条永远解不开
+    #    却显示 READY 的条目 —— 正是这张表最该避免的那种失败）。
+    #    回收路径对 NULL 行退化为"同节点 + 同算法"匹配，并在日志里如实写明
+    #    退化范围，不假装精确。
+    long_term_key_id = models.CharField(
+        max_length=64, null=True, blank=True, verbose_name="长期密钥标识",
+        help_text="封这一项时所用 NodeLongTermKey.key_id；历史行为 NULL（无法可靠回填）",
+    )
+    long_term_key_version = models.PositiveIntegerField(
+        null=True, blank=True, verbose_name="长期密钥版本",
+        help_text="封这一项时所用 NodeLongTermKey.key_version；历史行为 NULL",
+    )
     recipient_type = models.CharField(
         max_length=10, default='node', verbose_name="收件人类型",
         help_text="node=节点间预分配；user=分发给用户本人",

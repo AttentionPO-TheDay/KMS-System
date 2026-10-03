@@ -70,6 +70,16 @@ _WRAPPING_TO_CANONICAL: Dict[str, str] = {
     LEGACY_WRAPPING_FALCON: 'FALCON',
 }
 
+#: 上表的**反查**：规范算法名 → 该算法在库里的全部封装拼写。
+#: 由 `_WRAPPING_TO_CANONICAL` 派生而非手抄 —— 手抄的第二份一旦漂移，
+#: 表现是"某算法的历史池项匹配不到"，静默少失效一批（不报错）。
+_WRAPPINGS_BY_CANONICAL: Dict[str, Tuple[str, ...]] = {
+    canonical: tuple(
+        wrapping for wrapping, owner in _WRAPPING_TO_CANONICAL.items() if owner == canonical
+    )
+    for canonical in set(_WRAPPING_TO_CANONICAL.values())
+}
+
 #: 规范算法名 → 节点的公钥列名（`models.Node`）。这是**唯一**一份映射：
 #: 写入侧由 `node_key_registry._write_node_column` 取用（KMS-004 之后
 #: `NodeService._PUBLIC_KEY_COLUMNS` 已删除，不再有第二份）。镜像列
@@ -110,6 +120,32 @@ def canonical_algorithm(value: str) -> str:
     if name in ('FALCON_LATTICE', 'FALCONLATTICE'):
         return 'FALCON'
     return name
+
+
+def wrapping_algorithms_for(algorithm: str) -> Tuple[str, ...]:
+    """规范算法名 → 它在 `PreDistributedKey` 里可能出现的**全部**拼写。
+
+    用于"按算法家族匹配历史行"（KMS-007 D3 的退化分支）：库里的
+    `algorithm` / `wrapping_algorithm` 是**数据**（`kyber_kem` / `gm_sm2` /
+    `gm_sscl` / `falcon_lattice` …），而调用方手里通常是规范名
+    （`KYBER` / `FALCON`…）。两种拼写直接比会**恒不命中且不报错**，
+    表现是"该失效的历史池项还活着"。
+
+    返回值含：
+      * 上表的全部封装拼写（FALCON 的 `falcon_lattice`）；
+      * **规范名本身**（大写）—— 库里也确实有以规范名写进去的值
+        （`LEGACY_PROTECTION_ALGORITHMS` 那一类历史写法）。
+
+    不认识的输入（含空串）返回**空元组**：空集合不会误命中任何行。
+    这里刻意不返回"原样大写"—— 那个值在这套表里根本不存在，拿它去查
+    等于白查，而且看起来像查过了。
+    （`canonical_algorithm` 对不认识的输入原样大写返回、不抛异常，所以
+    这里**必须自己按表判一次成员资格**，不能把"返回非空"当成"认识"。）
+    """
+    canonical = canonical_algorithm(algorithm)
+    if canonical not in _WRAPPINGS_BY_CANONICAL:
+        return ()
+    return _WRAPPINGS_BY_CANONICAL[canonical] + (canonical,)
 
 
 def is_protection_algorithm(value: str) -> bool:
@@ -405,7 +441,8 @@ __all__ = [
     'WRAPPING_KYBER', 'WRAPPING_SM2', 'WRAPPING_SSCL', 'LEGACY_WRAPPING_FALCON',
     'NODE_WRAPPING_CHOICES', 'NODE_DEFAULT_WRAPPING',
     'NODE_PUBLIC_KEY_COLUMN', 'NODE_LEGACY_PRIVATE_KEY_COLUMN',
-    'canonical_algorithm', 'is_protection_algorithm', 'is_legacy_protection_algorithm',
+    'canonical_algorithm', 'wrapping_algorithms_for',
+    'is_protection_algorithm', 'is_legacy_protection_algorithm',
     'assert_protection_algorithm', 'algorithm_column',
     'KEY_STATUS_PENDING', 'KEY_STATUS_ACTIVE', 'KEY_STATUS_RETIRED', 'KEY_STATUS_REVOKED',
     'KEY_STATUS_EXPIRED', 'KEY_STATUS_LEGACY', 'KEY_STATUS_CHOICES',

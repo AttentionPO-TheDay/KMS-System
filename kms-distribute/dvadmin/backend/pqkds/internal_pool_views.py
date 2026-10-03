@@ -56,7 +56,18 @@ def _internal_token_ok(request) -> bool:
 def revoke_pool_by_key(request):
     """把依赖某节点长期密钥的可用池项置为 REVOKED。
 
-    请求体：`{"node_id": "NODE-A", "key_id": 12, "version": 3}`（后两项用于日志）
+    请求体：
+        `{"node_id": "NODE-A", "key_id": 12, "version": 3, "algorithm": "KYBER"}`
+
+    * `key_id` + `version` 用于**精确匹配**创建时回填的长期密钥引用
+      （KMS-007 D3）。此前这两项只出现在日志文案里，实际匹配只看 `node_id` ——
+      撤一把密钥会把该节点全部可用池项清空，日志却印得像是精确失效的。
+    * `algorithm`（**规范名**，如 `KYBER` / `FALCON`，可选但**强烈建议传**）
+      把"没有长期密钥引用"的历史行（迁移 0017 之前创建）的退化匹配收窄到
+      该算法的拼写家族。**不传时退化面是该节点全部算法的历史行** ——
+      那是本端点的旧行为，会误伤其它算法；调用方若拿不出算法名，
+      请把这一点当作已知的粗粒度失效对待（日志里会点名说明）。
+
     响应：  `{"code": 200, "data": {"revoked": <条数>}}`
     """
     if not _internal_token_ok(request):
@@ -78,6 +89,10 @@ def revoke_pool_by_key(request):
             node_id,
             payload.get('key_id'),
             payload.get('version'),
+            # 规范名（'KYBER' / 'FALCON'…）。传 None 时退化面落到该节点全部
+            # 算法（见 docstring）—— 这里不替调用方猜一个算法名，
+            # 猜错的方向是"清掉另一算法的历史池项"，且不报错。
+            algorithm=payload.get('algorithm'),
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception('连带失效池项失败: node=%s', node_id)

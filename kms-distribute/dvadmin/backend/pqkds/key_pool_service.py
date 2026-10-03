@@ -20,7 +20,9 @@ from datetime import timedelta
 from django.utils import timezone
 from django.db import transaction, models
 
+from . import api_contract as C
 from .models import Node, SessionKey, PreDistributedKey
+from .node_key_registry import require_usable_key
 from .crypto_utils import KyberCrypto, AESCrypto
 
 # 载荷层已切到国密 SM4（决策 D3）。这里显式导入算法标记与 SM4 实现，
@@ -59,7 +61,8 @@ class KeyPoolService:
     POOL_STATUS_REVOKED = 'REVOKED'
 
     @staticmethod
-    def revoke_pool_items_for_key(node_id: str, key_id, version=None) -> int:
+    def revoke_pool_items_for_key(node_id: str, key_id, version=None,
+                                  algorithm=None) -> int:
         """阶段 6（文档 §7.6）：长期密钥被回收后，连带失效依赖它的池项。
 
         池项里的密文是用**某个长期公钥**封的。那把长期密钥一旦被回收，
@@ -71,24 +74,100 @@ class KeyPoolService:
 
         范围只动 READY / RESERVED：已 CONSUMED 的是历史事实，
         改了会让审计记录对不上（那次会话确实用过这把密钥）。
+
+        ---- KMS-007 D3：匹配必须精确到"哪一把长期密钥" ----
+
+        改前这个函数**只按 node_id 匹配**，`key_id` / `version` 两个参数
+        只出现在日志文案里。后果：回收任何一个算法的一把密钥，会把该节点
+        **全部** READY/RESERVED 池项一次清空（包括用其它仍然有效的算法封的），
+        而日志逐字印着 `key_id=… version=…`，读日志的人会以为它是精确失效的。
+
+        现在分两面：
+
+        * **精确面** —— 创建池项时回填的 `long_term_key_id` +
+          `long_term_key_version` 命中（回填点见各 `generate_*_pool` 与
+          `user_distribution_views.distribute_to_user`）。这是唯一可靠的判据。
+        * **退化面** —— KMS-007 之前的历史行这两列是 NULL（迁移 0017 刻意
+          不回填：猜一个 key_id 落库比留空更糟，错了没有任何迹象）。它们
+          只能退化为「同节点 + **同算法家族**」匹配；**不提供 `algorithm`
+          时退化范围是该节点全部算法**（内部运维口的旧行为）。两种退化都
+          在日志里如实说明命中条数与范围 —— 不假装精确。
+
+        ⚠️ `algorithm` 收的是**规范名**（`KYBER`/`FALCON`…），不是库里的
+           封装拼写；家族展开由 `api_contract.wrapping_algorithms_for` 做。
         """
         from django.db.models import Q
 
         # 池项的密文可能封给 node1 或 node2 中的任一方，
         # 且算法上分节点腿/用户腿 —— 这里按节点匹配，命中任一角色即失效。
-        qs = PreDistributedKey.objects.filter(
+        scope = PreDistributedKey.objects.filter(
             status__in=KeyPoolService.POOL_STATUS_READY_VALUES
             + (KeyPoolService.POOL_STATUS_RESERVED,)
         ).filter(
             Q(node1__node_id=node_id) | Q(node2__node_id=node_id)
         )
-        n = qs.update(status=KeyPoolService.POOL_STATUS_REVOKED)
-        if n:
+
+        # 版本号只接受**真正的整数**：`True` 会被 `int()` 收成 1、
+        # `1.9` 会被截成 1 —— 静默变成"撤 v1"，而那可能正是在产版本。
+        # 调用方 `revoke_long_term_key` 已先做过严格校验；经内部运维口
+        # （`internal_pool_views`）进来时值来自 JSON，字符串数字是常见形态。
+        version_int = None
+        if isinstance(version, int) and not isinstance(version, bool):
+            version_int = version
+        elif isinstance(version, str) and version.strip().isdigit():
+            version_int = int(version.strip())
+
+        key_id_text = str(key_id or '').strip()
+
+        with transaction.atomic():
+            # --- 精确面：按创建时回填的长期密钥引用命中 -------------------
+            # key_id 为空时**不查**：`filter(long_term_key_id=None)` 在
+            # Django 里是 `IS NULL`，那会把"没有引用"的历史行误当成精确命中，
+            # 于是日志把退化面说成精确面 —— 恰好是要修的那类假精确。
+            precise_n = 0
+            if key_id_text and version_int is not None:
+                precise_n = scope.filter(
+                    long_term_key_id=key_id_text,
+                    long_term_key_version=version_int,
+                ).update(status=KeyPoolService.POOL_STATUS_REVOKED)
+
+            # --- 退化面：历史行（无长期密钥引用）---------------------------
+            degraded = scope.filter(long_term_key_id__isnull=True)
+            family = C.wrapping_algorithms_for(algorithm) if algorithm else ()
+            if algorithm and not family:
+                # 传了算法但认不出来：宁可**不退化**也不按节点全清 ——
+                # 认不出的算法名去匹配那个节点所有算法的池项，正是上面那个
+                # 缺陷的翻版，而且是静默的。留一条日志说明漏掉了什么。
+                degraded_n = 0
+                logger.error(
+                    "长期密钥回收：算法 %r 认不出来，历史行（无长期密钥引用）"
+                    "本次**未失效** —— 请核对调用方传入的算法名。node=%s key_id=%s",
+                    algorithm, node_id, key_id_text or key_id,
+                )
+                return precise_n
+            if family:
+                degraded = degraded.filter(
+                    Q(wrapping_algorithm__in=family) | Q(algorithm__in=family)
+                )
+            degraded_n = degraded.update(status=KeyPoolService.POOL_STATUS_REVOKED)
+
+        total = precise_n + degraded_n
+        if total:
+            if not algorithm:
+                scope_note = (
+                    f'调用方未提供算法，退化范围扩大到该节点全部算法'
+                    f'（历史行 {degraded_n} 条）—— 粗粒度失效，请核对是否误伤'
+                )
+            else:
+                scope_note = f'同节点+同算法{list(family)}（历史行 {degraded_n} 条）'
             logger.warning(
-                "长期密钥回收连带失效池项：node=%s key_id=%s version=%s -> %d 条置为 REVOKED",
-                node_id, key_id, version, n,
+                "长期密钥回收连带失效池项：node=%s key_id=%s version=%s -> %d 条置为 REVOKED"
+                "（精确命中 %d 条；无长期密钥引用的历史行按 %s 退化匹配）",
+                node_id, key_id_text or key_id,
+                version_int if version_int is not None else version,
+                total, precise_n, scope_note,
             )
-        return n
+        return total
 
     # ================================================================
     #  Kyber KEM 方案: 批量预分配
@@ -118,6 +197,34 @@ class KeyPoolService:
             node2 = Node.objects.get(node_id=node2_id)
         except Node.DoesNotExist as e:
             return {'success': False, 'message': f'节点不存在: {e}'}
+
+        # 闸门（KMS-007）：生成新池项 = 新工作，必须在读物化列之前先判
+        # `node2` 的 KYBER 长期密钥还能不能用。
+        #
+        # 不做这一步会怎样：物化列被清空**只发生在回收时那一把原本是 ACTIVE**
+        # （`revoke_public_key` 的分支）。若行已是 EXPIRED / RETIRED，或状态转换
+        # 走了别的路径，列里仍是旧公钥 —— 下面那句 `if not node2.kyber_public_key`
+        # 判不出来，一批**注定解不开**的池项就这么生成出来并显示 READY，
+        # 直到某次会话取用、在节点上解封失败才暴露，现场离原因已经很远。
+        #
+        # ⚠️ 只把闸门加在空值判断**之前**；下面仍然照旧读 `node2.kyber_public_key`
+        #    取材料 —— 登记行是判据，不是材料来源（两者不是同一份数据）。
+        # 闸门返回的登记行**顺手留下**：它就是下面回填 `long_term_key_id/version`
+        # 用的那一行（KMS-007 D3），不另查一次库 —— 两次查询之间可能发生轮换，
+        # 两次读到的会是不同的行，回填的引用就与实际封装用的材料对不上了。
+        # 失败形状沿用本层约定（`{'success': False}`），但把 `exc.code` 一并给出：
+        # "已回收"与"没有公钥"必须可区分，否则调用方拿到的只是同一句模糊文案，
+        # 而两者的处置完全不同（换密钥 vs 先初始化节点）。
+        try:
+            long_term_key = require_usable_key(node2, 'KYBER')
+        except C.ContractError as exc:
+            return {
+                'success': False,
+                'code': exc.code,
+                # 调用方（views.py 的 generate 动作）只转达 message、不转达 code，
+                # 所以码也必须出现在文案里，判据才看得到。
+                'message': f'节点 {node2_id} {exc.message}（{exc.code}）',
+            }
 
         if not node2.kyber_public_key:
             return {'success': False, 'message': f'节点 {node2_id} 没有 Kyber 公钥'}
@@ -211,6 +318,11 @@ class KeyPoolService:
                     status='READY',
                     expires_at=expires_at,
                     generation_time_ms=latency_ms,
+                    # KMS-007 D3：记下"这一项是用哪把长期密钥封的"。
+                    # 回收时 `revoke_pool_items_for_key` 的精确面全靠这两列；
+                    # 留空会退化成"同节点 + 同算法"的粗匹配（迁移 0017）。
+                    long_term_key_id=long_term_key.key_id,
+                    long_term_key_version=long_term_key.key_version,
                 ))
             except Exception as e:
                 logger.error(f"[KeyPool/Kyber] 第 {i} 条生成失败: {e}")
@@ -269,6 +381,36 @@ class KeyPoolService:
         except Node.DoesNotExist as e:
             return {'success': False, 'message': f'节点不存在: {e}'}
 
+        # 闸门（KMS-007）：Falcon 池项同样是**新工作**（生成一份新的加密包），
+        # 必须在读 `node2.falcon_public_key`（下面空值判断与循环里那一处读取）之前，
+        # 先按**事实来源** `NodeLongTermKey` 判这把 FALCON 密钥还能不能用。
+        #
+        # 不做这一步会怎样：Falcon 这一列有两个易被忽视的坑，叠加起来的现象是
+        # "池子照常生成、节点却永远解不开"：
+        #   1. `revoke_public_key` 只在被回收的那把**原本是 ACTIVE** 时才清列；
+        #      若行不是 ACTIVE（例如 0016 回填的 LEGACY 格材料行），列里是死材料，
+        #      下面的 `if not node2.falcon_public_key` 判不出来，照样封装入库；
+        #   2. 即使列被清空，旧文案也只有"没有 Falcon 公钥"——
+        #      与"密钥已被回收"混在同一句话里，运维按"去初始化"处置却是错的。
+        #
+        # ⚠️ 闸门只判"能不能用"，材料**仍然**从 `node2.falcon_public_key` 取 ——
+        #    绝不换成登记行的 `public_key`：FALCON 上两者不是同一份数据
+        #    （登记行的 ACTIVE 是标准 Falcon 签名公钥，本列的旧值可能是 CL-Falcon
+        #    格材料），换来源会静默换算法，所有既有信封全部解不开。
+        # 返回的登记行只用于回填 `long_term_key_id/version`（KMS-007 D3）——
+        # 那是"哪把**登记密钥**在管这一列"的记账，不是材料来源。
+        # 失败形状沿用本层约定（`{'success': False}`），并把 `exc.code` 带进 message：
+        # 调用方（views.py:3407 / kms_adapter.py:313）只转达 message、不读 code，
+        # 码不写进文案，判据与运维就都看不到它。
+        try:
+            long_term_key = require_usable_key(node2, 'FALCON')
+        except C.ContractError as exc:
+            return {
+                'success': False,
+                'code': exc.code,
+                'message': f'节点 {node2_id} {exc.message}（{exc.code}）',
+            }
+
         if not node2.falcon_public_key:
             return {'success': False, 'message': f'节点 {node2_id} 没有 Falcon 公钥'}
 
@@ -323,6 +465,10 @@ class KeyPoolService:
                     status='READY',
                     expires_at=expires_at,
                     generation_time_ms=latency_ms,
+                    # KMS-007 D3：封这一项用的是 node2 的 FALCON 登记密钥，
+                    # 回收精确匹配靠这两列（留空则退化为"同节点+同算法"）。
+                    long_term_key_id=long_term_key.key_id,
+                    long_term_key_version=long_term_key.key_version,
                 ))
             except Exception as e:
                 logger.error(f"[KeyPool/Falcon] 第 {i} 条生成失败: {e}")
@@ -568,6 +714,31 @@ class KeyPoolService:
         except Node.DoesNotExist as e:
             return {'success': False, 'message': f'节点不存在: {e}'}
 
+        # 闸门（KMS-007）：这份池子是**新工作**（为 sender 生成一批新的加密包），
+        # 必须在读 `sender_node.kyber_public_key` 之前先判它还能不能用。
+        #
+        # 不做这一步会怎样：这批密文是**用 sender 自己的公钥**封的（node1=sender，
+        # 由 sender 取件后自行解封）。密钥一旦被回收、而物化列因故没被清掉
+        # （清列只发生在被回收的那把原本是 ACTIVE 时），池子会照常生成、
+        # 记录照常显示可用；直到 sender 真正取件解封失败，才发现整批都是死件，
+        # 而日志里从头到尾只有"生成完成"。
+        #
+        # ⚠️ 材料仍然从 `sender_node.kyber_public_key` 取（下面解码与 encaps 用的
+        #    就是它）：登记行只当"能不能用"的判据，不当材料来源。
+        # 错误码写进 message：调用方（views.py:3575 / kms_adapter.py:313）
+        # 只转达 message，不转达 code —— 不写进文案就等于没有。
+        # 返回的登记行**顺手留下**用于回填 `long_term_key_id/version`（KMS-007 D3）：
+        # 那一行就是下面 encaps 所用材料的登记来源，不另查一次库 ——
+        # 两次查询之间可能发生轮换，回填的引用会与实际封的材料对不上。
+        try:
+            long_term_key = require_usable_key(sender_node, 'KYBER')
+        except C.ContractError as exc:
+            return {
+                'success': False,
+                'code': exc.code,
+                'message': f'发送方节点 {sender_node_id} {exc.message}（{exc.code}）',
+            }
+
         # 只需要发送方的 Kyber 公钥（用于加密传输给发送方）
         if not sender_node.kyber_public_key:
             return {'success': False, 'message': f'发送方节点 {sender_node_id} 没有 Kyber 公钥'}
@@ -634,6 +805,14 @@ class KeyPoolService:
                     status='distributed',
                     expires_at=expires_at,
                     generation_time_ms=latency_ms,
+                    # KMS-007 D3：这批密文是用 sender 自己的长期公钥封的，
+                    # 回填引用同样记下来。注意本状态（'distributed'）眼下**不在**
+                    # `revoke_pool_items_for_key` 的失效范围内（它只动 READY/RESERVED，
+                    # 已在 `POOL_STATUS_CONSUMED_VALUES` 里）—— 回填是为了让
+                    # "哪把长期密钥封的这一批"有据可查；将来若把范围扩到这里，
+                    # 精确面才有得可依。
+                    long_term_key_id=long_term_key.key_id,
+                    long_term_key_version=long_term_key.key_version,
                 ))
             except Exception as e:
                 logger.error(f"[KeyPool/Distribute] 第 {i} 条生成失败: {e}")

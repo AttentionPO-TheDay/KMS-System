@@ -61,8 +61,14 @@ export function sql(query) {
   // 放行的话会把测试输出刷得看不清；但也不能丢 —— 失败时它才是真正的线索。
   let raw
   try {
+    // ⚠️ `--default-character-set=utf8mb4` 不能省。mysql 客户端在非交互模式下
+    //    默认按 latin1 与**终端**通信（不看服务端库里那列的 utf8mb4），于是所有
+    //    中文读回来都是 `?` —— 写侧完全正确（API 回传的中文逐字对得上），只有
+    //    "用 mysql CLI 读出来"这一条路是坏的。症状极具误导性：断言失败时会显示
+    //    `KMS-007 ????????? KEY_REVOKED`，看起来像落库时就被打成了问号。
     raw = execSync(
-      `"${DOCKER_BIN}" exec ${MYSQL_CONTAINER} mysql -uroot -p${MYSQL_PW} -N -e "${query}"`,
+      `"${DOCKER_BIN}" exec ${MYSQL_CONTAINER} mysql -uroot -p${MYSQL_PW} `
+      + `--default-character-set=utf8mb4 -N -e "${query}"`,
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
     )
   } catch (err) {

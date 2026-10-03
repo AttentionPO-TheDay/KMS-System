@@ -61,6 +61,31 @@ KMS-006 追加三组（更新：显式身份、失败不落库、登记口不给
      只能由调用方声明（`_via_rotate`）；删掉那个标志之前先读
      `node_key_registry.py` 里它上方的说明。
 
+KMS-007 追加一组（回收的影响面：顺序、重试、以及"撤的是哪一个版本"）
+====================================================================
+ 10. 回收不只是一行状态。撤掉一把长期密钥会让**已经发出去的东西变成废纸**：
+     用它封过的池项永远解不开、正在用它跑的会话再也谈不下去。`revoke_long_term_key`
+     把这三件事编排成一步，本组钉住它的四条性质：
+
+     * **撤的是哪一个版本必须由调用方说了算**。`keyVersion: true` 在 Python 里
+       会被 `int()` 收成 1（`bool` 是 `int` 的子类），静默变成"撤 v1" ——
+       而那可能正是生产中的那一版，且响应照常成功。`0` / 负数 / 小数 / 字符串
+       同样不接受。这类错误的后果与"参数没写对"完全不成比例，所以一律拒绝。
+     * **重试必须能把没做完的补上**。三步的顺序是"先撤密钥 → 再池项 → 最后会话"，
+       所以中途失败留下的状态是"密钥已撤、影响面没处理完"。这种状态下再调一次，
+       函数**刻意不早返回**（那会把半成品永久固化，重试看起来成功、实际什么都没补）。
+       本组真的造出这个半成品：直调 `revoke_public_key` 只做第一步，再走一次完整
+       回收，断言 `alreadyRevoked=True` **且**池项确实被补上了。
+     * **"这次撤的"与"早就撤了"必须可区分**。它决定要不要发 KEY_REVOKED 存证 ——
+       重试若无条件上链，同一次回收会在链上留下多条记录，"回收了几次"就没有
+       可信答案了。
+     * **指定的那一行不存在时报 KEY_NOT_FOUND，且不顺手清场**。报"不存在"而不是
+       "已回收"，是因为调用方以为找对了行、实际撤了别的东西，是最坏的一种"成功"。
+
+     会话那一半另要看 `sessionsOk`：会话失效函数**在它自己的原子块里吞异常**，
+     失败时返回 `{'success': False}` 而不是抛出。拿 `sessions == 0` 当"没有会话
+     受影响"就会把"密钥已回收、会话还活着"读成一切正常。
+
 **它必须跑在 dvadmin3-django 容器里**（要 Django 环境与数据库）：
 
     docker cp "backend/pqkds/node_key_registry.py"      dvadmin3-django:/backend/pqkds/
@@ -93,7 +118,15 @@ from django.utils import timezone  # noqa: E402
 
 from pqkds import api_contract as C  # noqa: E402
 from pqkds import node_key_registry as R  # noqa: E402
-from pqkds.models import Node, NodeLongTermKey  # noqa: E402
+from pqkds.key_pool_service import KeyPoolService  # noqa: E402
+from pqkds.key_revocation_service import revoke_long_term_key  # noqa: E402
+from pqkds.models import (  # noqa: E402
+    Node,
+    NodeLongTermKey,
+    PreDistributedKey,
+    SessionKey,
+    SessionKeyInvalidation,
+)
 from pqkds.node_service import NodeService  # noqa: E402
 
 
@@ -1092,6 +1125,246 @@ def test_register_path_cannot_add_version(node):
     return all(results)
 
 
+def _make_pool_item(node, tag, status='READY', algorithm='kyber_kem',
+                    long_term_key_id=None, long_term_key_version=None):
+    """一条预分配池项。字段取**最小可用集** —— 本组只关心它的 status 与长期密钥引用。"""
+    return PreDistributedKey.objects.create(
+        pool_id=f'TESTKMS007-{tag}-{uuid.uuid4().hex[:8]}',
+        key_index=0,
+        node1=node,
+        algorithm=algorithm,
+        encrypted_key_data='{}',
+        key_hash='0' * 64,
+        status=status,
+        expires_at=timezone.now() + timedelta(days=1),
+        long_term_key_id=long_term_key_id,
+        long_term_key_version=long_term_key_version,
+    )
+
+
+def _make_session(a, b, tag):
+    """一条**活跃**会话（`established` 是失效服务会扫的三个状态之一）。"""
+    return SessionKey.objects.create(
+        session_id=f'TESTKMS007-{tag}-{uuid.uuid4().hex[:8]}',
+        node1=a, node2=b,
+        encrypted_session_key='{}',
+        key_exchange_data='{}',
+        status='established',
+        expires_at=timezone.now() + timedelta(hours=1),
+    )
+
+
+def test_revoke_service_impact(node):
+    """KMS-007：回收的三个影响面、重试语义，以及"撤的是哪一个版本"。
+
+    ---- 为什么要造一个"半成品"状态 ----
+    本组最要紧的一条是 D 段。三步顺序（撤密钥 → 池项 → 会话）决定了中途失败
+    会留下"密钥已撤、影响面没做完"的状态，而函数**刻意不在已是 REVOKED 时
+    早返回**。这条设计只有真的造出那个状态才验得出来：直调 `revoke_public_key`
+    只做第一步，池项仍是 READY，再走一次完整回收，看它有没有把剩下的补上。
+    不造这个状态的话，"重试幂等"与"重试把活干了"在返回值上长得一模一样。
+    """
+    results = []
+    other = _make_node('10-peer')
+    try:
+        # --- A. 撤的是哪一个版本，必须由调用方说了算 -------------------------
+        # 先登记一把真密钥，好让"被误撤"有一个可观测的后果。
+        key = R.register_public_key(node, algorithm='KYBER', public_key=_b64_key(1184))
+
+        # ⚠️ `True` 排在最前：Python 里 `isinstance(True, int)` 为真、`int(True)`
+        #    得到 1，一个写错的 `keyVersion: true` 会静默变成"撤 v1"。这里先把这个
+        #    危险本身钉住——不然下面那条拒绝看起来只是"严格一点更好"。
+        results.append(_report(
+            'int(True) == 1 —— 这正是 keyVersion: true 会静默撤掉 v1 的原因',
+            int(True) == 1 and isinstance(True, int),
+        ))
+
+        for bad in (True, False, 0, -1, 1.9, 'abc', '', '   ', None, []):
+            ok, detail = _rejects(
+                C.ERR_INVALID_PARAMETER, revoke_long_term_key,
+                node, 'KYBER', key.key_id, bad, needle='keyVersion',
+            )
+            results.append(_report(f'keyVersion={bad!r} 被拒（不猜、不 int() 兜底）', ok, detail))
+
+        still = NodeLongTermKey.objects.get(pk=key.pk)
+        results.append(_report(
+            '★ 以上全部被拒之后，那一行**一动没动**（尤其没有被静默撤成 v1）',
+            still.status != C.KEY_STATUS_REVOKED,
+            f'status={still.status} revoked_at={still.revoked_at}',
+        ))
+        results.append(_report(
+            '物化列也没被这些失败请求动过',
+            Node.objects.get(pk=node.pk).kyber_public_key == still.public_key,
+        ))
+
+        # --- B. 指名的那一行不存在：报 KEY_NOT_FOUND，且不顺手清场 -----------
+        missing_ok, missing_detail = _expect_contract_error(
+            C.ERR_KEY_NOT_FOUND, revoke_long_term_key,
+            node, 'KYBER', 'no-such-key-id', 1,
+        )
+        results.append(_report('撤一个不存在的 keyId → KEY_NOT_FOUND', missing_ok, missing_detail))
+        results.append(_report(
+            '报"不存在"之后，同节点**别的密钥**没被牵连（不做整节点清场）',
+            NodeLongTermKey.objects.filter(
+                node=node, algorithm='KYBER', status=C.KEY_STATUS_ACTIVE).count() == 1,
+        ))
+
+        # --- C. 正常路径：三个影响面一起发生 ---------------------------------
+        item = _make_pool_item(node, 'c', long_term_key_id=key.key_id, long_term_key_version=1)
+        session = _make_session(node, other, 'c')
+
+        result = revoke_long_term_key(
+            node, 'KYBER', key.key_id, key.key_version, reason='自测：正常回收',
+        )
+        revoked, impact = result['revoked'], result['impact']
+
+        results.append(_report(
+            '密钥本身转入 REVOKED 终态，并记下原因',
+            revoked['status'] == C.KEY_STATUS_REVOKED
+            and revoked['revokedReason'] == '自测：正常回收'
+            and bool(revoked['revokedAt']),
+            f"status={revoked['status']} reason={revoked['revokedReason']}",
+        ))
+        results.append(_report(
+            '★ 回收同时清空了物化列（不清的话既有读路径会继续拿它当可用，且失败是静默的）',
+            Node.objects.get(pk=node.pk).kyber_public_key in ('', None),
+            f"读回 {Node.objects.get(pk=node.pk).kyber_public_key!r}",
+        ))
+        results.append(_report(
+            'wasActive=True（撤的正是生产版本）/ alreadyRevoked=False（本次才撤的）',
+            revoked['wasActive'] is True and revoked['alreadyRevoked'] is False,
+            f"wasActive={revoked['wasActive']} alreadyRevoked={revoked['alreadyRevoked']}",
+        ))
+        item.refresh_from_db()
+        results.append(_report(
+            '★ 池项被连带失效（否则它会一直显示 READY，等某次会话取用后在节点上解封失败）',
+            item.status == 'REVOKED', f'status={item.status}',
+        ))
+        session.refresh_from_db()
+        results.append(_report(
+            '★ 会话被连带撤销',
+            session.status == 'revoked', f'status={session.status}',
+        ))
+        invalidation = SessionKeyInvalidation.objects.filter(session=session).first()
+        results.append(_report(
+            '失效记录写的是**已声明**的 manual_revocation，不是新造的第三个值',
+            invalidation is not None and invalidation.reason == 'manual_revocation',
+            f'reason={getattr(invalidation, "reason", None)}',
+        ))
+        results.append(_report(
+            '影响面如实回报：poolItems=1、sessions=1、sessionsOk=True',
+            impact['poolItems'] == 1 and impact['sessions'] == 1 and impact['sessionsOk'] is True,
+            f"poolItems={impact['poolItems']} sessions={impact['sessions']} ok={impact['sessionsOk']}",
+        ))
+
+        # --- D. ★ 半成品状态：重试必须把没做完的补上 -------------------------
+        # 直调 `revoke_public_key` **只做第一步**，池项留在 READY —— 这就是
+        # "密钥已撤、影响面没处理完"在库里的样子。
+        key2 = R.register_public_key(node, algorithm='KYBER', public_key=_b64_key(1184))
+        item2 = _make_pool_item(node, 'd', long_term_key_id=key2.key_id, long_term_key_version=1)
+        R.revoke_public_key(key2, '自测：只做第一步，人为造出半成品')
+        key2.refresh_from_db()
+        item2.refresh_from_db()
+        results.append(_report(
+            '半成品状态确实造出来了：密钥已撤，池项还是 READY',
+            key2.status == C.KEY_STATUS_REVOKED and item2.status == 'READY',
+            f'key={key2.status} item={item2.status}',
+        ))
+
+        retry = revoke_long_term_key(node, 'KYBER', key2.key_id, key2.key_version)
+        item2.refresh_from_db()
+        results.append(_report(
+            '重试如实报告 alreadyRevoked=True（"早就撤了"与"这次撤的"可区分）',
+            retry['revoked']['alreadyRevoked'] is True,
+            f"alreadyRevoked={retry['revoked']['alreadyRevoked']}",
+        ))
+        results.append(_report(
+            '★ 重试**没有**早返回：上一轮没做完的池项被补上了',
+            retry['impact']['poolItems'] >= 1 and item2.status == 'REVOKED',
+            f"poolItems={retry['impact']['poolItems']} item={item2.status}",
+        ))
+
+        # --- E. 撤一个**非生产**版本：不能误伤正在用的那一把 -----------------
+        # 登记两把新的（后一把接管生产槽位），再把前一把撤掉 —— 它已是 RETIRED。
+        stale = R.register_public_key(node, algorithm='KYBER', public_key=_b64_key(1184))
+        prod = R.register_public_key(node, algorithm='KYBER', public_key=_b64_key(1184))
+        stale_result = revoke_long_term_key(node, 'KYBER', stale.key_id, stale.key_version)
+        results.append(_report(
+            'wasActive=False —— 撤一把早就被取代的旧版本是清账，不是停服级事件',
+            stale_result['revoked']['wasActive'] is False,
+            f"wasActive={stale_result['revoked']['wasActive']}",
+        ))
+        results.append(_report(
+            '★ 撤旧版本**没有**清空物化列：生产中的那一把仍可正常使用',
+            Node.objects.get(pk=node.pk).kyber_public_key == prod.public_key,
+        ))
+        results.append(_report(
+            '生产槽位仍属于在生产的那一把',
+            NodeLongTermKey.objects.filter(
+                node=node, algorithm='KYBER', status=C.KEY_STATUS_ACTIVE).first().pk == prod.pk,
+        ))
+
+        # --- F. ★ KMS-007 D3：失效必须精确到"哪一把密钥、哪个算法" ----------
+        # 改前 `revoke_pool_items_for_key` **只按 node_id 匹配**：撤一个算法的
+        # 一把密钥，会把该节点**全部** READY/RESERVED 池项一次清空（包括用其它
+        # 仍然有效的算法封的），而日志逐字印着 key_id/version —— 读日志的人会
+        # 以为它是精确失效的。这一节就是钉住那个缺陷。
+        results.append(_report(
+            '算法名 → 库里拼写的家族展开：认识的非空、不认识的为空元组',
+            C.wrapping_algorithms_for('KYBER') == ('kyber_kem', 'KYBER')
+            and C.wrapping_algorithms_for('falcon_lattice') == ('falcon_lattice', 'FALCON')
+            and C.wrapping_algorithms_for('nonsense') == ()
+            and C.wrapping_algorithms_for('') == (),
+            f"KYBER={C.wrapping_algorithms_for('KYBER')} "
+            f"认不出={C.wrapping_algorithms_for('nonsense')!r}",
+        ))
+
+        fkey = R.register_public_key(node, algorithm='KYBER', public_key=_b64_key(1184))
+        # 三条历史行（**没有**长期密钥引用 —— 迁移 0017 之前创建的池项就是这样），
+        # 算法各不相同。节点相同，算法是唯一的收窄条件，所以这一节能分辨
+        # "按算法家族匹配"与"按节点全清"。
+        hist_kyber = _make_pool_item(node, 'f-kyber')
+        hist_falcon = _make_pool_item(node, 'f-falcon', algorithm='falcon_lattice')
+        hist_sm2 = _make_pool_item(node, 'f-sm2', algorithm='gm_sm2')
+
+        # F1. 认不出的算法名：**不退化**。宁可漏，也不能按节点全清 ——
+        #     那正是上面那个缺陷的翻版，而且是静默的（日志里另有一条 error）。
+        unknown_n = KeyPoolService.revoke_pool_items_for_key(
+            node.node_id, fkey.key_id, version=1, algorithm='nonsense',
+        )
+        hist_kyber.refresh_from_db()
+        results.append(_report(
+            '★ 算法名认不出时不做退化匹配：历史行一条都没动',
+            unknown_n == 0 and hist_kyber.status == 'READY',
+            f'revoked={unknown_n} kyber历史行={hist_kyber.status}',
+        ))
+
+        # F2. 正常撤销：只牵连**同算法家族**的历史行。
+        f_result = revoke_long_term_key(node, 'KYBER', fkey.key_id, fkey.key_version)
+        for item in (hist_kyber, hist_falcon, hist_sm2):
+            item.refresh_from_db()
+        results.append(_report(
+            '★ 同算法的历史行（无长期密钥引用）被退化匹配命中',
+            hist_kyber.status == 'REVOKED', f'status={hist_kyber.status}',
+        ))
+        results.append(_report(
+            '★ 另一算法的历史行**必须还活着** —— 改前按 node 全清，它们会一起被撤',
+            hist_falcon.status == 'READY' and hist_sm2.status == 'READY',
+            f'falcon={hist_falcon.status} sm2={hist_sm2.status}',
+        ))
+        results.append(_report(
+            '影响面只报了真正改动的那一条',
+            f_result['impact']['poolItems'] == 1,
+            f"poolItems={f_result['impact']['poolItems']}",
+        ))
+    finally:
+        # ⚠️ `_main` 只清理它自己建的那个节点。这里为了造会话多建了一个对端节点，
+        #    必须自己删掉 —— 漏删不会让本组失败，只会让开发库里慢慢积起
+        #    TESTKMS004-10-peer-* 这种谁也不知道哪来的行。
+        other.delete()
+    return all(results)
+
+
 def _main():
     print("== KMS-004 长期密钥登记不变量自测 ==\n")
 
@@ -1112,6 +1385,7 @@ def _main():
         ("更新：显式身份、三类拒绝与失败不落库", test_rotate_requires_explicit_identity),
         ("接口层：rotate 与回收终态、生产槽位归属", test_store_node_public_key_rotate),
         ("登记口不能给已有 keyId 加版本", test_register_path_cannot_add_version),
+        ("回收的影响面：三个连带失效、重试补做、版本区分", test_revoke_service_impact),
     ]
 
     failed = []

@@ -13,9 +13,11 @@
  *     与库里真实的行可以不一致，而两处各自都看着对；
  *   * ② 得**读库**看旧行的 status/active_slot 与 `Node.<算法>_public_key`
  *     物化列 —— "旧版本还被当成生产版本"的表现是分发继续用旧公钥，接口全绿；
- *   * ③ 得**真的**把一把密钥回收掉再拿它更新。回收**没有 HTTP 入口**
- *     （全仓库只有测试与内部调用方直调 `revoke_public_key`），所以这一条
- *     走临时 .py + docker exec 直调注册表，再回到 HTTP 上验"更新被拒"；
+ *   * ③ 得**真的**把一把密钥回收掉再拿它更新。⚠️ KMS-006 写作时这一步走的是
+ *     临时 .py + docker exec 直调 `revoke_public_key`（当时它全仓没有 HTTP
+ *     入口）；**KMS-007 加了 `POST /node-self/keys/revoke/` 之后改走真实入口**。
+ *     这不只是"换条路调"：直调注册表绕过了接口层，也就绕过了挂在接口层上的
+ *     `record_chain_event` —— 于是判据④的回收那一半当时根本无从验证；
  *   * ④ 得看响应里的 `chainHash`，**并且**承认链上事件按设计不落库表 ——
  *     `record_chain_event` 失败只返回空串、且它在事务之外被调用，所以
  *     "已更新"与"已上链"是两条独立证据，合成一句"成功"会把审计缺口盖掉。
@@ -33,10 +35,8 @@
  * ⚠️ 会**建真节点、写真数据**（`falcon_kds` 与浏览器存储都会变），
  *    只在本地验证环境跑。
  */
-import { execFileSync } from 'node:child_process'
-import { writeFileSync, unlinkSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
+import { dirname } from 'node:path'
 
 import {
   PQKDS,
@@ -48,7 +48,7 @@ import {
   newNodeSession,
   cryptoProvider
 } from './lib/node-session.mjs'
-import { sqlScalar, dockerBin } from '../../../tools/lib/mysql.mjs'
+import { sqlScalar } from '../../../tools/lib/mysql.mjs'
 // 静态 import src 模块在这里是安全的：ESM 按**声明顺序**深度优先求值，
 // `./lib/node-session.mjs` 排在最前，它的 `import 'fake-indexeddb/auto'`
 // 因此先于下面这些模块生效。反过来写（src 在前）会得到
@@ -135,45 +135,6 @@ const storedForm = (algorithm, hexPublicKey) => {
   const hex = String(hexPublicKey || '').toLowerCase()
   return algorithm === 'KYBER' ? Buffer.from(hex, 'hex').toString('base64') : hex
 }
-
-// ---------------------------------------------------------------------------
-// 容器内直调 Python（回收没有 HTTP 入口，只能这样碰它）
-// ---------------------------------------------------------------------------
-let pySeq = 0
-
-function runPy(code) {
-  const tag = `kms006_${pySeq++}`
-  // 临时文件放在**本文件同目录**：写死绝对路径在换机器/换目录时必然失效，
-  // 而那种失效表现为"docker cp 找不到文件"，看不出是路径写死了。
-  const local = join(HERE, `._v_${tag}.py`)
-  writeFileSync(local, code, 'utf8')
-  const env = { ...process.env, MSYS_NO_PATHCONV: '1' }
-  try {
-    execFileSync(dockerBin, ['cp', local, `dvadmin3-django:/backend/_v_${tag}.py`], { encoding: 'utf8', env })
-    return execFileSync(dockerBin, ['exec', 'dvadmin3-django', 'python', `/backend/_v_${tag}.py`], { encoding: 'utf8', env })
-  } finally {
-    try { unlinkSync(local) } catch { /* 忽略：删不掉临时文件不该让用例失败 */ }
-  }
-}
-
-const revokePy = (nodeId, algorithm, keyId) => `# -*- coding: utf-8 -*-
-import os, django
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'application.settings')
-django.setup()
-from pqkds.models import Node, NodeLongTermKey
-from pqkds import node_key_registry as R
-
-node = Node.objects.get(node_id=${JSON.stringify(nodeId)})
-key = (NodeLongTermKey.objects
-       .filter(node=node, algorithm=${JSON.stringify(algorithm)}, key_id=${JSON.stringify(keyId)})
-       .order_by('-key_version').first())
-if key is None:
-    print('NO_SUCH_KEY')
-else:
-    R.revoke_public_key(key, 'KMS-006 验收：回收后不可再更新')
-    key.refresh_from_db()
-    print('REVOKED' if key.status == 'REVOKED' else 'STATUS=' + str(key.status))
-`
 
 // ---------------------------------------------------------------------------
 // 工具
@@ -406,15 +367,40 @@ check('★ v2 仍占着生产槽位', ltKeyFact(nodeA.nodeId, KYBER, v1.keyId, 2
 // 7. ★ 判据③：回收后的接口返回明确错误码 KEY_REVOKED
 // ---------------------------------------------------------------------------
 title('7. ★ 判据③：回收之后，更新该密钥要报 KEY_REVOKED')
-info('回收（`revoke_public_key`）全仓**没有 HTTP 入口** —— 只有测试与内部调用方直调。')
-info('所以这一条走临时 .py + docker exec 直调注册表，再回到 HTTP 上验"更新被拒"。')
+info('回收走**真实回收入口** POST /node-self/keys/revoke/（KMS-007 新增）。')
+info('KMS-006 写作时它还不存在：那时 `revoke_public_key` 全仓没有 HTTP 入口，本节只能靠')
+info('临时 .py + docker exec 直调注册表 —— 那条路绕过接口层，也就绕过了挂在接口层上的')
+info('`record_chain_event`，于是"回收侧的链上事件"根本无从验证（第 8 节那两句话因此改掉了）。')
 
-const revokeOut = runPy(revokePy(nodeB.nodeId, KYBER, kB2.keyId))
-check('容器内直调 revoke_public_key 执行成功',
-  revokeOut.trim().endsWith('REVOKED'), revokeOut.trim().slice(-300))
+// ⚠️ 用 nodeB **自己的令牌**调：回收是自助接口，节点身份取自令牌自省，
+//    所以撤掉的必然是登录账号对应的那个节点 —— 传 nodeId 的入口根本不存在。
+const revokeResp = await api(PQKDS, '/node-self/keys/revoke/', {
+  method: 'POST',
+  token: nodeB.token,
+  body: {
+    // ⚠️ `algorithm` 必传：服务端按 (节点, 算法, keyId, 版本) 定位那一行，
+    //    且刻意不替调用方推断算法（keyId 跨算法不保证唯一）。缺了它拿到的是
+    //    `缺少 algorithm / keyId / keyVersion` —— 而下面的部署探针会把这种
+    //    "参数不全"读成"端点没部署"，把排查引向完全错误的方向。
+    algorithm: KYBER,
+    keyId: kB2.keyId,
+    keyVersion: kB2.version,
+    reason: 'KMS-006 验收：回收后不可再更新'
+  }
+})
+// 这条同时是**部署探针**：新端点没注册时这里拿到的是 HTTP 404/405，
+// 而后面每一条断言都会以"没读到字段"的方式失败 —— 那看起来像逻辑错，
+// 实际是跑着的进程里没有这段代码（KMS-006 踩过：容器先启动、文件后 cp 进去）。
+check('★ 回收入口存在且执行成功（HTTP 200 + code 200）',
+  revokeResp.status === 200 && isOk(revokeResp.body),
+  `HTTP=${revokeResp.status} code=${revokeResp.body?.code} msg=${revokeResp.body?.msg}`)
 check('库里该行已是 REVOKED 终态',
-  String(ltKeyFact(nodeB.nodeId, KYBER, kB2.keyId, 1)).includes('|REVOKED|'),
-  String(ltKeyFact(nodeB.nodeId, KYBER, kB2.keyId, 1)))
+  String(ltKeyFact(nodeB.nodeId, KYBER, kB2.keyId, kB2.version)).includes('|REVOKED|'),
+  String(ltKeyFact(nodeB.nodeId, KYBER, kB2.keyId, kB2.version)))
+check('★ 撤的正是生产版本：wasActive=true 且 alreadyRevoked=false',
+  revokeResp.body?.data?.revoked?.wasActive === true
+  && revokeResp.body?.data?.revoked?.alreadyRevoked === false,
+  JSON.stringify(revokeResp.body?.data?.revoked))
 check('★ 回收同时清空了物化列（不清的话既有读路径会继续把已回收的公钥当可用，且失败是静默的）',
   nodeColumnIs(nodeB.nodeId, KYBER, ''), '期望 Node.kyber_public_key 为空')
 
@@ -430,23 +416,33 @@ check('回收是终态：没有因此在回收记录之上叠出一个 v2 行',
   ltKeyFact(nodeB.nodeId, KYBER, kB2.keyId, 2) === null)
 
 // ---------------------------------------------------------------------------
-// 8. ★ 判据④：审计与链上 —— 以及必须如实说出来的两件事
+// 8. ★ 判据④：审计与链上 —— 更新与回收各一条
 // ---------------------------------------------------------------------------
-title('8. ★ 判据④：更新进了审计与链上；回收侧没有 HTTP 入口')
+title('8. ★ 判据④：更新与回收各自进了审计与链上')
 const chainHash = String(upd?.data?.chainHash || '')
-check('★ 链上那一半：更新响应带回链上交易哈希（非空）', Boolean(chainHash), chainHash || '（空）')
+check('★ 更新那一半的链上：响应带回链上交易哈希（非空）', Boolean(chainHash), chainHash || '（空）')
 check('★ 库内那一半：该行确已 v2 且 ACTIVE（与链上成不成无关，都必须成立）',
   ltKeyFact(nodeA.nodeId, KYBER, v1.keyId, 2) === `2|ACTIVE|${KYBER}`,
   `读到 ${ltKeyFact(nodeA.nodeId, KYBER, v1.keyId, 2)}`)
+
+const revokeChainHash = String(revokeResp.body?.data?.chainHash || '')
+check('★ 回收那一半的链上：响应同样带回链上交易哈希（非空）',
+  Boolean(revokeChainHash), revokeChainHash || '（空）')
+check('★ 回收那一半的库内：该行已 REVOKED 且记下了回收原因',
+  String(ltKeyFact(nodeB.nodeId, KYBER, kB2.keyId, kB2.version)).includes('|REVOKED|')
+  && revokeResp.body?.data?.revoked?.revokedReason === 'KMS-006 验收：回收后不可再更新',
+  `reason=${JSON.stringify(revokeResp.body?.data?.revoked?.revokedReason)}`)
+
 info('两件事必须分开读：')
-info('  · 链上 —— 上面那条 chainHash，只在链上交易成功、且回执里取到生命周期事件时才产生；')
-info('  · 库内 —— 上面那条 v2/ACTIVE，`record_chain_event` 在事务**之外**调用，')
-info('    失败只返回空串、不回滚更新。所以"已更新"与"已上链"是两个事实。')
+info('  · 链上 —— 上面两个 chainHash，只在链上交易成功、且回执里取到生命周期事件时才产生；')
+info('  · 库内 —— 上面那两条行状态，`record_chain_event` 在事务**之外**调用，')
+info('    失败只返回空串、不回滚已经成立的那次状态变更。所以"已更新/已回收"与"已上链"是两个事实。')
 info('链上事件按设计**不落库表**：它不写 `key_operation_record`、也不动 `keymanage.chain_status`，')
-info('在 MySQL 里没有可回读的行 —— 能回读的只有上面这两件独立证据。')
-info('回收侧的链上事件本次**没有走**：回收没有 HTTP 入口（第 7 节），而我们直调注册表')
-info('绕过了接口层，`record_chain_event` 正是挂在接口层上的。这是已知缺口，')
-info('不在 KMS-006 的范围内（本任务的产出是更新闭环）。')
+info('在 MySQL 里没有可回读的行 —— 能回读的只有上面这些独立证据。')
+info('⚠️ 重试路径上 chainHash 空串**不是**审计缺口：`alreadyRevoked=true` 说明上一次回收')
+info('   已经上过链，服务端刻意不重复发（同一次回收在链上留多条，"回收了几次"就没答案了）。')
+info('   判别要看 `revoked.alreadyRevoked`，不能只看 chainHash 是否为空 —— 回收页的存证标签')
+info('   就是按这个分的三态。重试语义由 tools/verify-keyrevoke-impact.mjs 专门验。')
 
 info(`本次真建的节点：${nodeA.nodeId} / ${nodeB.nodeId}`)
 info('证据都已落在上面：长期密钥表两行的状态、物化列、两个错误码、以及链上哈希。')

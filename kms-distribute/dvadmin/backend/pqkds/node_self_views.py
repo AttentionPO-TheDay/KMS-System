@@ -4,6 +4,7 @@
     GET  /node-self/          我在 KMS 里对应的节点（含初始化状态）
     GET  /node-self/keys/     本节点已登记的长期密钥（含历史版本，供页面与服务端对账）
     POST /node-self/keys/     登记一个算法的公钥（私钥永不上行）
+    POST /node-self/keys/revoke/  回收指定的一把长期密钥，并处理它的影响面
     POST /node-self/init/     节点首次登录后初始化四套基础密钥
 
 为什么是"自助"
@@ -35,6 +36,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from . import api_contract as C
+from .key_revocation_service import revoke_long_term_key
 from .models import Node, NodeLongTermKey
 from .node_service import NodeService
 from .node_permission import (
@@ -390,6 +392,126 @@ def node_self_keys(request, identity):
             'chainHash': chain_tx,
         },
         msg=result.get('message') or '公钥已登记',
+    )
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+@require_kms_user
+def node_self_revoke_key(request, identity):
+    """回收本节点的一把长期密钥，并连带处理它的影响面（KMS-007）。
+
+    这是节点侧「密钥回收」菜单的**落点**。在此之前那个菜单删的是另一个服务
+    里的 `keymanage` 旧行（`DELETE /lifecycle/keymanage/{keyId}`），而
+    `NodeLongTermKey` 那一行**原样不动** —— 页面显示"已回收"，节点手上的密钥
+    还是那一把，四个业务入口照旧拿它干活。与 KMS-006 之前更新页的问题同源。
+
+    ⚠️ `keyId` 与 `keyVersion` **必须一起显式给出**，服务端不替调用方推断
+       "当前那一把" —— 与 `POST /node-self/keys/` 的 `rotate` 同一条纪律。
+       被撤掉的是哪一行，事后只能靠这次请求的入参回答。
+
+    影响面（`data.impact`）如实回报，**不做粉饰**：
+
+      * `poolItems` —— 连带失效的预分配池项条数；
+      * `sessions` —— 连带撤销的活跃会话数；
+      * `sessionsOk` —— 会话那一半是否**确实**做成了。⚠️ 会话失效服务内部
+        吞异常（失败返回 `{'success': False}` 而不抛出），失败时 `sessions`
+        会是 0 而真实的活跃会话数可能大于 0。调用方（页面）**必须看这个标志**，
+        不能把 `sessions == 0` 当成"没有会话受影响"。
+
+    可重入：密钥已撤、池项与会话的重跑都只处理还没处理的部分，所以
+    "失败后重试"能把没做完的补上，不会重复计数。
+
+    ⚠️ **不碰任何私钥列**（`falcon_sign_private_key` 等）。装上可用性检查之后
+       它们不再是判定依据，而清掉只会毁掉取证线索；私钥如何在后端彻底消失
+       是另一件事（KMS-015）。
+    """
+    node = _find_node(identity)
+    if node is None:
+        return _error('当前账号未关联任何节点，无法回收密钥', 403)
+
+    if _public_status(node) == 'DISABLED':
+        return _error('该节点已被停用，无法回收密钥', 403)
+
+    try:
+        payload = json.loads(request.body or b'{}')
+    except (ValueError, TypeError):
+        return _error('请求体不是合法 JSON')
+    if not isinstance(payload, dict):
+        return _error('请求体应为 JSON 对象')
+
+    # ⚠️ `keyVersion` 用 `.get(...)` 而不是 `or`：`keyVersion: 0` 会被 `or`
+    #    吞成"没提供"，于是报出一句与实情无关的"缺少参数"。0 应当走到
+    #    版本号校验里被明确拒掉（与 `node_self_keys` 的注释同一条理由）。
+    algorithm = payload.get('algorithm')
+    key_id = payload.get('keyId', payload.get('key_id'))
+    key_version = payload.get('keyVersion', payload.get('key_version'))
+    if not algorithm or not key_id or key_version is None:
+        return _error('缺少 algorithm / keyId / keyVersion')
+
+    try:
+        result = revoke_long_term_key(
+            node, algorithm, key_id, key_version,
+            reason=payload.get('reason') or '',
+        )
+    except C.ContractError as exc:
+        # 按 `api_contract.ERROR_HTTP_STATUS` 给业务码，而不是一律 400：
+        # `KEY_NOT_FOUND`（撤了一个不存在的行）与 `INVALID_PARAMETER`（参数写错）
+        # 对页面是两种提示。这个表是错误码与状态的**唯一**对应关系，别在这里另写一份。
+        return _error(exc.message, C.ERROR_HTTP_STATUS.get(exc.code, 400),
+                      error_code=exc.code)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception('节点 %s 回收密钥异常', node.node_id)
+        return _error(f'回收密钥失败：{exc}', 500)
+
+    revoked = result['revoked']
+    impact = result['impact']
+
+    # 计划 §7 阶段 2 判据④：回收事件进审计与链上。
+    #
+    # ⚠️ 位置在事务**之外**（`revoke_public_key` 的原子块已提交）：存证失败
+    #    不该回滚一次已经成立的回收 —— 密钥已经撤了、物化列已经清了，那些事实
+    #    不因为链上少一条记录而改变。`record_chain_event` 失败只返回 None
+    #    并记日志（旁路增强），所以这里拿到的是"空"而不是异常。
+    #
+    # ⚠️ 只在**本次才转入 REVOKED** 时发存证。重试（上一次池项/会话没做完）
+    #    会再次走到这里，若无条件上链，同一次回收会在链上留下多条 KEY_REVOKED ——
+    #    链上记录一旦重复，"回收了几次"就没有可信答案了。
+    chain_tx = ''
+    if not revoked['alreadyRevoked']:
+        chain_tx = record_chain_event(
+            'KEY_REVOKED',
+            # 与 KEY_UPDATED 同口径：链上 keyId 用 NodeLongTermKey 的整数主键
+            # （链上接口只收整数，字符串 key_id 会在 Java 侧解析失败，
+            # 表现为"存证未成功"而不报错）。非空 nodeId 把它与分发事件区分开。
+            int(revoked['rowId'] or 0),
+            int(revoked['keyVersion'] or 0),
+            node.node_id,
+            # 上链只传摘要，不传公开材料本身。
+            str(revoked['publicKeyHash'] or ''),
+        ) or ''
+        if chain_tx:
+            logger.info('节点 %s 回收存证已上链: %s/%s v%s tx=%s',
+                        node.node_id, revoked['algorithm'], revoked['keyId'],
+                        revoked['keyVersion'], chain_tx)
+
+    msg = (f"已回收 {revoked['algorithm']}/{revoked['keyId']} v{revoked['keyVersion']}："
+           f"连带失效池项 {impact['poolItems']} 条、会话 {impact['sessions']} 条")
+    if not impact['sessionsOk']:
+        # 不把失败说成"0 个会话受影响" —— 那是两件不同的事，而后者会让人
+        # 以为不用管。这里把实情写进 msg，页面上必须看得见。
+        msg += f"；⚠️ 会话失效未成功（{impact['sessionMessage']}），请重试"
+
+    return _ok(
+        {
+            'revoked': revoked,
+            'impact': impact,
+            # 与更新、分发同一口径（`chainHash`）：回哈希而不是布尔值。
+            # 拿不到哈希时页面能如实说"已回收，但存证未成功"，
+            # 而不是把两者混为一谈 —— 审计缺口必须是**可见的**。
+            'chainHash': chain_tx,
+        },
+        msg=msg,
     )
 
 

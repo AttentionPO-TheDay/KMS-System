@@ -41,10 +41,19 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
+from . import api_contract as C
 from .models import Node, PreDistributedKey, SessionKey, SessionKeyConfirmation
+from .node_key_registry import require_usable_key
 from .user_distribution_views import require_kms_user
 
 logger = logging.getLogger(__name__)
+
+#: 取信封时要按登记表（`NodeLongTermKey`）判可用性的算法集合。
+#: 信封算法经 `canonical_algorithm` 归一后落在这四个里的，说明它靠节点的长期
+#: 密钥解封：Kyber/SM2/SSCL 是保护算法；FALCON 是历史 `falcon_lattice`
+#: 归一后的落点。其它取值（如 `AES` 老会话遗留）**跳过判定** ——
+#: 登记表不为它们保存行，拿去判等于用一把不相干的密钥下结论。
+_GATED_ALGORITHMS = tuple(C.PROTECTION_ALGORITHMS) + tuple(C.SIGNATURE_ALGORITHMS)
 
 
 def _ok(data=None, msg='操作成功'):
@@ -63,8 +72,18 @@ def _ok(data=None, msg='操作成功'):
 #: `body?.msg || body?.message` 再加一层状态码判断 —— 而漏掉任何一处，
 #: 表现都是"错误信息显示成 undefined"，很难追到是这里不统一。
 #: 本模块挂在 `/node-self/` 下，所以随 `node_self_views`。
-def _error(msg, code=400):
-    return JsonResponse({'code': code, 'msg': msg, 'data': None}, status=200)
+def _error(msg, code=400, error_code=None):
+    """`error_code` 是可编程的 `api_contract.ERR_*`（如 `KEY_REVOKED`），放在 `data` 里。
+
+    **不换约定** —— 把 `code` 改成字符串会静默破坏所有既有调用方对 `code === 200`
+    的判断（与 `node_self_views._error` 同一条兼容决定，见 doc/kms-callsite-inventory.md §七）。
+    "哪一种失败"必须可编程区分：取信封被拒时，调用方看 `data.error_code` 就知道
+    是"密钥已回收"还是别的，不必匹配中文文案 —— 文案会改，码不会。
+    """
+    return JsonResponse(
+        {'code': code, 'msg': msg, 'data': {'error_code': error_code} if error_code else None},
+        status=200,
+    )
 
 
 def _find_node(identity):
@@ -82,6 +101,11 @@ def node_envelopes(request, identity):
 
     默认只给未过期的；`includeExpired=1` 才带历史 ——
     过期的信封仍具参考价值，但默认列出来会让界面噪音很大。
+
+    ⚠️ KMS-007：交出信封 = 据此建立**新会话**，所以在组装响应之前，会按这批
+       信封实际用到的算法判长期密钥还能不能用（判据 = 登记表）。已回收/已过期
+       时**拒发**，错误码放在 `data.error_code`（`KEY_REVOKED` / `KEY_EXPIRED`）。
+       详见下方闸门的注释。
     """
     node = _find_node(identity)
     if node is None:
@@ -100,8 +124,49 @@ def node_envelopes(request, identity):
         queryset = queryset.filter(expires_at__gt=timezone.now())
 
     limit = min(int(request.GET.get('limit') or 100), 500)
+    records = list(queryset[:limit])
+
+    # 闸门（KMS-007）：把信封交出去 = 节点据此建立**新会话**（计划 §7 阶段 2 的
+    # "新会话"），所以在组装响应**之前**，先对这批信封实际用到的算法逐个判长期
+    # 密钥是否还能用于新工作。
+    #
+    # 不做这一步会怎样：本接口不读任何密钥材料，密钥被回收在响应里**完全看不出来** ——
+    # 节点照常拿到信封、照常解封；若回收时物化列没被清（清列只发生在被回收的那把
+    # 原本是 ACTIVE 时），它甚至能解出 K 并把会话推成 established。一把登记表里已
+    # 判死的密钥继续产生新会话，而服务端全程只有 200 —— 判据③要的正是让这种情形
+    # 返回明确错误码，而不是静默照常。
+    #
+    # ⚠️ 只判**这批信封里出现过的算法**，不判"节点名下所有算法"：
+    #    判后者会让一次不相干算法的回收把其它算法的信封一并锁死；
+    #    判前者才与"这些信封靠哪把密钥解封"对齐。
+    # ⚠️ 归一后不在 `_GATED_ALGORITHMS` 里的取值跳过（`canonical_algorithm`
+    #    对不认识的输入原样大写返回、不抛异常，所以这里必须自己按集合过滤）。
+    # ⚠️ 拒绝只覆盖 `KEY_REVOKED` / `KEY_EXPIRED` —— 判据③要的是"回收后有明确
+    #    错误码"；`KEY_NOT_FOUND`（登记表里压根没有该算法的行）**放行**：那是
+    #    "从未登记过"或历史回填缺行，不是回收事件，把既有行为升级成新拒绝
+    #    不属于本次范围（否则历史 `falcon_lattice` 信封会把节点直接锁在门外）。
+    # 判的是 `for_new_work`（默认 True，只认在产版本）：即使节点还留着更早的
+    # RETIRED 版本，回收之后也不再用它开新会话；这正是"回收禁止新会话"。
+    # 错误出口沿用本文件约定：HTTP 200 + 业务码，可编程码放 `data.error_code`。
+    algorithms = []
+    for record in records:
+        algorithm = C.canonical_algorithm(record.wrapping_algorithm or record.algorithm)
+        if algorithm in _GATED_ALGORITHMS and algorithm not in algorithms:
+            algorithms.append(algorithm)
+
+    for algorithm in algorithms:
+        try:
+            require_usable_key(node, algorithm)
+        except C.ContractError as exc:
+            if exc.code not in (C.ERR_KEY_REVOKED, C.ERR_KEY_EXPIRED):
+                continue
+            logger.error('节点 %s 取信封被拒：%s 长期密钥不可用 code=%s err=%s',
+                         node.node_id, algorithm, exc.code, exc.message)
+            return _error(exc.message, C.ERROR_HTTP_STATUS.get(exc.code, 400),
+                          error_code=exc.code)
+
     items = []
-    for record in queryset[:limit]:
+    for record in records:
         try:
             envelope = json.loads(record.encrypted_key_data or '{}')
         except (ValueError, TypeError):
