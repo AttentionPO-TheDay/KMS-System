@@ -1594,14 +1594,25 @@ def _make_pool_item(node, tag, status='READY', algorithm='kyber_kem',
     )
 
 
-def _make_session(a, b, tag):
-    """一条**活跃**会话（`established` 是失效服务会扫的三个状态之一）。"""
+def _make_session(a, b, tag, *, session_type='kyber_kem',
+                  recipient_key=None, falcon_key=None):
+    """一条**活跃**会话（`established` 是失效服务会扫的三个状态之一）。
+
+    ⚠️ KMS-016 起失效按**版本引用**匹配（`recipient_key_id/version`、
+    `falcon_key_id/version`，KMS-011 的四列），所以夹具默认带上一版引用；
+    `recipient_key=None` 时留 NULL（模拟 KMS-011 之前的历史行，走家族退化）。
+    """
     return SessionKey.objects.create(
         session_id=f'TESTKMS007-{tag}-{uuid.uuid4().hex[:8]}',
         node1=a, node2=b,
         encrypted_session_key='{}',
         key_exchange_data='{}',
         status='established',
+        session_type=session_type,
+        recipient_key_id=getattr(recipient_key, 'key_id', None),
+        recipient_key_version=getattr(recipient_key, 'key_version', None),
+        falcon_key_id=getattr(falcon_key, 'key_id', None),
+        falcon_key_version=getattr(falcon_key, 'key_version', None),
         expires_at=timezone.now() + timedelta(hours=1),
     )
 
@@ -1663,7 +1674,26 @@ def test_revoke_service_impact(node):
 
         # --- C. 正常路径：三个影响面一起发生 ---------------------------------
         item = _make_pool_item(node, 'c', long_term_key_id=key.key_id, long_term_key_version=1)
-        session = _make_session(node, other, 'c')
+        # ⚠️ KMS-016：会话带**这一版**的引用（精确面命中）；另有两条"不该被
+        #    误伤"的会话在下面断言：引用别的版本的、以及别的算法的。
+        #    ⚠️ 方向：被撤的 `node` 必须是**接收方（node2）** —— 保护密钥
+        #    引用在接收侧（`create_initiated_sessions` 建行时 node1=发送方、
+        #    node2=接收方，与生产一致；反过来摆会让精确面恒不命中）。
+        session = _make_session(other, node, 'c', session_type='kyber_kem',
+                                recipient_key=key)
+        # 同节点对、但引用**另一把** KYBER 的会话 → 撤这一把不该动它。
+        # ⚠️ `activate=False`：干扰夹具**不能抢生产槽位**，否则下面撤的 `key`
+        #    已经不是 ACTIVE（wasActive 判据与"清空物化列"都会先红）。
+        other_kyber = R.register_public_key(node, algorithm='KYBER', public_key=_b64_key(1184),
+                                            activate=False)
+        session_other_version = _make_session(other, node, 'c-other',
+                                              session_type='kyber_kem',
+                                              recipient_key=other_kyber)
+        # 同节点、但保护算法是 SM2 的会话 → 撤 KYBER 不该动它（KMS-016 修的就是这个）。
+        sm2_key = R.register_public_key(node, algorithm='SM2', public_key=_hex_pub('9a'),
+                                        activate=False)
+        session_sm2 = _make_session(other, node, 'c-sm2', session_type='gm_sm2',
+                                    recipient_key=sm2_key)
 
         result = revoke_long_term_key(
             node, 'KYBER', key.key_id, key.key_version, reason='自测：正常回收',
@@ -1697,6 +1727,21 @@ def test_revoke_service_impact(node):
             '★ 会话被连带撤销',
             session.status == 'revoked', f'status={session.status}',
         ))
+        # ★ KMS-016：不误伤 —— 这两条断言钉的正是全量验收实测踩中的缺陷
+        #（原实现把该节点**全部活跃会话**一并撤销，撤一把 KYBER 会杀掉
+        # SM2/SSCL 保护的会话）。
+        session_other_version.refresh_from_db()
+        session_sm2.refresh_from_db()
+        results.append(_report(
+            '★ 引用**别的版本**的会话不受影响（撤的是这一版，不是"这个算法"）',
+            session_other_version.status == 'established',
+            f'status={session_other_version.status}',
+        ))
+        results.append(_report(
+            '★ 别的保护算法（SM2）的会话不受影响（撤 KYBER 不杀 SM2 会话）',
+            session_sm2.status == 'established',
+            f'status={session_sm2.status}',
+        ))
         invalidation = SessionKeyInvalidation.objects.filter(session=session).first()
         results.append(_report(
             '失效记录写的是**已声明**的 manual_revocation，不是新造的第三个值',
@@ -1704,7 +1749,7 @@ def test_revoke_service_impact(node):
             f'reason={getattr(invalidation, "reason", None)}',
         ))
         results.append(_report(
-            '影响面如实回报：poolItems=1、sessions=1、sessionsOk=True',
+            '影响面如实回报：poolItems=1、sessions=1、sessionsOk=True（只算**真动了**的那条）',
             impact['poolItems'] == 1 and impact['sessions'] == 1 and impact['sessionsOk'] is True,
             f"poolItems={impact['poolItems']} sessions={impact['sessions']} ok={impact['sessionsOk']}",
         ))

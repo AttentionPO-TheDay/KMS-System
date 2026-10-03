@@ -12,6 +12,7 @@ import logging
 from django.utils import timezone
 from django.db import transaction
 from django.db.models import Q
+from . import api_contract as C
 from .models import SessionKey, SessionKeyInvalidation, Node, NodeKeyVersion
 
 logger = logging.getLogger(__name__)
@@ -22,42 +23,89 @@ class SessionInvalidationService:
 
     @staticmethod
     @transaction.atomic
-    def invalidate_sessions_for_node_key_update(node: Node, reason: str = 'node_key_updated') -> dict:
+    def invalidate_sessions_for_node_key_update(node: Node, reason: str = 'node_key_updated',
+                                                *, algorithm: str = '', key_id: str = '',
+                                                key_version=None) -> dict:
+        """节点密钥被回收/更新时，标记**受影响**的会话为已失效。
+
+        ---- KMS-016：从"该节点全部活跃会话"改成"引用那一版密钥的会话" ----
+
+        原实现按 `Q(node1=node) | Q(node2=node)` 匹配 —— **该节点的所有活跃
+        会话一并撤销**，不分算法、不分版本。两个后果都是实测过的：
+
+          * 撤一把 KYBER，会把该节点名下 SM2/SSCL 保护的、以及用**另一把**
+            Falcon 签名的活跃会话一起杀掉 —— 一次无关回收变成对所有在谈会话
+            的单方面终止（KMS-016 全量验收 §7 实测踩中：撤 B 的 KYBER，
+            B 的 SSCL 会话在关闭前就已经是 `revoked`）；
+          * 与 KMS-007 修池项时消掉的缺陷同源（"撤一个算法清空全部"），
+            池项那半当时改成了精确面 + 退化面，会话这半没有跟上。
+
+        现在按 KMS-011 落库的**具体版本引用**匹配（`recipient_key_id/version`
+        接收侧、`falcon_key_id/version` 发送侧签名密钥）：
+
+          * 精确面：会话引用的那一版被撤 → 撤销；
+          * 退化面：**历史行**（KMS-011 之前建的，四列全 NULL）无版本可对，
+            退化为"同节点 + 同算法家族"（`wrapping_algorithms_for`），
+            并在日志里如实说明 —— 不假装精确；
+          * 无 `algorithm/key_id/key_version` 的调用方（还有两个老入口）走
+            **粗粒度模式**：维持原行为，但记一条 warning —— "粗粒度"必须
+            看得见，否则它会被当成精确的。
+
+        返回值新增 `skipped_unmatched`（扫过但确认不受影响的历史行数）——
+        与 `invalidated_count` 一起，让"撤了之后会话还剩几条"可审计。
         """
-        当节点密钥更新时，标记所有与该节点相关的会话为已失效
-        
-        Args:
-            node: 更新密钥的节点
-            reason: 失效原因 ('node_key_updated' 或 'manual_revocation')
-        
-        Returns:
-            dict: 包含失效会话数量和详情的字典
-        """
+        name = C.canonical_algorithm(algorithm) if algorithm else ''
+        version_int = None
+        if isinstance(key_version, int) and not isinstance(key_version, bool):
+            version_int = key_version
+        elif isinstance(key_version, str) and key_version.strip().isdigit():
+            version_int = int(key_version.strip())
+        kid = str(key_id or '').strip()
+        precise = bool(name and kid and version_int is not None)
+
         try:
-            # 获取所有与该节点相关的活跃会话
             active_sessions = SessionKey.objects.filter(
                 Q(node1=node) | Q(node2=node),
                 status__in=['initiated', 'established', 'blockchain_recorded']
             )
-            
+
             invalidated_count = 0
             invalidated_sessions = []
-            
-            # 获取节点的当前密钥版本
+            skipped_unmatched = 0
+
+            # 获取节点的当前密钥版本（沿用原语义：写入失效记录的 after 值）
             try:
-                key_version = NodeKeyVersion.objects.filter(node=node).latest('kyber_version')
-                kyber_version_after = key_version.kyber_version
-                falcon_version_after = key_version.falcon_version
+                key_version_row = NodeKeyVersion.objects.filter(node=node).latest('kyber_version')
+                kyber_version_after = key_version_row.kyber_version
+                falcon_version_after = key_version_row.falcon_version
             except NodeKeyVersion.DoesNotExist:
                 kyber_version_after = None
                 falcon_version_after = None
-            
+
+            family = C.wrapping_algorithms_for(name) if name else ()
+
             for session in active_sessions:
-                # 标记会话为已失效
+                if precise:
+                    affected, why = SessionInvalidationService._session_references(
+                        session, node, name, kid, version_int, family,
+                    )
+                    if not affected:
+                        skipped_unmatched += 1
+                        logger.info(
+                            '会话 %s 不引用被撤的 %s/%s v%s（%s）—— 保持原状',
+                            session.session_id, name, kid, version_int, why,
+                        )
+                        continue
+                else:
+                    logger.warning(
+                        '会话失效走**粗粒度**模式（调用方未提供 algorithm/key_id/version）：'
+                        '节点 %s 的全部活跃会话都会被撤销 —— 这不是精确匹配',
+                        node.node_id,
+                    )
+
                 session.status = 'revoked'
                 session.save(update_fields=['status'])
-                
-                # 记录失效信息
+
                 invalidation_record = SessionKeyInvalidation.objects.create(
                     session=session,
                     invalidated_node=node,
@@ -65,7 +113,7 @@ class SessionInvalidationService:
                     kyber_version_after=kyber_version_after,
                     falcon_version_after=falcon_version_after
                 )
-                
+
                 invalidated_count += 1
                 invalidated_sessions.append({
                     'session_id': session.session_id,
@@ -73,19 +121,22 @@ class SessionInvalidationService:
                     'node2': session.node2.node_id,
                     'invalidation_id': invalidation_record.id
                 })
-                
+
                 logger.info(
                     f"会话 {session.session_id} 已标记为失效。"
                     f"原因: {reason}, 触发节点: {node.node_id}"
                 )
-            
+
             return {
                 'success': True,
                 'invalidated_count': invalidated_count,
+                'skipped_unmatched': skipped_unmatched,
                 'invalidated_sessions': invalidated_sessions,
                 'message': f'已标记 {invalidated_count} 个会话为失效状态'
+                           + (f'（另有 {skipped_unmatched} 个不引用被撤版本，保持原状）'
+                              if skipped_unmatched else '')
             }
-        
+
         except Exception as e:
             logger.error(f"标记会话失效失败: {str(e)}")
             return {
@@ -93,6 +144,42 @@ class SessionInvalidationService:
                 'invalidated_count': 0,
                 'message': f'标记会话失效失败: {str(e)}'
             }
+
+    @staticmethod
+    def _session_references(session, node, name, kid, version_int, family):
+        """会话是否引用 (node, name, kid, version) 这一版密钥。返回 (bool, 说明)。
+
+        两条引用面（与 KMS-011 落库的四列一一对应）：
+          * 接收侧：`session.node2`（收件方）的 **保护密钥** 引用；
+          * 发送侧：`session.node1`（发送方）的 **Falcon 签名密钥** 引用。
+        历史行（四列全 NULL）退化为"同节点 + 同算法家族"，如实标注。
+        """
+        session_type = C.canonical_algorithm(session.session_type or '')
+
+        # 接收侧：保护密钥
+        if session.node2_id == node.id:
+            if (session.recipient_key_id and session.recipient_key_version is not None):
+                if (session.recipient_key_id == kid
+                        and int(session.recipient_key_version) == version_int
+                        and session_type == name):
+                    return True, '接收侧保护密钥命中（精确）'
+                return False, (f'接收侧引用的是 {session.recipient_key_id}'
+                               f' v{session.recipient_key_version}（{session_type}）')
+            # 历史行：版本列 NULL → 算法家族退化
+            if family and session.session_type in family:
+                return True, '历史行（无版本引用）按算法家族命中（退化）'
+            return False, f'历史行（无版本引用）且算法 {session.session_type!r} 不在家族 {list(family)} 内'
+
+        # 发送侧：Falcon 签名密钥
+        if session.node1_id == node.id and name == 'FALCON':
+            if session.falcon_key_id and session.falcon_key_version is not None:
+                if (session.falcon_key_id == kid
+                        and int(session.falcon_key_version) == version_int):
+                    return True, '发送侧签名密钥命中（精确）'
+                return False, f'发送侧签名引用的是 {session.falcon_key_id} v{session.falcon_key_version}'
+            return False, '历史行（无签名密钥引用），Falcon 撤钥无法退化关联'
+
+        return False, f'会话与节点 {node.node_id} 的该角色（{name}）无引用关系'
 
     @staticmethod
     def check_session_validity(session: SessionKey) -> dict:

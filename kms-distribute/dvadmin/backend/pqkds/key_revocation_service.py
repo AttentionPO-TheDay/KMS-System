@@ -161,9 +161,12 @@ def revoke_long_term_key(
         node.node_id, key_id, version=version, algorithm=name,
     )
 
-    # 3) 失效会话。复用「更新」路径的既有策略（立即撤销），与 `views.py` 的
-    #    更新路径同一口径 —— 两条路给出不同处置的话，"密钥不好使了"这件事
-    #    在用户看来就会时灵时不灵。
+    # 3) 失效会话。**精确到这一版密钥**（KMS-016 起）：按会话行上 KMS-011
+    #    落库的四列版本引用匹配（接收侧保护密钥 / 发送侧 Falcon 签名密钥），
+    #    而不是把该节点的全部活跃会话一并撤销 —— 后者的实测后果是"撤一把
+    #    KYBER 把 SM2/SSCL 保护的会话也杀掉"（KMS-016 全量验收 §7 实测踩中）。
+    #    历史行（无版本引用）按算法家族退化，如实记日志。与池项那条线的
+    #    口径（KMS-007：精确面 + 退化面）保持一致。
     #
     #    ⚠️ `SessionKeyInvalidation.reason` 只能取它 choices 里列出的值。
     #      这里用 `manual_revocation`（"手动撤销"，语义正确且已声明），
@@ -178,6 +181,7 @@ def revoke_long_term_key(
     #      且失败时如实回报，不把它算进成功的影响面。
     session_result = SessionInvalidationService.invalidate_sessions_for_node_key_update(
         node, reason='manual_revocation',
+        algorithm=name, key_id=key_id, key_version=version,
     )
     sessions_ok = bool(session_result.get('success'))
     sessions = int(session_result.get('invalidated_count') or 0)
