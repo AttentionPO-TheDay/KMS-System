@@ -121,14 +121,25 @@ export async function createNode(adminToken, {
 } = {}) {
   const seed = Date.now().toString(36).toUpperCase().slice(-6)
   const nodeId = `${prefix}-${seed}${(seq++).toString(36).toUpperCase()}`
+  // ⚠️ IP/端口按 **nodeId 的哈希**派生，不用 Date.now()：服务端的节点注册有
+  //    去重判定（重名/同址会**返回已存在的旧节点**且不给激活凭证），而
+  //    Date.now() 取模的地址空间很窄 —— 一次中断的运行留下的节点会让
+  //    后来的运行"建节点成功但没拿到激活凭证"，报错里却是另一个节点，
+  //    看起来像注册接口坏了（KMS-015 施工时实测踩中一次）。
+  //    nodeId 本身带时间戳与序号，按它哈希得到的地址跨运行几乎不会撞。
+  //    ⚠️ 移位必须用 `>>>`（无符号）：`>>` 对 ≥2^31 的值给负数，拼出的
+  //    地址会出现负段，服务端回"IP地址: 请输入一个有效的IPv4或IPv6地址"——
+  //    看起来像注册接口的校验坏了。
+  let hashish = 7
+  for (const ch of nodeId) hashish = (hashish * 31 + ch.charCodeAt(0)) >>> 0
   const res = await api(PQKDS, '/nodes/register/', {
     method: 'POST',
     token: adminToken,
     body: {
       node_id: nodeId,
       name: name || nodeId,
-      ip_address: `10.${(Date.now() % 200) + 20}.${(Date.now() % 200) + 20}.1`,
-      port: 61000 + (Date.now() % 4000),
+      ip_address: `10.${(hashish % 200) + 20}.${((hashish >>> 8) % 200) + 20}.1`,
+      port: 61000 + (hashish % 4000),
       node_type: nodeType,
       permission_level: permissionLevel,
       domain_id: domainId

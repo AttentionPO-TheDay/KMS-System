@@ -369,151 +369,15 @@ class KeyPoolService:
         }
 
     # ================================================================
-    #  Falcon 格密码方案: 批量预分配
+    #  Falcon 格密码方案: 已封存（KMS-015）
     # ================================================================
-    @staticmethod
-    def generate_falcon_pool(
-        node1_id: str, node2_id: str,
-        count: int = None, expiry_hours: int = None
-    ) -> Dict[str, Any]:
-        """
-        Falcon 格密码方案批量预分配。
+    # `generate_falcon_pool` 于 KMS-015 **整体删除**：它是"用 Falcon 封装 SM4"
+    # 这条错误路线的唯一生产者，而该路线在密码学上不成立（Falcon 是签名
+    # 算法、没有封装原语；计划 §3 早已把它移出保护算法白名单）。
+    # 删除前核对过：`views.py` 的分流与 `check_and_replenish` 是两个仅有的
+    # 调用方，都已改为明确拒绝 falcon_lattice（见各自注释）—— 历史
+    # falcon_lattice 池项仍可读可审计，但不再有任何入口能产生新的。
 
-        对每条密钥:
-        1. 生成随机 AES-256 密钥
-        2. 用 node2 的 Falcon 公钥（无证书格密码）加密 AES 密钥
-        3. 存储加密数据，node2 用 Falcon 私钥解密恢复
-        """
-        count = count or KeyPoolService.DEFAULT_POOL_SIZE
-        expiry_hours = expiry_hours or KeyPoolService.DEFAULT_EXPIRY_HOURS
-
-        logger.info(f"[KeyPool/Falcon] 为 {node1_id} ↔ {node2_id} 预分配 {count} 条密钥")
-        t_total_start = time.perf_counter()
-
-        try:
-            node1 = Node.objects.get(node_id=node1_id)
-            node2 = Node.objects.get(node_id=node2_id)
-        except Node.DoesNotExist as e:
-            return {'success': False, 'message': f'节点不存在: {e}'}
-
-        # 闸门（KMS-007）：Falcon 池项同样是**新工作**（生成一份新的加密包），
-        # 必须在读 `node2.falcon_public_key`（下面空值判断与循环里那一处读取）之前，
-        # 先按**事实来源** `NodeLongTermKey` 判这把 FALCON 密钥还能不能用。
-        #
-        # 不做这一步会怎样：Falcon 这一列有两个易被忽视的坑，叠加起来的现象是
-        # "池子照常生成、节点却永远解不开"：
-        #   1. `revoke_public_key` 只在被回收的那把**原本是 ACTIVE** 时才清列；
-        #      若行不是 ACTIVE（例如 0016 回填的 LEGACY 格材料行），列里是死材料，
-        #      下面的 `if not node2.falcon_public_key` 判不出来，照样封装入库；
-        #   2. 即使列被清空，旧文案也只有"没有 Falcon 公钥"——
-        #      与"密钥已被回收"混在同一句话里，运维按"去初始化"处置却是错的。
-        #
-        # ⚠️ 闸门只判"能不能用"，材料**仍然**从 `node2.falcon_public_key` 取 ——
-        #    绝不换成登记行的 `public_key`：FALCON 上两者不是同一份数据
-        #    （登记行的 ACTIVE 是标准 Falcon 签名公钥，本列的旧值可能是 CL-Falcon
-        #    格材料），换来源会静默换算法，所有既有信封全部解不开。
-        # 返回的登记行只用于回填 `long_term_key_id/version`（KMS-007 D3）——
-        # 那是"哪把**登记密钥**在管这一列"的记账，不是材料来源。
-        # 失败形状沿用本层约定（`{'success': False}`），并把 `exc.code` 带进 message：
-        # 调用方（views.py:3407 / kms_adapter.py:313）只转达 message、不读 code，
-        # 码不写进文案，判据与运维就都看不到它。
-        try:
-            long_term_key = require_usable_key(node2, 'FALCON')
-        except C.ContractError as exc:
-            return {
-                'success': False,
-                'code': exc.code,
-                'message': f'节点 {node2_id} {exc.message}（{exc.code}）',
-            }
-
-        if not node2.falcon_public_key:
-            return {'success': False, 'message': f'节点 {node2_id} 没有 Falcon 公钥'}
-
-        # 初始化 Falcon 加密服务
-        from .falcon_aes_session_encryption import FalconAESSessionKeyEncryption
-        target_security = int(getattr(node2, 'falcon_security_level', '512') or '512')
-        falcon_enc = FalconAESSessionKeyEncryption(security_level=target_security)
-
-        pool_id = f"pool_falcon_{hashlib.sha256(f'{node1_id}_{node2_id}_{time.time()}'.encode()).hexdigest()[:16]}"
-        expires_at = timezone.now() + timedelta(hours=expiry_hours)
-
-        keys_to_create = []
-        latencies = []
-
-        for i in range(count):
-            t0 = time.perf_counter()
-            try:
-                # Step 1: 随机载荷密钥 —— D3 后是 SM4 的 16 字节
-                payload_key = PayloadCipher.generate_key()
-                key_hash = hashlib.sha256(payload_key).hexdigest()
-
-                # Step 2: Falcon 格密码加密（把载荷密钥交给格封装层）
-                enc_result = falcon_enc.encrypt_aes_key_with_falcon(
-                    recipient_id=node2_id,
-                    aes_key=payload_key,
-                    recipient_public_key_b64=node2.falcon_public_key
-                )
-
-                if not enc_result.get('success'):
-                    logger.warning(f"[KeyPool/Falcon] 第 {i} 条加密失败: {enc_result.get('message')}")
-                    continue
-
-                encrypted_data = json.dumps({
-                    'ciphertext': enc_result['ciphertext'],
-                    'algorithm': enc_result.get('algorithm', f'CertificatelessFalcon-{target_security}'),
-                    'security_level': target_security,
-                    'payload_algorithm': PAYLOAD_ALGORITHM_SM4,
-                })
-
-                t1 = time.perf_counter()
-                latency_ms = (t1 - t0) * 1000
-                latencies.append(latency_ms)
-
-                keys_to_create.append(PreDistributedKey(
-                    pool_id=pool_id,
-                    key_index=i,
-                    node1=node1,
-                    node2=node2,
-                    algorithm='falcon_lattice',
-                    encrypted_key_data=encrypted_data,
-                    key_hash=key_hash,
-                    status='READY',
-                    expires_at=expires_at,
-                    generation_time_ms=latency_ms,
-                    # KMS-007 D3：封这一项用的是 node2 的 FALCON 登记密钥，
-                    # 回收精确匹配靠这两列（留空则退化为"同节点+同算法"）。
-                    long_term_key_id=long_term_key.key_id,
-                    long_term_key_version=long_term_key.key_version,
-                ))
-            except Exception as e:
-                logger.error(f"[KeyPool/Falcon] 第 {i} 条生成失败: {e}")
-                continue
-
-        with transaction.atomic():
-            PreDistributedKey.objects.bulk_create(keys_to_create)
-
-        t_total = time.perf_counter() - t_total_start
-        throughput = len(keys_to_create) / t_total if t_total > 0 else 0
-        avg_ms = sum(latencies) / len(latencies) if latencies else 0
-
-        logger.info(
-            f"[KeyPool/Falcon] 完成: {len(keys_to_create)}/{count} 条, "
-            f"耗时 {t_total:.2f}s, 吞吐量 {throughput:.1f} keys/sec"
-        )
-
-        return {
-            'success': True,
-            'pool_id': pool_id,
-            'algorithm': f'CertificatelessFalcon-{target_security}',
-            'generated': len(keys_to_create),
-            'requested': count,
-            'total_time_sec': round(t_total, 3),
-            'throughput_per_sec': round(throughput, 1),
-            'avg_latency_ms': round(avg_ms, 2),
-            'expires_at': expires_at.isoformat(),
-        }
-
-    # ================================================================
     #  密钥取用
     # ================================================================
     @staticmethod
@@ -628,6 +492,7 @@ class KeyPoolService:
             key = None
             skipped = []
             first_dead = None
+            first_dead_reason = None
             for candidate in candidates:
                 # 状态机守卫：消费只允许从 READY 出发（旧拼写归一后判定）。
                 # 走到的行已经是 READY（WHERE 只放行它），这里防的是"将来有人
@@ -639,8 +504,31 @@ class KeyPoolService:
                     )
                     continue
 
+                # KMS-015：**历史错误算法不许进入新业务**。
+                # `falcon_lattice`（"用 Falcon 封装 SM4"）在密码学上不成立，
+                # 计划 §3 已把它移出保护算法白名单。历史行仍**可读可审计**
+                # （列表、监管、泄漏分析都照常），但消费口在这里一刀拒死 ——
+                # 不给"历史数据绕过新约束"留缝。排在密钥复核**之前**：
+                # 复核登记行状态对它本来就是错误的判据（它的问题不在密钥新旧，
+                # 在这条算法本身不该被消费）。
+                if candidate.algorithm == 'falcon_lattice':
+                    logger.warning(
+                        "池项 %s#%s 是历史错误算法 falcon_lattice（Falcon 封装 SM4 "
+                        "不成立）：拒绝消费 —— 历史行可读可审计，但不进入新业务",
+                        candidate.pool_id, candidate.key_index,
+                    )
+                    skipped.append({
+                        'pool_id': candidate.pool_id,
+                        'keyIndex': candidate.key_index,
+                        'reason': C.ERR_ALGORITHM_NOT_ALLOWED,
+                    })
+                    if first_dead is None:
+                        first_dead = candidate
+                        first_dead_reason = C.ERR_ALGORITHM_NOT_ALLOWED
+                    continue
+
                 # 复核长期密钥引用（见 docstring：只看引用，不猜收件方）。
-                family = {'kyber_kem': 'KYBER', 'falcon_lattice': 'FALCON'}.get(candidate.algorithm)
+                family = {'kyber_kem': 'KYBER'}.get(candidate.algorithm)
                 if not (candidate.long_term_key_id
                         and candidate.long_term_key_version is not None and family):
                     logger.warning(
@@ -669,6 +557,7 @@ class KeyPoolService:
                     })
                     if first_dead is None:
                         first_dead = candidate
+                        first_dead_reason = 'KEY_REVOKED'
                     logger.warning(
                         "池项 %s#%s 引用的 %s 密钥 %s v%s 已回收：就地标记 REVOKED 并跳过",
                         candidate.pool_id, candidate.key_index, family,
@@ -685,9 +574,23 @@ class KeyPoolService:
                 break
 
             if key is None:
-                # 探测完没有活件：按第一条死件的错误码拒（处置是"重新预分配"，
-                # 不是"稍后再试"）。`skipped` 如实带上本次纠正了什么。
+                # 探测完没有活件：按**第一条死件的错误码**拒 —— 两条路径的
+                # 处置不同（`KEY_REVOKED` → 重新预分配；`ALGORITHM_NOT_ALLOWED`
+                # → 这一批是历史错误算法，不该再被消费，重试也没用）。
+                # `skipped` 如实带上本次纠正/拒绝了什么。
                 if first_dead is not None:
+                    if first_dead_reason == C.ERR_ALGORITHM_NOT_ALLOWED:
+                        return {
+                            'success': False,
+                            'code': C.ERR_ALGORITHM_NOT_ALLOWED,
+                            'skipped': skipped,
+                            'message': (
+                                f'节点对 {node1_id} ↔ {node2_id} 没有可消费的预分配密钥：'
+                                f'检查了 {len(skipped)} 条，全部是历史错误算法 '
+                                f'falcon_lattice（Falcon 封装 SM4 不成立）。'
+                                f'历史行保留可读可审计，但不进入新业务'
+                            ),
+                        }
                     return {
                         'success': False,
                         'code': C.ERR_KEY_REVOKED,
@@ -868,10 +771,31 @@ class KeyPoolService:
         改前这里只数裸值 `'unused'`，而新写入的行一律是 `'READY'` ——
         于是"余量"恒为 0，每次检查都认为缺货并整批补货：补给动作看起来
         一直在工作，池子却越补越大，而没有任何一处报错。
+
+        ⚠️ KMS-015：只允许**新算法**（`kyber_kem`）补货。`falcon_lattice`
+        是历史错误算法（Falcon 封装 SM4 不成立），补货等于替它续命 ——
+        明确拒绝并把原因写在返回值里（调用方只转达 message）。
         """
         from django.db import models as db_models
         target_size = target_size or KeyPoolService.DEFAULT_POOL_SIZE
         now = timezone.now()
+
+        # KMS-015：历史错误算法不许进入新业务（补货也是新业务）。
+        if algorithm and algorithm != 'kyber_kem':
+            logger.warning(
+                "补充密钥池被拒：algorithm=%r 不是当前支持的封装算法（只支持 kyber_kem）"
+                "—— falcon_lattice 等历史错误算法不得进入新业务",
+                algorithm,
+            )
+            return {
+                'success': False,
+                'code': C.ERR_ALGORITHM_NOT_ALLOWED,
+                'message': (
+                    f'不支持为 {algorithm!r} 补充密钥池：当前只支持 kyber_kem。'
+                    f'falcon_lattice 是历史错误算法（Falcon 封装 SM4 不成立），'
+                    f'历史池项保留可读可审计，但不进入新业务'
+                ),
+            }
 
         available = PreDistributedKey.objects.filter(
             status__in=KeyPoolService.POOL_STATUS_READY_VALUES,
@@ -891,10 +815,9 @@ class KeyPoolService:
             f"余量 {available}/{target_size}，补充 {replenish_count} 条"
         )
 
-        if algorithm == 'falcon_lattice':
-            return KeyPoolService.generate_falcon_pool(node1_id, node2_id, replenish_count)
-        else:
-            return KeyPoolService.generate_kyber_pool(node1_id, node2_id, replenish_count)
+        # KMS-015：`falcon_lattice` 的分支已删除（generate_falcon_pool 整体移除，
+        # 上面的算法守门会先拒掉它）。只剩 Kyber 一条补货路径。
+        return KeyPoolService.generate_kyber_pool(node1_id, node2_id, replenish_count)
 
     # ================================================================
     #  线上预分配：生成加密数据包供发送方节点下载

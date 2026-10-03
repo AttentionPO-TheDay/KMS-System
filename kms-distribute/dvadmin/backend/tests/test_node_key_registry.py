@@ -7,8 +7,11 @@
 不是"函数返回了 success"：
 
   1. 登记必须**同时**写两处：`NodeLongTermKey` 一行 + `Node.<算法>_public_key`
-     物化视图列；FALCON 还要一并写镜像列 `falcon_public_key`。只写一处不会
-     报错，只会让"哪一处为准"取决于谁先读 —— 表现为"有时对"，比稳定错更难查。
+     物化视图列。只写一处不会报错，只会让"哪一处为准"取决于谁先读 ——
+     表现为"有时对"，比稳定错更难查。
+     ⚠️ KMS-015 起 FALCON 的**镜像列 `falcon_public_key` 停写**（读路径已切
+     到 `falcon_sign_public_key` 优先）；但回收时镜像列的**存量旧值**仍要
+     被清掉 —— "停写"与"不清理"是两回事，两条都有断言。
   2. **同一节点同一算法最多一行 ACTIVE**，且必须在**数据库层**成立 ——
      应用层判断在并发下会双双通过。这条约束建在 `active_slot`（status 的派生列）
      上，因为 MySQL 不支持部分索引，而 Django 遇到不支持的后端会**静默跳过**
@@ -249,8 +252,22 @@ def test_registration_writes_both_places(node):
 
     fresh = Node.objects.get(pk=node.pk)
     results.append(_report(
-        'FALCON：镜像列 falcon_public_key 一并写入（旧读路径还在用它）',
-        fresh.falcon_public_key == falcon,
+        '★ FALCON：镜像列 falcon_public_key **停写**（KMS-015 —— 只写规范列；'
+        '读路径已切到 falcon_sign_public_key 优先）',
+        fresh.falcon_public_key == '' and fresh.falcon_sign_public_key == falcon,
+        f'镜像列={fresh.falcon_public_key!r} 规范列长度={len(fresh.falcon_sign_public_key)}',
+    ))
+    # 停写的是**写**，不是清理：回收必须把镜像列也清掉（存量节点上可能还有旧值）。
+    # 造一个"旧时代残留的镜像值"，回收 FALCON 后它必须一起被清。
+    Node.objects.filter(pk=node.pk).update(falcon_public_key='LEGACY-MIRROR-VALUE')
+    active_falcon = NodeLongTermKey.objects.filter(
+        node=node, algorithm='FALCON', status=C.KEY_STATUS_ACTIVE).first()
+    R.revoke_public_key(active_falcon, '自测：KMS-015 镜像列清理面')
+    fresh = Node.objects.get(pk=node.pk)
+    results.append(_report(
+        '★ FALCON：回收把镜像列的**存量旧值**也清掉（停写 ≠ 不清理）',
+        fresh.falcon_public_key == '' and fresh.falcon_sign_public_key == '',
+        f'镜像列={fresh.falcon_public_key!r} 规范列={fresh.falcon_sign_public_key!r}',
     ))
 
     # activate=False 的行是"待启用"，不能抢生产版本，也不能覆盖物化视图列
@@ -420,8 +437,9 @@ def test_revoke_clears_node_columns(node):
         fresh.kyber_public_key == '', repr(fresh.kyber_public_key[:20]),
     ))
     results.append(_report(
-        '不动其他算法列',
-        bool(fresh.falcon_sign_public_key) and bool(fresh.falcon_public_key),
+        '不动其他算法列（KMS-015：FALCON 只写规范列，镜像列停写后为空）',
+        bool(fresh.falcon_sign_public_key) and fresh.falcon_public_key == '',
+        f'sign={len(fresh.falcon_sign_public_key)}B mirror={fresh.falcon_public_key!r}',
     ))
     results.append(_report(
         '不动 Node.status（撤一个算法 ≠ 节点没初始化；且两套状态拼写不同）',

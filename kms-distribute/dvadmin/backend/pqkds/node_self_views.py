@@ -175,9 +175,12 @@ def _node_payload(node: Node) -> dict:
         # 新设备登录时本地没有私钥，靠这个才能发现，否则界面看不出任何异常。
         'keyDeviceId': node.key_device_id or '',
         # 四套密钥各自是否就绪 —— 首次初始化引导页用它显示进度
+        # ⚠️ KMS-015：Falcon 就绪判定读**规范列优先**（镜像列 `falcon_public_key`
+        #    已停写；存量节点可能只有旧列，所以保留兜底）。
+        #    与 `initialize_base_keys` 的就绪判定同一口径，两处别漂移。
         'keys': {
             'kyber': bool(node.kyber_public_key),
-            'falcon': bool(node.falcon_public_key),
+            'falcon': bool(node.falcon_sign_public_key or node.falcon_public_key),
             'sm2': bool(node.gm_public_key),
             'sscl': bool(node.sscl_public_key),
         },

@@ -400,9 +400,11 @@ def _validate_request(payload: Dict[str, Any], user_id: int) -> Tuple[Optional[d
     if count < 1 or count > MAX_KEYS_PER_DISTRIBUTION:
         return None, _error(f'count 必须在 1..{MAX_KEYS_PER_DISTRIBUTION} 之间')
 
-    # 节点腿的封装算法由用户选择（2026-09-26 起）：
-    # 抗量子 Kyber / 抗量子 Falcon。不在白名单里就直接拒，
-    # 免得脏值一路走到封装层才报错。
+    # 节点腿的封装算法由用户选择（2026-09-26 起）。
+    # ⚠️ KMS-015 更正了这段注释：白名单**只有** kyber_kem / gm_sm2 / gm_sscl，
+    #    从没有、也不会有 falcon_lattice —— "Falcon 封装 SM4"在密码学上不成立
+    #    （Falcon 是签名算法），计划 §3 早已排除。旧注释里那句"抗量子 Kyber /
+    #    抗量子 Falcon"是 2026-09-26 那次改动的残留说法，与本行代码不符。
     node_wrapping = (
         payload.get('node_wrapping_algorithm')
         or payload.get('nodeWrappingAlgorithm')
@@ -457,6 +459,20 @@ def distribute_to_user(request, identity):
         '已弃用接口被调用：POST /key-pool/distribute-to-user/（用户腿旧模型）'
         '—— 新流程请用 POST /node-self/distributions/',
     )
+    # KMS-015：`Deprecation: true` 必须挂在**每一个**响应上（含 4xx）。
+    # 此前只在成功路径设置 —— 于是"被弃用接口的错误响应"看起来和一个
+    # 活着的接口一模一样，调用方（与验收断言）无从区分"弃用标记还在不在"。
+    # 头是 HTTP 层的事，包一层出口即可，不动任何 body 契约。
+    response = _distribute_to_user_inner(request, identity)
+    try:
+        response['Deprecation'] = 'true'
+    except Exception:  # noqa: BLE001 —— 头部设置失败不该改变响应本身
+        logger.warning('设置 Deprecation 响应头失败', exc_info=True)
+    return response
+
+
+def _distribute_to_user_inner(request, identity):
+    """`distribute_to_user` 的主体（KMS-015 拆出来，便于外层统一加弃用头）。"""
     try:
         payload = json.loads(request.body or b'{}')
     except (ValueError, TypeError):
@@ -873,8 +889,7 @@ def distribute_to_user(request, identity):
             'chainHash': chain_tx or '',
         }
     )
-    # 弃用标记走**响应头**而不是 body 字段：body 的字段集合是既有契约，
-    # 往里塞一个 `deprecated` 字段会让"按字段全集比对"的调用方（验收脚本里就有）
-    # 失败得莫名其妙。头部是 HTTP 层的事，不破坏任何既有解析。
-    response['Deprecation'] = 'true'
+    # ⚠️ 弃用头不在这里设 —— KMS-015 起由外层 `distribute_to_user` **统一**加到
+    # 每一个响应上（含 4xx）。此前只加在成功路径，"被弃用接口的错误响应"
+    # 与活接口长得一模一样。理由写在那个包装函数的注释里。
     return response

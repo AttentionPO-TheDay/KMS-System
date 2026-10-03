@@ -185,7 +185,9 @@ class DatabaseToBlockchainSyncService:
             else:
                 logger.warning(f"    Node has no Kyber public key")
             logger.info(f"  [3/4] Uploading Falcon public key...")
-            if node.falcon_public_key:
+            # KMS-015：读**规范列优先**（镜像列已停写；存量节点保留旧列兜底）。
+            # 与 node_self_views / initialize_base_keys 同一口径。
+            if node.falcon_sign_public_key or node.falcon_public_key:
                 falcon_result = self._upload_falcon_key_with_hash_check(node)
                 if not falcon_result['success']:
                     logger.warning(f"    Falcon public key upload failed: {falcon_result.get('message')}")
@@ -267,7 +269,8 @@ class DatabaseToBlockchainSyncService:
             }
     def _upload_falcon_key_with_hash_check(self, node: Node) -> Dict[str, Any]:
         try:
-            falcon_key = node.falcon_public_key
+            # KMS-015：同 [3/4] 的读口径 —— 规范列优先，旧列兜底。
+            falcon_key = node.falcon_sign_public_key or node.falcon_public_key
             falcon_size = len(falcon_key.encode() if isinstance(falcon_key, str) else falcon_key)
             logger.info(f"     Falcon公钥大小: {falcon_size} 字节")
             if falcon_size < self.hash_threshold:

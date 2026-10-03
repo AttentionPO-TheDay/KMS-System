@@ -49,20 +49,20 @@ REGISTRABLE_ALGORITHMS = tuple(C.PROTECTION_ALGORITHMS) + tuple(C.SIGNATURE_ALGO
 #: 规范算法名 → `Node` 上的公钥列。双写目标。
 _PUBLIC_KEY_COLUMN = dict(C.NODE_PUBLIC_KEY_COLUMN)
 
-#: 规范算法名 → 除规范列之外**还要一起写**的镜像列。目前只有 FALCON。
+#: 规范算法名 → 除规范列之外**回收时要一起清空**的镜像列。目前只有 FALCON。
 #:
 #: `Node` 上有两列装 Falcon 公钥，而它们语义不同：
 #:   * `falcon_sign_public_key` —— 规范列，签名路径真正读的那一列；
-#:   * `falcon_public_key`      —— CL-Falcon 时代的旧列，**但仍有读路径**在用它
-#:     （`initialize_base_keys` 的就绪判定、`database_blockchain_sync_service`、
-#:      若干 benchmark / 清理脚本）。
+#:   * `falcon_public_key`      —— CL-Falcon 时代的旧列。
 #:
-#: 新登记的节点两列写同一把标准 Falcon 公钥。之所以不在这里顺手停写旧列：
-#: 读路径还没清干净，停写会让每个新注册节点的 `falcon_public_key` 变成空，
-#: 上列那些读取方立刻看到空值 —— 那是 KMS-015（封存遗留路径）要一起做的事。
+#: ⚠️ KMS-015 起**停写**镜像列（登记只写规范列）：旧列的读路径已经切干净
+#: （`node_self_views` 的就绪判定与 `database_blockchain_sync_service` 都改成
+#: `falcon_sign_public_key or falcon_public_key` 的规范列优先读），继续双写只会
+#: 让"两列哪一列为准"这个旧问题永远留在每个新节点上。
 #:
-#: 放在这里而不是留在调用点，因为镜像列是**存储层一致性**的一部分：
-#: 回收时必须与规范列一起清空，漏掉任何一列都会让已回收的公钥继续可读。
+#: ⚠️ 但这张表**仍然保留**：回收（`public_key=''`）时两列都要清 ——
+#: 存量节点上可能还躺着旧列的值（KMS-004 回填之前的行），漏清会让已回收的
+#: 公钥继续从 `node.falcon_public_key` 读出来。停写的是**写**，不是清理。
 _MIRROR_COLUMNS: Dict[str, Tuple[str, ...]] = {
     'FALCON': ('falcon_public_key',),
 }
@@ -169,14 +169,18 @@ def _write_node_column(node: Node, algorithm: str, public_key: str) -> None:
     用 `queryset.update()` 而不是 `node.save()`：后者会把整个 Node 行写回，
     在并发登记时可能用陈旧的内存副本覆盖别人刚写的字段。
 
-    镜像列（见 `_MIRROR_COLUMNS`）与规范列**同写同清**：`public_key=''`
-    是回收路径，它必须把两列都清掉，否则已回收的 Falcon 公钥仍能被
-    `node.falcon_public_key` 读到。
+    ---- KMS-015：写只写规范列，清仍然两列都清 ----
+    登记（`public_key` 非空）时**不再**写镜像列（`_MIRROR_COLUMNS`）——
+    读路径已切到规范列优先，继续双写只会把"两列哪一列为准"留在每个新节点上。
+    回收（`public_key=''`）时**两列都清**：存量节点旧列里可能还有值，
+    漏清会让已回收的公钥继续从旧列读出来。
     """
     column = _PUBLIC_KEY_COLUMN.get(algorithm)
     if not column:
         return  # 理论上到不了：上面的白名单已经拦过
-    columns = (column, *_MIRROR_COLUMNS.get(algorithm, ()))
+    columns = (column,)
+    if not public_key:
+        columns = (column, *_MIRROR_COLUMNS.get(algorithm, ()))
     Node.objects.filter(pk=node.pk).update(**{c: public_key for c in columns})
     # 让调用方手里的实例与服务端一致，避免它随后拿旧值做判断
     for c in columns:

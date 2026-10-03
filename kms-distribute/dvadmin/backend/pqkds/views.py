@@ -1762,6 +1762,25 @@ class SessionKeyViewSet(CustomModelViewSet):
         # 一并决定 —— 在这里逐条收紧只会把 KMS-015 的工作摊成两处。
         return []
 
+    #: KMS-015 封存的旧会话模型动作：它们用**服务端私钥**做封装/解封
+    #: （`initiate` 直接读 `node.*_private_key` 做胶囊），而那批私钥正在被
+    #: 清理脚本清空、清单口径也随 §4.4 改为"服务端不持有"。整条链路
+    #: 已被节点到节点分发取代（`/node-self/distributions/` + 取信封 + 双方确认）。
+    #: 这里给**明确返回码**而不是静默 404：调用方拿到的是一句能照做的处置
+    #: （改用新链路），而不是"这个接口好像没了"。
+    _SEALED_SESSION_ACTIONS = (
+        'initiate', 'initiate_kyber_agreement', 'verify_and_decrypt',
+        'send_message', 'decrypt_message',
+    )
+
+    def _sealed_response(self):
+        return ErrorResponse(
+            msg='旧会话模型已封存（KMS-015）：这些动作依赖服务端私钥，而私钥只在节点本机。'
+                '请改用节点到节点分发：POST /node-self/distributions/ → 取信封 → '
+                'verify/recover → 双方 confirm（SESSION_SEALED）',
+            code=410,
+        )
+
     def initial(self, request, *args, **kwargs):
         """KMS-014：读动作要求登录（introspect 链，见 get_permissions 说明）。"""
         super().initial(request, *args, **kwargs)
@@ -1834,6 +1853,12 @@ class SessionKeyViewSet(CustomModelViewSet):
             logger.error(f"同步节点到区块链配置失败: {e}")
     @action(detail=False, methods=['post'])
     def initiate(self, request):
+        # KMS-015 封存：见 `_SEALED_SESSION_ACTIONS`。旧实现保留在下方，
+        # 供**回滚期内对照**（计划 §15 第 8 步：删除旧接口要在完整发布周期之后）。
+        # `if True` 而不是 `return` + 死代码：后者会被静态检查当缺陷，
+        # 而这里"到不了"是刻意的。
+        if True:
+            return self._sealed_response()
         try:
             node1_id = request.data.get('node1_id') or request.data.get('initiator_node') or request.data.get('from_node_id')
             node2_id = request.data.get('node2_id') or request.data.get('target_node') or request.data.get('to_node_id')
@@ -1959,6 +1984,12 @@ class SessionKeyViewSet(CustomModelViewSet):
             return ErrorResponse(msg=f"会话建立失败: {str(e)}")
     @action(detail=False, methods=['post'])
     def initiate_kyber_agreement(self, request):
+        # KMS-015 封存：见 `_SEALED_SESSION_ACTIONS`。旧实现保留在下方，
+        # 供**回滚期内对照**（计划 §15 第 8 步：删除旧接口要在完整发布周期之后）。
+        # `if True` 而不是 `return` + 死代码：后者会被静态检查当缺陷，
+        # 而这里"到不了"是刻意的。
+        if True:
+            return self._sealed_response()
         try:
             node1_id = request.data.get('node1_id') or request.data.get('initiator_node')
             node2_id = request.data.get('node2_id') or request.data.get('target_node')
@@ -1974,6 +2005,12 @@ class SessionKeyViewSet(CustomModelViewSet):
             return ErrorResponse(msg=f"Kyber密钥分发失败: {str(e)}")
     @action(detail=True, methods=['post'])
     def send_message(self, request, pk=None):
+        # KMS-015 封存：见 `_SEALED_SESSION_ACTIONS`。旧实现保留在下方，
+        # 供**回滚期内对照**（计划 §15 第 8 步：删除旧接口要在完整发布周期之后）。
+        # `if True` 而不是 `return` + 死代码：后者会被静态检查当缺陷，
+        # 而这里"到不了"是刻意的。
+        if True:
+            return self._sealed_response()
         try:
             session: SessionKey = SessionKey.objects.get(pk=pk)
             set_request_msg(request, f'发送加密消息(会话{pk})')
@@ -2269,6 +2306,12 @@ class SessionKeyViewSet(CustomModelViewSet):
                 return ErrorResponse(msg=f"发送消息失败: {error_msg}")
     @action(detail=True, methods=['post'])
     def decrypt_message(self, request, pk=None):
+        # KMS-015 封存：见 `_SEALED_SESSION_ACTIONS`。旧实现保留在下方，
+        # 供**回滚期内对照**（计划 §15 第 8 步：删除旧接口要在完整发布周期之后）。
+        # `if True` 而不是 `return` + 死代码：后者会被静态检查当缺陷，
+        # 而这里"到不了"是刻意的。
+        if True:
+            return self._sealed_response()
         try:
             session: SessionKey = SessionKey.objects.get(pk=pk)
             set_request_msg(request, f'解密消息(会话{pk})')
@@ -2492,6 +2535,12 @@ class SessionKeyViewSet(CustomModelViewSet):
             return ErrorResponse(msg=f"获取消息列表失败: {str(e)}")
     @action(detail=False, methods=['post'])
     def verify_and_decrypt(self, request):
+        # KMS-015 封存：见 `_SEALED_SESSION_ACTIONS`。旧实现保留在下方，
+        # 供**回滚期内对照**（计划 §15 第 8 步：删除旧接口要在完整发布周期之后）。
+        # `if True` 而不是 `return` + 死代码：后者会被静态检查当缺陷，
+        # 而这里"到不了"是刻意的。
+        if True:
+            return self._sealed_response()
         try:
             session_id = request.data.get('session_id')
             receiver_node_id = request.data.get('receiver_node_id')
@@ -3538,11 +3587,20 @@ class KeyPoolViewSet(CustomModelViewSet):
                     msg=f'节点 {actor.node_id} 不是该节点对（{node1_id}↔{node2_id}）的一方，'
                         f'无权为其预分配密钥')
 
+            # KMS-015：**历史错误算法不许进入新业务**。只允许 kyber_kem ——
+            # `falcon_lattice`（Falcon 封装 SM4）在密码学上不成立，计划 §3 早已
+            # 把它移出保护算法白名单；这里原先的分流分支会走到
+            # `generate_falcon_pool`（恒 generated=0 的"成功"），删除该分支并
+            # **明确拒绝**：历史 falcon_lattice 池项仍可读可审计，但不再有
+            # 任何入口能产生新的。
+            if algorithm != 'kyber_kem':
+                return ErrorResponse(
+                    msg=f'不支持为 {algorithm!r} 生成预分配密钥：当前只支持 kyber_kem。'
+                        f'falcon_lattice 是历史错误算法（Falcon 封装 SM4 不成立），'
+                        f'历史池项保留可读可审计，但不进入新业务（ALGORITHM_NOT_ALLOWED）')
+
             from .key_pool_service import KeyPoolService
-            if algorithm == 'falcon_lattice':
-                result = KeyPoolService.generate_falcon_pool(node1_id, node2_id, count, expiry_hours)
-            else:
-                result = KeyPoolService.generate_kyber_pool(node1_id, node2_id, count, expiry_hours)
+            result = KeyPoolService.generate_kyber_pool(node1_id, node2_id, count, expiry_hours)
 
             if result.get('success'):
                 return SuccessResponse(data=result, msg=f"预分配完成: {result['generated']} 条")
@@ -3646,7 +3704,11 @@ class KeyPoolViewSet(CustomModelViewSet):
             if result.get('success'):
                 return SuccessResponse(data=result, msg=f"补充完成: {result['generated']} 条")
             else:
-                return ErrorResponse(msg=result.get('message', '补充失败'))
+                # 与 consume 同一条约定：本命名空间没有错误码字段，
+                # 服务层给出的 code 必须写进**文案**才到得了调用方。
+                code = result.get('code')
+                text = result.get('message', '补充失败')
+                return ErrorResponse(msg=f"{text}（{code}）" if code else text)
         except Exception as e:
             return ErrorResponse(msg=f"补充失败: {str(e)}")
 
