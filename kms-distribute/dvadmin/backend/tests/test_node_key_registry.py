@@ -86,6 +86,17 @@ KMS-007 追加一组（回收的影响面：顺序、重试、以及"撤的是�
      失败时返回 `{'success': False}` 而不是抛出。拿 `sessions == 0` 当"没有会话
      受影响"就会把"密钥已回收、会话还活着"读成一切正常。
 
+KMS-013 追加一组（池项消费：能跑之后，真正要钉的是它拒绝什么）
+================================================================
+ 11. `consume_key` 在 KMS-013 之前**从未成功执行过**（裸名常量 → NameError；
+     修掉后还有 `select_for_update` 无外层事务 → TransactionManagementError）。
+     所以第 17 组先钉"它能跑"，再钉它**拒绝**什么：已消费的行取不到第二次、
+     过期的行取不出来（与页面的 `effective_status` 同判）、引用的长期密钥
+     登记行被回收时消费口自己拒（`KEY_REVOKED`，不依赖池项被标记 ——
+     标记可能被绕过）。另有正对照（换新引用后照常可消费），防"闸门恒拒绝"
+     也能让拒绝面全绿。状态机与旧拼写别名的**单一出处**在
+     `api_contract.POOL_TRANSITIONS` / `POOL_LEGACY_STATUS_ALIASES`。
+
 **它必须跑在 dvadmin3-django 容器里**（要 Django 环境与数据库）：
 
     docker cp "backend/pqkds/node_key_registry.py"      dvadmin3-django:/backend/pqkds/
@@ -1788,6 +1799,258 @@ def test_revoke_service_impact(node):
     return all(results)
 
 
+def test_pool_consume_semantics(node):
+    """KMS-013：池项消费 —— 断口复现、状态机、终态、过期与引用失效的消费口。
+
+    ---- 为什么这组不只测"消费成功" ----
+    `consume_key` 在 KMS-013 之前**从未成功执行过**（裸名 NameError +
+    `select_for_update` 无外层事务，roadmap §4 有复现记录），所以"它现在
+    能跑"本身就要有断言；而"能跑"之后，真正要钉的是**它拒绝什么**：
+
+      * 已消费的行取不到第二次（一次性）；
+      * 过期的行取不出来 —— 页面（`effective_status`）与消费必须对"过期"
+        给出**同一个**答案，不然页面说可用、消费说没有，两边都不报错；
+      * 引用的长期密钥登记行被回收 → 消费口必须自己拒（`KEY_REVOKED`）——
+        这是阶段 5 出口检查「密钥版本失效会阻止消费」在**消费口**的那一半；
+        另一半（回收把池项连带标 REVOKED）由第 14 组覆盖。
+
+    ⚠️ 本组刻意**不用** `_make_pool_item`：那个夹具只设 node1（node2 为空），
+       而 `consume_key` 按**节点对**双向匹配，node2 为空的行永远不会被选中 ——
+       用它做夹具的话所有消费都返回"没有可用"，看起来像消费坏了。
+    """
+    results = []
+    other = _make_node('13-peer')
+    tag = uuid.uuid4().hex[:8]
+
+    def pair_item(name, **kw):
+        return PreDistributedKey.objects.create(
+            pool_id=f'TESTKMS013-{name}-{tag}',
+            key_index=0,
+            node1=node,
+            node2=other,
+            algorithm=kw.pop('algorithm', 'kyber_kem'),
+            encrypted_key_data='{}',
+            key_hash='0' * 64,
+            status=kw.pop('status', 'READY'),
+            expires_at=kw.pop('expires_at', timezone.now() + timedelta(days=1)),
+            **kw,
+        )
+
+    try:
+        # --- A. 断口复现 ---------------------------------------------------
+        # 断口 1：常量是**类属性**，静态方法里的裸名解析不到（NameError）。
+        # 这条断言本身不执行消费，但它把"名字从哪来"钉在类上。
+        results.append(_report(
+            '★ POOL_STATUS_READY_VALUES 挂在类上且含旧拼写（裸名曾经解析不到 —— 断口 1）',
+            KeyPoolService.POOL_STATUS_READY_VALUES == (C.POOL_READY, 'unused'),
+            f'{KeyPoolService.POOL_STATUS_READY_VALUES}',
+        ))
+        # 断口 2：事务边界。此时节点对没有任何池项 —— 修好前这里抛
+        # TransactionManagementError / NameError，修好后走完事务并如实返回失败。
+        empty = KeyPoolService.consume_key(node.node_id, other.node_id)
+        results.append(_report(
+            '★ 直调不再抛 NameError / TransactionManagementError，如实回 POOL_ITEM_UNAVAILABLE',
+            empty.get('success') is False and empty.get('code') == C.ERR_POOL_ITEM_UNAVAILABLE,
+            f"code={empty.get('code')} message={str(empty.get('message'))[:60]}",
+        ))
+
+        # --- B. 状态机表（单一出处：api_contract） --------------------------
+        results.append(_report(
+            '状态机：READY → CONSUMED 合法；READY → RESERVED **没有边**（保留值）',
+            C.pool_transition_allowed(C.POOL_READY, C.POOL_CONSUMED)
+            and not C.pool_transition_allowed(C.POOL_READY, C.POOL_RESERVED)
+            and C.POOL_RESERVED in C.POOL_TRANSITIONS
+            and C.POOL_TRANSITIONS[C.POOL_RESERVED]
+            == frozenset({C.POOL_CONSUMED, C.POOL_REVOKED, C.POOL_EXPIRED}),
+            f'READY→CONSUMED={C.pool_transition_allowed(C.POOL_READY, C.POOL_CONSUMED)} '
+            f'READY→RESERVED={C.pool_transition_allowed(C.POOL_READY, C.POOL_RESERVED)}',
+        ))
+        results.append(_report(
+            '旧拼写经归一后与规范值同判：unused≡READY；used/distributed≡CONSUMED（不可再消费）',
+            C.pool_status_allows_new_work('unused') and C.pool_status_allows_new_work(C.POOL_READY)
+            and not C.pool_status_allows_new_work('used')
+            and not C.pool_status_allows_new_work('distributed')
+            and C.normalize_pool_status('distributed') == C.POOL_CONSUMED,
+            f"distributed→{C.normalize_pool_status('distributed')}",
+        ))
+
+        # --- C. 正常消费：旧拼写行也能取、一次性、消费会话落库 --------------
+        legacy = pair_item('c-legacy', status='unused')  # 历史拼写，只在别名表里算"可用"
+        session = _make_session(node, other, 'c')
+        first = KeyPoolService.consume_key(node.node_id, other.node_id, session=session)
+        legacy.refresh_from_db()
+        results.append(_report(
+            '★ 历史拼写（unused）的行也能被取到 —— 只认 READY 会让它永远取不出来',
+            first.get('success') is True and first.get('pool_id') == legacy.pool_id,
+            f"success={first.get('success')} pool_id={first.get('pool_id')}",
+        ))
+        results.append(_report(
+            '★ 取用后行转**规范值** CONSUMED、记下 used_at 与消费会话（页面「消费情况」列的数据源）',
+            legacy.status == C.POOL_CONSUMED
+            and legacy.used_at is not None
+            and legacy.used_by_session_id == session.pk,
+            f'status={legacy.status} session={legacy.used_by_session_id}',
+        ))
+        second = KeyPoolService.consume_key(node.node_id, other.node_id, session=session)
+        results.append(_report(
+            '★ 同一行取不到第二次（一次性消费；此时节点对没有其它可用行）',
+            second.get('success') is False
+            and second.get('code') == C.ERR_POOL_ITEM_UNAVAILABLE,
+            f"success={second.get('success')} code={second.get('code')}",
+        ))
+
+        # --- D. 过期行：消费口与页面必须同判 --------------------------------
+        expired = pair_item('d-exp', status='READY')
+        PreDistributedKey.objects.filter(pk=expired.pk).update(
+            expires_at=timezone.now() - timedelta(minutes=1))
+        expired.refresh_from_db()
+        after_exp = KeyPoolService.consume_key(node.node_id, other.node_id)
+        expired.refresh_from_db()
+        results.append(_report(
+            '★ 已过期的 READY 行取不出来，且标记未动（过期不是消费，不改状态）',
+            after_exp.get('success') is False and expired.status == C.POOL_READY,
+            f"success={after_exp.get('success')} 行状态={expired.status}",
+        ))
+        from pqkds.serializers import PreDistributedKeySerializer
+        shown = PreDistributedKeySerializer(expired).data
+        results.append(_report(
+            '★ 页面口径同判：序列化器的 effective_status=EXPIRED（库内值仍是 READY）',
+            shown.get('effective_status') == C.POOL_EXPIRED and shown.get('status') == C.POOL_READY,
+            f"effective_status={shown.get('effective_status')} status={shown.get('status')}",
+        ))
+
+        # --- E. 引用的长期密钥被回收 → 识破即纠正、跳过继续取 ------------------
+        key = R.register_public_key(node, algorithm='KYBER', public_key=_b64_key(1184))
+        bound = pair_item('e-bound', status=C.POOL_READY,
+                          long_term_key_id=key.key_id, long_term_key_version=key.key_version)
+        # 只直调登记层回收（`revoke_public_key(row, reason)` 收的是**行**；做
+        # 影响面编排的是 `revoke_long_term_key`），池项仍是 READY —— 这正是
+        # "连带标记漏网"的行（历史数据、手工改库、标记引入之前的行）。消费口
+        # 必须自己看出来，而不是把它取走、让调用方解封时才失败。
+        R.revoke_public_key(key, '自测：KMS-013')
+
+        # E1 —— 池子里只剩这一条死件：拒绝，且码是 KEY_REVOKED（处置是
+        # "重新预分配"，不是"稍后再试"）。
+        blocked = KeyPoolService.consume_key(node.node_id, other.node_id)
+        bound.refresh_from_db()
+        results.append(_report(
+            '★ 只剩死件时消费被拒：码是 KEY_REVOKED（不是笼统的"没有可用"）',
+            blocked.get('success') is False and blocked.get('code') == C.ERR_KEY_REVOKED,
+            f"code={blocked.get('code')} message={str(blocked.get('message'))[:48]}",
+        ))
+        # E2 —— 识破即纠正：死件被就地标成 REVOKED（与回收路径**同一判据**的
+        # 迟到应用）。不标的话它会永远躺在 READY 集合里，页面继续显示
+        # "可被会话取用"，与消费的结论再次互相矛盾。
+        results.append(_report(
+            '★ 死件被就地标成 REVOKED（页面口径从此一致），skipped 如实回报',
+            bound.status == C.POOL_REVOKED
+            and any(s.get('pool_id') == bound.pool_id for s in blocked.get('skipped') or []),
+            f"行状态={bound.status} skipped={blocked.get('skipped')}",
+        ))
+        # E3 —— 纠正之后不再毒化池子：第二次消费面对的是"没有 READY 行"，
+        # 而不是又一次撞上同一条死件。这是"只拒绝不纠正"版本的回归判据 ——
+        # 那个版本下这一条会永远返回 KEY_REVOKED。
+        after = KeyPoolService.consume_key(node.node_id, other.node_id)
+        results.append(_report(
+            '★ 第二次消费不再撞上死件：池子空了就是"没有可用"',
+            after.get('success') is False and after.get('code') == C.ERR_POOL_ITEM_UNAVAILABLE,
+            f"code={after.get('code')}",
+        ))
+        # E4 —— 跳过继续取：死件（key_index=0）后面还有活件（index=1）时，
+        # 消费必须拿到活的那条、并如实回报跳过了什么。这一条钉的是
+        # "一条死件毒化整个节点对"的反面（消费按 key_index 取，死件排在前
+        # 就会永远挡路）。
+        key2 = R.register_public_key(node, algorithm='KYBER', public_key=_b64_key(1184))
+        dead2 = pair_item('e-dead2', status=C.POOL_READY,
+                          long_term_key_id=key.key_id, long_term_key_version=1)
+        live = pair_item('e-live', status=C.POOL_READY,
+                         long_term_key_id=key2.key_id, long_term_key_version=key2.key_version)
+        PreDistributedKey.objects.filter(pk=dead2.pk).update(key_index=0)
+        PreDistributedKey.objects.filter(pk=live.pk).update(key_index=1)
+        picked = KeyPoolService.consume_key(node.node_id, other.node_id)
+        dead2.refresh_from_db()
+        live.refresh_from_db()
+        results.append(_report(
+            '★ 跳过死件取到活件：拿到的是活的那条，skipped 如实带出死件',
+            picked.get('success') is True and picked.get('pool_id') == live.pool_id
+            and dead2.status == C.POOL_REVOKED and live.status == C.POOL_CONSUMED
+            and len(picked.get('skipped') or []) == 1,
+            f"取到={picked.get('pool_id')} 死件={dead2.status} 活件={live.status} "
+            f"skipped={picked.get('skipped')}",
+        ))
+        # 正对照：上面全部拒绝之后，引用活密钥的行仍然能正常消费 ——
+        # 没有这一条，"闸门恒拒绝"也能让拒绝面全绿。
+        key3 = R.register_public_key(node, algorithm='KYBER', public_key=_b64_key(1184))
+        fresh = pair_item('e-fresh', status=C.POOL_READY,
+                          long_term_key_id=key3.key_id, long_term_key_version=key3.key_version)
+        ok_again = KeyPoolService.consume_key(node.node_id, other.node_id)
+        fresh.refresh_from_db()
+        results.append(_report(
+            '★ 正对照：引用活密钥（新 keyId）的行照常消费成功（闸门不是恒拒绝）',
+            ok_again.get('success') is True and ok_again.get('pool_id') == fresh.pool_id
+            and fresh.status == C.POOL_CONSUMED
+            and ok_again.get('status') == C.POOL_CONSUMED,
+            f"success={ok_again.get('success')} pool_id={ok_again.get('pool_id')}",
+        ))
+
+        # --- F. skip_locked=False 的等锁路径（验收脚本走 HTTP，覆盖不了它）-----
+        # 真开一个**持锁线程**：它把这一行 `SELECT ... FOR UPDATE` 锁住 1.2 秒
+        # 再回滚。主线程此时调 skip_locked=False 的消费 —— InnoDB 会等锁，
+        # 对方回滚后重新读到的是 READY（对方没提交任何东西）→ 照常消费成功。
+        #
+        # ⚠️ 两个细节缺一不可，否则这条断言在证明不了任何事的情况下也会绿：
+        #    * 持锁线程必须先 `set_autocommit(False)` —— autocommit 下
+        #      `SELECT ... FOR UPDATE` 是语句级锁，语句一结束就释放，主线程
+        #      根本不会等；
+        #    * 断言主线程**确实等了**（elapsed ≥ 0.3s）。不看耗时的版本里，
+        #      就算锁压根没生效、断言也照样通过。
+        # 真并发的"恰好一个成功"由验收脚本用 N 个独立进程钉（同一进程的线程
+        # 测不出 InnoDB 对**不同连接**的隔离，那只由它们的连接数保证）。
+        wait_item = pair_item('f-wait', status=C.POOL_READY)
+        import threading
+        import time as _time
+        state = {}
+
+        def _hold_row_lock():
+            from django.db import connection as conn
+            try:
+                conn.set_autocommit(False)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        'SELECT id FROM dvadmin_pqkds_pre_distributed_keys WHERE id=%s FOR UPDATE',
+                        [wait_item.pk],
+                    )
+                    state['held'] = True
+                    _time.sleep(1.2)
+                conn.rollback()
+            except Exception as exc:  # noqa: BLE001
+                state['error'] = repr(exc)
+            finally:
+                conn.close()
+
+        holder = threading.Thread(target=_hold_row_lock, daemon=True)
+        holder.start()
+        wait_start = _time.perf_counter()
+        while not state.get('held') and not state.get('error') and holder.is_alive():
+            _time.sleep(0.02)
+        waited = KeyPoolService.consume_key(node.node_id, other.node_id, skip_locked=False)
+        elapsed = _time.perf_counter() - wait_start
+        holder.join(timeout=5)
+        results.append(_report(
+            'skip_locked=False 的等锁路径：真等到锁释放后消费成功（且确实等待过）',
+            waited.get('success') is True and waited.get('pool_id') == wait_item.pool_id
+            and elapsed >= 0.3,
+            f"success={waited.get('success')} elapsed={elapsed:.2f}s "
+            f"error={state.get('error')}",
+        ))
+    finally:
+        # ⚠️ `_main` 只清理它自己建的节点。对端节点由本组自己交代清楚 ——
+        #    池行与我会话都挂在这个对端（或被测节点）上，随 CASCADE 一并清掉；
+        #    漏删不会让本组失败，只会让开发库里慢慢积起没人认得出来的表名行。
+        other.delete()
+    return all(results)
+
+
 def _main():
     print("== KMS-004 长期密钥登记不变量自测 ==\n")
 
@@ -1811,6 +2074,7 @@ def _main():
         ("回收的影响面：三个连带失效、重试补做、版本区分", test_revoke_service_impact),
         ("按显式版本取密钥：四种拒绝各自可区分（KMS-008）", test_require_key_version),
         ("服务端验签：验不过必拒、验过才登记（KMS-010）", test_verify_node_distribution_signature),
+        ("池项消费：断口复现、状态机、终态、过期与引用失效（KMS-013）", test_pool_consume_semantics),
     ]
 
     failed = []

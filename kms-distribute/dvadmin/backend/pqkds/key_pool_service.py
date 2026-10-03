@@ -45,20 +45,35 @@ class KeyPoolService:
     LOW_THRESHOLD_RATIO = 0.2  # 低于 20% 触发补充
 
     # ----------------------------------------------------------------
-    #  阶段 6（文档 §7.5）：密钥池项状态
+    #  池项状态（KMS-013：状态机与别名表的**唯一出处**是 `api_contract`）
     # ----------------------------------------------------------------
-    # 正常流转 READY → RESERVED → CONSUMED；预分配密钥**一次性消费**，
-    # 不能被多个会话复用（并发保护见 pick_key 的 select_for_update(skip_locked)）。
+    # 原先这五个常量在本文件里另行定义，而 `api_contract` 里没有对应物 ——
+    # 于是"什么算可用"只在这一个模块里成立，别处要判同一件事就得各写一套。
+    # 现在值全部从 `api_contract` 派生（含旧拼写别名表），加一个新别名
+    # 只用改一处；派生而不是照抄，是为了让漂移在**导入时**就发生错误，
+    # 而不是等到某次消费把可用的行说成不可用（静默）。
     #
-    # 为什么把「可用」定义成一个**集合**而不是单个值：
-    # 库里已有按旧值 'unused' 写入的历史行。只认 'READY' 会让它们
-    # 永远取不出来 —— 现象是"池子里明明有货，却说没有可用的预分配密钥"。
-    # 统一由这个常量表达"什么算可用"，避免各处分别兼容两套拼写。
-    POOL_STATUS_READY_VALUES = ('READY', 'unused')
-    POOL_STATUS_RESERVED = 'RESERVED'
-    POOL_STATUS_CONSUMED_VALUES = ('CONSUMED', 'used', 'distributed')
-    POOL_STATUS_EXPIRED_VALUES = ('EXPIRED', 'expired')
-    POOL_STATUS_REVOKED = 'REVOKED'
+    # ⚠️ 迁移目标 `READY → RESERVED → CONSUMED` 里的 `RESERVED` 是**保留值**：
+    #    当前没有任何生产写入点，也刻意没有 —— 消费是单事务的
+    #    "选中（FOR UPDATE）→ 标记 CONSUMED"，中间窗口为零，没有需要预留的
+    #    时间段。理由与转移表写在 `api_contract.POOL_TRANSITIONS` 上方。
+    POOL_STATUS_READY_VALUES = (
+        (C.POOL_READY,)
+        + tuple(
+            alias for alias, canonical in C.POOL_LEGACY_STATUS_ALIASES.items()
+            if canonical == C.POOL_READY
+        )
+    )
+    POOL_STATUS_RESERVED = C.POOL_RESERVED
+    POOL_STATUS_CONSUMED_VALUES = (C.POOL_CONSUMED,) + tuple(
+        alias for alias, canonical in C.POOL_LEGACY_STATUS_ALIASES.items()
+        if canonical == C.POOL_CONSUMED
+    )
+    POOL_STATUS_EXPIRED_VALUES = (C.POOL_EXPIRED,) + tuple(
+        alias for alias, canonical in C.POOL_LEGACY_STATUS_ALIASES.items()
+        if canonical == C.POOL_EXPIRED
+    )
+    POOL_STATUS_REVOKED = C.POOL_REVOKED
 
     @staticmethod
     def revoke_pool_items_for_key(node_id: str, key_id, version=None,
@@ -504,18 +519,78 @@ class KeyPoolService:
     @staticmethod
     def consume_key(
         node1_id: str, node2_id: str,
-        algorithm: str = None, session: SessionKey = None
+        algorithm: str = None, session: SessionKey = None,
+        skip_locked: bool = True,
     ) -> Dict[str, Any]:
-        """
-        从密钥池中取出一条未使用的密钥。
-        支持双向查找（A↔B 或 B↔A）。
+        """从密钥池中取出一条未使用的密钥。支持双向查找（A↔B 或 B↔A）。
+
+        ---- 本函数在 KMS-013 之前的实际状态：从未成功执行过 ----
+        两个断口叠在一起，且**每个都被下一层的错误文案掩盖**（roadmap §4）：
+
+        1. 第 518 行用的是**裸名** `POOL_STATUS_READY_VALUES`，而它是
+           `KeyPoolService` 的类属性 —— 静态方法里裸名解析到模块作用域，
+           必然 `NameError`。经过 HTTP 入口时它被兜底 except 收成
+           「密钥取用失败: name 'POOL_STATUS_READY_VALUES' is not defined」，
+           看起来像脚本参数问题，实则函数从未跑起来。
+        2. 修掉 1 之后还有第二层：`select_for_update` **必须在事务里**，
+           而本仓库没开 `ATOMIC_REQUESTS`，autocommit 下 Django 直接抛
+           `TransactionManagementError`。
+
+        ---- 现在的事务边界 ----
+        `with transaction.atomic():` 包住"选一条 + 标记 CONSUMED"这**整个**
+        临界区，行锁才有效。⚠️ 边界是刻意比"写一行"宽的：原先 `atomic()`
+        只包了标记那几行，选中与标记之间锁已释放 —— 两个并发请求会拿到
+        **同一条** READY 行，随后各自标记、各自返回成功。那正是"重复消费"
+        本身，而每个响应都显示 success。
+
+        ---- `skip_locked` 的两种模式和它测什么 ----
+        `True`（默认，生产路径）：被其它事务锁住的行直接跳过 → 并发 N 取 1
+        时其余请求得到"没有可用"；这正是验收要钉住的恰好一个成功。
+        `False`（**只给验收用**）：锁冲突时 InnoDB 等待，等对方提交后
+        **重新读到的是 CONSUMED、按 WHERE 过滤掉** → 本函数返回失败而不是
+        重复消费。两种模式都拒绝重复消费，区别只在这条路径能不能被走到。
+        参数显式放在签名里，是为了让"等锁也安全"这件事**可以被断言**，
+        而不是靠读 InnoDB 语义推断。
+
+        ---- 可用性判据之外，为什么还要一道闸门（KMS-013 实测后改成"识破即纠正"）----
+        可取的判据是「READY（含旧拼写）+ 未过期」，正常路径下不会取到死件：
+        长期密钥被回收时 KMS-007 已把该池项转 REVOKED。但**标记本身可能漏网**
+        （算法名认不出、手工改库、标记引入之前的行）—— 逃过标记的行会显示
+        READY、被正常选中、直到解封时才失败，现场离原因已经很远。
+
+        所以选中之后按行上自带的**长期密钥引用**（`long_term_key_id` /
+        `long_term_key_version`，KMS-007 D3 回填）复核登记表。判据只用行上
+        已有的事实，**不去猜"哪个节点是收件方"**：单向池（`pool_dist_*`）
+        封给发送方自己、节点间池封给 node2，同是 kyber_kem 在行上分不出来，
+        猜错方向的闸门比没有闸门更糟。引用查不到或没有引用的行只记日志
+        放行 —— 不能核对 ≠ 有问题。
+
+        ---- 复核不过时的三件事，缺一不可（第一版只有"拒绝"，实测后改的）----
+        1. **就地标 REVOKED**（在行锁内）。不标的话：页面的 `effective_status`
+           只看过期，会继续显示"可被会话取用"，与消费的结论再次互相矛盾；
+           而且死件永远躺在 READY 集合里，每次消费都白探一次。标记用的
+           判据与回收路径**同源**（登记行已 REVOKED），不是另写一套策略 ——
+           它只是同一条结论在消费时刻的迟到应用。
+        2. **跳过它继续取下一条**，并把跳过的事实放进响应（`skipped`）。
+           只拒绝不跳过的问题实测出来了：消费按 `key_index` 取第一条，
+           一条死件（index 最小）会**毒化整个节点对** —— 之后每次消费都
+           撞在它身上返回 KEY_REVOKED，池子里明明有活件却永远取不出来。
+           跳过也**不是静默**：跳了什么、为什么、标了什么，响应与日志都有。
+        3. 全部探测完仍没有活件时，按第一条死件的错误码如实拒
+           （`KEY_REVOKED` 而不是笼统的"没有可用"）—— 调用方的处置不同：
+           该重新预分配，而不是"稍后再试"。
+
+        ⚠️ 探测条数有上界（`MAX_PROBE`）：池子被大规模污染时不做无界扫描，
+           在响应里如实说明"检查了 N 条"。`skip_locked` 模式下被别的事务
+           锁住的行直接跳过，探测不会因此等待。
         """
         now = timezone.now()
         # 阶段 6（文档 §7.5）：可用的判据是 READY。
         # 必须把历史值 'unused' 一并纳入 —— 库里已有按旧值写入的行，
         # 只查 'READY' 会让它们永远取不出来（表现为"池子里有货却说没有"）。
+        # ⚠️ 常量写**类限定名**：裸名解析不到类属性（见 docstring 断口 1）。
         q = PreDistributedKey.objects.filter(
-            status__in=POOL_STATUS_READY_VALUES, expires_at__gt=now
+            status__in=KeyPoolService.POOL_STATUS_READY_VALUES, expires_at__gt=now
         ).filter(
             models.Q(node1__node_id=node1_id, node2__node_id=node2_id) |
             models.Q(node1__node_id=node2_id, node2__node_id=node1_id)
@@ -523,42 +598,151 @@ class KeyPoolService:
         if algorithm:
             q = q.filter(algorithm=algorithm)
 
-        key = q.order_by('key_index').select_for_update(skip_locked=True).first()
-        if not key:
-            return {
-                'success': False,
-                'message': f'节点对 {node1_id} ↔ {node2_id} 没有可用的预分配密钥'
-            }
-
+        # ---- 整个临界区在一个事务里（见 docstring 断口 2）----
+        # `MAX_PROBE`：同一次消费内最多探测的候选条数。池子被大规模污染时
+        # 不做无界扫描 —— 与 `skip_locked` 的组合意味着探测本身也不等待。
+        MAX_PROBE = 64
         with transaction.atomic():
-            # 阶段 6：消费后置 CONSUMED（旧值 'used' 等价物）。
-            key.status = 'CONSUMED'
+            candidates = list(
+                q.order_by('key_index').select_for_update(skip_locked=skip_locked)[:MAX_PROBE]
+            )
+            if not candidates:
+                # 区分"池子空了"与"正被其它请求取用"：两者的处置不同
+                # （补货 vs 稍后重试）。skip_locked 下拿不到行锁的那一眼
+                # 与真没有行的表现相同，这里用一次无锁计数把话说清楚 ——
+                # 计数会瞬时过时，所以措辞是"可能"。
+                contended = PreDistributedKey.objects.filter(
+                    status__in=KeyPoolService.POOL_STATUS_READY_VALUES, expires_at__gt=now,
+                ).filter(
+                    models.Q(node1__node_id=node1_id, node2__node_id=node2_id) |
+                    models.Q(node1__node_id=node2_id, node2__node_id=node1_id)
+                ).exists()
+                hint = '（该节点对仍有可用条目，但正被其它请求同时取用）' if contended else ''
+                return {
+                    'success': False,
+                    'code': C.ERR_POOL_ITEM_UNAVAILABLE,
+                    'message': f'节点对 {node1_id} ↔ {node2_id} 没有可用的预分配密钥{hint}',
+                }
+
+            from .models import NodeLongTermKey
+            key = None
+            skipped = []
+            first_dead = None
+            for candidate in candidates:
+                # 状态机守卫：消费只允许从 READY 出发（旧拼写归一后判定）。
+                # 走到的行已经是 READY（WHERE 只放行它），这里防的是"将来有人
+                # 把 WHERE 放宽"—— 表在 `api_contract.POOL_TRANSITIONS`。
+                if not C.pool_transition_allowed(candidate.status, C.POOL_CONSUMED):
+                    logger.error(
+                        "池项 %s#%s 处于 %r，不允许迁移到 CONSUMED —— 跳过",
+                        candidate.pool_id, candidate.key_index, candidate.status,
+                    )
+                    continue
+
+                # 复核长期密钥引用（见 docstring：只看引用，不猜收件方）。
+                family = {'kyber_kem': 'KYBER', 'falcon_lattice': 'FALCON'}.get(candidate.algorithm)
+                if not (candidate.long_term_key_id
+                        and candidate.long_term_key_version is not None and family):
+                    logger.warning(
+                        "池项 %s#%s（算法 %r）没有长期密钥引用或算法认不出，"
+                        "消费前无法核对（放行）—— 失效标记由回收路径的退化面负责",
+                        candidate.pool_id, candidate.key_index, candidate.algorithm,
+                    )
+                    key = candidate
+                    break
+
+                rows = NodeLongTermKey.objects.filter(
+                    models.Q(node=candidate.node1) | models.Q(node=candidate.node2),
+                    algorithm=family,
+                    key_id=candidate.long_term_key_id,
+                    key_version=candidate.long_term_key_version,
+                )
+                if rows.filter(status=C.KEY_STATUS_REVOKED).exists():
+                    # 识破即纠正：就地标 REVOKED（同一判据的迟到应用），
+                    # 跳过它继续取 —— 只拒绝不跳过时，一条死件会毒化整个节点对。
+                    candidate.status = C.POOL_REVOKED
+                    candidate.save(update_fields=['status'])
+                    skipped.append({
+                        'pool_id': candidate.pool_id,
+                        'keyIndex': candidate.key_index,
+                        'reason': 'KEY_REVOKED',
+                    })
+                    if first_dead is None:
+                        first_dead = candidate
+                    logger.warning(
+                        "池项 %s#%s 引用的 %s 密钥 %s v%s 已回收：就地标记 REVOKED 并跳过",
+                        candidate.pool_id, candidate.key_index, family,
+                        candidate.long_term_key_id, candidate.long_term_key_version,
+                    )
+                    continue
+                if not rows.exists():
+                    logger.warning(
+                        "池项 %s#%s 引用的 %s 密钥 %s v%s 在登记表中查不到，无法核对（放行）",
+                        candidate.pool_id, candidate.key_index, family,
+                        candidate.long_term_key_id, candidate.long_term_key_version,
+                    )
+                key = candidate
+                break
+
+            if key is None:
+                # 探测完没有活件：按第一条死件的错误码拒（处置是"重新预分配"，
+                # 不是"稍后再试"）。`skipped` 如实带上本次纠正了什么。
+                if first_dead is not None:
+                    return {
+                        'success': False,
+                        'code': C.ERR_KEY_REVOKED,
+                        'skipped': skipped,
+                        'message': (
+                            f'节点对 {node1_id} ↔ {node2_id} 没有可用的预分配密钥：'
+                            f'检查了 {len(skipped)} 条，全部引用的长期密钥已回收'
+                            f'（已就地标记 REVOKED），请重新预分配'
+                        ),
+                    }
+                return {
+                    'success': False,
+                    'code': C.ERR_POOL_ITEM_UNAVAILABLE,
+                    'message': f'节点对 {node1_id} ↔ {node2_id} 没有可消费的预分配密钥',
+                }
+
+            # 标记为消费。统一写成新值 CONSUMED（旧拼写经 WHERE 进来，出去一律是新值）。
+            key.status = C.POOL_CONSUMED
             key.used_at = now
             if session:
                 key.used_by_session = session
             key.save(update_fields=['status', 'used_at', 'used_by_session'])
+            consumed = {
+                'key_id': key.id,
+                'pool_id': key.pool_id,
+                'key_index': key.key_index,
+                'algorithm': key.algorithm,
+                'encrypted_key_data': key.encrypted_key_data,
+                'key_hash': key.key_hash,
+                'status': key.status,
+            }
 
         logger.info(
-            f"[KeyPool] 消耗密钥 {key.pool_id}#{key.key_index} "
-            f"({key.get_algorithm_display()}) for {node1_id} ↔ {node2_id}"
+            f"[KeyPool] 消耗密钥 {consumed['pool_id']}#{consumed['key_index']} "
+            f"for {node1_id} ↔ {node2_id}"
+            + (f"（本次跳过 {len(skipped)} 条已回收）" if skipped else "")
         )
 
-        return {
-            'success': True,
-            'key_id': key.id,
-            'pool_id': key.pool_id,
-            'key_index': key.key_index,
-            'algorithm': key.algorithm,
-            'encrypted_key_data': key.encrypted_key_data,
-            'key_hash': key.key_hash,
-        }
+        return {'success': True, **consumed, **({'skipped': skipped} if skipped else {})}
 
     # ================================================================
     #  密钥池统计
     # ================================================================
     @staticmethod
     def get_pool_stats(node1_id: str = None, node2_id: str = None) -> Dict[str, Any]:
-        """获取密钥池统计信息"""
+        """获取密钥池统计信息。
+
+        KMS-013 起口径归一：「未使用」= READY + 全部旧拼写别名（含未过期的
+        历史行），「已使用」= CONSUMED + 别名。改前这里分别查裸值
+        `status='unused'` / `'used'`，与 `consume_key` 收的集合**不是同一套** ——
+        统计说"还有 3 条可用"而消费说"没有可用"（或反过来），两个数字都
+        出自同一个模块却互相矛盾，且没有任何一处会报错。
+        新增 `reserved` / `revoked` 读数：监管页要如实显示五个状态
+        （`RESERVED` 恒为 0 —— 它是保留值，见 `POOL_TRANSITIONS` 的说明）。
+        """
         from django.db import models as db_models
         now = timezone.now()
 
@@ -570,10 +754,15 @@ class KeyPoolService:
             )
 
         total = base_q.count()
-        unused = base_q.filter(status='unused', expires_at__gt=now).count()
-        used = base_q.filter(status='used').count()
+        unused = base_q.filter(
+            status__in=KeyPoolService.POOL_STATUS_READY_VALUES, expires_at__gt=now
+        ).count()
+        used = base_q.filter(status__in=KeyPoolService.POOL_STATUS_CONSUMED_VALUES).count()
+        reserved = base_q.filter(status=KeyPoolService.POOL_STATUS_RESERVED).count()
+        revoked = base_q.filter(status=KeyPoolService.POOL_STATUS_REVOKED).count()
         expired = base_q.filter(
-            db_models.Q(status='expired') | db_models.Q(status='unused', expires_at__lte=now)
+            db_models.Q(status__in=KeyPoolService.POOL_STATUS_EXPIRED_VALUES)
+            | db_models.Q(status__in=KeyPoolService.POOL_STATUS_READY_VALUES, expires_at__lte=now)
         ).count()
 
         by_algorithm = {}
@@ -581,13 +770,19 @@ class KeyPoolService:
             alg_q = base_q.filter(algorithm=alg)
             by_algorithm[alg] = {
                 'total': alg_q.count(),
-                'unused': alg_q.filter(status='unused', expires_at__gt=now).count(),
-                'used': alg_q.filter(status='used').count(),
+                'unused': alg_q.filter(
+                    status__in=KeyPoolService.POOL_STATUS_READY_VALUES, expires_at__gt=now
+                ).count(),
+                'used': alg_q.filter(
+                    status__in=KeyPoolService.POOL_STATUS_CONSUMED_VALUES
+                ).count(),
             }
 
         # 按节点对统计
         node_pairs = []
-        pairs = base_q.filter(status='unused', expires_at__gt=now).values(
+        pairs = base_q.filter(
+            status__in=KeyPoolService.POOL_STATUS_READY_VALUES, expires_at__gt=now
+        ).values(
             'node1__node_id', 'node1__name', 'node2__node_id', 'node2__name', 'algorithm'
         ).annotate(available=db_models.Count('id')).order_by('-available')
 
@@ -606,6 +801,8 @@ class KeyPoolService:
             'unused': unused,
             'used': used,
             'expired': expired,
+            'reserved': reserved,
+            'revoked': revoked,
             'by_algorithm': by_algorithm,
             'node_pairs': node_pairs,
         }
@@ -615,13 +812,30 @@ class KeyPoolService:
     # ================================================================
     @staticmethod
     def cleanup_expired() -> Dict[str, Any]:
-        """删除过期的未使用/已下发密钥，同时清理本地文件中的过期密钥"""
+        """删除过期的未使用/已下发密钥，同时清理本地文件中的过期密钥。
+
+        ⚠️ 删除范围**刻意不含** RESERVED / REVOKED：前者是保留值（当前恒空，
+        见 `POOL_TRANSITIONS`），后者是"依赖的密钥已回收"的**证据行** ——
+        审计要能回答"这批池项后来怎么了"，删掉它等于把原因一起抹掉。
+        """
         now = timezone.now()
 
-        # 1. 删除数据库中过期且未被使用的密钥（unused / distributed / expired）
+        # 1. 删除数据库中过期且未被使用的密钥。
+        # 范围与 KMS-013 之前**逐项等价**，只是换成符号名：
+        #   READY（含旧拼写 'unused'）+ 旧拼写 'distributed'（等价 CONSUMED）
+        #   + EXPIRED（含旧拼写 'expired'）。
+        # ⚠️ 刻意**不含**规范值 'CONSUMED' / 'RESERVED' / 'REVOKED'：
+        #    消费过的行是"被哪次会话用掉"的历史记录，RESERVED 是保留值，
+        #    REVOKED 是"依赖的密钥已回收"的证据 —— 都被清理抹掉的话，
+        #    审计再问"这批池项后来怎么了"就没有任何行可以回答。
+        removable_statuses = (
+            KeyPoolService.POOL_STATUS_READY_VALUES
+            + ('distributed',)
+            + KeyPoolService.POOL_STATUS_EXPIRED_VALUES
+        )
         expired_keys = PreDistributedKey.objects.filter(
             expires_at__lte=now,
-            status__in=['unused', 'distributed', 'expired']
+            status__in=removable_statuses,
         )
         deleted_count, _ = expired_keys.delete()
         logger.info(f"[KeyPool] 自动删除过期密钥: {deleted_count} 条")
@@ -648,13 +862,20 @@ class KeyPoolService:
         algorithm: str = 'kyber_kem',
         target_size: int = None
     ) -> Optional[Dict[str, Any]]:
-        """检查密钥池余量，低于阈值时自动补充"""
+        """检查密钥池余量，低于阈值时自动补充。
+
+        ⚠️ 余量口径与 `consume_key` 一致（READY + 旧拼写别名）。
+        改前这里只数裸值 `'unused'`，而新写入的行一律是 `'READY'` ——
+        于是"余量"恒为 0，每次检查都认为缺货并整批补货：补给动作看起来
+        一直在工作，池子却越补越大，而没有任何一处报错。
+        """
         from django.db import models as db_models
         target_size = target_size or KeyPoolService.DEFAULT_POOL_SIZE
         now = timezone.now()
 
         available = PreDistributedKey.objects.filter(
-            status='unused', expires_at__gt=now, algorithm=algorithm
+            status__in=KeyPoolService.POOL_STATUS_READY_VALUES,
+            expires_at__gt=now, algorithm=algorithm,
         ).filter(
             db_models.Q(node1__node_id=node1_id, node2__node_id=node2_id) |
             db_models.Q(node1__node_id=node2_id, node2__node_id=node1_id)

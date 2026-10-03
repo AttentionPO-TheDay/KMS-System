@@ -3321,12 +3321,18 @@ class KeyPoolViewSet(CustomModelViewSet):
 
     def get_queryset(self):
         from .models import PreDistributedKey
+        from . import api_contract as _C
         now = timezone.now()
 
-        # 自动删除过期且未使用的密钥
+        # 自动删除过期且未使用的密钥。
+        # KMS-013：与 `KeyPoolService.cleanup_expired` 用**同一组符号名**
+        # （此前两处各自写裸值列表，改一处漏一处）。不含 CONSUMED / REVOKED：
+        # 消费历史与回收证据都不该被列表页的一次加载抹掉。
         expired_qs = PreDistributedKey.objects.filter(
             expires_at__lte=now,
-            status__in=['unused', 'distributed', 'expired']
+            status__in=(
+                _C.POOL_READY, 'unused', 'distributed', _C.POOL_EXPIRED, 'expired',
+            ),
         )
         expired_count = expired_qs.count()
         if expired_count > 0:
@@ -3352,6 +3358,10 @@ class KeyPoolViewSet(CustomModelViewSet):
             .only(
                 'id', 'pool_id', 'key_index', 'algorithm', 'status', 'key_hash',
                 'generation_time_ms', 'used_at', 'expires_at', 'create_datetime',
+                # KMS-013：序列化器新增了这三列（长期密钥引用 + 消费会话）。
+                # ⚠️ 漏掉它们不会报错，只会让**每一行**各触发一次补查 ——
+                # 42 行的页面上正是本节注释里记录的那种"慢到前端超时"。
+                'long_term_key_id', 'long_term_key_version', 'used_by_session',
                 'node1__node_id', 'node1__name', 'node2__node_id', 'node2__name',
             )
         )
@@ -3430,7 +3440,14 @@ class KeyPoolViewSet(CustomModelViewSet):
             if result.get('success'):
                 return SuccessResponse(data=result, msg="密钥取用成功")
             else:
-                return ErrorResponse(msg=result.get('message', '无可用密钥'))
+                # ⚠️ 本命名空间（`/key-pool/*`）**没有错误码字段**，调用方只能读 msg。
+                # KMS-013 起服务层会给出 `code`（如 POOL_ITEM_UNAVAILABLE /
+                # KEY_REVOKED），这里必须把它写进**文案**才到得了调用方 ——
+                # 与 generate 动作同一条约定。只回 message 的话，"池子空了"
+                # 与"正被并发取用"在响应里长得一模一样。
+                code = result.get('code')
+                text = result.get('message', '无可用密钥')
+                return ErrorResponse(msg=f"{text}（{code}）" if code else text)
         except Exception as e:
             return ErrorResponse(msg=f"密钥取用失败: {str(e)}")
 

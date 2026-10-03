@@ -183,3 +183,6 @@ kms-distribute/111.7z
 # 调研中间产物：含 GB/T 国标 PDF 原文（有版权、13MB）与一次性探针脚本。
 # 脚本按需重跑即可，原文另行保存。
 /_research/
+
+# 部署同步时的上一版前端产物（临时保留以便回退；确认无需回退后可删）。
+/kms-updatedel/front/.deploy-prev-assets-*/

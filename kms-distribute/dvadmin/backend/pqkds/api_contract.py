@@ -239,6 +239,90 @@ def key_status_allows_new_work(status: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# 二之二、池项状态（计划 §7 阶段 5「READY → RESERVED → CONSUMED 不可逆乱跳」）
+# ---------------------------------------------------------------------------
+# 与上面长期密钥一样，这里也是**状态机表**而不是散落各处的 `if status == ...`：
+# 消费路径（`consume_key`）与失效路径（`revoke_pool_items_for_key`）在不
+# 同的模块里，任何一侧放宽都会让另一侧的判断失去意义。
+#
+# ⚠️ KMS-013 的**定夺**：`RESERVED` 是**保留值**，当前没有任何生产写入点，
+#    也不应该有 —— 见下方 `POOL_TRANSITIONS` 的说明。把它连同转移表一起
+#    写在这里，是为了让"它是一条谁都不走的路"成为**可读的事实**，而不是
+#    一个需要翻遍全仓才能确认的疑点。
+
+POOL_READY = 'READY'          # 已预分配，可被会话取用
+POOL_RESERVED = 'RESERVED'    # 保留值：从未产生过（见 POOL_TRANSITIONS 说明）
+POOL_CONSUMED = 'CONSUMED'    # 已取用：一次性，不可再取
+POOL_EXPIRED = 'EXPIRED'      # 超过有效期
+POOL_REVOKED = 'REVOKED'      # 依赖的长期密钥已回收（KMS-007 的连带失效）
+
+#: 旧拼写 → 新拼写。库里已有按旧值写入的历史行（'unused' 等），
+#: **读取方**必须把两套拼写都算数，否则历史行永远取不出来 ——
+#: 现象是"池子里明明有货，却说没有可用的预分配密钥"。
+POOL_LEGACY_STATUS_ALIASES: Dict[str, str] = {
+    'unused': POOL_READY,
+    'used': POOL_CONSUMED,
+    'distributed': POOL_CONSUMED,
+    'expired': POOL_EXPIRED,
+}
+
+#: 状态机允许的池项迁移。**只允许**这些边。
+#:
+#: 为什么没有 `READY → RESERVED`：
+#:   `RESERVED` 要解决的是"我取出来到用上它之间，别被别人抢走"。而当前
+#:   消费是**单个事务**里的"选中（FOR UPDATE）→ 标记 CONSUMED"，中间窗口
+#:   为零 —— 没有需要预留的时间段，加了它反而会引入一个"预留了但忘了消费"
+#:   的新故障态（池项卡在 RESERVED，过期又被 cleanup 忽略）。
+#:   计划 §7 阶段 5 原文写的是「READY → RESERVED → CONSUMED 状态不可逆乱跳」；
+#:   既然中间站不落地，这条要求在这里的可执行形式就是：**表内没有那两条边，
+#:   强行置 RESERVED 会被本表拒绝**（`pool_transition_allowed`），
+#:   而不是"没人走"而已。
+#:
+#: ⚠️ 改这张表之前先问"这条边会不会让人相信一个没发生的动作"：
+#:    `REVOKED` 从每个非终态都可到达（回收是外部事实，不产生信任主张）；
+#:    `CONSUMED` 只能从 `READY` 到达（它主张"这一项被某次会话用掉了"，
+#:    从其它状态到达就是在伪造消费记录）。
+POOL_TRANSITIONS: Dict[str, frozenset] = {
+    POOL_READY: frozenset({POOL_CONSUMED, POOL_REVOKED, POOL_EXPIRED}),
+    POOL_RESERVED: frozenset({POOL_CONSUMED, POOL_REVOKED, POOL_EXPIRED}),
+    POOL_CONSUMED: frozenset(),   # 终态：消费是历史事实
+    POOL_EXPIRED: frozenset({POOL_REVOKED}),
+    POOL_REVOKED: frozenset(),    # 终态
+}
+
+#: 终态集合：到达后不再接受任何消费。
+POOL_TERMINAL_STATUSES = frozenset({POOL_CONSUMED, POOL_EXPIRED, POOL_REVOKED})
+
+#: 「可用于**新会话**」的判定值集合，只收敛**新逻辑**要写的那一个值。
+#: ⚠️ 读取/消费路径还应把 `POOL_LEGACY_STATUS_ALIASES` 里的旧值一并纳入 ——
+#:    历史行仍在那里，漏掉它们不会报错，只会静默地把可用项说成不可用。
+POOL_STATUS_USABLE_FOR_NEW_WORK = frozenset({POOL_READY})
+
+
+def normalize_pool_status(status) -> str:
+    """池项状态归一：旧拼写 → 新拼写；未知值**原样返回**。
+
+    原样返回未知值（而不是猜一个近似的）是刻意的：池项状态列没有 choices
+    之外的写入点，出现未知值说明有第三个写入方 —— 把它猜成 READY 会让
+    "来路不明的行"变成"可消费的行"，而那是安全方向的错误。
+    """
+    text = str(status or '').strip()
+    return POOL_LEGACY_STATUS_ALIASES.get(text, text)
+
+
+def pool_status_allows_new_work(status) -> bool:
+    """该池项是否可被**新会话**取用（消费）。旧拼写经归一后判定。"""
+    return normalize_pool_status(status) in POOL_STATUS_USABLE_FOR_NEW_WORK
+
+
+def pool_transition_allowed(current, target) -> bool:
+    """`current → target` 是否是合法的池项迁移（两侧都先归一旧拼写）。"""
+    return normalize_pool_status(target) in POOL_TRANSITIONS.get(
+        normalize_pool_status(current), frozenset()
+    )
+
+
+# ---------------------------------------------------------------------------
 # 三、会话状态（计划 §6.3）
 # ---------------------------------------------------------------------------
 # 原状态机只有 initiated / established / blockchain_recorded / expired / revoked，

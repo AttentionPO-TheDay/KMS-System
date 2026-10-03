@@ -18,10 +18,15 @@
       </template>
 
 <el-row :gutter="12" class="stat-row">
-        <el-col :span="6"><div class="stat"><div class="k">总数</div><div class="v">{{ stats.total ?? '-' }}</div></div></el-col>
-        <el-col :span="6"><div class="stat"><div class="k">未使用</div><div class="v">{{ stats.unused ?? '-' }}</div></div></el-col>
-        <el-col :span="6"><div class="stat"><div class="k">已使用</div><div class="v">{{ stats.used ?? '-' }}</div></div></el-col>
-        <el-col :span="6"><div class="stat"><div class="k">已过期</div><div class="v">{{ stats.expired ?? '-' }}</div></div></el-col>
+        <el-col :span="4"><div class="stat"><div class="k">总数</div><div class="v">{{ stats.total ?? '-' }}</div></div></el-col>
+        <el-col :span="4"><div class="stat"><div class="k">可用</div><div class="v">{{ stats.unused ?? '-' }}</div></div></el-col>
+        <el-col :span="4"><div class="stat"><div class="k">已消费</div><div class="v">{{ stats.used ?? '-' }}</div></div></el-col>
+        <el-col :span="4"><div class="stat"><div class="k">已过期</div><div class="v">{{ stats.expired ?? '-' }}</div></div></el-col>
+        <el-col :span="4"><div class="stat"><div class="k">已回收</div><div class="v">{{ stats.revoked ?? '-' }}</div></div></el-col>
+        <!-- 「预留」恒为 0：RESERVED 是保留值，没有任何写入点（KMS-013 定夺，
+             `api_contract.POOL_TRANSITIONS` 里也没有指向它的边）。仍然显示它，
+             是为了让"这个状态不存在"这件事在页面上可见，而不是被悄悄省略。 -->
+        <el-col :span="4"><div class="stat"><div class="k">预留</div><div class="v">{{ stats.reserved ?? '-' }}</div></div></el-col>
       </el-row>
 
       <el-form :inline="true" class="filter-bar">
@@ -54,13 +59,44 @@
         <el-table-column label="算法" width="120">
           <template #default="scope">{{ scope.row.algorithm_display || scope.row.algorithm }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="100">
+        <el-table-column label="状态" width="120">
           <template #default="scope">
-            <el-tag size="small" :type="statusTag(scope.row.status)">{{ scope.row.status_display || scope.row.status }}</el-tag>
+            <!-- KMS-013：显示**真实状态**（effective_status）——
+                 行还是 READY 但已过期的，消费接口不认它（expires_at 判据），
+                 页面若不回退就会说"可用"而消费说"没有"。两者互相矛盾且
+                 都不报错，所以以服务端的 effective_status 为准。
+                 回退时把原始值也展示出来，避免读页面的人以为库里真的写了 EXPIRED。 -->
+            <el-tag size="small" :type="statusTag(scope.row.effective_status || scope.row.status)">
+              {{ statusLabel(scope.row.effective_status || scope.row.status) }}
+            </el-tag>
+            <div v-if="scope.row.effective_status && scope.row.effective_status !== scope.row.status" class="cell-sub">
+              库内值：{{ statusLabel(scope.row.status) }}
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="接收密钥版本" min-width="180">
+          <template #default="scope">
+            <!-- 计划 §8.4「接收密钥版本」：这一项是用哪把长期密钥封的。
+                 消费前的可用性复核按这两列查登记表（回收后拒消费），
+                 显示出来，用户才能把池项与"已回收的那把"对上。 -->
+            <template v-if="scope.row.long_term_key_id">
+              <code class="ref">{{ shortRef(scope.row.long_term_key_id) }}</code>
+              <span class="cell-sub"> v{{ scope.row.long_term_key_version }}</span>
+            </template>
+            <span v-else class="cell-sub">历史行（无引用）</span>
           </template>
         </el-table-column>
         <el-table-column label="密钥哈希" min-width="150">
           <template #default="scope"><code class="hash">{{ shortHash(scope.row.key_hash) }}</code></template>
+        </el-table-column>
+        <el-table-column label="消费情况" min-width="150">
+          <template #default="scope">
+            <template v-if="scope.row.used_at">
+              <div>{{ formatTime(scope.row.used_at) }}</div>
+              <div class="cell-sub">会话 #{{ scope.row.used_by_session_id ?? '-' }}</div>
+            </template>
+            <span v-else class="cell-sub">未消费</span>
+          </template>
         </el-table-column>
         <el-table-column label="过期时间" width="170">
           <template #default="scope">{{ formatTime(scope.row.expires_at) }}</template>
@@ -182,23 +218,54 @@ const algorithmOptions = computed(() => {
 })
 
 const statusOptions = computed(() => {
+  // 选项取自**effective_status**（与表格显示同源）：只按库内 status 生成，
+  // 会出现"筛选项里有『可被会话取用』、选完却一行都没有"（那些行其实已过期）。
   const seen = new Map()
   allRows.value.forEach((r) => {
-    if (r.status) seen.set(r.status, r.status_display || r.status)
+    const st = r.effective_status || r.status
+    if (st) seen.set(st, statusLabel(st))
   })
   return [...seen].map(([value, label]) => ({ value, label }))
 })
 
 function statusTag(status) {
-  if (status === 'unused') return 'success'
-  if (status === 'used') return 'info'
-  if (status === 'expired') return 'danger'
+  if (status === 'READY' || status === 'unused') return 'success'
+  if (status === 'CONSUMED' || status === 'used' || status === 'distributed') return 'info'
+  if (status === 'EXPIRED' || status === 'expired' || status === 'REVOKED') return 'danger'
   return 'warning'
+}
+
+/**
+ * 状态文案表（KMS-013）。
+ * ⚠️ 显示的以 `effective_status`（服务端归一 + 过期回退）为准；
+ *    库内原值（status）只在两者不同时作为小字附注。别反过来 ——
+ *    页面说"可用"、消费说"没有"的那种矛盾就是这么来的。
+ */
+const STATUS_LABELS = {
+  READY: '可被会话取用',
+  RESERVED: '预留（保留值）',
+  CONSUMED: '已消费',
+  EXPIRED: '已过期',
+  REVOKED: '已回收',
+  unused: '未使用（历史）',
+  used: '已使用（历史）',
+  expired: '已过期（历史）',
+  distributed: '已下发（历史）'
+}
+
+function statusLabel(status) {
+  return STATUS_LABELS[status] || status || '-'
 }
 
 function shortHash(hash) {
   if (!hash) return '-'
   return hash.length > 20 ? `${hash.slice(0, 10)}…${hash.slice(-6)}` : hash
+}
+
+/** 长期密钥 key_id 可能是 `kms-20260926-ab12cd34-XXXX` 这类长串，只留两头。 */
+function shortRef(ref) {
+  if (!ref) return '-'
+  return ref.length > 24 ? `${ref.slice(0, 14)}…${ref.slice(-6)}` : ref
 }
 
 function formatTime(value) {
@@ -211,9 +278,10 @@ function applyFilter() {
   const kw = filter.keyword.trim().toLowerCase()
   rows.value = allRows.value.filter((r) => {
     if (filter.algorithm && r.algorithm !== filter.algorithm) return false
-    if (filter.status && r.status !== filter.status) return false
+    // 按 effective_status 筛（与表格显示的同一个值）—— 见 statusOptions 的说明。
+    if (filter.status && (r.effective_status || r.status) !== filter.status) return false
     if (!kw) return true
-    return [r.pool_id, r.node1_id, r.node1_name, r.key_hash]
+    return [r.pool_id, r.node1_id, r.node1_name, r.key_hash, r.long_term_key_id]
       .filter(Boolean)
       .some((v) => String(v).toLowerCase().includes(kw))
   })
@@ -275,11 +343,25 @@ async function submitDistribute() {
     // 服务端实际返回 {success, pool_id, sender_node_id, receiver_node_id, generated, expires_at}。
     // 先按真实字段名读，再留几个兜底 —— 之前只猜了 count/keys/total，
     // 结果把一整串 JSON 当提示显示给用户了（能跑但难看，也算一种"没验证到位"）。
+    //
+    // KMS-013（计划 §7 阶段 5「不能用'请求成功'冒充'全部完成'」）：
+    // `generated < count` 时**必须**如实说明缺了多少 —— 服务层对单条失败
+    // 只记日志并 `continue`（例如某条的 KEM 封装失败），响应仍是 success。
+    // 只报"已生成并分发 N 条"会把失败的 M 条整个吞掉。
     const count = res?.generated ?? res?.count ?? res?.keys?.length ?? res?.total ?? null
-    distResult.value = count
-      ? `已生成并分发 ${count} 条（Kyber KEM，批次 ${res?.pool_id || '-'}）`
-      : `服务端已受理：${JSON.stringify(res)?.slice(0, 160)}`
-    ElMessage.success('生成并分发完成')
+    const requested = distForm.count
+    if (count !== null && Number(count) < Number(requested)) {
+      distResult.value = `部分完成：请求 ${requested} 条，实际生成并分发 ${Number(count)} 条，`
+        + `另有 ${Number(requested) - Number(count)} 条在服务端生成时失败（批次 ${res?.pool_id || '-'}）。`
+        + `服务端日志里逐条记有失败原因；池列表只显示成功落库的条目，不会把失败算成完成。`
+      ElMessage.warning('部分完成：有密钥生成失败，已如实列出数量')
+    } else if (count) {
+      distResult.value = `已生成并分发 ${count} 条（Kyber KEM，批次 ${res?.pool_id || '-'}）`
+      ElMessage.success('生成并分发完成')
+    } else {
+      distResult.value = `服务端已受理：${JSON.stringify(res)?.slice(0, 160)}`
+      ElMessage.success('生成并分发完成')
+    }
     await loadAll()
   } catch (error) {
     distError.value = error.message
@@ -358,6 +440,8 @@ onMounted(loadAll)
 .filter-bar { margin-bottom: 4px; }
 .table-foot { margin-top: 10px; color: var(--el-text-color-secondary); font-size: 12px; }
 .hash { font-size: 12px; }
+.ref { font-size: 12px; }
+.cell-sub { color: var(--el-text-color-secondary); font-size: 12px; }
 .form-hint { margin-top: 4px; color: var(--el-text-color-secondary); font-size: 12px; }
 .dialog-error { margin-top: 8px; color: var(--el-color-danger); font-size: 12px; word-break: break-all; }
 .dialog-ok { margin-top: 8px; color: var(--el-color-success); font-size: 12px; }

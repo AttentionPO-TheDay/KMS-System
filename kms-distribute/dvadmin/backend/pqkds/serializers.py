@@ -267,15 +267,46 @@ class PreDistributedKeySerializer(CustomModelSerializer):
     algorithm_display = serializers.CharField(source='get_algorithm_display', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
 
+    # KMS-013：状态**回退** —— 行还是 READY 但已过期的，页面必须显示"已过期"
+    # 而不是"可被会话取用"。列表页的自动清理只删其中一部分（见 `get_queryset`），
+    # 而消费判据（`consume_key` 的 `expires_at__gt=now`）**不认**过期行 ——
+    # 不回退的话页面说"可用"、消费说"没有"，两个数字都出自服务端却互相矛盾。
+    effective_status = serializers.SerializerMethodField()
+
+    def get_effective_status(self, obj):
+        from .api_contract import (
+            POOL_EXPIRED,
+            POOL_STATUS_USABLE_FOR_NEW_WORK,
+            POOL_TERMINAL_STATUSES,
+            normalize_pool_status,
+        )
+        status = normalize_pool_status(obj.status)
+        if status in POOL_STATUS_USABLE_FOR_NEW_WORK and obj.expires_at:
+            from django.utils import timezone
+            if obj.expires_at <= timezone.now():
+                return POOL_EXPIRED
+        return status
+
+    # KMS-013：这一项是**用哪把长期密钥**封的（计划 §8.4「接收密钥版本」）。
+    # 消费前的可用性复核（`consume_key`）就按这两列查登记表，页面把它显示
+    # 出来，用户看到"已回收"与池项"仍可用"时才知道该核对什么。
+    #
+    # ⚠️ `used_by_session_id` 必须**显式声明**：它是 FK 的 `attname`，
+    #    不在 DRF 的模型字段名集合里（那里是 `used_by_session`）——
+    #    只写进 Meta.fields 会在加载时抛 ImproperlyConfigured。
+    used_by_session_id = serializers.IntegerField(read_only=True)
+
     class Meta:
         model = PreDistributedKey
         fields = [
             'id', 'pool_id', 'key_index',
             'node1_id', 'node1_name', 'node2_id', 'node2_name',
             'algorithm', 'algorithm_display',
-            'status', 'status_display',
+            'status', 'status_display', 'effective_status',
+            'long_term_key_id', 'long_term_key_version',
+            'used_by_session_id', 'used_at',
             'key_hash', 'generation_time_ms',
-            'used_at', 'expires_at',
+            'expires_at',
             'create_datetime',
         ]
         read_only_fields = fields

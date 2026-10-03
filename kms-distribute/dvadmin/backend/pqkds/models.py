@@ -788,18 +788,25 @@ class PreDistributedKey(CoreModel):
         ('kyber_kem', 'Kyber KEM'),
         ('falcon_lattice', 'Falcon 格密码'),
     ]
-    #: 密钥池项状态（阶段 6，文档 §7.5）。
+    #: 密钥池项状态（KMS-013 归口）。
     #:
-    #: 正常流转：READY → RESERVED → CONSUMED。预分配密钥**必须一次性消费**，
-    #: 不能被多个会话重复使用 —— 这是整张表存在的意义所在。
+    #: 「什么算可用」「允许哪些迁移」由 `api_contract` 的
+    #: `POOL_TRANSITIONS` / `pool_transition_allowed` 表达，服务层与页面
+    #: 都从那一处取 —— 在这里另写一套必然漂移。
+    #:
+    #: ⚠️ `RESERVED` 是**保留值**：当前没有任何生产写入点，也刻意没有
+    #: （消费是单事务的"选中 → 标记"，中间窗口为零，没有需要预留的时间段）。
+    #: 留着它是为了不破坏既有取值面；`api_contract.POOL_TRANSITIONS` 里
+    #: 也**没有**任何指向它的边，强行写入会被状态机拒绝。
     #:
     #: ⚠️ 旧值 `unused` / `used` / `distributed` 仍保留在 choices 里：
     #: 库里已有按旧值写入的历史行，收紧掉会让它们无法被任何查询命中。
-    #: 读取方应统一用 `KeyPoolService.POOL_STATUS_READY_VALUES` 表达"什么算可用"
-    #: （见 key_pool_service），而不是在各处分别兼容两套拼写。
+    #: 读取方应统一用 `KeyPoolService.POOL_STATUS_READY_VALUES` /
+    #: `api_contract.normalize_pool_status` 表达"什么算可用"，而不是在
+    #: 各处分别兼容两套拼写。
     STATUS_CHOICES = [
         ('READY', '已预分配，可被会话取用'),
-        ('RESERVED', '正在被某次会话占用'),
+        ('RESERVED', '保留值：从未产生（见 api_contract.POOL_TRANSITIONS）'),
         ('CONSUMED', '已成功建立会话，不可再次使用'),
         ('EXPIRED', '超过有效期'),
         ('REVOKED', '依赖的长期密钥已回收或检测异常'),
@@ -883,7 +890,7 @@ class PreDistributedKey(CoreModel):
     )
     encrypted_key_data = models.TextField(verbose_name="加密的密钥数据", help_text="使用格密码封装后的对称会话密钥（JSON）")
     key_hash = models.CharField(max_length=64, verbose_name="密钥哈希", help_text="对称密钥的SHA256哈希，用于校验")
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='READY', verbose_name="状态", help_text="密钥当前状态")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='READY', verbose_name="状态", help_text="密钥当前状态；可用性与迁移规则见 api_contract.POOL_TRANSITIONS")
     used_at = models.DateTimeField(null=True, blank=True, verbose_name="使用时间", help_text="密钥被消耗的时间")
     used_by_session = models.ForeignKey(SessionKey, on_delete=models.SET_NULL, null=True, blank=True, related_name='predist_key', verbose_name="使用该密钥的会话", help_text="消耗此密钥的会话")
     expires_at = models.DateTimeField(verbose_name="过期时间", help_text="密钥过期时间")
