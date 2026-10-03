@@ -42,11 +42,11 @@ from __future__ import annotations
 
 import json
 import logging
-import uuid
-from datetime import timedelta
+import re
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from . import api_contract as C
@@ -54,8 +54,8 @@ from . import kms_service_client as kms
 from .envelope_signature import ciphertext_digest
 from .models import DistributionBatch, Node, PreDistributedKey, SessionKey, UserNodeAuthorization
 from .node_key_registry import require_key_version
-from .sm4_crypto import PAYLOAD_ALGORITHM_SM4, PayloadCipher
-from .wrappers import NODE_WRAPPING_BY_CANONICAL, wrap_with_public_key
+from .sm4_crypto import PAYLOAD_ALGORITHM_SM4
+from .wrappers import NODE_WRAPPING_BY_CANONICAL, NODE_WRAPPING_CHOICES
 
 logger = logging.getLogger(__name__)
 
@@ -70,36 +70,171 @@ DEFAULT_EXPIRES_HOURS = 24
 MAX_EXPIRES_HOURS = 168
 
 
-def _as_expires_hours(raw: Any) -> int:
-    """把请求里的 `expiresInHours` 收敛成 1..MAX 的整数。**认不出就拒绝，不猜。**
+def _as_expires_at(raw: Any) -> "timezone.datetime":
+    """把调用方给的**绝对有效期**收敛成一个合法的时间点。**认不出就拒绝，不猜。**
 
-    与 `node_self_views._as_bool`、`key_revocation_service._as_key_version` 同一条纪律：
-    `bool` 要单独挡（`isinstance(True, int)` 为真，`int(True)` 得到 1 ——
-    一个写错的 `expiresInHours: true` 会静默变成"1 小时"）。
+    ⚠️ KMS-009 起收的是绝对时间而不是"多少小时"：签名要覆盖 `expires_at`，
+       节点就必须在**签名之前**知道它是哪个时刻 —— 服务端事后再算，
+       节点签的就是一份"还不知道有效期"的信。
+
+    ⚠️ "客户端给值"不等于"客户端说了算"：**范围与上界仍由服务端强制**。
+       允许客户端随便定有效期，等于把"会话密钥有时限"这条安全属性交给调用方。
     """
     if raw is None or raw == '':
-        return DEFAULT_EXPIRES_HOURS
-    if isinstance(raw, bool):
         raise C.ContractError(
-            f'expiresInHours 应为 1..{MAX_EXPIRES_HOURS} 的整数：{raw!r}',
+            '缺少 expiresAt：有效期必须由调用方给出（签名要覆盖它）',
             code=C.ERR_INVALID_PARAMETER,
         )
-    if isinstance(raw, int):
-        hours = raw
-    elif isinstance(raw, str) and raw.strip().isdigit():
-        hours = int(raw.strip())
+    if isinstance(raw, datetime):
+        moment = raw
     else:
+        text = str(raw).strip()
+        if not text:
+            raise C.ContractError('expiresAt 不能为空', code=C.ERR_INVALID_PARAMETER)
+        try:
+            moment = datetime.fromisoformat(text.replace('Z', '+00:00'))
+        except ValueError as exc:
+            raise C.ContractError(
+                f'expiresAt 应为 ISO8601 时间串，收到 {raw!r}', code=C.ERR_INVALID_PARAMETER,
+            ) from exc
+    if timezone.is_aware(moment):
+        # ⚠️ 本仓库 `USE_TZ = False`（settings.py），`timezone.now()` 返回**朴素**
+        #    时间（与库里所有 datetime 列一致）。带上时区的时间点必须**转换到
+        #    本地时区后去掉 tzinfo**，否则一比较就抛
+        #    "can't compare offset-naive and offset-aware datetimes" ——
+        #    那是 500，不是拒绝，看起来像服务端坏了。
+        moment = timezone.make_naive(moment, timezone.get_current_timezone())
+    else:
+        # 不带时区的时间点按**服务器本地时区**解释（与库里的存量行同一口径）。
+        # 这不是"猜"：契约里要求 ISO8601，而调用方（页面）用的是本地时间或 UTC ——
+        # 两者都靠"转换到服务器时区"归一到同一把尺子上。
+        moment = moment
+
+    now = timezone.now()
+    if moment <= now:
+        raise C.ContractError('expiresAt 已经过去了', code=C.ERR_INVALID_PARAMETER)
+    if moment > now + timedelta(hours=MAX_EXPIRES_HOURS):
         raise C.ContractError(
-            f'expiresInHours 应为 1..{MAX_EXPIRES_HOURS} 的整数：{raw!r}',
-            code=C.ERR_INVALID_PARAMETER,
-        )
-    if not 1 <= hours <= MAX_EXPIRES_HOURS:
-        raise C.ContractError(
-            f'expiresInHours 应在 1..{MAX_EXPIRES_HOURS} 之间，收到 {hours}'
+            f'expiresAt 距现在不能超过 {MAX_EXPIRES_HOURS} 小时'
             f'（{DEFAULT_EXPIRES_HOURS} 是默认值）',
             code=C.ERR_INVALID_PARAMETER,
         )
-    return hours
+    return moment
+
+
+#: 批次号的形状：`dist-<yyyyMMddHHmmss>-<8位十六进制>`。
+#: 与 KMS-008 之前服务端自铸的那一串同形 —— 它被写进会话 ID
+#: （`{batch_id}-n{pk}`）与链事件的批次字段，形状变了会波及那些读取方。
+_BATCH_ID_RE = re.compile(r'^dist-\d{14}-[0-9a-f]{8}$')
+
+
+def _as_batch_id(raw: Any) -> str:
+    """校验调用方给的批次号。**形状与长度都要管**，但不查重。
+
+    ⚠️ 不查重是刻意的：查重会**先查后写**，两次请求之间仍可能撞上（竞态），
+       而 `DistributionBatch.batch_id` 上有**唯一约束**——真正的守门人是它。
+       这里再查一次只会给人一种"已经防住了"的错觉（并发下并不成立）。
+       撞号由数据库拦下，服务端把它转成一句人话（见 `_batch_id_taken`）。
+
+    ⚠️ 长度上限取模型字段的 64：超长会撞 MySQL 的列宽，报出来的是驱动层
+       的截断/报错，看起来与本模块无关。
+    """
+    text = str(raw or '').strip()
+    if not text:
+        raise C.ContractError(
+            '缺少 batchId：批次号必须由调用方给出（签名要覆盖它）',
+            code=C.ERR_INVALID_PARAMETER,
+        )
+    if len(text) > 64 or not _BATCH_ID_RE.match(text):
+        raise C.ContractError(
+            f'batchId 形状非法：应为 dist-<14位时间>-<8位十六进制>，收到 {text!r}',
+            code=C.ERR_INVALID_PARAMETER,
+        )
+    return text
+
+
+def _as_envelope(raw: Any) -> Dict[str, Any]:
+    """校验节点交上来的信封本体是**这一版契约要求的形状**。
+
+    只做形状与必需字段的检查，不碰密码学（那是 KMS-010 的验签）。形状检查要
+    在**加密运算之前**完成，否则畸形信封会一路走到签名校验，
+    报出来的是一句"验签失败"——而那看起来像伪造。
+    """
+    if not isinstance(raw, dict) or not raw:
+        raise C.ContractError('缺少 envelope：分发信封必须由发送节点在本地封装', code=C.ERR_INVALID_PARAMETER)
+
+    wrapping = str(raw.get('wrapping_algorithm') or '').strip().lower()
+    if wrapping == 'kyber_kem':
+        required = ('kem_ciphertext', 'encrypted_key', 'nonce', 'tag')
+    elif wrapping in ('gm_sm2', 'gm_sscl'):
+        required = ('ciphertext',)
+    else:
+        raise C.ContractError(
+            f"信封的 wrapping_algorithm 非法：{wrapping or '(空)'}"
+            f'（可选 {"、".join(NODE_WRAPPING_CHOICES)}）',
+            code=C.ERR_ALGORITHM_NOT_ALLOWED,
+        )
+    missing = [name for name in required if not str(raw.get(name) or '').strip()]
+    if missing:
+        raise C.ContractError(
+            f'{wrapping} 信封缺少必需字段：{", ".join(missing)}',
+            code=C.ERR_INVALID_PARAMETER,
+        )
+    # 承载签名的字段也要在：签名是对"整份信封的规范字段集"算的，
+    # 其中 `ciphertext_digest` 由节点算出并写进信封（与服务端重算的比对见调用方）。
+    if not str(raw.get('ciphertext_digest') or '').strip():
+        raise C.ContractError(
+            '信封缺少 ciphertext_digest：签名要覆盖它，不能事后补',
+            code=C.ERR_INVALID_PARAMETER,
+        )
+    return raw
+
+
+def _canonical_inner_json(envelope: Dict[str, Any], canonical: str) -> str:
+    """按**内层密文字段**重建紧凑 JSON —— 与校验摘要时的口径一致。
+
+    这是"摘要算的是什么"的**唯一**一份定义：只有密文那几项，
+    **不含** `batch_id` / `expires_at` / 签名等后加字段。
+    含进去会让摘要依赖它自己（自指），历史上已经踩过一次
+    （见 `envelope_signature.SIGNED_FIELDS` 的注释）。
+    """
+    if canonical == 'KYBER':
+        inner = {
+            'kem_ciphertext': envelope.get('kem_ciphertext'),
+            'encrypted_key': envelope.get('encrypted_key'),
+            'nonce': envelope.get('nonce'),
+            'tag': envelope.get('tag'),
+            'payload_algorithm': envelope.get('payload_algorithm') or PAYLOAD_ALGORITHM_SM4,
+            'wrapping_algorithm': envelope.get('wrapping_algorithm') or 'kyber_kem',
+        }
+    else:
+        inner = {
+            'algorithm': envelope.get('algorithm') or 'sm2',
+            'ciphertext': envelope.get('ciphertext'),
+            'public_key': envelope.get('public_key'),
+            'payload_algorithm': envelope.get('payload_algorithm') or PAYLOAD_ALGORITHM_SM4,
+            'wrapping_algorithm': envelope.get('wrapping_algorithm'),
+            'recipient_public_key': envelope.get('recipient_public_key'),
+        }
+        if envelope.get('key_system'):
+            inner['key_system'] = envelope.get('key_system')
+    return json.dumps(inner, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+
+
+def _as_key_hash(raw: Any) -> str:
+    """载荷密钥的 SHA256（hex，64 位）。**形状必须对**，值无法在服务端核对。
+
+    ⚠️ 服务端没有 K，所以它**永远无法验证**这个值 —— 这不是缺口，是设计：
+       它是留给接收方解出 K 之后自查的（解出来的那把是不是发送方声称的那把）。
+       这里只保证形状，免得一个乱码在接收方那边被当成"密钥不对"。
+    """
+    text = str(raw or '').strip().lower()
+    if len(text) != 64 or not all(ch in '0123456789abcdef' for ch in text):
+        raise C.ContractError(
+            'keyHash 应为 64 位十六进制（SM4 载荷密钥的 SHA256）',
+            code=C.ERR_INVALID_PARAMETER,
+        )
+    return text
 
 
 def authorized_node_ids(user_id: int) -> List[int]:
@@ -271,25 +406,37 @@ def create_node_distribution(sender: Node, receiver: Node, *,
                              protection_algorithm: str,
                              recipient_key_id: Any,
                              recipient_key_version: Any,
-                             expires_hours: Any = None) -> Dict[str, Any]:
-    """发送节点 → 接收节点的一次分发：按**指定版本**封装并落全套副作用。
+                             batch_id: Any,
+                             expires_at: Any,
+                             envelope: Any,
+                             signature: Any,
+                             key_hash: Any) -> Dict[str, Any]:
+    """发送节点 → 接收节点的一次分发：**登记节点产出的信封**（KMS-009）。
 
-    这是 KMS-008「新请求契约」的服务端落点。与旧 `distribute_to_user` 的差别：
+    KMS-008 时这里还在服务端生成 SM4 并封装（过渡实现）。KMS-009 把那份工作
+    搬到了发送节点的浏览器里（`provider.wrapForPeer` + `signNodeEnvelope`），
+    本函数从此只做三件事：**核形状、算摘要、落库**。
 
-    | | 旧（用户腿） | 新（节点间） |
-    |---|---|---|
-    | 要 `source_key_id` | 要（用户自己的解封密钥） | **不要** |
-    | 用哪把接收方公钥 | 物化列 = "当前生产版本" | **请求指定的那一版** |
-    | 为谁封 | 用户本人 + 各节点 | 只有接收节点 |
-    | 有效期 | 固定 24 小时 | 请求可给，限 1..168 |
+    | | 谁做 |
+    |---|---|
+    | 生成 SM4、用接收方那一版公钥封装 | 发送节点（浏览器） |
+    | 用本地 Falcon 私钥签名 | 发送节点（浏览器） |
+    | 校验密钥版本可用、批次号/有效期合法、摘要自洽 | 服务端（本函数） |
+    | 验签 | **KMS-010**（本阶段只要求"必须带签名"，还没验） |
 
-    ⚠️ `protection_algorithm` 用**规范名**（SM2 / SSCL / KYBER）—— 与 §16 契约、
-       §7 阶段 3 的写作一致；换算成封装拼写（gm_sm2 / kyber_kem …）只在
-       `wrappers.NODE_WRAPPING_BY_CANONICAL` 一处发生。
+    ⚠️ **服务端从头到尾拿不到 SM4 明文**（计划 §2.1）：节点交上来的是已加密的
+       信封与它的哈希，服务端只做搬运与登记。
+    ⚠️ `key_hash` 由节点给出，服务端**无法自算**（没有 K）——它不是这里的判据，
+       而是留给**接收方**解出 K 之后自查的（KMS-011/012）。
+
+    `batch_id` / `expires_at` 由**调用方给**（KMS-009 起）：签名要覆盖它们，
+    服务端就不能在事后赋值。服务端仍负责校验它们的合法性（形状、上界、
+    不与既有批次撞号），所以"客户端说了算"只限**值**，不限**约束**。
 
     抛 `C.ContractError`：
       * 算法不在保护白名单（含 FALCON）→ `ALGORITHM_NOT_ALLOWED`；
-      * 有效期越界/认不出 → `INVALID_PARAMETER`；
+      * 缺签名 → `SIGNATURE_REQUIRED`；摘要对不上 → `ENVELOPE_TAMPERED`；
+      * 批次号/有效期/信封形状非法 → `INVALID_PARAMETER`；
       * 接收方那一版不可用 → `require_key_version` 的四种码，原样透出。
 
     返回 dict（不是 HTTP 响应）：`{batch, batch_id, key_hash, digest,
@@ -305,71 +452,111 @@ def create_node_distribution(sender: Node, receiver: Node, *,
             code=C.ERR_ALGORITHM_NOT_ALLOWED,
         )
     wrapping = NODE_WRAPPING_BY_CANONICAL[canonical]
-    hours = _as_expires_hours(expires_hours)
 
-    # 指定哪版就查哪版 —— 查询先于封装发生，这是"版本真进了请求"的判据。
+    # 指定哪版就查哪版 —— 查询先于登记发生，这是"版本真进了请求"的判据。
+    # 它同时回答"这个节点这个算法有没有可用版本"，是 KMS-008 起就有的判据。
     key = require_key_version(receiver, canonical, recipient_key_id, recipient_key_version)
 
-    payload_key = PayloadCipher.generate_key()
-    # ⚠️ 材料取自**登记行**（那一版），不是接收方的物化列 ——
-    #    物化列只有"当前生产版本"，用它就回到了"选了 v1、实际封 v2"的老问题。
-    #    两者存储形式相同（KYBER base64 / SM2·SSCL hex），所以同一套解码路径可用。
-    envelope, key_hash = wrap_with_public_key(
-        payload_key, key.public_key, wrapping, recipient_node_id=receiver.node_id,
+    batch_id = _as_batch_id(batch_id)
+    expires_at = _as_expires_at(expires_at)
+
+    # --- 以下三样全部由**发送节点**产出（KMS-009）---
+    # 服务端不再生成 SM4、不再封装。它在这里做的事只有"收下、核形状、落库"：
+    #   * `envelope` 是节点用接收方**那一版公钥**封好的密文（含待签字段）；
+    #   * `signature` 是节点用本地 Falcon 私钥对规范字节串的签名；
+    #   * `key_hash` 是那把 SM4 的 SHA256（服务端没有 K，无法自算 —— 见 docstring）。
+    envelope = _as_envelope(envelope)
+    signature = str(signature or '').strip()
+    if not signature:
+        # 没有签名就**不收**。这是"移除服务端代签名"的落点：服务端既不签，
+        # 也不接受"没签的"——留一条无签名的入口，等于把签名变成可选，
+        # 而"可选的安全属性"在实践中总是退化成"没有"。
+        raise C.ContractError(
+            '缺少签名：分发信封必须由发送节点用本地 Falcon 私钥签名后提交',
+            code=C.ERR_SIGNATURE_REQUIRED,
+        )
+    key_hash = _as_key_hash(key_hash)
+
+    inner_json = _canonical_inner_json(envelope, canonical)
+    digest = ciphertext_digest(inner_json)
+    declared_digest = str(envelope.get('ciphertext_digest') or '').strip()
+    if declared_digest and declared_digest != digest:
+        # 节点声明的摘要与服务端重算的对不上 —— 只可能是两边的规范化口径漂移了。
+        # **不收**：等 KMS-010 拿它去验签时才发现的话，报出来的会是"签名无效"，
+        # 而那看起来像伪造（安全事件），实际只是序列化不一致。
+        raise C.ContractError(
+            '信封的密文摘要与服务端重算的不一致：两侧的规范化序列化口径可能漂移了',
+            code=C.ERR_ENVELOPE_TAMPERED,
+        )
+
+    stored_json = json.dumps(
+        {**envelope, 'signature': signature},
+        ensure_ascii=False, sort_keys=True, separators=(',', ':'),
     )
-    envelope_json = json.dumps(envelope, ensure_ascii=False)
-    digest = ciphertext_digest(envelope_json)
 
-    batch_id = f'dist-{timezone.now().strftime("%Y%m%d%H%M%S")}-{uuid.uuid4().hex[:8]}'
-    expires_at = timezone.now() + timedelta(hours=hours)
+    try:
+        with transaction.atomic():
+            PreDistributedKey.objects.create(
+                pool_id=batch_id,
+                key_index=0,
+                # `node1` = 收件节点（`node_session_views` 取信封就是按
+                # `node1=<自己> AND recipient_type='node'` 查的）。
+                node1=receiver,
+                node2=None,
+                algorithm=wrapping,
+                wrapping_algorithm=wrapping,
+                payload_algorithm=PAYLOAD_ALGORITHM_SM4,
+                # 新模型没有"用户来源密钥"。留 NULL 而不是编一个 0：
+                # 0 会被下游当成一把真的 key_id 去查。
+                source_key_id=None,
+                recipient_type='node',
+                encrypted_key_data=stored_json,
+                key_hash=key_hash,
+                status='distributed',
+                expires_at=expires_at,
+                # KMS-007 为"这一项是用哪把长期密钥封的"补的两列 —— 新流程里
+                # 它从"生成时顺手记下的"升级为"**请求指定的、封装实际用的**那一版"，
+                # 于是回收时的精确失效天然命中，不需要任何退化匹配。
+                long_term_key_id=key.key_id,
+                long_term_key_version=key.key_version,
+            )
 
-    with transaction.atomic():
-        PreDistributedKey.objects.create(
-            pool_id=batch_id,
-            key_index=0,
-            # `node1` = 收件节点（`node_session_views` 取信封就是按
-            # `node1=<自己> AND recipient_type='node'` 查的）。
-            node1=receiver,
-            node2=None,
-            algorithm=wrapping,
-            wrapping_algorithm=wrapping,
-            payload_algorithm=PAYLOAD_ALGORITHM_SM4,
-            # 新模型没有"用户来源密钥"。留 NULL 而不是编一个 0：
-            # 0 会被下游当成一把真的 key_id 去查。
-            source_key_id=None,
-            recipient_type='node',
-            encrypted_key_data=envelope_json,
-            key_hash=key_hash,
-            status='distributed',
-            expires_at=expires_at,
-            # KMS-007 为"这一项是用哪把长期密钥封的"补的两列 —— 新流程里
-            # 它从"生成时顺手记下的"升级为"**请求指定的、封装实际用的**那一版"，
-            # 于是回收时的精确失效天然命中，不需要任何退化匹配。
-            long_term_key_id=key.key_id,
-            long_term_key_version=key.key_version,
-        )
+            src_domain, target_domains, dist_type = classify_distribution(sender, [receiver])
+            batch = DistributionBatch.objects.create(
+                batch_id=batch_id,
+                user_id=sender.sys_user_id,
+                # 同上：新模型没有用户来源密钥。
+                source_key_id=None,
+                wrapping_algorithm=wrapping,
+                node_ids=json.dumps([receiver.id]),
+                node_success_count=1,
+                # 没有用户腿，这一列如实记 False（旧流程它表示"用户那份也成功了"）。
+                user_envelope_ok=False,
+                status='success',
+                source_domain_id=src_domain,
+                target_domain_ids=json.dumps(target_domains, ensure_ascii=False),
+                distribution_type=dist_type,
+            )
 
-        src_domain, target_domains, dist_type = classify_distribution(sender, [receiver])
-        batch = DistributionBatch.objects.create(
-            batch_id=batch_id,
-            user_id=sender.sys_user_id,
-            # 同上：新模型没有用户来源密钥。
-            source_key_id=None,
-            wrapping_algorithm=wrapping,
-            node_ids=json.dumps([receiver.id]),
-            node_success_count=1,
-            # 没有用户腿，这一列如实记 False（旧流程它表示"用户那份也成功了"）。
-            user_envelope_ok=False,
-            status='success',
-            source_domain_id=src_domain,
-            target_domain_ids=json.dumps(target_domains, ensure_ascii=False),
-            distribution_type=dist_type,
-        )
-
-        session_count = create_initiated_sessions(
-            sender, {receiver.id: receiver}, [receiver.id], batch_id, expires_at,
-            dispatch='node_distribution', session_type=wrapping,
-        )
+            session_count = create_initiated_sessions(
+                sender, {receiver.id: receiver}, [receiver.id], batch_id, expires_at,
+                dispatch='node_distribution', session_type=wrapping,
+            )
+    except IntegrityError as exc:
+        # `batch_id` 撞唯一约束。KMS-009 起批次号由**调用方**生成，所以撞号是
+        # 真会发生的事（页面生成的随机后缀撞上、或同一个批次被提交两次）。
+        #
+        # ⚠️ 不把它原样抛出去：Django 的 IntegrityError 里带着表名与索引名，
+        #    接口层兜底 except 会把它们一起回给调用方（看起来像库坏了）。
+        #    而且**必须**在这里转，因为撞号是**可重试**的业务冲突，
+        #    与"写信封时出错"（500）不是一回事。
+        if 'batch_id' in str(exc):
+            raise C.ContractError(
+                f'批次号 {batch_id} 已被使用：同一次分发不要重复提交，'
+                f'或重新生成一个批次号',
+                code=C.ERR_INVALID_PARAMETER,
+            ) from exc
+        raise
 
     # 上链在事务**提交之后**（与 KMS-006/007 同口径）：存证失败不该回滚一次
     # 已经成立的分发 —— 信封已经落库、接收方已经能取到它。

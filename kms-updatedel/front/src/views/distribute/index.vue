@@ -108,6 +108,18 @@
               <div class="form-hint">1..168 小时，默认 24。到期后信封不再可用（不自动续期）。</div>
             </el-form-item>
 
+            <el-form-item label="发送方 Falcon 版本">
+              <el-tag v-if="falconReady" size="small" type="success" effect="plain">
+                {{ falconKey?.keyId }} v{{ falconKey?.keyVersion }}
+              </el-tag>
+              <el-tag v-else size="small" type="danger" effect="plain">本机不可用</el-tag>
+              <div class="form-hint">
+                信封用**本机这把 Falcon 私钥**签名。两个条件都要满足：服务端说这一版可用
+                （登记表），且**本机密钥库里有它的私钥** —— 换过设备或清过浏览器数据时，
+                前者成立而后者不成立，提交会被服务端拒（`SIGNATURE_REQUIRED`）。
+              </div>
+            </el-form-item>
+
             <el-form-item>
               <el-button type="primary" :loading="submitting" :disabled="!canSubmit" @click="handleDistribute">
                 分发
@@ -115,6 +127,16 @@
               <el-button @click="loadNodes">刷新节点</el-button>
             </el-form-item>
           </el-form>
+
+          <el-alert
+            v-if="mapped && !nodeLoading && !falconReady"
+            title="本机没有可用于签名的 Falcon 私钥"
+            description="信封必须由发送节点本地签名。请在本机生成一把 Falcon 密钥（「密钥生成」页），或改用当初生成密钥的那台设备。"
+            type="warning"
+            :closable="false"
+            show-icon
+            class="mb16"
+          />
 
           <el-alert v-if="result" type="success" :closable="false" show-icon class="mt8">
             <template #title>分发完成：批次 {{ result.batchId }}</template>
@@ -124,6 +146,11 @@
                 （{{ result.protectionLabel }}）封好会话密钥，交给 {{ result.receiverNodeName }}。
               </p>
               <p>有效期至 {{ formatTime(result.expiresAt) }}；登记会话 {{ result.sessionCount }} 条。</p>
+              <p v-if="result.signaturePresent">
+                信封已用本机 Falcon 私钥签名（载荷密钥哈希 <code>{{ result.localKeyHash }}</code>）——
+                <span class="muted">服务端此刻只登记、还没验签，验签是下一步（KMS-010）。</span>
+              </p>
+              <p v-else class="muted">⚠️ 服务端未回执"已带签名"，请把这条报给维护者。</p>
               <p v-if="result.chainHash">链上存证：{{ result.chainHash }}</p>
               <!-- ⚠️ 存证没成功**如实说**，不与"分发成功"混成一句 ——
                    分发本身已经成立（信封落库、接收方能取），缺的是审计那一半。 -->
@@ -182,8 +209,14 @@
  *      搅在一起。新契约里保护算法就是 SM2 / SSCL / Kyber 三选一。
  *
  * 新增的是**接收方密钥版本**：选定节点与算法后向服务端查它的长期密钥列表，
- * 选一版"生产中"的。服务端按**这一版**封装 —— 旧实现读的是物化列
+ * 选一版"生产中"的。服务端按**这一版**核对 —— 旧实现读的是物化列
  * （"当前生产公钥"），请求里带了版本也传不进封装调用。
+ *
+ * KMS-009：**SM4 与封装搬到了本机**。本页现在自己做三件事：
+ *   1. 生成 16 字节 SM4 载荷密钥；
+ *   2. 用接收方**那一版**公钥封好（`provider.wrapForPeer`）；
+ *   3. 用**本机 Falcon 私钥**签名（`signNodeEnvelope`）。
+ * 服务端只登记，从此拿不到 SM4 明文（计划 §2.1）。
  *
  * 三条由服务端保证、前端只做体验优化：
  *   * 接收节点的密钥列表要对它有**授权**才拿得到（未授权 403）；
@@ -192,13 +225,21 @@
  */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { getSelfNode } from '@/api/pqkds/node-self'
+import { getSelfNode, listSelfNodeKeys } from '@/api/pqkds/node-self'
 import {
   createNodeDistribution,
   listDistributionBatches,
   listPeerKeys,
   listUserNodes
 } from '@/services/user-distribution-api'
+import { cryptoProvider } from '@/utils/crypto/browser-provider.js'
+import { buildKeyRef } from '@/utils/crypto/key-ref.js'
+import {
+  buildNodeEnvelope,
+  generatePayloadKey,
+  newBatchId,
+  signNodeEnvelope
+} from '@/utils/crypto/envelope-signing.js'
 
 /** 保护算法（规范名）。与 `api_contract.PROTECTION_ALGORITHMS` 一致，Falcon 不在其中。 */
 const PROTECTION_ALGORITHMS = ['KYBER', 'SM2', 'SSCL']
@@ -209,6 +250,10 @@ const nodes = ref([])
 const nodesLoading = ref(false)
 const mapped = ref(false)
 const nodeLoading = ref(true)
+const selfNodeId = ref('')
+/** 本机可用于签名的 Falcon 密钥（取自己方长期密钥里可用于新工作的那把）。 */
+const falconKey = ref(null)
+const falconReady = ref(false)
 const peerKeys = ref([])
 const keysLoading = ref(false)
 const batches = ref([])
@@ -235,8 +280,48 @@ const form = reactive({
 const usablePeerKeys = computed(() => peerKeys.value.filter((key) => key.allowsNewWork === true))
 
 const canSubmit = computed(() => Boolean(
-  mapped.value && form.receiverNodeCode && form.recipientKeyRef && !submitting.value
+  mapped.value && form.receiverNodeCode && form.recipientKeyRef
+  && falconReady.value && !submitting.value
 ))
+
+/**
+ * 取本节点那把**可用于签名**的 Falcon 公钥记录，并确认**本机**有对应私钥。
+ *
+ * ⚠️ 两个条件是分开的，缺一不可：
+ *    * 服务端说这把 Falcon 版本可用（`allowsNewWork` —— 登记表是事实来源）；
+ *    * **本机密钥库里有它的私钥**（`hasKey`）。设备换了一台、或本地库被清过时，
+ *      服务端照样说可用，而本机签不了名 —— 那种状态下提交会在服务端吃一个
+ *      `SIGNATURE_REQUIRED`，看着像"服务端不认签名"，实际是本机缺材料。
+ *      所以在页面上先判、并给出该做什么（去「密钥生成」页生成或换设备）。
+ */
+async function loadFalconKey() {
+  falconKey.value = null
+  falconReady.value = false
+  if (!selfNodeId.value) {
+    return
+  }
+  try {
+    const data = await listSelfNodeKeys()
+    const candidates = (data?.keys || []).filter(
+      (k) => k.algorithm === 'FALCON' && k.allowsNewWork === true
+    )
+    for (const candidate of candidates) {
+      const ref = buildKeyRef({
+        nodeId: selfNodeId.value,
+        algorithm: 'FALCON',
+        keyId: candidate.keyId,
+        version: candidate.keyVersion
+      })
+      if (await cryptoProvider.hasKey(ref)) {
+        falconKey.value = { ...candidate, keyRef: ref }
+        falconReady.value = true
+        return
+      }
+    }
+  } catch (error) {
+    errorMessage.value = `加载本机签名密钥失败：${describeError(error)}`
+  }
+}
 
 /** 把选中的 `keyId@version` 还原成两个字段（服务端要分开收）。 */
 function parseKeyRef(ref) {
@@ -261,6 +346,8 @@ async function loadSelf() {
   try {
     const data = await getSelfNode()
     mapped.value = Boolean(data?.mapped)
+    selfNodeId.value = data?.node?.nodeId || ''
+    await loadFalconKey()
   } catch (error) {
     errorMessage.value = `加载节点身份失败：${describeError(error)}`
   } finally {
@@ -347,16 +434,54 @@ async function handleDistribute() {
   if (!canSubmit.value || parsed === null) {
     return
   }
+  // 选中的那一版接收方公钥 —— 它的 `publicKey` 是**比对形式的小写 hex**
+  // （服务端 `_public_key_hex` 统一换算过），正是 `wrapForPeer` 要的入参形状。
+  const peerKey = usablePeerKeys.value.find(
+    (k) => k.keyId === parsed.keyId && Number(k.keyVersion) === parsed.keyVersion
+  )
+  if (!peerKey) {
+    errorMessage.value = '选中的接收方密钥版本已不在列表里，请重新选择。'
+    return
+  }
+
   submitting.value = true
   errorMessage.value = ''
   result.value = null
   try {
+    // ---- 以下三步全在**本机**完成（KMS-009）----
+    // 1) 本地生成 SM4 载荷密钥；
+    const payloadKey = generatePayloadKey()
+    // 2) 本地用接收方那一版公钥封装；
+    // 3) 本地用 Falcon 私钥签名。
+    // `batchId` / `expiresAt` 也在这里定 —— 签名要覆盖它们（见
+    // `envelope-signing.js` 文件头的说明），服务端仍会校验形状与上界。
+    const batchId = newBatchId()
+    const expiresAt = new Date(Date.now() + Number(form.expiresInHours) * 3600 * 1000).toISOString()
+    const { envelope, keyHash, wrapping } = await buildNodeEnvelope({
+      provider: cryptoProvider,
+      payloadKey,
+      wrapping: form.protectionAlgorithm,
+      recipientPublicKeyHex: peerKey.publicKey,
+      batchId,
+      senderNodeId: selfNodeId.value,
+      receiverNodeId: form.receiverNodeCode,
+      recipientKeyId: parsed.keyId,
+      recipientKeyVersion: parsed.keyVersion,
+      expiresAt
+    })
+    const signature = await signNodeEnvelope(cryptoProvider, falconKey.value.keyRef, envelope)
+
     const data = await createNodeDistribution({
       receiverNodeId: form.receiverNodeCode,
       protectionAlgorithm: form.protectionAlgorithm,
       recipientKeyId: parsed.keyId,
       recipientKeyVersion: parsed.keyVersion,
-      expiresInHours: form.expiresInHours
+      batchId,
+      expiresAt,
+      envelope,
+      signature,
+      keyHash,
+      wrappingAlgorithm: wrapping
     })
     result.value = {
       batchId: data?.batchId,
@@ -366,7 +491,9 @@ async function handleDistribute() {
       receiverNodeName: data?.receiverNodeName || form.receiverNodeCode,
       sessionCount: data?.sessionCount ?? 0,
       expiresAt: data?.expiresAt,
-      chainHash: data?.chainHash || ''
+      chainHash: data?.chainHash || '',
+      signaturePresent: Boolean(data?.signaturePresent),
+      localKeyHash: keyHash
     }
     ElMessage.success('分发完成')
     await loadBatches()
@@ -406,6 +533,10 @@ function describeError(error) {
       return '这一版已过期，请改选其它版本或让对方续期。'
     case 'ALGORITHM_NOT_ALLOWED':
       return '该算法不能用于保护会话密钥（Falcon 只做签名）。请选 SM2 / SSCL / Kyber。'
+    case 'SIGNATURE_REQUIRED':
+      return '服务端没有收到签名。本机这把 Falcon 私钥可能不在密钥库里（换过设备或清过数据）—— 请在本机重新生成一把 Falcon 密钥后再分发。'
+    case 'ENVELOPE_TAMPERED':
+      return '信封的摘要与服务端重算的对不上（两侧的规范化序列化口径可能漂移了）。这是实现问题，请把它报给维护者，不要重试。'
     case 'INVALID_PARAMETER':
       return `参数不合法：${fallback}`
     default:

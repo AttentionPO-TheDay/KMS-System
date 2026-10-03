@@ -647,7 +647,7 @@ def node_peer_keys(request, peer_node_id, identity):
 @require_http_methods(['POST'])
 @require_kms_user
 def node_self_distributions(request, identity):
-    """发起一次**节点到节点**的分发 —— KMS-008 的新请求契约（§16.2）。
+    """发起一次**节点到节点**的分发 —— KMS-008 的新请求契约，KMS-009 起**由节点封装**。
 
     请求体（驼峰，snake_case 兼容；与 `/node-self/keys/` 同一套读法）：
 
@@ -656,31 +656,43 @@ def node_self_distributions(request, identity):
       "protectionAlgorithm": "KYBER",      // SM2 / SSCL / KYBER（规范名）
       "recipientKeyId": "KRB-XXXX-KYBER-ab12cd34",
       "recipientKeyVersion": 1,
-      "expiresInHours": 24 }               // 可选，1..168
+      "batchId": "dist-20261003153012-4b7e1b0a",
+      "expiresAt": "2026-10-04T15:30:12+08:00",
+      "envelope": { ... },                 // 节点用接收方那一版公钥封好的密文
+      "signature": "<base64>",             // 节点用本地 Falcon 私钥对规范字节串的签名
+      "keyHash": "<64 位十六进制>" }        // SM4 载荷密钥的 SHA256（接收方自查用）
     ```
 
     <h2>与旧 `POST /key-pool/distribute-to-user/` 的差别（这就是"新契约"）</h2>
     1. **没有 `source_key_id`** —— 发送方不再需要一把"给自己解封"的用户密钥。
        传了也不作数（会记一条日志，落库的 `source_key_id` 是 NULL），
        因为新模型里根本不存在这个角色。
-    2. **接收方密钥版本是显式的**，且封装**按指定的那一版**发生
-       （`require_key_version` 先于封装查询）。旧流程读物化列，
+    2. **接收方密钥版本是显式的**，且登记时核对的就是**那一版**
+       （`require_key_version` 先于落库查询）。旧流程读物化列，
        选哪版都等于"当前生产版本"。
     3. **只封给接收节点**，没有"发起用户自己的那一份"（用户腿）。
     4. 保护算法用**规范名**（SM2 / SSCL / KYBER）；Falcon 被拒 ——
        它是签名算法，不提供机密性（计划 §3）。
+
+    <h2>KMS-009：SM4 与封装搬到了节点侧（服务端不再生成载荷密钥）</h2>
+    节点在浏览器里生成 SM4、用接收方的**指定版本公钥**封装、再用**本地 Falcon
+    私钥**签名（`crypto/envelope-signing.js` + `provider.wrapForPeer`），
+    服务端只**核形状、算摘要、落库**。于是服务端从头到尾拿不到 SM4 明文
+    （计划 §2.1）。
+
+    ⚠️ `batchId` 与 `expiresAt` 由**调用方**给出：签名覆盖它们，
+       服务端就不能在事后赋值。服务端仍校验形状与上界（"客户端给值"不等于
+       "客户端说了算"）。
+
+    ⚠️ **验签是 KMS-010**：本阶段只强制"必须带签名"（没签名直接拒），
+       还没做密码学验证 —— 那一步落地时本接口不用改（服务层已经收好了
+       `signature` 与规范字段）。
 
     <h2>身份与权限</h2>
     发送方 = 令牌映射到的节点（前端传不了，也不该传）。需要：
       * 账号映射到节点，否则 403；
       * 具备 `CAP_DISTRIBUTE`（L2 及以上），否则 403；
       * 对接收节点有有效授权，否则 403。
-
-    <h2>这次**不做**签名（KMS-009/010 的边界）</h2>
-    信封里暂时没有 Falcon 签名字段 —— 签名要用**发送方的私钥**，而私钥只在
-    节点本地（KMS-005 起服务端不再持有）。把签名搬进本接口与"服务端验签、
-    没有签名就拒发"一起，是 KMS-009/010 的事。所以这里**不装作已签**：
-    信封里没有就是没有，与旧流程的如实口径一致。
     """
     try:
         payload = json.loads(request.body or b'{}')
@@ -731,9 +743,16 @@ def node_self_distributions(request, identity):
             recipient_key_version=payload.get('recipientKeyVersion')
             if payload.get('recipientKeyVersion') is not None
             else payload.get('recipient_key_version'),
-            expires_hours=payload.get('expiresInHours')
-            if payload.get('expiresInHours') is not None
-            else payload.get('expires_in_hours'),
+            batch_id=payload.get('batchId') if payload.get('batchId') is not None
+            else payload.get('batch_id'),
+            expires_at=payload.get('expiresAt') if payload.get('expiresAt') is not None
+            else payload.get('expires_at'),
+            # KMS-009：这三样由**节点**产出（本地封装 + 本地签名），
+            # 服务端只登记。见该 service 的 docstring。
+            envelope=payload.get('envelope'),
+            signature=payload.get('signature'),
+            key_hash=payload.get('keyHash') if payload.get('keyHash') is not None
+            else payload.get('key_hash'),
         )
     except C.ContractError as exc:
         # 业务码按 `ERROR_HTTP_STATUS` 给（那是对外契约的唯一一份映射），
@@ -761,6 +780,11 @@ def node_self_distributions(request, identity):
             # 空串 = 存证未成功（链不可用等）。**不隐藏**：
             # 前端据此如实显示"已分发，但存证未成功"，而不是混成一句"成功"。
             'chainHash': result['chain_hash'] or '',
+            # KMS-009：信封确实带着发送节点的签名 —— 但**本阶段还没验签**
+            # （那是 KMS-010）。所以这里如实回 `signaturePresent`（有没有带）
+            # 而不是 `signatureVerified`（验没验过）：后者现在恒为假，
+            # 回一个假的字段比不回更糟 —— 它会被当成"验过了但不通过"。
+            'signaturePresent': True,
             'status': 'success',
         },
         msg='分发完成',

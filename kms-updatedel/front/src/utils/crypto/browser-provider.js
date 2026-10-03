@@ -113,6 +113,22 @@ function b64ToHex(value) {
   return out
 }
 
+/**
+ * hex/字节 → base64。`b64ToHex` 的反方向，给**封装**方向用（KMS-009）。
+ *
+ * ⚠️ 必须分块喂 `String.fromCharCode`：它一次收一个参数表，
+ *    把上万个字节摊成实参会爆栈（"Maximum call stack size exceeded"），
+ *    而那句报错完全看不出是编码问题。分块大小取 4096，与字节数无关地安全。
+ */
+export function bytesToB64(value) {
+  const bytes = toBytes(value) || fromHex(value)
+  let binary = ''
+  for (let i = 0; i < bytes.length; i += 4096) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 4096))
+  }
+  return btoa(binary)
+}
+
 //: Kyber 变体。**变体由公钥长度自描述**（服务端 `wrappers.py` 的 pk_len_map 同口径），
 //: 所以两边不必预先约定 —— 但生成时要选一个，默认 768（NIST 3 级）。
 const KYBER_VARIANTS = {
@@ -362,6 +378,91 @@ export class BrowserCryptoProvider extends CryptoProvider {
       throw new Error('Kyber 封装返回了认不出的字节形态（期望 Uint8Array / ArrayBuffer / 数字数组）')
     }
     return { ciphertext, sharedSecret, algorithm: name, variant }
+  }
+
+  /**
+   * 用**接收方的公钥**把载荷密钥封成一份**节点腿信封**（KMS-009）。
+   *
+   * 与 `encapsulate` 的分工：那个是 KEM **原语**（返回密文与共享秘密，剩下的事
+   * 调用方自己干）；本方法产出的是**可以直接落库、对面可以直接解**的成品信封，
+   * 形状与服务端 `wrappers.wrap_with_public_key` 逐字段对应。
+   *
+   * 为什么放在 provider 里而不是页面里：这是密码学动作（KEM/KEX + DEM 的组合），
+   * 与 `unwrapEnvelope` 是严格的一对 —— 对面就是拿 `unwrapEnvelope` 解它的。
+   * 分散到页面里，等于让"封"与"解"两侧各自的实现漂移，而漂移的表现是
+   * **能封、开不开**（GCM 认证失败或 SM2 完整性校验失败），报错看起来像密钥不对。
+   *
+   * @param {string} algorithm 保护算法：KYBER / SM2 / SSCL（规范名或历史拼写都认）
+   * @param {string} recipientPublicKeyHex 接收方公钥（hex；KYBER 由内部转成字节）
+   * @param {Uint8Array} payloadKey 16 字节 SM4 载荷密钥
+   * @returns {Promise<{envelope: object, wrapping: string}>} `wrapping` 是库内口径的算法拼写
+   */
+  async wrapForPeer(algorithm, recipientPublicKeyHex, payloadKey) {
+    const name = normalizeAlgorithm(algorithm)
+    const publicKeyHex = String(recipientPublicKeyHex || '').trim().toLowerCase()
+    const key = toBytes(payloadKey)
+    if (!key || key.length !== 16) {
+      throw new Error(`载荷密钥必须是 16 字节的 SM4 密钥（收到 ${key ? `${key.length} 字节` : '非字节'}）`)
+    }
+
+    if (name === 'KYBER') {
+      const { sm4GcmEncrypt } = await import('../sm4.js')
+      const encapsulated = await this.encapsulate('KYBER', publicKeyHex)
+      // KEK 取共享秘密**前 16 字节** —— 与服务端
+      // `PayloadCipher.kek_from_shared_secret('sm4', ss)` 同一口径。
+      // 取错长度不会报错，只会解出乱码。
+      const kek = encapsulated.sharedSecret.slice(0, 16)
+      const iv = crypto.getRandomValues(new Uint8Array(12))
+      // ⚠️ **不传 aad**：服务端封装时也没传（`wrappers.py` 的 kyber 分支），
+      //    这里传了就会"能封、开不开"，而报错是 GCM 认证失败。
+      const { ciphertext, tag } = sm4GcmEncrypt(kek, key, iv)
+      return {
+        wrapping: 'kyber_kem',
+        envelope: {
+          kem_ciphertext: bytesToB64(encapsulated.ciphertext),
+          encrypted_key: bytesToB64(ciphertext),
+          nonce: bytesToB64(iv),
+          tag: bytesToB64(tag),
+          payload_algorithm: 'sm4',
+          wrapping_algorithm: 'kyber_kem'
+        }
+      }
+    }
+
+    if (name === 'SM2' || name === 'SSCL') {
+      const { SM2 } = await import('gm-crypto')
+      // ⚠️ gm-crypto 的 `encrypt` 返回 **ArrayBuffer**，且 C1 **不带 `04`
+      //    未压缩点前缀**（实测比国标格式少 2 个字符）。直接当密文用会被
+      //    `decryptEnvelope` 判"C1 不是未压缩点" —— 而那句报错听起来像
+      //    "密钥不对"。补回前缀（下面 selfTest 里那处是同一个坑）。
+      //
+      // ⚠️ 入参必须是 **ArrayBuffer**，不是 Uint8Array —— gm-crypto 里判的是
+      //    `instanceof ArrayBuffer`，而 Uint8Array **是视图不是 ArrayBuffer**，
+      //    会被它拒成 `Expected "string" | "Buffer" | "ArrayBuffer" but received
+      //    "[object Uint8Array]"`。`Uint8Array.from` 复制一份再取 `.buffer`，
+      //    顺带避开"传进去的是别人 buffer 的一段视图"这种更难查的情形。
+      const raw = SM2.encrypt(Uint8Array.from(key).buffer, publicKeyHex)
+      const wrapping = name === 'SM2' ? 'gm_sm2' : 'gm_sscl'
+      const envelope = {
+        algorithm: 'sm2',
+        ciphertext: '04' + toHex(new Uint8Array(raw)),
+        public_key: publicKeyHex,
+        payload_algorithm: 'sm4',
+        wrapping_algorithm: wrapping,
+        recipient_public_key: publicKeyHex
+      }
+      if (name === 'SSCL') {
+        // `key_system` 表达"密钥体系"，与 `algorithm`（密码算法，必须恒为 'sm2'，
+        // 解密侧会校验）是两件事 —— 服务端 `SsclWrapper.wrap` 同此口径。
+        envelope.key_system = 'sscl'
+      }
+      return { wrapping, envelope }
+    }
+
+    throw new Error(
+      `wrapForPeer 不支持 ${algorithm}：保护算法只允许 KYBER / SM2 / SSCL` +
+        '（Falcon 是签名算法，不提供机密性）'
+    )
   }
 
   /**

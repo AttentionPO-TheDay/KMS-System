@@ -145,6 +145,101 @@ def envelope_digest(envelope: Dict[str, Any]) -> str:
     return hashlib.sha256(canonical_payload(envelope)).hexdigest()
 
 
+# ===========================================================================
+# 节点到节点分发的信封签名（KMS-009）
+# ===========================================================================
+# 与上面那套**并存，但不共用**。
+#
+# 为什么另起一套而不是扩 `SIGNED_FIELDS`
+# ------------------------------------
+# `SIGNED_FIELDS` 是**历史信封的签名口径**：已经签出去的信封，其签名对应
+# 那份固定的字段集合。往里加一个字段，所有历史签名的验签会**当场失效** ——
+# 而失效的表现是"验签失败"，看起来像"这些信被篡改过"（安全事件），
+# 实际只是我们改了规范。`ciphertext_digest` 的注释里已经写过一次同类教训
+# （序列化方式一改，历史信封全部验不过，引发错误告警）。
+#
+# 两套口径的差别是真实的语义差别，不是历史包袱：
+#   * 用户腿信封签的是"给**某个用户**的哪一把密钥"（recipient_user_id / source_key_id）；
+#   * 节点腿信封签的是"给**某个节点**的哪一版长期密钥"（receiver_node_id /
+#     recipient_key_id / recipient_key_version）。
+# 硬塞进同一份字段表，会得到一份"总有一半字段是 None"的签名输入 ——
+# 而 None 与"字段缺失"在字节串上无法区分，正是这套机制最该避免的歧义。
+NODE_ENVELOPE_SIGNED_FIELDS = (
+    'batch_id',
+    'sender_node_id',
+    'receiver_node_id',
+    'wrapping_algorithm',
+    'payload_algorithm',
+    'recipient_key_id',
+    'recipient_key_version',
+    'key_hash',
+    'ciphertext_digest',
+    'expires_at',
+)
+
+
+def node_canonical_payload(envelope: Dict[str, Any]) -> bytes:
+    """节点腿信封的**确定性字节串**（签名/验签共用这一份规范）。
+
+    与 `canonical_payload` 同一套序列化口径：`sort_keys=True`、
+    `separators=(',', ':')`、`ensure_ascii=False`。**浏览器侧必须产出逐字节
+    相同的字节串**（`src/utils/crypto/envelope-signing.js` 里那份），
+    否则会出现"节点签的信服务端验不过"——而那种失败看起来完全像伪造。
+
+    ⚠️ 缺失字段记为 `None` 而不是跳过，理由同 `canonical_payload`。
+
+    ⚠️ `expires_at` 与 `batch_id` **进来了**，代价是它们必须由调用方在
+    **签名之前**给出（`expiresAt` 传绝对时间、`batchId` 由页面生成并由服务端
+    校验格式与唯一性）。这是 KMS-009 定下的口径：签名要覆盖它们，
+    就不能再由服务端在事后赋值 —— 否则节点签的是一份"还不知道有效期"的信。
+    """
+    subset = {k: envelope.get(k) for k in NODE_ENVELOPE_SIGNED_FIELDS}
+    return json.dumps(subset, sort_keys=True, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+
+
+def verify_node_envelope(envelope: Dict[str, Any], signature_b64: str,
+                         falcon_public_key: str) -> bool:
+    """用发送节点的 Falcon 公钥验证**节点腿信封**的签名。
+
+    与 `verify_envelope` 的差别有两处，都是实质的：
+      * 重建的是 `node_canonical_payload`（另一套字段集合，见上）；
+      * 公钥来自**长期密钥登记表**（`NodeLongTermKey.public_key`，**hex**），
+        而不是用户腿那两列 base64 的 `falcon_sign_public_key` ——
+        这里不能用 `_decode_falcon_public_key`（见 `_decode_registry_key_material`
+        的说明：解错编码的表现是"验签永不通过"，且不报编码错）。
+
+    任何异常都返回 False —— 验签的失败方向必须是"拒绝"，不能是"放行"。
+
+    ⚠️ KMS-009 阶段**还没有人调用它**：把 SM4 生成与封装搬到节点侧之后，
+        "服务端验签并拒绝坏签名"是 KMS-010 的事（本函数是那一步的落点，
+        先放在这里是为了让浏览器侧的签名从第一天起就有一份**可执行的**
+        服务端对照实现 —— 验收脚本现在就用它证伪跨语言实现的漂移）。
+    """
+    try:
+        from .crypto_utils import FalconCrypto
+
+        pk = _decode_registry_key_material(falcon_public_key)
+        if not pk or not signature_b64:
+            return False
+
+        f = FalconCrypto(512)
+        if len(pk) != f.public_key_bytes:
+            logger.warning('验签节点信封失败：公钥长度 %d 与 Falcon-512 期望的 %d 不符',
+                           len(pk), f.public_key_bytes)
+            return False
+
+        signed_message = base64.b64decode(signature_b64)
+        recovered = f.verify(signed_message, pk)
+        if recovered is None:
+            return False
+        # 双保险：恢复出的内容必须与重新计算的规范字节串一致 ——
+        # 只判"签名自洽"证明不了"签的正是当前这份信封"。
+        return recovered == node_canonical_payload(envelope)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning('验签节点信封异常（按失败处理）: %s', exc)
+        return False
+
+
 # ---------------------------------------------------------------------------
 # 密钥解码
 # ---------------------------------------------------------------------------
@@ -175,3 +270,30 @@ def _decode_falcon_private_key(raw: str) -> Optional[bytes]:
 def _decode_falcon_public_key(raw: str) -> Optional[bytes]:
     """取节点的**标准** Falcon 签名公钥（来自 falcon_sign_public_key）。"""
     return _decode_b64(raw)
+
+
+def _decode_registry_key_material(raw: str) -> Optional[bytes]:
+    """解**长期密钥登记表**（`NodeLongTermKey.public_key`）里的公钥材料。
+
+    ⚠️ 那一列存的是 **hex**（KMS-005 起节点上传的就是 hex，登记层原样落库），
+       与上面那两个"直接 base64"的助手**不是一套编码**。
+       拿 `_decode_b64` 去解它有两个失败形态，**都不会报成"编码不对"**：
+         * 长度是 4 的倍数时：base64 把 hex 当普通字符解出一串**等长但完全不同**的
+           字节，于是长度校验不过、验签返回 False —— 看起来像"签名无效"；
+         * 长度不是 4 的倍数时（1794 % 4 == 2）：binascii 抛异常，被 except 吞掉，
+           同样返回 False。
+       两种都会让"验签"这件事**永远不通过**，而原因与签名本身毫无关系。
+
+    ⚠️ 所以这里按**形状**认编码而不是猜：全 hex 且长度为偶数 → 按 hex 解；
+       否则按 base64 解。两种形状不可能同时成立（hex 的字符集是 base64 的子集，
+       但一段全 hex 的串按 base64 解出来的字节数会少 1/4，长度校验能兜住）。
+    """
+    text = str(raw or '').strip()
+    if not text:
+        return None
+    if len(text) % 2 == 0 and all(ch in '0123456789abcdefABCDEF' for ch in text):
+        try:
+            return bytes.fromhex(text)
+        except ValueError:
+            return None
+    return _decode_b64(text)

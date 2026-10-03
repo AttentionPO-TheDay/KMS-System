@@ -95,15 +95,24 @@ export async function listPeerKeys(nodeCode, algorithms) {
 }
 
 /**
- * 发起一次**节点到节点**的分发（KMS-008 / §16.2 的新请求契约）。
+ * 发起一次**节点到节点**的分发（KMS-008 的新请求契约；KMS-009 起**由节点封装**）。
  *
  * 与 `distributeToUser` 的差别（这就是"新契约"）：
  *   * **没有** `sourceKeyId` —— 不需要"我的解封密钥"；
- *   * 接收方密钥版本**显式指定**，服务端按**那一版**封装；
+ *   * 接收方密钥版本**显式指定**，服务端按**那一版**核对；
  *   * 只封给接收节点，没有"发起用户自己的那一份"。
  *
+ * KMS-009 起，`envelope` / `signature` / `keyHash` / `batchId` / `expiresAt`
+ * **全部由调用方（页面在本机）产出** —— SM4 在浏览器生成、用接收方那一版公钥
+ * 封装、用本机 Falcon 私钥签名（见 `utils/crypto/envelope-signing.js`）。
+ * 服务端只登记，从此拿不到 SM4 明文。
+ *
+ * ⚠️ `batchId` 与 `expiresAt` 必须由调用方给：签名覆盖它们，服务端就不能事后赋值。
+ *
  * @param {{receiverNodeId: string, protectionAlgorithm: 'SM2'|'SSCL'|'KYBER',
- *          recipientKeyId: string, recipientKeyVersion: number, expiresInHours?: number}} payload
+ *          recipientKeyId: string, recipientKeyVersion: number,
+ *          batchId: string, expiresAt: string, envelope: object,
+ *          signature: string, keyHash: string}} payload
  *   `receiverNodeId` 是**业务编号**；`protectionAlgorithm` 用**规范名**
  *   （Falcon 会被服务端拒 —— 它是签名算法）。
  */
@@ -112,16 +121,25 @@ export async function createNodeDistribution({
   protectionAlgorithm,
   recipientKeyId,
   recipientKeyVersion,
-  expiresInHours
+  batchId,
+  expiresAt,
+  envelope,
+  signature,
+  keyHash,
+  wrappingAlgorithm
 }) {
   return unwrapPqkds(await pqkdsHttp.post('/node-self/distributions/', {
     receiverNodeId,
     protectionAlgorithm,
     recipientKeyId,
     recipientKeyVersion,
-    ...(expiresInHours === undefined || expiresInHours === null || expiresInHours === ''
-      ? {}
-      : { expiresInHours })
+    batchId,
+    expiresAt,
+    envelope,
+    signature,
+    keyHash,
+    // 仅排障用：库内口径的封装拼写（服务端自己也能算，多带一份便于对账）。
+    ...(wrappingAlgorithm ? { wrappingAlgorithm } : {})
   }))
 }
 

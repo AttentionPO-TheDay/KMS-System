@@ -99,6 +99,24 @@ export class CryptoProvider {
   }
 
   /**
+   * 用**接收方的公钥**把载荷密钥封成一份可直接落库、对面可直接解的**节点腿信封**。
+   *
+   * 与 `encapsulate` 的区别是层次：那个是 KEM **原语**（返回密文与共享秘密，
+   * 组合与编码由调用方负责）；本方法产出**成品**，形状与服务端
+   * `wrappers.wrap_with_public_key` 逐字段对应，对面拿 `unwrapEnvelope` 就能解。
+   *
+   * 支持 KYBER / SM2 / SSCL（计划 §3 的保护算法白名单）。
+   *
+   * @param {string} algorithm
+   * @param {string} recipientPublicKeyHex
+   * @param {Uint8Array} payloadKey 16 字节 SM4 载荷密钥
+   * @returns {Promise<{envelope: object, wrapping: string}>}
+   */
+  async wrapForPeer(algorithm, recipientPublicKeyHex, payloadKey) { // eslint-disable-line no-unused-vars
+    throw new Error(`${this.constructor.name} 未实现 wrapForPeer`)
+  }
+
+  /**
    * 自检：**用这份材料真的做一轮加解密/签名验证**，而不是"看着是好的"。
    *
    * 存在理由是密钥库里躺着的材料可能是**上一代格式**或**别的算法**的：
