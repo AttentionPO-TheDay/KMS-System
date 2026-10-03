@@ -20,7 +20,14 @@ from .user_distribution_views import (
     user_symmetric_keys,
 )
 # 阶段 2：节点自助（首次登录后的密钥初始化）。身份取自令牌自省，见该模块 docstring。
-from .node_self_views import node_self, node_self_init, node_self_keys, node_self_revoke_key
+from .node_self_views import (
+    node_peer_keys,
+    node_self,
+    node_self_distributions,
+    node_self_init,
+    node_self_keys,
+    node_self_revoke_key,
+)
 # §6.5：节点取自己的信封 + 提交「我已恢复 K」的证明
 # §10.10：节点自己的会话列表（服务端按外键隔离，见该函数的 docstring）
 from .node_session_views import node_envelopes, node_session_confirm, node_sessions
@@ -76,6 +83,17 @@ urlpatterns = [
     path('node-self/sessions/', node_sessions, name='node-self-sessions'),
     path('node-self/sessions/<str:session_id>/confirm/', node_session_confirm,
          name='node-self-session-confirm'),
+
+    # --- KMS-008：节点间分发的新请求契约（§16）---
+    # `peers/<...>/keys/` 与 `distributions/` 都是**无通配段的固定前缀 +
+    # 一个受约束的段**，不会被 router 的 `nodes/<pk>/` 吃掉；但同样必须排在
+    # router 之前 —— 与上面几条同一理由，见本文件顶部说明。
+    # ⚠️ `peers/<str:peer_node_id>/keys/` 里的 id 是**业务编号**（`Node.node_id`），
+    #    不是主键；`<str:...>` 不匹配斜杠，所以不会把后面的 /keys/ 一起吃掉。
+    path('node-self/peers/<str:peer_node_id>/keys/', node_peer_keys,
+         name='node-self-peer-keys'),
+    path('node-self/distributions/', node_self_distributions,
+         name='node-self-distributions'),
 
     # --- §3 激活 / §5 登录（设备凭据）---
     # ⚠️ 这三条**必须**排在 router 之前，且必须排在上面那些

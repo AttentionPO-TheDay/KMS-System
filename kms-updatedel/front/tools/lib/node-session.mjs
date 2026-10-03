@@ -37,9 +37,14 @@ export const PQKDS = `${ORIGIN}/pqkds-api/pqkds`
 export const UPDATEDEL_API = `${ORIGIN}/updatedel-api`
 
 /**
- * 调一个 JSON 接口。**不抛错** —— 返回 `{status, body}`，
+ * 调一个 JSON 接口。**不抛错** —— 返回 `{status, body, headers}`，
  * 由调用方按自己的判据断言。"网络层失败"与"业务拒绝"在验收里是两回事，
  * 混成一个异常会让失败信息只剩一句 `fetch failed`。
+ *
+ * `headers` 是**响应头**（`Headers` 对象转成的普通对象）。加它是因为
+ * 有的判据本来就在头部而不在 body 里 —— 例如弃用标记 `Deprecation: true`
+ * （KMS-008 用它标旧用户腿接口）。把这类判据写成"读 body 里的某个字段"
+ * 会让它与实现约定脱节。
  */
 export async function api(base, path, { method = 'GET', token, body } = {}) {
   const res = await fetch(`${base}${path}`, {
@@ -50,7 +55,9 @@ export async function api(base, path, { method = 'GET', token, body } = {}) {
     },
     ...(body ? { body: JSON.stringify(body) } : {})
   })
-  return { status: res.status, body: await res.json().catch(() => null) }
+  const headers = {}
+  res.headers.forEach((value, name) => { headers[name.toLowerCase()] = value })
+  return { status: res.status, body: await res.json().catch(() => null), headers }
 }
 
 /**

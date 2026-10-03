@@ -596,6 +596,77 @@ def require_usable_key(node: Node, algorithm: str, *, for_new_work: bool = True)
     return key
 
 
+def require_key_version(node: Node, algorithm: str, key_id, key_version,
+                        *, for_new_work: bool = True) -> NodeLongTermKey:
+    """取**调用方显式指定的那一版**长期密钥；不可用则抛带错误码的异常。
+
+    与 `require_usable_key` 的区别是语义上的，不是宽松程度上的：
+      * `require_usable_key` 问的是"这个节点这个算法**现在**能用哪一把"，
+        服务端替调用方挑（挑当前生产版本）；
+      * 本函数问的是"**我指定的这一版**能不能用" —— 版本由调用方给出，
+        服务端只负责如实回答，不替它换一把。
+
+    为什么必须存在这一条（计划 §6.1）：「所有请求显式携带版本；不允许依赖
+    '当前最新版本'的隐式行为」。分发路径原本做不到这一点 —— `wrap_for_node`
+    读的是 `Node.<算法>_public_key` 物化列（"当前生产公钥"），请求里就算带了
+    版本号也传不进封装调用。后果是"用户选择了 v1，实际用 v2 封的"：
+    接收方按 v1 去解，解不开，而整个流程每一处都成功。
+    这里把"指定的那一版"变成**先于封装发生**的一次查询，指定哪版就封哪版。
+
+    ⚠️ 四种拒绝各自的处置不同，所以错误码必须分开：
+      * `KEY_NOT_FOUND`        —— 这一版压根没有（keyId 写错 / 版本写错 /
+        从未登记过）。调用方该做的是核对 keyRef。
+      * `KEY_REVOKED`          —— 撤过的密钥是**终态**，重试永远不会成功。
+        调用方该换成另一把，而不是重试。
+      * `KEY_EXPIRED`          —— 有效期过了，续期或换版本。
+      * `KEY_VERSION_MISMATCH` —— 行在、也没被撤，但**不是当前生产版本**
+        （RETIRED）。这正是判据②「旧版本不能被误当成当前生产版本」：拿一把
+        已被取代的旧版本开新信封，等于让接收方拿到一把它已经不打算再用的密钥
+        所保护的密文 —— 密文能解出来，但"哪些密钥还在服役"这件事从此没有答案。
+
+    ⚠️ `KEY_VERSION_MISMATCH` 而不是别的码：这个码在本仓库的含义就是
+    "你说的这一版与服务端的记账对不上"，与 KMS-006 给 `rotate` 定的
+    "版本回退或跨越"是同一条语义。不要为"点了旧版本"另造一个码 ——
+    错误码表是**唯一**一份（`api_contract`），加一个就要问一遍所有消费方。
+
+    ⚠️ `key_version` 的解析复用 `_as_version`：只认 ≥1 的整数或纯数字字符串，
+    不 `int()` 兜底。同一个值在这里宽松一次，下一条路径就会再宽松一次。
+    """
+    name = C.canonical_algorithm(algorithm)
+    kid = str(key_id or '').strip()
+    if not kid:
+        raise C.ContractError(
+            f'{name} 未指定 keyId：请求必须显式携带要用的那一版', code=C.ERR_INVALID_PARAMETER,
+        )
+    version = _as_version(key_version)
+
+    key = NodeLongTermKey.objects.filter(
+        node=node, algorithm=name, key_id=kid, key_version=version,
+    ).first()
+    if key is None:
+        # 报"这一版不存在"，不回退到"该算法的最新一版" —— 回退会让
+        # `KEY_NOT_FOUND` 这个码永远发不出去，而调用方正是靠它发现 keyRef 写错。
+        raise C.ContractError(
+            f'{name} 密钥 {kid} v{version} 不存在', code=C.ERR_KEY_NOT_FOUND,
+        )
+
+    if key.status == C.KEY_STATUS_REVOKED:
+        raise C.ContractError(
+            f'{name} 密钥 {kid} v{version} 已回收', code=C.ERR_KEY_REVOKED,
+        )
+    if key.is_expired or key.status == C.KEY_STATUS_EXPIRED:
+        raise C.ContractError(
+            f'{name} 密钥 {kid} v{version} 已过期', code=C.ERR_KEY_EXPIRED,
+        )
+    if for_new_work and not key.allows_new_work:
+        # 走到这里只剩"行在、未撤、未过期、但不是生产版本"（RETIRED）。
+        raise C.ContractError(
+            f'{name} 密钥 {kid} v{version} 不是当前生产版本，不能用于新的分发',
+            code=C.ERR_KEY_VERSION_MISMATCH,
+        )
+    return key
+
+
 def revoke_keys_for_node(node: Node, reason: str = '', algorithm: str = '') -> int:
     """回收一个节点的全部（或指定算法的）未回收长期密钥。返回条数。
 
@@ -617,5 +688,5 @@ __all__ = [
     'REGISTRABLE_ALGORITHMS',
     'hash_public_key', 'new_key_id',
     'register_public_key', 'rotate_public_key', 'revoke_public_key',
-    'current_key', 'require_usable_key', 'revoke_keys_for_node',
+    'current_key', 'require_usable_key', 'require_key_version', 'revoke_keys_for_node',
 ]

@@ -187,20 +187,78 @@ NODE_WRAPPING_CHOICES = ('kyber_kem', 'gm_sm2', 'gm_sscl')
 def wrap_for_node(payload_key: bytes, node, wrapping_algorithm: str = NODE_DEFAULT_WRAPPING):
     """把载荷密钥封给**一个节点**（节点腿，D10 保留抗量子）。
 
-    ⚠️ 这里刻意**不改** `key_pool_service` 里那条既有路径 —— D10 要求节点侧零改动，
-    而 P0-C 已验证那条路径能正确往返 16 字节载荷，重写只会引入回归。
-    本函数复用的是**同一套配方**（见 `key_pool_service.py` 里
-    `generate_distributable_pool` 的 Step 2）：
-        kem_ct, ss = kyber.encrypt(node_pk)
-        kek        = PayloadCipher.kek_from_shared_secret(SM4, ss)
-        enc, tag   = SM4Crypto.encrypt(payload_key, kek)
-    两者产出同构的数据包，因此既有读取端（`consume_key` / 节点侧解封）**无需改动**即可解开。
+    本函数只做"**从节点的物化列取公钥**"这一步，真正的封装在
+    `wrap_with_public_key` —— 那是唯一一份实现。这么分是因为 KMS-008 起
+    分发要按**调用方显式指定的那一版**密钥封装（计划 §6.1），而那一版的公钥
+    不在物化列里（物化列只装当前生产版本）；两条路径必须共用同一套
+    KEM+DEM 编排，否则"用物化列封的"与"用指定版本封的"会各自漂移，
+    而漂移的表现是**能封、开不开**。
 
     <h2>为什么节点那份必须用同一把 K</h2>
     用户要与节点用**同一把 SM4** 通信，双方都必须持有 K（计划 §3.1）。
     用户那份走国密 SM2、节点那份走抗量子 Kyber —— **两条腿算法不同，但解出的 K 是同一把**。
     这正是 D10 方案 A 能成立的根本原因；如果两条腿各生成一把 K，双方就根本对不上。
 
+    ⚠️ 历史上这里还有一个 `falcon_lattice` 分支，已被阶段 5（文档 §6.2）的白名单
+       排除 —— `NODE_WRAPPING_CHOICES` 不含它，本函数在读取公钥**之前**就会拒绝，
+       那个分支永远到不了（已删）。相应地，读**历史** falcon_lattice 信封的路径
+       也不在这里，而在 `_DelegatingNodeWrapper('FALCON', 'falcon_lattice')`（只管解封）。
+
+    @return `(envelope, key_hash)`；封装失败抛 `WrapperError`
+    """
+    algorithm = wrapping_algorithm or NODE_DEFAULT_WRAPPING
+    column = _NODE_KEY_COLUMN.get(algorithm)
+    if column is None:
+        # 含 falcon_lattice：它曾在这张映射里，阶段 5 移除后与其它未知值同样处置。
+        raise WrapperError(f'节点腿不支持的封装算法: {algorithm}')
+
+    public_key_str = getattr(node, column, None)
+    node_code = getattr(node, 'node_id', '?')
+    if not public_key_str:
+        raise WrapperError(f'节点 {node_code} 没有 {algorithm} 对应的公钥，无法封装')
+
+    return wrap_with_public_key(
+        payload_key, public_key_str, algorithm, recipient_node_id=node_code,
+    )
+
+
+#: 节点腿封装算法 → 它读 `Node` 上的哪一列公钥。**唯一**一份映射：
+#: `wrap_for_node` 与"按显式版本封装"两条路径都经它取列/材料，不各写一份。
+_NODE_KEY_COLUMN = {
+    'kyber_kem': 'kyber_public_key',
+    'gm_sm2': 'gm_public_key',
+    'gm_sscl': 'sscl_public_key',
+}
+
+#: 规范算法名（`api_contract.PROTECTION_ALGORITHMS`）→ 节点腿的封装拼写。
+#:
+#: KMS-008 起新请求用**规范名**（SM2 / SSCL / KYBER）表达保护算法（§16 契约
+#: 与 §7 阶段 3 都这么写），而封装层与库里的历史拼写是 `gm_sm2` 等 ——
+#: 这个映射是两者之间唯一的换算处，别在别的模块另写一份。
+NODE_WRAPPING_BY_CANONICAL = {
+    'KYBER': 'kyber_kem',
+    'SM2': 'gm_sm2',
+    'SSCL': 'gm_sscl',
+}
+
+
+def wrap_with_public_key(payload_key: bytes, public_key_str: str, wrapping_algorithm: str,
+                         *, recipient_node_id: str = ''):
+    """按**给定的公钥材料**封装载荷密钥 —— 节点腿封装的唯一实现。
+
+    与 `wrap_for_node` 的差别只有公钥从哪来：它接受调用方给的公钥字符串
+    （存储形式：KYBER 为 base64、SM2/SSCL 为 hex，与物化列、`NodeLongTermKey.public_key`
+    三者同形），而不是去读某个节点的物化列。KMS-008 的按显式版本封装走这里。
+
+    ⚠️ 配方必须与 `key_pool_service.generate_distributable_pool` 的 Step 2 逐字节一致
+       （D10 要求节点侧零改动，而 P0-C 已验证那条路径能正确往返 16 字节载荷）：
+           kem_ct, ss = kyber.encrypt(pk)
+           kek        = PayloadCipher.kek_from_shared_secret(SM4, ss)
+           enc, tag   = SM4Crypto.encrypt(payload_key, kek)
+       国密两条腿复用用户腿的封装器（Sm2Wrapper / SsclWrapper）：SSCL 与 SM2 的
+       加解密本来就是同一套 sm2p256v1 曲线运算，差别只在密钥怎么派生。
+
+    @param recipient_node_id 只用于错误文案（出错时能指出是哪个节点的那把公钥）
     @return `(envelope, key_hash)`；封装失败抛 `WrapperError`
     """
     import base64
@@ -212,14 +270,13 @@ def wrap_for_node(payload_key: bytes, node, wrapping_algorithm: str = NODE_DEFAU
     if algorithm not in NODE_WRAPPING_CHOICES:
         raise WrapperError(f'节点腿不支持的封装算法: {algorithm}')
 
+    where = f'（节点 {recipient_node_id}）' if recipient_node_id else ''
+
     if algorithm == 'kyber_kem':
-        public_key_b64 = getattr(node, 'kyber_public_key', None)
-        if not public_key_b64:
-            raise WrapperError(f'节点 {getattr(node, "node_id", "?")} 没有 Kyber 公钥，无法封装')
         try:
-            node_pk = base64.b64decode(public_key_b64)
+            node_pk = base64.b64decode(public_key_str)
         except Exception as exc:  # noqa: BLE001
-            raise WrapperError(f'节点 Kyber 公钥解码失败: {exc}') from exc
+            raise WrapperError(f'Kyber 公钥解码失败{where}: {exc}') from exc
 
         from .crypto_utils import KyberCrypto
         # 与既有池路径同一套判定：按公钥长度定 Kyber 变体（见 key_pool_service 的 pk_len_map）
@@ -237,62 +294,15 @@ def wrap_for_node(payload_key: bytes, node, wrapping_algorithm: str = NODE_DEFAU
         # SSCL 与 SM2 的加解密本来就是同一套 sm2p256v1 曲线运算，
         # 差别只在密钥怎么派生（见 SsclWrapper 的说明），
         # 因此节点用对应私钥即可解封，节点侧不需要新代码。
-        node_code = getattr(node, 'node_id', '?')
-        if algorithm == 'gm_sm2':
-            public_key_hex = getattr(node, 'gm_public_key', None)
-            if not public_key_hex:
-                raise WrapperError(f'节点 {node_code} 没有国密公钥，无法封装')
-            wrapper = WRAPPERS['SM2']
-        else:
-            public_key_hex = getattr(node, 'sscl_public_key', None)
-            if not public_key_hex:
-                raise WrapperError(f'节点 {node_code} 没有 SSCL 公钥，无法封装')
-            wrapper = WRAPPERS['SSCL']
-
-        gm_envelope = wrapper.wrap(payload_key, public_key_hex)
+        wrapper = WRAPPERS['SM2'] if algorithm == 'gm_sm2' else WRAPPERS['SSCL']
+        gm_envelope = wrapper.wrap(payload_key, public_key_str)
         # ⚠️ 不改 `algorithm`（那是密码算法，SM2 解密会校验它必须是 'sm2'），
         # 节点腿用的是哪种**算法档位**由 wrapping_algorithm 表达。
         gm_envelope['wrapping_algorithm'] = algorithm
-        gm_envelope['recipient_public_key'] = str(public_key_hex).lower()
+        gm_envelope['recipient_public_key'] = str(public_key_str).lower()
         return gm_envelope, hashlib.sha256(payload_key).hexdigest()
     else:
-        # Falcon 节点腿（2026-09-26 补）。
-        #
-        # 这里**复用**既有的 Falcon 池路径配方（key_pool_service.generate_falcon_pool Step 2：
-        # FalconAESSessionKeyEncryption.encrypt_aes_key_with_falcon），
-        # 而不是另写一套格加密 —— 节点侧的解封路径因此不用改，
-        # 信封形状也与池路径一致（{ciphertext, algorithm, security_level, payload_algorithm}）。
-        #
-        # 之所以原先这里是抛错：D16 把 Kyber 定为唯一默认值，而"用户能否选抗量子算法"
-        # 当时没有需求。现在用户侧要能选 Kyber / Falcon，所以把这条腿补齐。
-        public_key_b64 = getattr(node, 'falcon_public_key', None)
-        node_code = getattr(node, 'node_id', '?')
-        if not public_key_b64:
-            raise WrapperError(f'节点 {node_code} 没有 Falcon 公钥，无法封装')
-
-        from .falcon_aes_session_encryption import FalconAESSessionKeyEncryption
-        try:
-            security_level = int(getattr(node, 'falcon_security_level', '512') or '512')
-        except (TypeError, ValueError):
-            security_level = 512
-        falcon_enc = FalconAESSessionKeyEncryption(security_level=security_level)
-        enc_result = falcon_enc.encrypt_aes_key_with_falcon(
-            recipient_id=node_code,
-            aes_key=payload_key,
-            recipient_public_key_b64=public_key_b64,
-        )
-        if not enc_result.get('success'):
-            raise WrapperError(
-                f'节点 {node_code} 的 Falcon 封装失败：{enc_result.get("message") or "未知原因"}'
-            )
-        falcon_envelope = {
-            'ciphertext': enc_result['ciphertext'],
-            'algorithm': enc_result.get('algorithm', f'CertificatelessFalcon-{security_level}'),
-            'security_level': security_level,
-            'payload_algorithm': PAYLOAD_ALGORITHM_SM4,
-            'wrapping_algorithm': algorithm,
-        }
-        return falcon_envelope, hashlib.sha256(payload_key).hexdigest()
+        raise WrapperError(f'节点腿不支持的封装算法: {algorithm}')
 
     kek = PayloadCipher.kek_from_shared_secret(PAYLOAD_ALGORITHM_SM4, shared_secret)
     encrypted_key, nonce_tag = SM4Crypto.encrypt(payload_key, kek)

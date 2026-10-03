@@ -354,11 +354,18 @@ class SessionKey(CoreModel):
         max_length=20,
         choices=[
             ('aes_falcon', 'AES+Falcon会话'),
-            ('kyber_kem', 'Kyber密钥协商')
+            ('kyber_kem', 'Kyber密钥协商'),
+            # KMS-008：新分发的会话按**实际用的保护算法**记，不再是"一律 kyber_kem"。
+            # 该字段在 `node_session_views` 里本来就以 `protectionAlgorithm` 的
+            # 名义下发（会话列表拿它当"这条会话用哪种算法保护的"展示），
+            # 而旧用户腿流程恒写 kyber_kem —— 连国密节点腿的会话也记成 Kyber。
+            # 值是**节点腿的封装拼写**（与 `wrappers.NODE_WRAPPING_CHOICES` 同形）。
+            ('gm_sm2', '国密 SM2 保护'),
+            ('gm_sscl', '国密 SSCL 保护'),
         ],
         default='aes_falcon',
         verbose_name="会话类型",
-        help_text="会话建立的协议类型"
+        help_text="会话建立的协议类型 = 本次分发用的保护算法拼写"
     )
     status = models.CharField(
         max_length=20,
@@ -1005,7 +1012,14 @@ class DistributionBatch(CoreModel):
 
     batch_id = models.CharField(max_length=64, unique=True, verbose_name="批次号")
     user_id = models.BigIntegerField(verbose_name="发起用户ID", help_text="kms.sys_user.user_id（逻辑引用）")
-    source_key_id = models.BigIntegerField(verbose_name="来源密钥ID", help_text="用户所选非对称密钥")
+    #: KMS-008 起可空：新的节点间分发**没有**"用户来源密钥"这个概念
+    #: （旧用户腿流程才有 —— 用户选一把自己的非对称密钥来解封）。
+    #: 可空而不是填 0：0 会被下游当成一把真的 `kms.keymanage.key_id` 去查，
+    #: 查到的是"碰巧同号的另一把密钥"，比查不到糟得多。
+    source_key_id = models.BigIntegerField(
+        null=True, blank=True, verbose_name="来源密钥ID",
+        help_text="旧用户腿流程里用户所选的非对称密钥；节点间分发为 NULL",
+    )
     wrapping_algorithm = models.CharField(max_length=20, verbose_name="封装算法", help_text="SM2 / SSCL")
     node_ids = models.TextField(verbose_name="目标节点", help_text="JSON 数组，形如 [1,2,3]")
     node_success_count = models.IntegerField(default=0, verbose_name="节点成功数")

@@ -40,9 +40,15 @@ from django.views.decorators.http import require_http_methods
 
 from . import api_contract as C
 from . import kms_service_client as kms
+from .distribution_service import (
+    authorized_node_ids,
+    classify_distribution,
+    create_initiated_sessions,
+    record_distribution_chain_event,
+)
 from .envelope_signature import ciphertext_digest, sign_envelope, verify_envelope
 from .models import DistributionBatch, Node, PreDistributedKey, SessionKey, UserKeyEnvelope, UserNodeAuthorization
-from .node_key_registry import require_usable_key
+from .node_key_registry import require_key_version, require_usable_key
 from .sm4_crypto import PAYLOAD_ALGORITHM_SM4, PayloadCipher
 from .wrappers import (
     NODE_DEFAULT_WRAPPING,
@@ -110,116 +116,6 @@ def require_kms_user(view):
     return wrapper
 
 
-def _create_initiated_sessions(user_id, node_map, succeeded_node_ids, batch_id, expires_at):
-    """为本次分发成功送达的每个节点登记一条 **initiated** 会话（文档 §6.5）。
-
-    发起方是发起分发的用户 —— 按阶段 2 的 Node↔sys_user 一一映射，
-    该用户本身也是一个节点。取不到映射时（管理员发起的场景）**不建会话**：
-    会话是"两个节点之间"的东西，没有发起节点就不存在这条边。
-
-    只建 initiated，不建 established —— 理由见调用点的说明：
-    验签（§6.3/§6.4）尚未实现，建 established 等于宣称一个没验证过的属性。
-
-    幂等：session_id 由 batch_id + 节点后缀构成并带唯一约束，
-    重复执行同一批次不会产生重复会话（走 get_or_create）。
-    """
-    sender_node = Node.objects.filter(sys_user_id=user_id).first()
-    if sender_node is None:
-        logger.info('分发批次 %s：发起用户 %s 未映射到节点，不建会话', batch_id, user_id)
-        return 0
-
-    created = 0
-    for node_db_id in succeeded_node_ids:
-        target = node_map.get(node_db_id)
-        if target is None or target.id == sender_node.id:
-            # 自己和自己不建会话（节点向自己分发的场景没有意义）
-            continue
-        session_id = f'{batch_id}-n{target.id}'
-        try:
-            _, was_created = SessionKey.objects.get_or_create(
-                session_id=session_id,
-                defaults={
-                    'node1': sender_node,
-                    'node2': target,
-                    'session_type': 'kyber_kem',
-                    # 会话密钥本体不在服务端 —— 服务端只有包给双方的密文，
-                    # 所以这两列如实标注"材料在信封里，不在本表"，
-                    # 而不是塞一个占位明文进去（那会让"服务端不存明文"这条不变量失真）。
-                    'encrypted_session_key': f'see envelopes of batch {batch_id}',
-                    'key_exchange_data': json.dumps({
-                        'batch_id': batch_id,
-                        'dispatch': 'user_distribution',
-                        'note': '会话密钥经信封分发，服务端不持有明文',
-                    }, ensure_ascii=False),
-                    'status': 'initiated',
-                    'expires_at': expires_at,
-                },
-            )
-            if was_created:
-                created += 1
-        except Exception as exc:  # noqa: BLE001
-            # 单节点建会话失败不该让整次分发回滚 —— 信封已经发给它了，
-            # 回滚反而会造成"用户以为没发、节点其实收到了"的更糟状态。
-            logger.warning('批次 %s 为节点 %s 建会话失败: %s', batch_id, target.node_id, exc)
-
-    if created:
-        logger.info('分发批次 %s：登记 %d 条 initiated 会话（发送方 %s）',
-                    batch_id, created, sender_node.node_id)
-    return created
-
-
-def _record_distribution_chain_event(source_key_id, key_version, sender_node, target_nodes,
-                                     material_digest, batch_id):
-    """把本次分发记到链上（文档 §8.6 的 KEY_DISTRIBUTED）。
-
-    <h2>为什么失败不影响分发结果</h2>
-    <b>因为分发已经成功了</b> —— 信封已经落库、密钥已经在接收方手里。
-    存证是**旁路增强**：链上少一条记录不会让已发生的事变成没发生。
-    如果这里抛异常并回滚分发，就变成"链写不进去 ⇒ 用户拿不到密钥"，
-    把可用性问题升级成功能问题。
-
-    所以：失败只记日志、**不改分发结论**。但调用方会把结果回显到响应里
-    （`chainEvidence` 字段），让"存证没成功"这件事在界面上看得见 ——
-    静默吞掉才是真正危险的：审计缺口会变成不可见。
-
-    <h2>为什么记 source_key_id 而不是别的</h2>
-    被分发的会话密钥（SM4）不在服务端、也不该上链。链上要回答的是
-    "**哪把长期密钥被用于建立会话**"——那正是 source_key_id，
-    也是后续做密钥泄漏关联分析时的入口。
-
-    ⚠️ 上链的是**摘要**：`material_digest` 是信封的密文摘要，
-    不是密文本身，更不是任何密钥材料。
-    """
-    if sender_node is None:
-        # 没有发送方节点就没有"谁分发的"这个事实。宁可不上链，
-        # 也不要编一个 owner 出来 —— 链上的记录一旦写错就撤不回来。
-        logger.info('批次 %s：发起方未映射到节点，跳过链上存证', batch_id)
-        return None
-    node_code = getattr(sender_node, 'node_id', '') or ''
-    try:
-        tx_hash = kms.record_chain_event(
-            'KEY_DISTRIBUTED',
-            int(source_key_id),
-            int(key_version or 0),
-            node_code,
-            str(material_digest or ''),
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning('批次 %s 链上存证失败: %s', batch_id, exc)
-        return None
-    if tx_hash:
-        logger.info('批次 %s 已上链存证: keyId=%s tx=%s', batch_id, source_key_id, tx_hash)
-    return tx_hash
-
-
-def _authorized_node_ids(user_id: int) -> List[int]:
-    """该用户当前有效的节点授权 ID 列表。"""
-    return list(
-        UserNodeAuthorization.objects.filter(user_id=user_id, status='active')
-        .values_list('node_id', flat=True)
-    )
-
-
 def _safe_json_list(raw) -> List[str]:
     """把库里存的 JSON 数组字段安全解析成列表；坏了就返回空列表。
 
@@ -232,42 +128,6 @@ def _safe_json_list(raw) -> List[str]:
         return [str(x) for x in parsed] if isinstance(parsed, list) else []
     except (ValueError, TypeError):
         return []
-
-
-def _classify_distribution(user_id: int, target_nodes) -> Tuple[str, List[str], str]:
-    """阶段 5（文档 §8.5）：判定本次分发是同域还是跨域。
-
-    返回 `(发起方域, 目标域列表, 'same'|'cross'|'mixed')`。
-
-    发起方域的取法：本系统的分发发起人是 `kms.sys_user`，而"域"是**节点**的属性
-    （Node.domain_id，阶段 2 引入）。所以先经 `Node.sys_user_id` 反查发起人
-    对应的节点，取它的 domain_id。
-
-    取不到时（管理员发起、或账号未映射到节点）返回空串，并且**整体判为 mixed** ——
-    "不知道发起方在哪"时不应擅自断言成"同域"，那会把跨域分发粉饰成同域，
-    正好掩盖了这个标记要暴露的东西。
-    """
-    source_node = Node.objects.filter(sys_user_id=user_id).only('domain_id').first()
-    source_domain = (getattr(source_node, 'domain_id', '') or '').strip()
-
-    target_domains = sorted({
-        (getattr(n, 'domain_id', '') or '').strip()
-        for n in target_nodes
-        if (getattr(n, 'domain_id', '') or '').strip()
-    })
-
-    if not source_domain or not target_domains:
-        return source_domain, target_domains, 'mixed'
-
-    same = [d for d in target_domains if d == source_domain]
-    cross = [d for d in target_domains if d != source_domain]
-    if cross and same:
-        dist_type = 'mixed'
-    elif cross:
-        dist_type = 'cross'
-    else:
-        dist_type = 'same'
-    return source_domain, target_domains, dist_type
 
 
 # ---------------------------------------------------------------------------
@@ -523,7 +383,10 @@ def _validate_request(payload: Dict[str, Any], user_id: int) -> Tuple[Optional[d
 
     # D5：节点必须在**该用户自己的**授权范围内。这是服务端强制，
     # 不依赖前端下拉只显示有权的节点。
-    allowed = set(_authorized_node_ids(user_id))
+    #
+    # ⚠️ KMS-008：这个助手搬到了 `distribution_service`（新旧两条路径共用，
+    #    放这里会让服务层反向 import 视图层）。
+    allowed = set(authorized_node_ids(user_id))
     unauthorized = [n for n in node_ids if n not in allowed]
     if unauthorized:
         # 不回显"哪些节点存在但你没权"，只说没权 —— 避免把节点清单探测出来
@@ -565,6 +428,19 @@ def _validate_request(payload: Dict[str, Any], user_id: int) -> Tuple[Optional[d
 def distribute_to_user(request, identity):
     """核心：把对称密钥分发给选中的节点**以及用户本人**（D6）。
 
+    ⚠️ **DEPRECATED（KMS-008）**：这是旧的**用户腿**模型 —— 发起用户必须先有
+       一把自己的非对称密钥（`source_key_id`），服务端为它再封一份"给自己解封"
+       的信封。新模型是**节点到节点**：`POST /node-self/distributions/`
+       （发送节点取接收方指定版本的公钥封 SM4，没有用户腿）。
+
+       本接口**保留可用**（一段迁移期），因为它还被这些消费方使用：
+       既有验收脚本（`verify-keyrevoke-impact.mjs` 等把它当分发夹具）、
+       以及 `kms-ops/tests/` 下的旧 e2e 脚本。新页面**不得**再调它。
+       迁移完成的标志是 KMS-015 反转那些脚本的断言。
+
+       每次调用都会记一条 warning 日志，并在响应头带 `Deprecation: true` ——
+       "还有谁在用它"必须可查，否则迁移期会无限期延长。
+
     流程（顺序是有讲究的）：
       1. 解析请求体；
       2. **先问主 KMS 要加密目标点** `P_A` —— 顺便就完成了 D17 的算法校验
@@ -577,6 +453,10 @@ def distribute_to_user(request, identity):
     ⚠️ 目标点是 `P_A = W_A + λ·P_pub`，**不是** `key_value` 里的 `finalPublicKey`。
     用后者封出来的信封**谁都打不开**（§3.2.3）。
     """
+    logger.warning(
+        '已弃用接口被调用：POST /key-pool/distribute-to-user/（用户腿旧模型）'
+        '—— 新流程请用 POST /node-self/distributions/',
+    )
     try:
         payload = json.loads(request.body or b'{}')
     except (ValueError, TypeError):
@@ -860,8 +740,13 @@ def distribute_to_user(request, identity):
             # 阶段 5（文档 §8.5）：跨域标记。
             # 快照而非回查 —— "这次分发当时是不是跨域"是历史事实，
             # 不该因后续部门调动/节点换域而被改写。
-            src_domain, target_domains, dist_type = _classify_distribution(
-                user_id, [node_map[nid] for nid in node_ids if nid in node_map]
+            #
+            # ⚠️ KMS-008：`classify_distribution` 现在收**发起方节点**而不是 userId
+            #    （新流程的发起方本来就是节点，两个调用点得用同一个口径）。
+            #    旧流程的发起人是"用户"，仍按 userId 反查一次节点。
+            src_domain, target_domains, dist_type = classify_distribution(
+                Node.objects.filter(sys_user_id=user_id).only('domain_id').first(),
+                [node_map[nid] for nid in node_ids if nid in node_map],
             )
             batch = DistributionBatch.objects.create(
                 batch_id=batch_id,
@@ -892,7 +777,14 @@ def distribute_to_user(request, identity):
             # 所以这里只如实登记"会话已发起"：接收方已拿到信封、
             # 密钥材料已就位，**尚未确认**。待验签流程补齐后再由那条链路提升为
             # established。`SessionKey.status` 的默认值本就是 'initiated'。
-            _create_initiated_sessions(user_id, node_map, succeeded_node_ids, batch_id, expires_at)
+            #
+            # ⚠️ KMS-008：会话类型仍写死 kyber_kem（旧流程的既有失真 ——
+            #    国密节点腿也记成 kyber_kem）。新流程按实际算法记，
+            #    不在这一步改动旧路径的落库值，免得历史批次的口径在同一提交里变两次。
+            create_initiated_sessions(
+                Node.objects.filter(sys_user_id=user_id).first(),
+                node_map, succeeded_node_ids, batch_id, expires_at,
+            )
 
     except WrapperError as exc:
         logger.error('封装失败: batch=%s err=%s', batch_id, exc)
@@ -905,16 +797,21 @@ def distribute_to_user(request, identity):
     #
     # ⚠️ 位置在事务**之外**：存证失败不该回滚一次已经成功的分发
     #    （信封已落库、密钥已在接收方手里）。详见该函数的说明。
-    chain_tx = _record_distribution_chain_event(
-        source_key_id=source_key_id,
-        key_version=key_info.get('version'),
-        sender_node=sender_node,
-        target_nodes=node_map,
-        material_digest=last_envelope_digest,
-        batch_id=batch_id,
+    #
+    # ⚠️ KMS-008：链事件的口径搬到了 `distribution_service.record_distribution_chain_event`，
+    #    那里的 keyId 是"被用于建立会话的那把长期密钥的主键"、nodeId 是它的归属节点。
+    #    旧流程沿用既有口径（keyId = 用户腿的 keymanage key、nodeId = 发送方节点）——
+    #    改旧批次的上链口径会让同一条链上的历史事件与新的对不上。
+    chain_tx = record_distribution_chain_event(
+        'KEY_DISTRIBUTED',
+        source_key_id,
+        int(key_info.get('version') or 0),
+        getattr(sender_node, 'node_id', '') or '',
+        last_envelope_digest,
+        batch_id,
     )
 
-    return _ok(
+    response = _ok(
         {
             'batchId': batch.batch_id,
             'sourceKeyId': source_key_id,
@@ -937,3 +834,8 @@ def distribute_to_user(request, identity):
             'chainHash': chain_tx or '',
         }
     )
+    # 弃用标记走**响应头**而不是 body 字段：body 的字段集合是既有契约，
+    # 往里塞一个 `deprecated` 字段会让"按字段全集比对"的调用方（验收脚本里就有）
+    # 失败得莫名其妙。头部是 HTTP 层的事，不破坏任何既有解析。
+    response['Deprecation'] = 'true'
+    return response

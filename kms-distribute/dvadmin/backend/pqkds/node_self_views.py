@@ -36,10 +36,12 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from . import api_contract as C
+from .distribution_service import authorized_node_ids, create_node_distribution
 from .key_revocation_service import revoke_long_term_key
 from .models import Node, NodeLongTermKey
 from .node_service import NodeService
 from .node_permission import (
+    CAP_DISTRIBUTE,
     CAP_GENERATE,
     LEVEL_LABELS,
     NodePermissionError,
@@ -565,4 +567,201 @@ def node_self_init(request, identity):
             'node': _node_payload(node),
         },
         msg=result.get('message') or '初始化完成',
+    )
+
+
+# ---------------------------------------------------------------------------
+# KMS-008：节点间分发的新请求契约（§16 的 peers / distributions 两条）
+# ---------------------------------------------------------------------------
+# 为什么这两条落在本模块、而不是 `user_distribution_views`：
+#   * 它们属 `/node-self/*` 命名空间，本命名空间的响应约定是
+#     **HTTP 恒 200、业务码在 `code`、可编程码在 `data.error_code`**（见本文件 `_error`），
+#     与 `user_distribution_views._error`（真 HTTP 状态码）**不是一套**；
+#   * 复用的 `_long_term_key_payload` / `_find_node` 都定义在本文件，
+#     放对面会造成两个视图模块互相 import。
+#
+# ⚠️ 两条都收**业务编号**（`Node.node_id`，如 `KRB-S2U57I1`），不是主键 ——
+#    与 `/user-nodes/` 回的 `nodeId`（那是主键）**不同**，页面传参时别混。
+#    混了的表现是"节点明明在，接口说它不存在"。
+@csrf_exempt
+@require_http_methods(['GET'])
+@require_kms_user
+def node_peer_keys(request, peer_node_id, identity):
+    """查**对端节点**可用于接收保护的长期密钥（§16.1）。
+
+    发送方要显式选"用接收方的哪一版公钥封"，就需要先看到有哪些版本可选。
+    返回的形状复用本文件 `_long_term_keys_payload`（与 `/node-self/keys/` 同形：
+    `algorithm/keyId/keyVersion/status/statusLabel/allowsNewWork/publicKeyHash/
+    effectiveAt/expiresAt/...`），**只含公开量** —— 那一份里本来就没有私钥。
+
+    <h2>为什么要归属校验</h2>
+    "公钥是公开量"不等于"谁都能枚举"。不校验的话，任一节点可以拿别人的节点编号
+    把**全部节点**的密钥版本、状态、有效期逐个拉走 —— 那是一条不经过授权的
+    资产探测通道。判据与服务端的 D5 同源：**调用方对该节点有有效授权**
+    （`UserNodeAuthorization`，状态 active）。
+    无授权返回 403 + `data.error_code = NOT_AUTHORIZED`。
+
+    <h2>为什么不过滤状态</h2>
+    与本文件 `_long_term_keys_payload` 同一条理由：页面要能显示"上一版已被取代"
+    "这一版已回收"，只回可用的会让用户看到"密钥凭空少了一把"。
+    **能不能用**由 `allowsNewWork` 字段回答（取自 `api_contract`，前端不另判），
+    页面按它把不可用的版本置灰。
+
+    `?algorithm=` 可给逗号分隔的算法名（规范名或历史拼写都认，经
+    `canonical_algorithm` 归一）；**不给则不过滤**，把全部算法如实返回。
+    """
+    node = _find_node(identity)
+    if node is None:
+        return _error('当前账号未关联任何节点', 403, error_code=C.ERR_NOT_AUTHORIZED)
+
+    peer = Node.objects.filter(node_id=peer_node_id).first()
+    if peer is None:
+        return _error(f'节点不存在：{peer_node_id}', 404, error_code=C.ERR_KEY_NOT_FOUND)
+
+    # ⚠️ 比的是**主键**（`authorized_node_ids` 返回的就是主键），不是业务编号。
+    if peer.id not in set(authorized_node_ids(identity['userId'])):
+        return _error(
+            f'你没有与节点 {peer.node_id} 的通信权限', 403, error_code=C.ERR_NOT_AUTHORIZED,
+        )
+
+    wanted = {
+        C.canonical_algorithm(part)
+        for part in (request.GET.get('algorithm') or '').split(',')
+        if part.strip()
+    }
+    keys = [
+        payload for payload in _long_term_keys_payload(peer)
+        if not wanted or payload['algorithm'] in wanted
+    ]
+    return _ok({
+        # 两个标识都给：主键给调用方回传用，业务编号给人看/给日志用。
+        'nodeId': peer.id,
+        'nodeCode': peer.node_id,
+        'nodeName': peer.name,
+        'keys': keys,
+        'total': len(keys),
+    })
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+@require_kms_user
+def node_self_distributions(request, identity):
+    """发起一次**节点到节点**的分发 —— KMS-008 的新请求契约（§16.2）。
+
+    请求体（驼峰，snake_case 兼容；与 `/node-self/keys/` 同一套读法）：
+
+    ```json
+    { "receiverNodeId": "KRB-XXXX",        // 业务编号，不是主键
+      "protectionAlgorithm": "KYBER",      // SM2 / SSCL / KYBER（规范名）
+      "recipientKeyId": "KRB-XXXX-KYBER-ab12cd34",
+      "recipientKeyVersion": 1,
+      "expiresInHours": 24 }               // 可选，1..168
+    ```
+
+    <h2>与旧 `POST /key-pool/distribute-to-user/` 的差别（这就是"新契约"）</h2>
+    1. **没有 `source_key_id`** —— 发送方不再需要一把"给自己解封"的用户密钥。
+       传了也不作数（会记一条日志，落库的 `source_key_id` 是 NULL），
+       因为新模型里根本不存在这个角色。
+    2. **接收方密钥版本是显式的**，且封装**按指定的那一版**发生
+       （`require_key_version` 先于封装查询）。旧流程读物化列，
+       选哪版都等于"当前生产版本"。
+    3. **只封给接收节点**，没有"发起用户自己的那一份"（用户腿）。
+    4. 保护算法用**规范名**（SM2 / SSCL / KYBER）；Falcon 被拒 ——
+       它是签名算法，不提供机密性（计划 §3）。
+
+    <h2>身份与权限</h2>
+    发送方 = 令牌映射到的节点（前端传不了，也不该传）。需要：
+      * 账号映射到节点，否则 403；
+      * 具备 `CAP_DISTRIBUTE`（L2 及以上），否则 403；
+      * 对接收节点有有效授权，否则 403。
+
+    <h2>这次**不做**签名（KMS-009/010 的边界）</h2>
+    信封里暂时没有 Falcon 签名字段 —— 签名要用**发送方的私钥**，而私钥只在
+    节点本地（KMS-005 起服务端不再持有）。把签名搬进本接口与"服务端验签、
+    没有签名就拒发"一起，是 KMS-009/010 的事。所以这里**不装作已签**：
+    信封里没有就是没有，与旧流程的如实口径一致。
+    """
+    try:
+        payload = json.loads(request.body or b'{}')
+    except (ValueError, TypeError):
+        return _error('请求体不是合法 JSON')
+    if not isinstance(payload, dict):
+        return _error('请求体应为 JSON 对象')
+
+    node = _find_node(identity)
+    if node is None:
+        return _error('当前账号未关联任何节点，无法发起分发', 403, error_code=C.ERR_NOT_AUTHORIZED)
+
+    if payload.get('source_key_id') or payload.get('sourceKeyId'):
+        # 不拒绝（迁移期里客户端可能还带着它），但必须让"它没被用到"可追溯 ——
+        # 静默忽略一个字段，事后没人能回答"到底是不是按新的那套走的"。
+        logger.info(
+            '节点 %s 的分发请求带了 source_key_id=%r：新契约不使用它（节点间分发没有用户腿）',
+            node.node_id, payload.get('source_key_id') or payload.get('sourceKeyId'),
+        )
+
+    receiver_code = str(
+        payload.get('receiverNodeId') or payload.get('receiver_node_id') or ''
+    ).strip()
+    if not receiver_code:
+        return _error('缺少 receiverNodeId（接收节点的业务编号）')
+    receiver = Node.objects.filter(node_id=receiver_code).first()
+    if receiver is None:
+        return _error(f'接收节点不存在：{receiver_code}', 404, error_code=C.ERR_KEY_NOT_FOUND)
+
+    # 阶段 7（文档 §8.4）：发起分发需要 distribute 能力。与旧入口同一口径 ——
+    # 管理员不能代替节点发起（新模型里"发送方"必须是个有密钥的节点）。
+    try:
+        require_capability(node, CAP_DISTRIBUTE)
+    except NodePermissionError as exc:
+        return _error(str(exc), 403, error_code=C.ERR_NOT_AUTHORIZED)
+
+    if receiver.id not in set(authorized_node_ids(identity['userId'])):
+        return _error(
+            f'你没有向节点 {receiver.node_id} 分发的权限', 403, error_code=C.ERR_NOT_AUTHORIZED,
+        )
+
+    try:
+        result = create_node_distribution(
+            node, receiver,
+            protection_algorithm=payload.get('protectionAlgorithm')
+            or payload.get('protection_algorithm') or '',
+            recipient_key_id=payload.get('recipientKeyId') or payload.get('recipient_key_id'),
+            recipient_key_version=payload.get('recipientKeyVersion')
+            if payload.get('recipientKeyVersion') is not None
+            else payload.get('recipient_key_version'),
+            expires_hours=payload.get('expiresInHours')
+            if payload.get('expiresInHours') is not None
+            else payload.get('expires_in_hours'),
+        )
+    except C.ContractError as exc:
+        # 业务码按 `ERROR_HTTP_STATUS` 给（那是对外契约的唯一一份映射），
+        # 可编程码原样放 `data.error_code` —— 页面据此分支，不匹配文案。
+        return _error(exc.message, C.ERROR_HTTP_STATUS.get(exc.code, 400), error_code=exc.code)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception('节点 %s 向 %s 分发异常', node.node_id, receiver_code)
+        return _error(f'分发失败：{exc}', 500)
+
+    key = result['recipient_key']
+    return _ok(
+        {
+            'batchId': result['batch_id'],
+            'receiverNodeId': receiver.node_id,
+            'receiverNodeName': receiver.name,
+            'protectionAlgorithm': result['protection_algorithm'],
+            'wrappingAlgorithm': result['wrapping_algorithm'],
+            # 回显**实际用的**那一版 —— 这是"请求里的版本真的进了封装"的可核对证据
+            # （页面显示"用的是 v2"，而库里那一行也是 v2）。
+            'recipientKeyId': key.key_id,
+            'recipientKeyVersion': key.key_version,
+            'keyHash': result['key_hash'],
+            'sessionCount': result['session_count'],
+            'expiresAt': result['expires_at'].isoformat(),
+            # 空串 = 存证未成功（链不可用等）。**不隐藏**：
+            # 前端据此如实显示"已分发，但存证未成功"，而不是混成一句"成功"。
+            'chainHash': result['chain_hash'] or '',
+            'status': 'success',
+        },
+        msg='分发完成',
     )

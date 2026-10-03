@@ -1125,6 +1125,145 @@ def test_register_path_cannot_add_version(node):
     return all(results)
 
 
+def test_require_key_version(node):
+    """KMS-008：按**显式指定的一版**取密钥，四种拒绝各自可区分。
+
+    ---- 这一组防的是什么 ----
+    `require_usable_key` 问的是"这个算法现在能用哪一把"（服务端替调用方挑）；
+    本函数问的是"**我指定的这一版**能不能用"。两者差别不是松紧，而是
+    "版本由谁给出" —— 计划 §6.1 要求所有请求显式携带版本，不允许服务端
+    自己挑"当前最新"。
+
+    要在分发路径上做到这一点，就得先有一次**先于封装发生**的精确查询：
+    分发原本读的是物化列（"当前生产公钥"），请求里带了版本也传不进封装，
+    于是"用户选了 v1、实际用 v2 封的"，而每一处都成功。
+
+    ⚠️ 本组刻意用一个**只登记了两版**的节点：`KEY_VERSION_MISMATCH`
+    那条只有在"行存在、未撤、未过期、但不是生产版本"时才发得出来 ——
+    少造一版（比如只登记 v1 就撤它），这条会变成 `KEY_REVOKED`，
+    断言看起来照样过，测的却是另一条分支。
+    """
+    results = []
+    try:
+        # --- 夹具：同一 keyId 两版（v2 在产，v1 被取代）；另一 keyId 一把回收了的 ---
+        # ⚠️ v2 必须走 `rotate_public_key` 而不是再调一次 `register_public_key` ——
+        #    KMS-006 起登记口拒绝给已有 keyId 加版本（那会绕过回收终态、生产槽位
+        #    与逐版递增三道校验），拿登记口去造夹具会直接撞上那条守卫。
+        kid = 'KMS008-K1'
+        v1 = R.register_public_key(node, algorithm='KYBER', public_key=_b64_key(1184),
+                                   key_id=kid, key_version=1)
+        v2 = R.rotate_public_key(node, algorithm='KYBER', public_key=_b64_key(1184),
+                                 key_id=kid, key_version=2)
+        revoked = R.register_public_key(node, algorithm='SM2', public_key=_hex_pub('ab'),
+                                        key_id='KMS008-REVOKED')
+        R.revoke_public_key(revoked, 'KMS-008 自测：造一把已回收的')
+
+        results.append(_report(
+            '夹具就位：KYBER 同 keyId 的 v1（RETIRED）/ v2（ACTIVE）+ 一把已回收的 SM2',
+            NodeLongTermKey.objects.get(pk=v1.pk).status == C.KEY_STATUS_RETIRED
+            and NodeLongTermKey.objects.get(pk=v2.pk).status == C.KEY_STATUS_ACTIVE,
+            f'v1={NodeLongTermKey.objects.get(pk=v1.pk).status} '
+            f'v2={NodeLongTermKey.objects.get(pk=v2.pk).status}',
+        ))
+
+        # --- A. 命中：指定的那一版被原样取回 ---------------------------------
+        got = R.require_key_version(node, 'KYBER', kid, 2)
+        results.append(_report(
+            '★ 指定 v2 → 取回的就是 v2 那一行（不是"最新一版"，就是**这一版**）',
+            got.pk == v2.pk and got.key_version == 2,
+            f'pk={got.pk}（期望 {v2.pk}）version={got.key_version}',
+        ))
+        # ⚠️ 版本用字符串给也要认：前端表单里的 select 值就是字符串。
+        got_str = R.require_key_version(node, 'KYBER', kid, '2')
+        results.append(_report(
+            '纯数字字符串的版本号（前端表单常态）同样命中同一行',
+            got_str.pk == v2.pk,
+            f'pk={got_str.pk}',
+        ))
+
+        # --- B. 不存在的版本：KEY_NOT_FOUND，且**不回退**到别的版本 ----------
+        ok, detail = _expect_contract_error(
+            C.ERR_KEY_NOT_FOUND, R.require_key_version, node, 'KYBER', kid, 9,
+        )
+        results.append(_report(
+            '★ 指定一个不存在的版本 → KEY_NOT_FOUND（不回退到 v2）', ok, detail,
+        ))
+        ok, detail = _expect_contract_error(
+            C.ERR_KEY_NOT_FOUND, R.require_key_version, node, 'KYBER', 'no-such-key-id', 1,
+        )
+        results.append(_report(
+            '指定一个不存在的 keyId → KEY_NOT_FOUND（不回退到同算法的别的 keyId）', ok, detail,
+        ))
+
+        # --- C. 已回收：KEY_REVOKED（终态，重试永远不会成功）------------------
+        ok, detail = _expect_contract_error(
+            C.ERR_KEY_REVOKED, R.require_key_version, node, 'SM2', 'KMS008-REVOKED', 1,
+        )
+        results.append(_report('★ 指定一把已回收的 → KEY_REVOKED（不是笼统的"不存在"）', ok, detail))
+
+        # --- D. 被取代的旧版本：KEY_VERSION_MISMATCH（判据②）------------------
+        ok, detail = _expect_contract_error(
+            C.ERR_KEY_VERSION_MISMATCH, R.require_key_version, node, 'KYBER', kid, 1,
+        )
+        results.append(_report(
+            '★ 指定一把**已被取代**的旧版本 → KEY_VERSION_MISMATCH —— '
+            '这正是判据②「旧版本不能被误当成当前生产版本」',
+            ok, detail,
+        ))
+        # ⚠️ 反过来：解旧信封（for_new_work=False）时同一行**必须放行**。
+        #    不加这一条的话，"一律拒绝 RETIRED"也能让上面那条断言变绿 ——
+        #    而那会把"旧信封还能解"这条既有能力一起砍掉。
+        try:
+            unwrap_ok = R.require_key_version(
+                node, 'KYBER', kid, 1, for_new_work=False).pk == v1.pk
+        except C.ContractError as exc:  # noqa: BLE001
+            unwrap_ok = False
+            detail = f'被拒：{exc.code} {exc.message}'
+        results.append(_report(
+            '同一把 RETIRED 在 for_new_work=False（解旧信封）下放行 —— '
+            '拒绝的是"开新信封"，不是"这一版不存在"',
+            unwrap_ok,
+        ))
+
+        # --- E. 参数面：空 keyId 与坏版本号都给 INVALID_PARAMETER ------------
+        for bad_kid in ('', '   ', None):
+            ok, detail = _rejects(
+                C.ERR_INVALID_PARAMETER, R.require_key_version, node, 'KYBER', bad_kid, 1,
+                needle='keyId',
+            )
+            results.append(_report(f'keyId={bad_kid!r} 被拒（必须显式指名）', ok, detail))
+        for bad_ver in (True, 0, -1, 1.9, 'abc', None, []):
+            ok, detail = _rejects(
+                C.ERR_INVALID_PARAMETER, R.require_key_version, node, 'KYBER', kid, bad_ver,
+                needle='keyVersion',
+            )
+            results.append(_report(f'keyVersion={bad_ver!r} 被拒（不猜、不 int() 兜底）', ok, detail))
+
+        # --- F. 算法白名单：Falcon 不是保护算法 ------------------------------
+        ok, detail = _expect_contract_error(
+            C.ERR_KEY_NOT_FOUND, R.require_key_version, node, 'FALCON', kid, 1,
+        )
+        results.append(_report(
+            '拿 FALCON 去查同一 keyId → 查不到（算法进查询，不会串到别的算法的行）',
+            ok, detail,
+        ))
+
+        # 以上全部被拒之后，两行都一动没动。
+        still_v1 = NodeLongTermKey.objects.get(pk=v1.pk)
+        still_v2 = NodeLongTermKey.objects.get(pk=v2.pk)
+        results.append(_report(
+            '全部被拒之后两行都没被改动（查询不该有副作用）',
+            still_v1.status == C.KEY_STATUS_RETIRED and still_v2.status == C.KEY_STATUS_ACTIVE,
+            f'v1={still_v1.status} v2={still_v2.status}',
+        ))
+    finally:
+        # ⚠️ 本组没有额外建的节点要清理：`_main` 建的那个节点会被它自己删掉，
+        #    长期密钥行靠外键 CASCADE 一并消失。保留 `finally` 是为了与
+        #    其余各组同形，将来若要加对端节点，落点已经在了。
+        pass
+    return all(results)
+
+
 def _make_pool_item(node, tag, status='READY', algorithm='kyber_kem',
                     long_term_key_id=None, long_term_key_version=None):
     """一条预分配池项。字段取**最小可用集** —— 本组只关心它的 status 与长期密钥引用。"""
@@ -1386,6 +1525,7 @@ def _main():
         ("接口层：rotate 与回收终态、生产槽位归属", test_store_node_public_key_rotate),
         ("登记口不能给已有 keyId 加版本", test_register_path_cannot_add_version),
         ("回收的影响面：三个连带失效、重试补做、版本区分", test_revoke_service_impact),
+        ("按显式版本取密钥：四种拒绝各自可区分（KMS-008）", test_require_key_version),
     ]
 
     failed = []

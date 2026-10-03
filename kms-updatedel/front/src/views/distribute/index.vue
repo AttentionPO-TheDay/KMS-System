@@ -4,15 +4,15 @@
       <div>
         <h2>密钥分发</h2>
         <p class="page-desc">
-          选择接收节点与自己的非对称密钥，系统会为每个节点和你本人各生成一份对称密钥信封。
-          对称密钥由分发模块生成并保管，你手上只有用自己公钥封好的那一份 —— 有效期 24 小时。
+          选择接收节点、保护算法与<b>接收方密钥版本</b>。服务端按你指定的那一版公钥封装会话密钥，
+          只有接收节点本地的对应私钥能解开 —— 有效期 1 到 168 小时，到期自动失效。
         </p>
       </div>
     </header>
 
     <el-row :gutter="16">
       <!-- ------------------------------------------------------------------
-           发起分发
+           发起分发（KMS-008 新请求契约）
            ------------------------------------------------------------------ -->
       <el-col :xs="24" :lg="14">
         <el-card class="panel" shadow="never">
@@ -20,13 +20,24 @@
             <div class="panel-head">
               <span>发起分发</span>
               <el-tag v-if="nodes.length" size="small" type="info" effect="plain">
-                可选节点 {{ nodes.length }} 个 · 单次上限 {{ maxSelectable }}
+                可选节点 {{ nodes.length }} 个
               </el-tag>
             </div>
           </template>
 
+          <!-- 身份：新契约是**节点到节点**，管理员账号没有节点身份，发不了 -->
           <el-alert
-            v-if="!nodes.length && !nodesLoading"
+            v-if="!nodeLoading && !mapped"
+            title="当前账号未关联任何节点"
+            description="分发是节点之间的动作（发送方必须有自己的长期密钥）。请用节点账号登录后再分发。"
+            type="warning"
+            :closable="false"
+            show-icon
+            class="mb16"
+          />
+
+          <el-alert
+            v-else-if="!nodesLoading && !nodes.length"
             title="你还没有被授权任何节点。请联系管理员在「节点鉴权」里为你授权后再分发。"
             type="warning"
             :closable="false"
@@ -34,74 +45,67 @@
             class="mb16"
           />
 
-          <el-form label-width="110px" @submit.prevent>
+          <el-form label-width="130px" @submit.prevent>
             <el-form-item label="接收节点">
               <el-select
-                v-model="form.nodeIds"
-                multiple
+                v-model="form.receiverNodeCode"
                 filterable
-                collapse-tags
-                collapse-tags-tooltip
-                :multiple-limit="maxSelectable"
-                placeholder="选择要接收该对称密钥的节点"
+                placeholder="选择接收该会话密钥的节点"
                 class="full-width"
+                @change="handleReceiverChange"
               >
                 <el-option
                   v-for="node in nodes"
-                  :key="node.nodeId"
+                  :key="node.nodeCode"
                   :label="`${node.nodeName}（${node.nodeCode}）`"
-                  :value="node.nodeId"
+                  :value="node.nodeCode"
                 />
               </el-select>
             </el-form-item>
 
             <!--
-              封装体系 → 节点腿算法（2026-09-26）。
-              抗量子不是"每次都必须"，而是与国密并列的一种选择：
-                * 抗量子 → 再选 Kyber 还是 Falcon（用**节点**的抗量子公钥封装）
-                * 国密   → 不额外选算法，节点腿**跟随你在下面选的那把源密钥**
-                           （SM2 源密钥 → 节点腿用国密 SM2；SSCL → 国密 SSCL）
-                           —— 也就是"用你自己生成的密钥"
+              保护算法（计划 §3 的固定职责）：
+                SM2 / SSCL / Kyber 保护 SM4；Falcon 只签名，**不是**保护算法。
+              旧页面那套「抗量子 / 国密」二分已经去掉 —— 它把"用谁的密钥"
+                和"用哪种算法"搅在一起；新契约里算法就是算法，一次选定。
             -->
-            <el-form-item label="封装体系">
-              <el-radio-group v-model="form.cryptoFamily">
-                <el-radio-button label="pq">抗量子</el-radio-button>
-                <el-radio-button label="gm">国密</el-radio-button>
+            <el-form-item label="保护算法">
+              <el-radio-group
+                v-model="form.protectionAlgorithm"
+                :disabled="!form.receiverNodeCode"
+                @change="handleAlgorithmChange"
+              >
+                <el-radio-button label="KYBER">Kyber</el-radio-button>
+                <el-radio-button label="SM2">SM2</el-radio-button>
+                <el-radio-button label="SSCL">SSCL</el-radio-button>
               </el-radio-group>
+              <div class="form-hint">Falcon 是签名算法，不提供机密性，不在保护算法之列。</div>
             </el-form-item>
 
-            <!-- 阶段 5（文档 §6.2）：抗量子分支下只剩 Kyber。
-                 原先还有 Falcon —— 那是概念混用：Falcon 是**签名**算法，
-                 不提供机密性，不能用它保护 SM4 会话密钥。
-                 正确分工是 SM2/SSCL/Kyber 保护 SM4，Falcon 负责签名验签。 -->
-            <el-form-item v-if="form.cryptoFamily === 'pq'" label="抗量子算法">
-              <el-radio-group v-model="form.nodeWrappingAlgorithm">
-                <el-radio-button label="kyber_kem">Kyber</el-radio-button>
-              </el-radio-group>
-            </el-form-item>
-
-            <el-form-item label="节点封装算法">
-              <el-tag size="small" type="info">{{ effectiveNodeWrappingLabel }}</el-tag>
-            </el-form-item>
-
-            <el-form-item label="我的解封密钥">
+            <el-form-item label="接收方密钥版本">
               <el-select
-                v-model="form.sourceKeyId"
-                filterable
-                placeholder="选择给你自己解封用的非对称密钥"
+                v-model="form.recipientKeyRef"
+                :loading="keysLoading"
+                :disabled="!form.receiverNodeCode"
+                placeholder="选择用接收方的哪一版公钥封装"
                 class="full-width"
               >
                 <el-option
-                  v-for="key in usableKeys"
-                  :key="key.keyId"
-                  :label="`${key.keyName}（${key.encrytName}）`"
-                  :value="key.keyId"
+                  v-for="key in usablePeerKeys"
+                  :key="`${key.keyId}@${key.keyVersion}`"
+                  :label="keyLabel(key)"
+                  :value="`${key.keyId}@${key.keyVersion}`"
                 />
               </el-select>
+              <div class="form-hint">
+                只列**可用于新工作**的版本（生产中）。已被取代或已回收的版本不出现在这里 ——
+                能不能用由服务端判（`allowsNewWork`），页面不另写一套。
+              </div>
             </el-form-item>
 
-            <el-form-item label="每节点份数">
-              <el-input-number v-model="form.count" :min="1" :max="100" />
+            <el-form-item label="有效期（小时）">
+              <el-input-number v-model="form.expiresInHours" :min="1" :max="168" />
+              <div class="form-hint">1..168 小时，默认 24。到期后信封不再可用（不自动续期）。</div>
             </el-form-item>
 
             <el-form-item>
@@ -115,9 +119,16 @@
           <el-alert v-if="result" type="success" :closable="false" show-icon class="mt8">
             <template #title>分发完成：批次 {{ result.batchId }}</template>
             <div class="result-body">
-              <p>为你本人生成 <strong>{{ result.envelopeCount }}</strong> 份信封，有效期至 {{ formatTime(result.expiresAt) }}。</p>
-              <p>目标节点 {{ result.nodeCount }} 个（节点侧投递尚未接线，批次状态如实记为「部分成功」）。</p>
-</div>
+              <p>
+                已按接收方 <strong>{{ result.recipientKeyId }} v{{ result.recipientKeyVersion }}</strong>
+                （{{ result.protectionLabel }}）封好会话密钥，交给 {{ result.receiverNodeName }}。
+              </p>
+              <p>有效期至 {{ formatTime(result.expiresAt) }}；登记会话 {{ result.sessionCount }} 条。</p>
+              <p v-if="result.chainHash">链上存证：{{ result.chainHash }}</p>
+              <!-- ⚠️ 存证没成功**如实说**，不与"分发成功"混成一句 ——
+                   分发本身已经成立（信封落库、接收方能取），缺的是审计那一半。 -->
+              <p v-else class="muted">链上存证未成功（分发本身已完成；审计缺口需要重试存证）。</p>
+            </div>
           </el-alert>
 
           <el-alert v-if="errorMessage" type="error" :closable="false" show-icon class="mt8">
@@ -140,7 +151,7 @@
 
           <el-table :data="batches" size="small" v-loading="batchesLoading" empty-text="还没有分发记录">
             <el-table-column label="批次号" prop="batchId" min-width="170" show-overflow-tooltip />
-            <el-table-column label="算法" prop="wrappingAlgorithm" width="76" />
+            <el-table-column label="算法" prop="wrappingAlgorithm" width="86" />
             <el-table-column label="节点" width="64">
               <template #default="scope">{{ scope.row.nodeSuccessCount }}/{{ scope.row.nodeCount }}</template>
             </el-table-column>
@@ -161,29 +172,45 @@
 
 <script setup>
 /**
- * 密钥分发页（P3 步骤 9）。
+ * 密钥分发页 —— KMS-008 的**新请求契约**。
  *
- * 这里**原来是一个只读的记录查询页**（只能看历史分发记录 + Excel 导出），
- * 现在重做成真正的分发操作页。
+ * 这一版删掉了旧"用户腿"的两样东西：
+ *   1. 「我的解封密钥」（`sourceKeyId`）—— 那是"服务端为发起人本人也封一份"
+ *      的旧模型。新模型是**节点到节点**：发送节点取接收节点的公钥封 SM4，
+ *      没有"用户自己的那一份"；
+ *   2. 「封装体系（抗量子/国密）」二分 —— 它把"用谁的密钥"与"用哪种算法"
+ *      搅在一起。新契约里保护算法就是 SM2 / SSCL / Kyber 三选一。
  *
- * 三件事由服务端保证，前端只做体验优化：
- *   1. 节点列表只含**已授权给当前用户**的（D5）；
- *   2. 可选密钥只列 SM2 / SSCL（D17）—— 真正的拦截在服务端，
- *      前端过滤只是避免用户白跑一趟；
- *   3. `user_id` 由服务端从令牌解析，本页**不传也不该传**。
+ * 新增的是**接收方密钥版本**：选定节点与算法后向服务端查它的长期密钥列表，
+ * 选一版"生产中"的。服务端按**这一版**封装 —— 旧实现读的是物化列
+ * （"当前生产公钥"），请求里带了版本也传不进封装调用。
+ *
+ * 三条由服务端保证、前端只做体验优化：
+ *   * 接收节点的密钥列表要对它有**授权**才拿得到（未授权 403）；
+ *   * 保护算法白名单由服务端强制（Falcon 会被拒）；
+ *   * 能不能用某一版由 `allowsNewWork` 回答（取自 `api_contract`，前端不另判）。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { listGenerateKeys } from '@/services/generate-api'
-import { distributeToUser, listDistributionBatches, listUserNodes } from '@/services/user-distribution-api'
+import { getSelfNode } from '@/api/pqkds/node-self'
+import {
+  createNodeDistribution,
+  listDistributionBatches,
+  listPeerKeys,
+  listUserNodes
+} from '@/services/user-distribution-api'
 
-/** 用户腿允许的算法（D17）。与服务端白名单保持一致。 */
-const USER_LEG_ALGORITHMS = ['SM2', 'SSCL']
+/** 保护算法（规范名）。与 `api_contract.PROTECTION_ALGORITHMS` 一致，Falcon 不在其中。 */
+const PROTECTION_ALGORITHMS = ['KYBER', 'SM2', 'SSCL']
+
+const PROTECTION_LABELS = { KYBER: '抗量子 Kyber', SM2: '国密 SM2', SSCL: '国密 SSCL' }
 
 const nodes = ref([])
 const nodesLoading = ref(false)
-const maxSelectable = ref(10)
-const keys = ref([])
+const mapped = ref(false)
+const nodeLoading = ref(true)
+const peerKeys = ref([])
+const keysLoading = ref(false)
 const batches = ref([])
 const batchesLoading = ref(false)
 const submitting = ref(false)
@@ -191,81 +218,116 @@ const errorMessage = ref('')
 const result = ref(null)
 
 const form = reactive({
-  nodeIds: [],
-  sourceKeyId: null,
-  count: 1,
-  cryptoFamily: 'pq',            // pq = 抗量子；gm = 国密
-  nodeWrappingAlgorithm: 'kyber_kem' // 仅抗量子体系下使用
+  receiverNodeCode: '',
+  protectionAlgorithm: 'KYBER',
+  /** `${keyId}@${keyVersion}` —— 一个字符串比两个联动字段好判"选没选"。 */
+  recipientKeyRef: '',
+  expiresInHours: 24
 })
 
 /**
- * 本次分发**实际**用的节点腿算法。
+ * 可用于**新工作**的接收方密钥版本。
  *
- * 国密体系下不额外选算法：节点腿跟随所选源密钥 —— 选了 SM2 密钥就用国密 SM2，
- * 选了 SSCL 密钥就用国密 SSCL。这既符合"用你自己生成的密钥"的直觉，
- * 也避免让用户在两个地方重复表达同一件事。
+ * ⚠️ 判据直接用服务端的 `allowsNewWork`，**不在前端另写一套状态判断** ——
+ *    两份必然漂移，而漂移的表现是"界面显示可用、提交被告知不可用"（或更糟：
+ *    界面隐藏了一个其实可用的版本）。这个字段与后端 `api_contract` 的状态集合绑定。
  */
-const effectiveNodeWrapping = computed(() => {
-  if (form.cryptoFamily === 'pq') {
-    return form.nodeWrappingAlgorithm
+const usablePeerKeys = computed(() => peerKeys.value.filter((key) => key.allowsNewWork === true))
+
+const canSubmit = computed(() => Boolean(
+  mapped.value && form.receiverNodeCode && form.recipientKeyRef && !submitting.value
+))
+
+/** 把选中的 `keyId@version` 还原成两个字段（服务端要分开收）。 */
+function parseKeyRef(ref) {
+  const text = String(ref || '')
+  const at = text.lastIndexOf('@')
+  if (at <= 0) {
+    return null
   }
-  const source = usableKeys.value.find((k) => k.keyId === form.sourceKeyId)
-  return String(source?.encrytName || '').toUpperCase() === 'SSCL' ? 'gm_sscl' : 'gm_sm2'
-})
+  const keyVersion = Number(text.slice(at + 1))
+  if (!Number.isInteger(keyVersion) || keyVersion < 1) {
+    return null
+  }
+  return { keyId: text.slice(0, at), keyVersion }
+}
 
-const effectiveNodeWrappingLabel = computed(() => ({
-  kyber_kem: '抗量子 Kyber',
-  falcon_lattice: '抗量子 Falcon',
-  gm_sm2: '国密 SM2（跟随源密钥）',
-  gm_sscl: '国密 SSCL（跟随源密钥）'
-}[effectiveNodeWrapping.value] || effectiveNodeWrapping.value))
+function keyLabel(key) {
+  return `${key.keyId} v${key.keyVersion}（${key.statusLabel || key.status}）`
+}
 
-/**
- * 可用于分发的密钥，两个条件缺一不可：
- *   1) 算法必须是 SM2 / SSCL（D17 的前端侧过滤，服务端另有强制）；
- *   2) 状态必须是「有效」。
- *
- * 第 2 条是 2026-09-26 补的：此前只按算法过滤，于是**已回收的密钥照样列在
- * 下拉里**，用户选它、点分发，才吃到一个 400（后端返回 KEY_REVOKED
- * 「该密钥已被回收，不能作为分发目标」）。后端拦得住，但让用户去点一次
- * 必然失败的提交，本身就是界面在骗人 —— 回收了还能拿来封装，也会让人
- * 怀疑回收到底生效没有。
- */
-const ACTIVE_STATUS = '0'
-const usableKeys = computed(() =>
-  keys.value.filter((key) => {
-    const algorithm = String(key.encrytName || '').toUpperCase()
-    const status = key.status == null ? '' : String(key.status)
-    return USER_LEG_ALGORITHMS.includes(algorithm) && status === ACTIVE_STATUS
-  })
-)
-
-const canSubmit = computed(() => form.nodeIds.length > 0 && Boolean(form.sourceKeyId) && !submitting.value)
+async function loadSelf() {
+  nodeLoading.value = true
+  try {
+    const data = await getSelfNode()
+    mapped.value = Boolean(data?.mapped)
+  } catch (error) {
+    errorMessage.value = `加载节点身份失败：${describeError(error)}`
+  } finally {
+    nodeLoading.value = false
+  }
+}
 
 async function loadNodes() {
   nodesLoading.value = true
   try {
     const data = await listUserNodes()
     nodes.value = data?.nodes || []
-    maxSelectable.value = data?.maxSelectable || 10
     // 授权可能被管理员收回：把已不在列表里的选择清掉，
     // 否则提交时只会拿到一个"越权"错误，而用户看不出是自己选了个失效节点。
-    const allowed = new Set(nodes.value.map((n) => n.nodeId))
-    form.nodeIds = form.nodeIds.filter((id) => allowed.has(id))
+    const allowed = new Set(nodes.value.map((n) => n.nodeCode))
+    if (form.receiverNodeCode && !allowed.has(form.receiverNodeCode)) {
+      form.receiverNodeCode = ''
+      peerKeys.value = []
+      form.recipientKeyRef = ''
+    }
   } catch (error) {
-    errorMessage.value = `加载节点失败：${error.message}`
+    errorMessage.value = `加载节点失败：${describeError(error)}`
   } finally {
     nodesLoading.value = false
   }
 }
 
-async function loadKeys() {
-  try {
-    const data = await listGenerateKeys({ pageNum: 1, pageSize: 200 })
-    keys.value = data?.rows || []
-  } catch (error) {
-    errorMessage.value = `加载密钥列表失败：${error.message}`
+/**
+ * 拉接收方在当前算法下的密钥列表。
+ *
+ * ⚠️ 路径里用的是**业务编号**（`nodeCode`），不是 `/user-nodes/` 回的 `nodeId`
+ *    （那是主键）。传错的表现是"节点明明在，接口说它不存在"。
+ */
+async function loadPeerKeys() {
+  peerKeys.value = []
+  form.recipientKeyRef = ''
+  if (!form.receiverNodeCode) {
+    return
   }
+  keysLoading.value = true
+  try {
+    const data = await listPeerKeys(form.receiverNodeCode, [form.protectionAlgorithm])
+    peerKeys.value = data?.keys || []
+    // 只有一版可用时直接选中：一次点击就能提交，少一步无意义的交互。
+    // ⚠️ 多于一个候选时**不预选** —— 预选一个"看起来对"的版本，
+    //    用户按下去就发出去了，而他并没有真正做选择。
+    if (usablePeerKeys.value.length === 1) {
+      const only = usablePeerKeys.value[0]
+      form.recipientKeyRef = `${only.keyId}@${only.keyVersion}`
+    }
+  } catch (error) {
+    errorMessage.value = `加载接收方密钥列表失败：${describeError(error)}`
+  } finally {
+    keysLoading.value = false
+  }
+}
+
+function handleReceiverChange() {
+  errorMessage.value = ''
+  result.value = null
+  return loadPeerKeys()
+}
+
+function handleAlgorithmChange() {
+  errorMessage.value = ''
+  result.value = null
+  return loadPeerKeys()
 }
 
 async function loadBatches() {
@@ -274,42 +336,80 @@ async function loadBatches() {
     const data = await listDistributionBatches({ limit: 50 })
     batches.value = data?.items || []
   } catch (error) {
-    errorMessage.value = `加载批次失败：${error.message}`
+    errorMessage.value = `加载批次失败：${describeError(error)}`
   } finally {
     batchesLoading.value = false
   }
 }
 
 async function handleDistribute() {
-  if (!canSubmit.value) {
+  const parsed = parseKeyRef(form.recipientKeyRef)
+  if (!canSubmit.value || parsed === null) {
     return
   }
   submitting.value = true
   errorMessage.value = ''
   result.value = null
   try {
-    const data = await distributeToUser({
-      sourceKeyId: form.sourceKeyId,
-      nodeIds: form.nodeIds,
-      count: form.count,
-      // 节点腿封装算法由用户选（抗量子 Kyber / Falcon）
-      // 节点腿算法：抗量子体系下取用户选的那个；国密体系下跟随源密钥（见 effectiveNodeWrapping）
-      nodeWrappingAlgorithm: effectiveNodeWrapping.value
+    const data = await createNodeDistribution({
+      receiverNodeId: form.receiverNodeCode,
+      protectionAlgorithm: form.protectionAlgorithm,
+      recipientKeyId: parsed.keyId,
+      recipientKeyVersion: parsed.keyVersion,
+      expiresInHours: form.expiresInHours
     })
     result.value = {
       batchId: data?.batchId,
-      envelopeCount: data?.userEnvelopeCount || 0,
-      nodeCount: data?.nodeResults?.length || 0,
-      expiresAt: data?.expiresAt
+      recipientKeyId: data?.recipientKeyId,
+      recipientKeyVersion: data?.recipientKeyVersion,
+      protectionLabel: PROTECTION_LABELS[data?.protectionAlgorithm] || data?.protectionAlgorithm || '',
+      receiverNodeName: data?.receiverNodeName || form.receiverNodeCode,
+      sessionCount: data?.sessionCount ?? 0,
+      expiresAt: data?.expiresAt,
+      chainHash: data?.chainHash || ''
     }
     ElMessage.success('分发完成')
     await loadBatches()
   } catch (error) {
-    // 服务端的拒绝理由已经足够具体（越权节点 / 算法不允许 / 超过上限），
-    // 原样展示比前端再编一句更准确。
-    errorMessage.value = error.message
+    // 服务端的拒绝理由已经足够具体（没授权 / 版本不对 / 已回收 / 算法不允许），
+    // 按**错误码**给下一步，而不是把文案原样抛回去 —— 用户要知道的是"该做什么"。
+    errorMessage.value = describeError(error)
+    // 版本类的失败多半是因为列表已经过时（对方刚更新/回收），顺手刷一次，
+    // 让用户下一眼看到的是当前真实可用的版本。
+    if (error?.errorCode && error.errorCode !== 'NOT_AUTHORIZED') {
+      await loadPeerKeys()
+    }
   } finally {
     submitting.value = false
+  }
+}
+
+/**
+ * 把错误翻成"下一步做什么"。
+ *
+ * ⚠️ 分支**按 `error.errorCode`**（由 `@/api/pqkds/http` 拦截器从
+ *    `body.data.error_code` 附上），不匹配 `error.message` —— 文案随时会改，
+ *    而匹配文案的失败方式是**静默走错分支**，不会有任何一处报错。
+ */
+function describeError(error) {
+  const fallback = error?.message || String(error) || '未知错误'
+  switch (error?.errorCode) {
+    case 'NOT_AUTHORIZED':
+      return '当前账号没有向该节点分发的权限（或未关联节点）。请联系管理员在「节点鉴权」里授权。'
+    case 'KEY_NOT_FOUND':
+      return '接收方的这一版密钥不存在 —— 它可能刚被更新或回收。列表已刷新，请重选一版。'
+    case 'KEY_REVOKED':
+      return '这一版已被回收（终态），不会再恢复。请改用列表里的其它版本。'
+    case 'KEY_VERSION_MISMATCH':
+      return '这一版不是接收方当前的生产版本（已被取代）。请选标记为「生产中」的那一版。'
+    case 'KEY_EXPIRED':
+      return '这一版已过期，请改选其它版本或让对方续期。'
+    case 'ALGORITHM_NOT_ALLOWED':
+      return '该算法不能用于保护会话密钥（Falcon 只做签名）。请选 SM2 / SSCL / Kyber。'
+    case 'INVALID_PARAMETER':
+      return `参数不合法：${fallback}`
+    default:
+      return fallback
   }
 }
 
@@ -330,7 +430,7 @@ function formatTime(value) {
 }
 
 onMounted(async () => {
-  await Promise.all([loadNodes(), loadKeys(), loadBatches()])
+  await Promise.all([loadSelf(), loadNodes(), loadBatches()])
 })
 </script>
 
