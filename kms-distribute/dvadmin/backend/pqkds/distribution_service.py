@@ -260,7 +260,9 @@ def authorized_node_ids(user_id: int) -> List[int]:
 
 def create_initiated_sessions(sender_node, node_map, succeeded_node_ids, batch_id,
                               expires_at, *, dispatch: str = 'user_distribution',
-                              session_type: str = 'kyber_kem') -> int:
+                              session_type: str = 'kyber_kem',
+                              recipient_key=None, falcon_key=None,
+                              recipient_key_versions=None) -> int:
     """为本次分发成功送达的每个节点登记一条 **initiated** 会话（文档 §6.5）。
 
     发起方是**发送节点**。取不到发送节点时（管理员发起的旧流程）**不建会话**：
@@ -277,6 +279,15 @@ def create_initiated_sessions(sender_node, node_map, succeeded_node_ids, batch_i
                         （kyber_kem / gm_sm2 / gm_sscl）—— 该字段在
                         `node_session_views` 里就是以 `protectionAlgorithm` 的名义
                         下发的，旧流程一律硬编码 kyber_kem 是既有失真，新路径不再沿用。
+    @param recipient_key / falcon_key  KMS-011：把"这条会话关联的具体密钥版本"
+                        落进会话行（计划 §7 阶段 4 第 1 条）。新分发路径两条都传
+                        （`require_key_version` 查到的那两行）；旧用户腿路径只传
+                        `falcon_key`（它没有"接收方指定版本"这个概念，接收密钥
+                        版本列留空 —— 与 `PreDistributedKey.long_term_key_id`
+                        对历史行留空同一条纪律：**不编**）。
+    @param recipient_key_versions  备用形状（批量）—— 目前调用方都按"整批同一版"传
+                        `recipient_key`，本参数留给"一批里各节点版本不同"的将来；
+                        给了它就**不读** `recipient_key`。
     """
     if sender_node is None:
         logger.info('分发批次 %s：发起方未映射到节点，不建会话', batch_id)
@@ -289,6 +300,10 @@ def create_initiated_sessions(sender_node, node_map, succeeded_node_ids, batch_i
             # 自己和自己不建会话（节点向自己分发的场景没有意义）
             continue
         session_id = f'{batch_id}-n{target.id}'
+        # 每个接收节点取自己那一版（批量形状优先，否则整批同一版）。
+        target_recipient_key = recipient_key
+        if recipient_key_versions:
+            target_recipient_key = recipient_key_versions.get(node_db_id) or recipient_key
         try:
             _, was_created = SessionKey.objects.get_or_create(
                 session_id=session_id,
@@ -307,6 +322,12 @@ def create_initiated_sessions(sender_node, node_map, succeeded_node_ids, batch_i
                     }, ensure_ascii=False),
                     'status': 'initiated',
                     'expires_at': expires_at,
+                    # KMS-011：关联的具体密钥版本（取信封/验签/显示都靠它）。
+                    # 取不到就留 None —— 见 docstring 的说明。
+                    'recipient_key_id': getattr(target_recipient_key, 'key_id', None),
+                    'recipient_key_version': getattr(target_recipient_key, 'key_version', None),
+                    'falcon_key_id': getattr(falcon_key, 'key_id', None),
+                    'falcon_key_version': getattr(falcon_key, 'key_version', None),
                 },
             )
             if was_created:
@@ -600,6 +621,10 @@ def create_node_distribution(sender: Node, receiver: Node, *,
             session_count = create_initiated_sessions(
                 sender, {receiver.id: receiver}, [receiver.id], batch_id, expires_at,
                 dispatch='node_distribution', session_type=wrapping,
+                # KMS-011：会话记录关联的具体密钥版本 —— 就是本次实际用的
+                # 那两行（接收方那一版 + 发送方签名那一版）。验收签/取信封
+                # 与页面显示都读它们，不再靠 batch_id 反查。
+                recipient_key=key, falcon_key=signing_key,
             )
     except IntegrityError as exc:
         # `batch_id` 撞唯一约束。KMS-009 起批次号由**调用方**生成，所以撞号是

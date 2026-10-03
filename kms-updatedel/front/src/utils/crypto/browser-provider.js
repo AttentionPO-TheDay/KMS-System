@@ -103,8 +103,14 @@ export const toBytes = (value) => {
  * 信封里的二进制字段是 base64（服务端 `wrappers.py` 用 `base64.b64encode`），
  * 而本 provider 内部一律按 hex 走 —— 转换只在这一处发生，
  * 免得各调用点各转一套，错了要等到"解出来是乱码"才发现。
+ *
+ * ⚠️ KMS-011 起**导出**：接收方验收（`node-envelope.js`）要先把信封里的
+ *    base64 附加签名转成字节再喂给 `verify`，而 `verify` 只收 hex/字节。
+ *    在那里另写一份 atob 循环，等于把这条"只在一处转换"的纪律破掉 ——
+ *    两份实现在补位（缺 '=' ）或非 ASCII 上的行为会漂移，而漂移的表现
+ *    是"验签失败"，看起来像伪造。
  */
-function b64ToHex(value) {
+export function b64ToHex(value) {
   const binary = atob(String(value || ''))
   let out = ''
   for (let i = 0; i < binary.length; i++) {

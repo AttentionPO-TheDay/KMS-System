@@ -549,11 +549,16 @@ def distribute_to_user(request, identity):
     # （`code` 字段保持数字状态码，见该函数的约定）。
     if sender_node is not None and sender_node.falcon_sign_private_key:
         try:
-            require_usable_key(sender_node, 'FALCON')
+            # 返回值（那一版 `NodeLongTermKey` 行）留给 KMS-011 的会话落库用：
+            # 会话要记"发送方签名用的是哪一版"，而这就是本次实际用的那一行。
+            # 失败分支里它是 None，会话落库那边对 None 留空即可。
+            falcon_key_for_session = require_usable_key(sender_node, 'FALCON')
         except C.ContractError as exc:
             logger.error('分发被拒：发送方 %s 的 FALCON 密钥不可用 code=%s err=%s',
                          sender_node.node_id, exc.code, exc.message)
             return _error(f'{exc.code}：{exc.message}', exc.http_status)
+    else:
+        falcon_key_for_session = None
 
     envelopes: List[UserKeyEnvelope] = []
     node_records: List[PreDistributedKey] = []
@@ -808,9 +813,16 @@ def distribute_to_user(request, identity):
             # ⚠️ KMS-008：会话类型仍写死 kyber_kem（旧流程的既有失真 ——
             #    国密节点腿也记成 kyber_kem）。新流程按实际算法记，
             #    不在这一步改动旧路径的落库值，免得历史批次的口径在同一提交里变两次。
+            #
+            # ⚠️ KMS-011：`falcon_key` 传的是**本次签名用的那一版**（签名段上面
+            #    用 `require_usable_key(node, 'FALCON')` 的返回值签的，就是它）。
+            #    接收密钥版本**留空**：旧流程没有"接收方指定版本"这个概念
+            #    （它读的是物化列），编一个版本号比留空更糟 —— 与迁移 0017
+            #    对历史行留空同一条纪律。
             create_initiated_sessions(
                 Node.objects.filter(sys_user_id=user_id).first(),
                 node_map, succeeded_node_ids, batch_id, expires_at,
+                falcon_key=falcon_key_for_session,
             )
 
     except WrapperError as exc:

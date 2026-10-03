@@ -209,6 +209,81 @@ export function listSelfSessions(options = {}) {
   return http.get('/node-self/sessions/', { params }).then(unwrap)
 }
 
+/**
+ * 我可以解封的**节点腿信封**列表（KMS-011 / §6.5）。
+ *
+ * 每项含 `envelopeId`（整数主键，verify/recover 都用它）、`envelope` 本体、
+ * `keyHash`、有效期，以及 KMS-011 补上的两样定位信息：
+ *   * `sessionId` / `sessionStatus` —— 这个批次对应的会话（旧流程的节点腿
+ *     信封没有对应会话时为 null）；
+ *   * `isRecipient` —— **我是不是收件方**。发送方自己的列表里也会出现这些
+ *     信封（它是自己发的），但取信/验签/解封只对接收方有意义。
+ *     页面按它决定显示"处理"还是"等待对方处理"，别让用户点了才发现 403。
+ *
+ * ⚠️ 已有 KMS-007 的回收闸门：本节点对应算法的长期密钥被回收/过期时，
+ *    接口直接拒（`data.error_code` 是 KEY_REVOKED/KEY_EXPIRED），不是返回空列表。
+ */
+export function listSelfEnvelopes(options = {}) {
+  const params = {}
+  if (options.includeExpired) params.includeExpired = 1
+  if (options.limit) params.limit = options.limit
+  return http.get('/node-self/envelopes/', { params }).then(unwrap)
+}
+
+/**
+ * 这条会话该用**哪两版密钥**验收/解封（KMS-011）。
+ *
+ * 返回 `{recipientKeyId, recipientKeyVersion, falconKeyId, falconKeyVersion,
+ *       falconPublicKey, senderNodeId, proofMessage}` —— 都是分发时写进
+ * 会话行的那一份记录，不是"当前生产版本"。缺值时**如实为 null**（历史会话），
+ * 页面显示"—"，不编。
+ *
+ * ⚠️ `falconPublicKey` 是小写 hex（服务端归一过），正是 `cryptoProvider.verify`
+ *    要的形状。用错编码的表现是"验签失败"，看起来像伪造。
+ * ⚠️ 只有**接收方**能调（发送方不需要，第三方不该拿到这条映射）——
+ *    越权返回 `data.error_code = NOT_SESSION_PARTY`。
+ */
+export function getSessionVersions(sessionId) {
+  return http.post(`/node-self/sessions/${encodeURIComponent(sessionId)}/versions/`).then(unwrap)
+}
+
+/**
+ * 回报"我在本机验签通过"（KMS-011）。服务端会**独立复核一次**再推进状态：
+ * 通过 → 会话进入 `recipient_verified`；验不过 → `SIGNATURE_INVALID`，状态不动。
+ *
+ * 幂等：会话已越过这一步时如实回 ok（`advanced=false`），不回退状态。
+ */
+export function verifyEnvelope(envelopeId) {
+  return http.post(`/node-self/envelopes/${encodeURIComponent(envelopeId)}/verify/`).then(unwrap)
+}
+
+/**
+ * 回报"我在本机解封成功"（KMS-011）。会话进入 `key_recovered`。
+ *
+ * ⚠️ 顺序由服务端状态机强制：没先验签就回报解封 → `SESSION_STATE_INVALID`
+ *    （`initiated → key_recovered` 不是合法边）。这不是刁难：验签与解封
+ *    是两条证据，状态机要的就是"两件事都真的发生过"。
+ * ⚠️ 这一步是**节点的声明**（服务端没有 K，无法独立验证）。真正的建立条件
+ *    是后面双方 proof 一致 —— 页面上别把"已解封"说成"会话安全了"。
+ */
+export function recoverEnvelope(envelopeId) {
+  return http.post(`/node-self/envelopes/${encodeURIComponent(envelopeId)}/recover/`).then(unwrap)
+}
+
+/**
+ * 提交持有证明 `HMAC-SHA256(K, session_id)`（十六进制，64 字符）。
+ *
+ * ⚠️ proof 是**证明持有 K**，不是 K 本身 —— 服务端没有 K，也永远不该收到 K。
+ *    用 `node-envelope.js` 的 `nodeProof()` 算，别自己拼字符串：
+ *    与对方（或服务端未来的校验）差一个字节的编码口径，症状都是
+ *    "双方证明不一致"，看起来像有一方拿错了密钥。
+ */
+export function confirmSelfSession(sessionId, proof) {
+  return http.post(
+    `/node-self/sessions/${encodeURIComponent(sessionId)}/confirm/`, { proof }
+  ).then(unwrap)
+}
+
 // ---------------------------------------------------------------------------
 // 设备凭据认证（文档 §3 激活 / §5 登录）
 // ---------------------------------------------------------------------------

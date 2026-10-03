@@ -808,6 +808,12 @@ def node_self_distributions(request, identity):
             # 与请求里给的那一版逐字段对得上（对不上就说明请求的版本没进验签）。
             'falconKeyId': result['signing_key'].key_id,
             'falconKeyVersion': result['signing_key'].key_version,
+            # KMS-011：**签名实际用的**那一版（与上面两个同值，但在同一份回执里
+            # 用两个名字表达两件事：`falconKey*` 是"验签用的"，`signingKey*`
+            # 是"签的"。现在是同一行记录，将来若支持"一把签、另一把验"会分叉）。
+            # 接收方要回到**同一版**公钥验签，会话行也记的它（`node_session_versions`）。
+            'signingKeyId': result['signing_key'].key_id,
+            'signingKeyVersion': result['signing_key'].key_version,
             # 保留 `signaturePresent`（KMS-009 起就有）：它是"有没有带"的如实回答，
             # 与"验没验过"是两个问题。既有调用方若只看这一个字段，行为不变。
             'signaturePresent': True,

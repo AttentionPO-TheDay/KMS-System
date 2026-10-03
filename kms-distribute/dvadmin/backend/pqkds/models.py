@@ -381,6 +381,36 @@ class SessionKey(CoreModel):
         help_text="会话当前状态"
     )
     expires_at = models.DateTimeField(verbose_name="过期时间", help_text="会话密钥过期时间")
+
+    # --- KMS-011：会话记录关联的具体密钥版本（计划 §7 阶段 4 第 1 条）---
+    # "会话记录关联具体接收密钥版本和 Falcon 密钥版本"。
+    #
+    # 为什么必须是**显式四列**而不是从批次/信封反查：
+    #   * 反查要拿 `{batch_id}-n{pk}` 去拼、再解析，而 batch_id 是字符串约定，
+    #     改一次命名规则所有历史会话就查不出自己的密钥版本 —— 静默；
+    #   * 接收方取信封时页面上要显示"这封信靠哪一版解封"，这个信息必须
+    #     随会话本身给出，否则页面只能显示一个自己拼的猜测值。
+    #
+    # 留空（NULL）而不是填占位：历史会话（本迁移之前建的）没有这些值，
+    # 编一个 key_id 比留空更糟 —— 它会被下游当成真的去查。与
+    # `PreDistributedKey.long_term_key_id`（迁移 0017）同一条纪律。
+    recipient_key_id = models.CharField(
+        max_length=64, null=True, blank=True, verbose_name="接收方长期密钥 keyId",
+        help_text="这条会话的 SM4 是靠接收方哪一把长期密钥保护的（KMS-011）",
+    )
+    recipient_key_version = models.IntegerField(
+        null=True, blank=True, verbose_name="接收方长期密钥版本",
+    )
+    #: 发送方签名用的那一版 Falcon 长期密钥（KMS-010 起请求里显式携带，
+    #: 这里随会话落库）：接收方验签要**回到同一版**公钥，kms 侧不再另挑。
+    falcon_key_id = models.CharField(
+        max_length=64, null=True, blank=True, verbose_name="发送方 Falcon keyId",
+        help_text="发送节点签名这封信封用的 Falcon 密钥（验收签要用同一版）",
+    )
+    falcon_key_version = models.IntegerField(
+        null=True, blank=True, verbose_name="发送方 Falcon 版本",
+    )
+
     class Meta:
         verbose_name = "会话密钥"
         verbose_name_plural = "会话密钥"

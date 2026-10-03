@@ -30,7 +30,14 @@ from .node_self_views import (
 )
 # §6.5：节点取自己的信封 + 提交「我已恢复 K」的证明
 # §10.10：节点自己的会话列表（服务端按外键隔离，见该函数的 docstring）
-from .node_session_views import node_envelopes, node_session_confirm, node_sessions
+from .node_session_views import (
+    node_envelope_recover,
+    node_envelope_verify,
+    node_envelopes,
+    node_session_confirm,
+    node_session_versions,
+    node_sessions,
+)
 # §3 激活 / §5 登录：设备凭据认证（节点**唯一的**登录方式，节点没有口令）。
 # ⚠️ 这两个端点刻意**不要求登录态** —— 它们就是用来产生令牌的。
 from .node_auth_views import node_activate, node_challenge, node_login
@@ -83,6 +90,18 @@ urlpatterns = [
     path('node-self/sessions/', node_sessions, name='node-self-sessions'),
     path('node-self/sessions/<str:session_id>/confirm/', node_session_confirm,
          name='node-self-session-confirm'),
+    # KMS-011：接收方取信封的两条操作（§6.5 的第 ①② 条）。
+    # `versions/` 只回"这条会话该用哪两版密钥"（发送方 Falcon 公钥 + 接收方
+    # 那一版），是接收方本机验签/解封的入参；`verify` / `recover` 是它做完
+    # 之后**如实回报**——服务端据此按状态机推进会话，并在 verify 里独立复核。
+    path('node-self/sessions/<str:session_id>/versions/', node_session_versions,
+         name='node-self-session-versions'),
+    # ⚠️ `<int:envelope_pk>` 是 `PreDistributedKey` 的**整数主键**，不是批次号；
+    #    约束成 int 让 `/envelopes/`（无通配段）与它互不吃掉。
+    path('node-self/envelopes/<int:envelope_pk>/verify/', node_envelope_verify,
+         name='node-self-envelope-verify'),
+    path('node-self/envelopes/<int:envelope_pk>/recover/', node_envelope_recover,
+         name='node-self-envelope-recover'),
 
     # --- KMS-008：节点间分发的新请求契约（§16）---
     # `peers/<...>/keys/` 与 `distributions/` 都是**无通配段的固定前缀 +
