@@ -112,7 +112,7 @@
           <el-table-column label="公钥体积" width="130">
             <template #default="{ row }">{{ keySizeText(row) }}</template>
           </el-table-column>
-          <el-table-column label="绑定设备" min-width="150" show-overflow-tooltip>
+          <el-table-column label="绑定设备指纹" min-width="150" show-overflow-tooltip>
             <template #default="{ row }">
               <span class="mono">{{ row.server?.deviceId || '—' }}</span>
             </template>
@@ -150,7 +150,9 @@
           <el-descriptions-item label="公钥摘要">
             <span class="mono">{{ detail.server?.publicKeyHash || '—' }}</span>
           </el-descriptions-item>
-          <el-descriptions-item label="绑定设备">
+          <el-descriptions-item label="绑定设备指纹">
+            <!-- 注册这一版密钥时该设备公钥的指纹（见 selfNode 页的同名说明：
+                 不是 MAC 地址）。历史行可能为空（无设备信息的旧 ref）。 -->
             <span class="mono">{{ detail.server?.deviceId || '—' }}</span>
           </el-descriptions-item>
           <el-descriptions-item label="登记时间">{{ formatTime(detail.createdAt) }}</el-descriptions-item>

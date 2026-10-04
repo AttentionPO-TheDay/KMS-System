@@ -54,10 +54,17 @@
           <el-descriptions-item label="初始化时间">
             {{ formatTime(node.initializedAt) }}
           </el-descriptions-item>
-          <el-descriptions-item label="绑定设备">
+          <el-descriptions-item label="绑定设备指纹">
             <!-- §4.4 设备绑定：密钥绑在哪台设备上。与「本地密钥环境」页的本机
-                 deviceId 比对，才能发现"我用的不是当初那台设备"。 -->
+                 指纹比对，才能发现"我用的不是当初那台设备"。
+
+                 ⚠️ 展示内容**不是 MAC 地址**，也不可能是：这是浏览器里生成的一对
+                 **不可导出** ECDSA-P256 设备密钥中，**公钥**的 SHA-256 指纹
+                 （`sha256("crv|x|y")[:32]`，见服务端 `_public_key_fingerprint`）。
+                 浏览器拿不到稳定 MAC（网卡随机化下更没有意义）；
+                 指纹只作展示与"换设备"判定的可验证量，登录靠的是设备私钥签名。 -->
             <span class="mono">{{ node.keyDeviceId || '（未绑定）' }}</span>
+            <div class="hint">设备公钥的 SHA-256 指纹（32 位十六进制），不是 MAC 地址；换设备或清站点数据后会变。</div>
           </el-descriptions-item>
         </el-descriptions>
 

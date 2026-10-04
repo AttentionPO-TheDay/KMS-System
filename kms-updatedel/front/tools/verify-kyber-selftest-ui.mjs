@@ -107,6 +107,35 @@ const clickByText = (selector, text) => evalJs(`
     return 'CLICKED'
   })()
 `)
+
+/**
+ * 等按钮**可用**再点（最多 `timeoutMs`）。
+ *
+ * ⚠️ 为什么不能直接 clickByText：按钮带 `:disabled="loading || !mapped"`，
+ *    页面刚挂载时 load() 还没回来 —— 点一个禁用按钮是**静默无效**的
+ *    （不报错、不触发 handler），现象是"点了但页面毫无反应"。
+ *    独立页顶上那行品牌文案一进入就有"节点首次初始化"字样，用"等文字出现"
+ *    当就绪条件更是**一进来就命中**（探测早于数据加载）。所以要等的是
+ *    **disabled 变 false**，不是某个文案出现。
+ */
+const clickWhenEnabled = async (text, timeoutMs = 20000) => {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeoutMs) {
+    const state = await evalJs(`
+      (() => {
+        const btns = [...document.querySelectorAll('button')]
+        const el = btns.find((b) => (b.innerText || '').includes(${JSON.stringify(text)}))
+        if (!el) return 'NOT_FOUND'
+        if (el.disabled) return 'DISABLED'
+        el.click()
+        return 'CLICKED'
+      })()
+    `)
+    if (state === 'CLICKED') return state
+    await sleep(400)
+  }
+  return 'TIMEOUT'
+}
 /** 给 el-input 填值：绕过 Vue 的包装，走原生 setter + input 事件。 */
 const fillInput = (placeholder, value) => evalJs(`
   (() => {
@@ -173,8 +202,9 @@ check('★ 独立页面自带「退出登录」出口（没有导航也不至于
   `hasLogout=${chromeOnInit?.hasLogout}`)
 
 // ---- 5) 点「开始初始化」：四套密钥本机生成并登记 ----
-const initClick = await clickByText('button', '开始初始化')
-check('点击「开始初始化」', initClick === 'CLICKED', String(initClick))
+// ⚠️ 等按钮**可用**再点（页面刚挂载时它是禁用态，点了不生效，见 clickWhenEnabled）。
+const initClick = await clickWhenEnabled('开始初始化')
+check('点击「开始初始化」（等按钮从禁用变为可用后）', initClick === 'CLICKED', String(initClick))
 const initDone = await waitForText('初始化已完成', 150000)
 check('★★ 四套密钥（含 Kyber）本机生成 + 登记 + 收尾成功，节点转 ACTIVE',
   initDone.hit,
@@ -266,15 +296,30 @@ for (const algo of ['SM2', 'SSCL', 'Falcon']) {
     `${run.click} ${line.slice(0, 130) || `（诊断：${run.text.replace(/\s+/g, ' ').slice(0, 140)}）`}`)
 }
 
-// ---- 6c) 状态文案：「当前版本」而不是「生产中」 ----
-// 判据用整页文本（状态标签出现在卡片的「平台」列与卡片头部两处）。
-const pageAfterSelfTest = String(await bodyText() || '')
-check('★★ ACTIVE 的展示文案是「当前版本」，不再是「生产中」'
-  + '（"生产中"会被读成"正在生成"，让人不敢用一把其实已就绪的密钥）',
-  pageAfterSelfTest.includes('当前版本') && !pageAfterSelfTest.includes('生产中'),
-  pageAfterSelfTest.includes('生产中')
-    ? '页面上仍有「生产中」！'
-    : `页面含「当前版本」=${pageAfterSelfTest.includes('当前版本')}`)
+// ---- 6c) 状态文案：「可用」而不是「生产中」/「当前版本」 ----
+// 判据用 **`.el-tag` 集合**而不是整页文本：页面上「可用于新会话」这类说明文案
+// 也含"可用"二字，拿整页查会把"标签没换"放过去。
+const tagTexts = String(await evalJs(
+  `JSON.stringify([...document.querySelectorAll('.el-tag')].map((t) => (t.innerText || '').trim()))`
+) || '')
+const pageText6c = String(await bodyText() || '')
+check('★★ ACTIVE 的展示文案是「可用」（"生产中"会被读成"正在生成"，'
+  + '让人不敢用一把其实已就绪的密钥）',
+  tagTexts.includes('"可用"') && !pageText6c.includes('生产中') && !pageText6c.includes('当前版本'),
+  `el-tag 集合=${tagTexts.slice(0, 160)}`)
+
+// ---- 6d) 设备字段：「绑定设备指纹」且如实说明不是 MAC ----
+// ⚠️ 路由 = 目录菜单 + 子菜单：9474 `selfnode` 挂在 9430 `selfzone`（节点信息）下。
+await send('Page.navigate', { url: `${ORIGIN}/updatedel/selfzone/selfnode` })
+await sleep(4000)
+const selfNodeText = String(await bodyText() || '')
+check('★ 「当前节点」页的绑定设备字段标为「绑定设备指纹」'
+  + '（原名"绑定设备"会让人以为是 MAC 地址）',
+  selfNodeText.includes('绑定设备指纹'),
+  selfNodeText.split('\n').map((l) => l.trim()).filter((l) => l.includes('绑定设备')).join(' | ').slice(0, 140) || '（页面片段：' + selfNodeText.replace(/\s+/g, ' ').slice(0, 120) + '）')
+check('★ 页面上如实写明它是什么（设备公钥的 SHA-256 指纹，不是 MAC）',
+  selfNodeText.includes('不是 MAC'),
+  selfNodeText.split('\n').map((l) => l.trim()).find((l) => l.includes('MAC'))?.slice(0, 120) || '未找到说明行')
 
 // ---- 7) 清理：删掉本脚本建的节点 ----
 let cleanupOut = ''
