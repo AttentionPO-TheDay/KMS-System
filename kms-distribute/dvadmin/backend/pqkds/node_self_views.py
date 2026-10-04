@@ -197,7 +197,7 @@ def _long_term_key_payload(k: NodeLongTermKey) -> dict:
         'status': k.status,
         # 状态文案与「这把还能干什么」都由服务端下发，取自 `api_contract`。
         # 前端**不另写一份**中文表与可用性判断：两份必然漂移，而漂移的表现是
-        # "界面写着生产中、实际已被取代"—— 用户据此做的判断全是错的，
+        # "界面写着当前版本、实际已被取代"—— 用户据此做的判断全是错的，
         # 且没有任何一处会报错。
         'statusLabel': _STATUS_LABELS.get(k.status, k.status),
         'allowsNewWork': k.allows_new_work,

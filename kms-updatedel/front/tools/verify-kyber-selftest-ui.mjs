@@ -153,6 +153,25 @@ check('★ 激活后守卫把未初始化节点送到「节点首次初始化」
   atInit.hit && String(await evalJs('location.pathname')).includes('/node-init'),
   `path=${await evalJs('location.pathname')}`)
 
+// ★ 这页是**独立页面**（不经 Layout）：没有侧边栏/顶部菜单 ——
+//   挂了完整导航会让人误以为"已经进系统了"，而这页是初始化未完成前的一道闸门。
+const chromeOnInit = await evalJs(`
+  (() => ({
+    sidebar: Boolean(document.querySelector('.sidebar-container')),
+    navbar: Boolean(document.querySelector('.navbar')),
+    hasLogout: [...document.querySelectorAll('button')].some((b) => (b.innerText || '').includes('退出登录')),
+  }))()
+`)
+check('★★ 「节点首次初始化」没有侧边栏（独立页面，不是系统内页）',
+  chromeOnInit && chromeOnInit.sidebar === false,
+  `sidebar=${chromeOnInit?.sidebar}`)
+check('★ 也没有顶部菜单栏（连导航都不该出现）',
+  chromeOnInit && chromeOnInit.navbar === false,
+  `navbar=${chromeOnInit?.navbar}`)
+check('★ 独立页面自带「退出登录」出口（没有导航也不至于走不掉）',
+  chromeOnInit && chromeOnInit.hasLogout === true,
+  `hasLogout=${chromeOnInit?.hasLogout}`)
+
 // ---- 5) 点「开始初始化」：四套密钥本机生成并登记 ----
 const initClick = await clickByText('button', '开始初始化')
 check('点击「开始初始化」', initClick === 'CLICKED', String(initClick))
@@ -246,6 +265,16 @@ for (const algo of ['SM2', 'SSCL', 'Falcon']) {
     /自检通过/.test(line),
     `${run.click} ${line.slice(0, 130) || `（诊断：${run.text.replace(/\s+/g, ' ').slice(0, 140)}）`}`)
 }
+
+// ---- 6c) 状态文案：「当前版本」而不是「生产中」 ----
+// 判据用整页文本（状态标签出现在卡片的「平台」列与卡片头部两处）。
+const pageAfterSelfTest = String(await bodyText() || '')
+check('★★ ACTIVE 的展示文案是「当前版本」，不再是「生产中」'
+  + '（"生产中"会被读成"正在生成"，让人不敢用一把其实已就绪的密钥）',
+  pageAfterSelfTest.includes('当前版本') && !pageAfterSelfTest.includes('生产中'),
+  pageAfterSelfTest.includes('生产中')
+    ? '页面上仍有「生产中」！'
+    : `页面含「当前版本」=${pageAfterSelfTest.includes('当前版本')}`)
 
 // ---- 7) 清理：删掉本脚本建的节点 ----
 let cleanupOut = ''

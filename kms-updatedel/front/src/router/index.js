@@ -83,24 +83,24 @@ export const constantRoutes = [
     component: () => import('@/views/error/401.vue'),
     hidden: true
   },
-  // 阶段 2：节点首次登录的密钥初始化引导页。
+  // 节点首次登录的密钥初始化引导页。
   //
   // 刻意放在 **constantRoutes**（静态注册）而不是 sys_menu，原因：
   // 状态为 PENDING_INIT 的节点尚未完成初始化，不该假定它有完整菜单；
   // 而路由守卫在检测到 PENDING_INIT 时会把它送到这里 —— 如果这个页面本身
   // 依赖菜单下发，就会形成"要进引导页得先有菜单、要菜单得先完成初始化"的死循环。
+  //
+  // ⚠️ 与 `/login` 一样**不用 `Layout` 包裹**（2026-10-04 改）：套在主布局里
+  //    会带出侧边栏与顶部菜单，用户看到一条完整的系统导航会误以为
+  //    "已经进系统了"，而这页的语义是**一道闸门**（初始化完成前其它页面
+  //    都会被守卫弹回来）。独立页面 = 没有可点的导航，语义就没歧义了；
+  //    页面自己提供退出登录的出口。
   {
     path: '/node-init',
-    component: Layout,
+    component: () => import('@/views/nodeInit/index.vue'),
+    name: 'NodeInit',
     hidden: true,
-    children: [
-      {
-        path: '',
-        component: () => import('@/views/nodeInit/index.vue'),
-        name: 'NodeInit',
-        meta: { title: '节点首次初始化', icon: 'lock' }
-      }
-    ]
+    meta: { title: '节点首次初始化', icon: 'lock' }
   },
   {
     path: '/:pathMatch(.*)*',

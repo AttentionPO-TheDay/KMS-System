@@ -1,12 +1,20 @@
 <template>
-  <div class="app-container node-init">
-    <el-card shadow="never" class="node-init__card">
-      <template #header>
-        <div class="node-init__header">
-          <h2>节点首次初始化</h2>
-          <el-tag :type="statusTagType" size="large">{{ statusText }}</el-tag>
-        </div>
-      </template>
+  <!-- 独立页面（路由不经 `Layout`，与 `/login` 同级）：没有侧边栏/顶部菜单。
+       这页是**闸门**不是系统内页 —— 挂上完整导航会让人误以为已经进系统。
+       页面自带退出登录，避免"没有导航、也走不掉"的死角。 -->
+  <div class="node-init-page">
+    <div class="node-init-page__bar">
+      <span class="node-init-page__brand">KMS · 节点首次初始化</span>
+      <el-button link size="small" :disabled="initializing" @click="handleLogout">退出登录</el-button>
+    </div>
+    <div class="node-init-page__inner">
+      <el-card shadow="never" class="node-init__card">
+        <template #header>
+          <div class="node-init__header">
+            <h2>节点首次初始化</h2>
+            <el-tag :type="statusTagType" size="large">{{ statusText }}</el-tag>
+          </div>
+        </template>
 
       <!-- 账号没关联节点：这是管理员账号，或数据异常 -->
       <el-alert
@@ -130,7 +138,8 @@
           Falcon 的计算占大头，整体通常在数秒内完成。期间请勿关闭页面或重复点击。
         </p>
       </template>
-    </el-card>
+      </el-card>
+    </div>
   </div>
 </template>
 
@@ -143,8 +152,10 @@ import { getSelfNode, initSelfNodeKeys, registerSelfNodePublicKey } from '@/api/
 import { markNodeInitialized } from '@/utils/node-init-status'
 import { cryptoProvider } from '@/utils/crypto/browser-provider.js'
 import { deviceFingerprint, hasDeviceKey } from '@/utils/crypto/device-credential.js'
+import useUserStore from '@/store/modules/user'
 
 const router = useRouter()
+const userStore = useUserStore()
 
 const loading = ref(true)
 const initializing = ref(false)
@@ -331,11 +342,45 @@ function goWorkbench() {
   router.push('/workbench')
 }
 
+/**
+ * 退出登录（独立页面自带，见模板顶栏）。
+ *
+ * 为什么这页必须有自己的出口：路由不再经 `Layout`，顶栏那套「注销」
+ * 就不存在了 —— 若这里不给出口，一个登错账号的人（或节点还没想好要不要
+ * 初始化的用户）会停在一个"没有导航、也走不掉"的页面上。
+ * 与 Navbar 的注销同一套动作（`userStore.logOut()`），失败也放行跳转：
+ * 令牌清了、服务端没清掉是不一致，但**不让用户卡死在这页**更重要。
+ */
+async function handleLogout() {
+  try {
+    await userStore.logOut()
+  } catch { /* 见 docstring：失败不阻断退出 */ }
+  router.push('/login')
+}
+
 onMounted(load)
 </script>
 
 <style scoped>
-.node-init__card { max-width: 980px; margin: 24px auto; }
+/* 独立页外壳：与 /login 同级、不套 Layout —— 全高背景 + 居中内容。
+   没有侧边栏与顶部菜单是**刻意的**（这页是闸门不是系统内页），
+   顶栏只留品牌名与「退出登录」。 */
+.node-init-page {
+  min-height: 100vh;
+  background: var(--el-bg-color-page, #f5f7fa);
+  padding: 0 16px 32px;
+}
+.node-init-page__bar {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 14px 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.node-init-page__brand { font-weight: 600; color: var(--el-text-color-primary, #303133); }
+.node-init-page__inner { max-width: 980px; margin: 8px auto 0; }
+.node-init__card { border-radius: 10px; }
 .node-init__header { display: flex; align-items: center; justify-content: space-between; }
 .node-init__header h2 { margin: 0; font-size: 18px; }
 .node-init__lead { margin: 0 0 16px; color: var(--kms-text-secondary, #606266); line-height: 1.7; }

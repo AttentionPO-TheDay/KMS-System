@@ -200,7 +200,13 @@ KEY_STATUS_LEGACY = 'LEGACY'        # 历史记录，来源不明，只读
 
 KEY_STATUS_CHOICES: Tuple[Tuple[str, str], ...] = (
     (KEY_STATUS_PENDING, '待启用'),
-    (KEY_STATUS_ACTIVE, '生产中'),
+    # ⚠️ ACTIVE 的展示文案是「当前版本」而**不是**「生产中」（2026-10-04 改）：
+    #    "生产中"在密钥管理的语境里会被读成"正在生成"（与生成页的「生成中…」
+    #    只差一个字），用户看到一个已就绪的密钥标着它，会以为还在生成、
+    #    不敢用它分发。而 ACTIVE 的真实语义是"**这一版是当前生产版本**"
+    #    （它能开新工作；被它取代的版本叫「已被取代」）。
+    #    「当前版本」与「已被取代」「已回收」并列自洽，没有歧义。
+    (KEY_STATUS_ACTIVE, '当前版本'),
     (KEY_STATUS_RETIRED, '已被取代'),
     (KEY_STATUS_REVOKED, '已回收'),
     (KEY_STATUS_EXPIRED, '已过期'),
