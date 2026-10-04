@@ -1,61 +1,10 @@
 import { defineConfig, loadEnv } from 'vite'
 import path from 'path'
 import createVitePlugins from './vite/plugins'
-
-/**
- * 修 `crystals-kyber` 的**严格模式**问题（浏览器打包专属）。
- *
- * 问题
- * ----
- * 该包的 `kyber512/768/1024.js` 用**裸赋值**定义四个函数：
- *
- *     KeyGen512 = function() { ... }     // 没有 var/let/const
- *
- * 这在 CommonJS 下能跑 —— CJS **不是**严格模式，裸赋值会创建隐式全局变量。
- * （所以它的自测在 Node 里一直是好的，问题不会在那里暴露。）
- *
- * 但打包成 ES 模块后是**严格模式**：对未声明标识符赋值会直接抛
- * `ReferenceError: KeyGen512 is not defined`。
- *
- * 症状（2026-09-30 实测）
- * ----------------------
- * 构建**成功**、页面也打得开，只有真正用到 Kyber 时才炸：
- * 节点首次初始化走到「正在生成 Kyber…」就失败，节点永远停在 PENDING_INIT，
- * 而报错只有一句 `KeyGen512 is not defined`，完全看不出是这个包的问题。
- * （它是懒加载 chunk，所以错在调用时而非加载时。）
- *
- * 修法
- * ----
- * 给这 12 处补上 `var `：语义与原隐式全局一致，但在模块作用域内、且合法。
- * **只动这一处**，算法实现一字未改。
- *
- * 为什么用插件而不是改 node_modules
- * --------------------------------
- * 改 node_modules 在 `npm ci` 后就没了，且改动不进版本库 —— 会变成
- * "本地能跑、别人拉下来就坏"的隐形状态。插件随构建配置一起进版本库，可复现。
- *
- * 定位与下方 alias 里的 crypto shim / fs stub 一致：都是
- * "让这个 Node 向的包能在浏览器里跑"，不改变它的密码学行为。
- */
-function fixCrystalsKyberStrictMode() {
-  // 只命中该包的三个实现文件（按路径分段匹配，避免误伤同名文件）
-  const TARGET = /[\\/]crystals-kyber[\\/]kyber(512|768|1024)\.js$/
-  return {
-    name: 'fix-crystals-kyber-strict-mode',
-    // 必须在 commonjs 插件**之前**跑：等它转完，裸赋值已经被搬进
-    // ESM 包装里，行首匹配就对不上了。
-    enforce: 'pre',
-    transform(code, id) {
-      if (!TARGET.test(id)) return null
-      // 只匹配**行首**（`^` + `m`）= 顶层赋值。
-      // 已带 `var ` 的行不会被匹配：`var` 之后跟的是空格+标识符，
-      // 而不是 ` = function`。
-      const fixed = code.replace(/^([A-Za-z_$][A-Za-z0-9_$]*)(\s*=\s*function)/gm, 'var $1$2')
-      if (fixed === code) return null
-      return { code: fixed, map: null }
-    },
-  }
-}
+// `crystals-kyber` 的严格模式补丁：规则在**独立模块**里 ——
+// `tools/check-kyber-strict.mjs` 的回归检查与这里共用同一份
+// transform（两处各抄一道正则，迟早只改一处）。
+import fixCrystalsKyberStrictMode from './vite/plugins/crystals-kyber-fix'
 
 /**
  * 给 `crystals-kyber` 补上 `Buffer` 全局（浏览器打包专属）。
