@@ -297,13 +297,27 @@
       <el-descriptions :column="1" border class="mb16">
         <el-descriptions-item label="节点">{{ activationTarget || '-' }}</el-descriptions-item>
         <el-descriptions-item label="激活凭证">
+          <!--
+            凭证按**密码**的方式展示：默认打码，点「显示」才现明文。
+
+            ⚠️ 打码防的是"被旁人一眼看走"与顺手截屏，**不防**复制 ——
+               这块内容本来就在管理员自己屏幕上，任何"看不到也拿不走"的
+               设计在这里只会妨碍正当使用（他总得把凭证交给节点操作者）。
+               所以「复制」始终可用，取的是 `activationCode` 而不是屏幕上那串点。
+          -->
           <div class="code-row">
-            <code class="code-text">{{ activationCode }}</code>
+            <code class="code-text" :class="{ 'is-masked': !revealActivationCode }">
+              {{ revealActivationCode ? activationCode : activationCodeMasked }}
+            </code>
+            <el-button size="small" plain @click="revealActivationCode = !revealActivationCode">
+              {{ revealActivationCode ? '隐藏' : '显示' }}
+            </el-button>
             <el-button size="small" type="primary" plain @click="copyActivationCode">复制</el-button>
           </div>
         </el-descriptions-item>
       </el-descriptions>
       <div class="hint-text">
+        凭证默认隐藏显示（点「显示」查看原文；「复制」不受影响）。<br />
         节点操作者打开登录页 → 选择「节点」→ 输入节点名称与这张凭证即可完成激活。
         激活后设备凭据留在那台浏览器本机，之后该节点可在此浏览器直接点击登录。
       </div>
@@ -373,6 +387,19 @@ const creating = ref(false)
 const activationOpen = ref(false)
 const activationCode = ref('')
 const activationTarget = ref('')
+/**
+ * 是否明文显示凭证。**每次打开弹窗都重置为 false** ——
+ * 上一位管理员点开过眼睛、没关页面就换个节点重签，下一位一进来就是明文，
+ * 那与"默认隐藏"这个约定直接相悖。
+ */
+const revealActivationCode = ref(false)
+/**
+ * 打码后的占位。
+ *
+ * 用**定长**，不按凭证长度生成：凭证长度本身不敏感，但长度一致的点阵
+ * 读起来更像"一段被隐藏的内容"，也不会因为 43 个点把弹窗撑出换行。
+ */
+const activationCodeMasked = computed(() => '•'.repeat(24))
 const createError = ref('')
 const createFormRef = ref()
 const createForm = reactive({
@@ -512,6 +539,8 @@ async function submitCreate() {
       // 一次性激活凭证：只在这里出现一次，必须立刻展示并提示"仅显示一次"。
       activationCode.value = res?.activation_code || ''
       activationTarget.value = res?.node_id || createForm.node_id || ''
+      // 每次打开都回到默认隐藏（见 revealActivationCode 的注释）。
+      revealActivationCode.value = false
       if (activationCode.value) {
         activationOpen.value = true
       } else {
@@ -542,6 +571,8 @@ async function handleReissue(row) {
     const res = await reissueActivationCode(row.id)
     activationCode.value = res?.activation_code || ''
     activationTarget.value = row.node_id
+    // 重签同样回到默认隐藏 —— 上一次展开过不代表这一次也该展开。
+    revealActivationCode.value = false
     if (activationCode.value) {
       activationOpen.value = true
     } else {
@@ -871,6 +902,14 @@ onMounted(load)
      恰好是用户抄不着又看不出来的部分 */
   word-break: break-all;
   user-select: all;
+}
+
+/* 打码态：点阵不该被"全选复制"选中 —— 复制到的必须永远是凭证本身，
+   而不是一串点。`user-select: none` 让 Ctrl+A / 拖选都跳过它。 */
+.code-text.is-masked {
+  color: var(--kms-text-secondary, #909399);
+  letter-spacing: 2px;
+  user-select: none;
 }
 
 .hint-text {

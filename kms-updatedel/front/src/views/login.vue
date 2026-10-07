@@ -43,7 +43,14 @@
               :disabled="anyNodeBusy"
               @click="handleQuickLogin(id)"
             >
-              <span class="activated-name">{{ id }}</span>
+              <span class="activated-main">
+                <span class="activated-name">{{ id }}</span>
+                <!-- 绑定文件里的最近登录时间。没有绑定记录（本功能上线前激活的
+                     存量浏览器）就什么都不显示，不编一个时间出来。 -->
+                <span v-if="bindingOf(id)?.lastLoginAt" class="activated-meta">
+                  上次登录 {{ formatBindingTime(bindingOf(id).lastLoginAt) }}
+                </span>
+              </span>
               <span class="activated-action">{{ busyNode === id ? '登录中…' : '点击登录' }}</span>
             </button>
           </div>
@@ -79,9 +86,23 @@
           </el-input>
         </el-form-item>
         <el-form-item prop="activationCode">
+          <!--
+            激活凭证按**密码**的方式展示（不显示明文）。
+
+            ⚠️ 它不会长期留在输入框里：激活成功即进入系统；失败（凭证错、
+               节点名错）时服务端不消耗凭证，用户改一下节点名就能重试 ——
+               所以清空输入框并不是必须的，反而不清空更省事。
+               但**明文常驻屏幕**这件事本身要避免：它是一次性凭证、
+               高熵随机串，防的是"被旁人/被截屏看走"。
+
+            `show-password` 给眼睛图标：需要核对时点一下即可见，
+            不是"藏起来不让看"。整串字很长（43 字符）塞在 400px 的卡片里
+            本来也读不全，默认可见的实用价值很低。
+          -->
           <el-input
             v-model="loginForm.activationCode"
-            type="text"
+            type="password"
+            show-password
             size="large"
             auto-complete="off"
             placeholder="激活凭证（管理员签发，仅显示一次）"
@@ -157,9 +178,10 @@
 <script setup>
 import { getCodeImg } from "@/api/login";
 import Cookies from "js-cookie";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import { encrypt, decrypt } from "@/utils/jsencrypt";
 import { listActivatedNodes } from '@/utils/crypto/device-credential';
+import { clearOtherBindings, listBindings } from '@/utils/crypto/node-binding';
 import useUserStore from '@/store/modules/user'
 
 const userStore = useUserStore()
@@ -203,6 +225,22 @@ const loginRules = {
  */
 const activatedNodes = ref([])
 /**
+ * 本机各节点的**绑定文件**，按节点编号索引（`node-binding.js`）。
+ *
+ * 登录成功后本机会写下绑定文件（节点名、设备指纹、首次/最近登录时间）。
+ * 这张表只用来在列表里显示"上次登录 …" —— 没有绑定记录的节点（本功能上线前
+ * 就激活过的存量浏览器）照样列出、照样能登录，只是不显示这一行。
+ */
+const bindings = ref({})
+const bindingOf = (nodeId) => bindings.value[nodeId] || null
+
+function formatBindingTime(value) {
+  if (!value) return ''
+  const d = new Date(String(value))
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleString('zh-CN', { hour12: false })
+}
+
+/**
  * 正在免输入登录的节点 id；空串表示没有在忙。
  *
  * ⚠️ 模板里**不要**直接把它绑给 `:disabled` —— 用 `anyNodeBusy` 那个布尔。
@@ -212,13 +250,32 @@ const activatedNodes = ref([])
  */
 const busyNode = ref('')
 const anyNodeBusy = computed(() => busyNode.value !== '')
+/**
+ * 正在弹「切换绑定节点」确认框。
+ *
+ * ⚠️ 防的是**连点叠框**：确认框弹出时登录还没开始（`busyNode` 还是空），
+ *    第二次点击会走到同一分支、再弹一个 —— 用户看到两个一样的框，
+ *    点掉一个另一个还在，而它们各自持有自己那份"当前绑定"快照。
+ */
+const switchingNode = ref(false)
 
 async function refreshActivatedNodes() {
   if (!isNodeMode.value) {
     activatedNodes.value = []
+    bindings.value = {}
     return
   }
   activatedNodes.value = await listActivatedNodes()
+  // ⚠️ 只保留**本机确实还能登录**的那些节点的绑定：绑定文件可能比设备凭据
+  //    活得久（本机凭据被单独清掉、或用户手工删过 deviceKeys 记录）。
+  //    不过滤的话，"当前绑定"会指向一个列表里根本不存在、也点不进去的节点，
+  //    而换节点确认框会拿它当"当前绑定"念出来 —— 用户看得见却找不到它。
+  //    （这些悬空记录仍留在盘上，换节点时 `clearOtherBindings` 会一并清掉。）
+  const present = new Set(activatedNodes.value)
+  const all = await listBindings()
+  bindings.value = Object.fromEntries(
+    all.filter((b) => present.has(b.nodeId)).map((b) => [b.nodeId, b])
+  )
 }
 
 watch(isNodeMode, (nodeMode) => {
@@ -294,7 +351,14 @@ function handleLogin() {
  *    （见 node_account_service），所以"输错凭证"就是唯一的失败方式，
  *    不存在"凭证对但口令错"这种中间态。
  */
-function handleNodeActivate() {
+async function handleNodeActivate() {
+  // 回车/连点会重复进来：激活是**消耗凭证**的动作，第二次请求只会拿到
+  // "凭证已用"的报错，把一次成功的激活显示成失败。这里与「激活并登录」
+  // 按钮的 :loading 是同一道闸（按钮上的 loading 只在请求发出后生效，
+  // 而确认框那一段是异步的）。
+  if (loading.value || switchingNode.value) {
+    return
+  }
   const nodeId = String(loginForm.value.nodeId || '').trim()
   const code = String(loginForm.value.activationCode || '').trim()
   if (!nodeId) {
@@ -307,13 +371,24 @@ function handleNodeActivate() {
   }
 
   loading.value = true
+  // 激活也是"进入某个节点"的一种。本机已有别的绑定时，同样要问一次 ——
+  // 直接激活会把新节点写进绑定，而旧那份悄悄留在本机（两个身份并存）。
+  const pending = currentBindingEntry()
+  if (pending && pending.nodeId !== nodeId && !(await confirmNodeSwitch(pending, nodeId))) {
+    loading.value = false
+    return
+  }
   userStore.activateNodeWithCode({ nodeId, code })
-    .then(() => {
-      // 激活成功：本机现在有该节点的设备凭据了。
-      // 后续所有登录都走挑战-应答，不再需要凭证。
+    .then(async () => {
+      // 激活成功：本机现在有该节点的设备凭据，绑定文件也已写下
+      // （`userStore.activateNodeWithCode` 里落库）。
+      // 之后所有登录都走挑战-应答，不再需要凭证。
       loading.value = false
       ElMessage.success('激活成功，正在进入…')
-      router.push({ path: '/' })
+      if (pending && pending.nodeId !== nodeId) {
+        await purgeOtherBindings(nodeId)
+      }
+      enterAfterNodeLogin()
     })
     .catch((error) => {
       loading.value = false
@@ -321,16 +396,37 @@ function handleNodeActivate() {
     })
 }
 
+/** 本机当前绑定（最近登录的那一份）；没有绑定文件时返回 null。 */
+function currentBindingEntry() {
+  return Object.values(bindings.value)
+    .sort((a, b) => String(b.lastLoginAt || '').localeCompare(String(a.lastLoginAt || '')))[0] || null
+}
+
 /** 已激活节点：点一下就走挑战-应答，不输入任何东西 */
-function handleQuickLogin(nodeId) {
-  if (anyNodeBusy.value) {
+async function handleQuickLogin(nodeId) {
+  // `switchingNode` 一起挡：确认框弹出的那一瞬间登录还没开始
+  // （`busyNode` 仍是空），连点会叠出第二个框。
+  if (anyNodeBusy.value || switchingNode.value) {
     return
   }
+  // 先判定"这是不是切换节点"：本机有绑定文件、且绑的不是这个节点。
+  // 确认框要在**发起登录之前**弹 —— 登录本身会把绑定文件刷成新节点，
+  // 那时候再问"要不要清掉旧的"已经晚了（"当前绑定"已经不是原来那个了）。
+  const pending = currentBindingEntry()
+  if (pending && pending.nodeId !== nodeId && !(await confirmNodeSwitch(pending, nodeId))) {
+    return
+  }
+
   busyNode.value = nodeId
   userStore.loginAsActivatedNode(nodeId)
-    .then(() => {
+    .then(async () => {
       busyNode.value = ''
-      router.push({ path: '/' })
+      // 登录成功即落绑定文件（刷新最近登录时间；首登时间保留原值）——
+      // 这一步在 store 的登录动作里完成。
+      if (pending && pending.nodeId !== nodeId) {
+        await purgeOtherBindings(nodeId)
+      }
+      enterAfterNodeLogin()
     })
     .catch((error) => {
       busyNode.value = ''
@@ -339,6 +435,73 @@ function handleQuickLogin(nodeId) {
       // 刷新一次列表，让"其实用不了"的节点不再显示成可点。
       refreshActivatedNodes()
     })
+}
+
+/**
+ * 「换节点」确认框。返回 true = 用户同意继续（并同意清除旧绑定）。
+ *
+ * 文案的落点
+ * ----------
+ *   1. 这台浏览器**同时只服务一个节点** —— 登录新节点会清掉旧的登录身份；
+ *   2. 清掉之后旧节点要在这台浏览器上再登录，**只能由管理员重签激活凭证**
+ *      （设备公钥还登记在服务端，本机私钥没了就签不出挑战）；
+ *   3. 用户随时可以取消，取消即本次登录作废（不产生任何副作用）。
+ *
+ * 不复述"文件"这个词：界面语言是"绑定"，真正被删掉的是本机那份设备凭据 +
+ * 绑定记录。用户要理解的是后果（要重签凭证），不是存储实现。
+ */
+async function confirmNodeSwitch(fromBinding, toNodeId) {
+  if (switchingNode.value) {
+    return false
+  }
+  switchingNode.value = true
+  const from = fromBinding?.nodeId || ''
+  const fromName = fromBinding?.nodeName ? `（${fromBinding.nodeName}）` : ''
+  try {
+    await ElMessageBox.confirm(
+      `本机当前绑定的是节点 ${from}${fromName}，即将登录 ${toNodeId}。\n`
+      + '登录后本机会改为只服务新节点，旧的绑定与登录身份将被清除；'
+      + `此后 ${from} 要在这台浏览器上重新登录，需要管理员重新签发激活凭证。`,
+      '切换绑定节点',
+      {
+        confirmButtonText: '清除旧绑定并登录',
+        cancelButtonText: '取消',
+        type: 'warning',
+        // 多行文案 + 节点编号会被默认宽度折得很难读
+        customClass: 'node-switch-confirm'
+      }
+    )
+    return true
+  } catch {
+    return false
+  } finally {
+    switchingNode.value = false
+  }
+}
+
+/**
+ * 清除新节点之外的全部绑定与登录身份（**只清本机**）。
+ *
+ * 服务端登记的公钥**不动** —— 清掉的是本机的私钥与记账，不是服务端的授权。
+ * 原因写在这里免得后人"顺手"去改服务端：那会让另一个节点在别的设备上也登录不了。
+ */
+async function purgeOtherBindings(keepNodeId) {
+  try {
+    const removed = await clearOtherBindings(keepNodeId)
+    const count = (removed?.bindingsRemoved || []).length
+    if (count > 0) {
+      ElMessage.info(`已清除本机其它 ${count} 个节点的绑定`)
+    }
+  } catch (error) {
+    // 清不掉不该阻断进站：用户已经登录成功了。但要如实说出来 ——
+    // 静默失败会让"本机只绑定一个节点"这个前提悄悄不成立。
+    ElMessage.warning(`旧绑定清除未完成：${error?.message || '未知原因'}`)
+  }
+}
+
+/** 登录/激活成功后的统一收尾：跳根路径，由守卫按服务端身份分流。 */
+async function enterAfterNodeLogin() {
+  router.push({ path: '/' })
 }
 
 function getCode() {
@@ -507,6 +670,24 @@ getCookie();
   white-space: nowrap;
 }
 
+/* 节点名 + 绑定信息（最近登录）纵向排列；右侧仍是「点击登录」 */
+.activated-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.activated-meta {
+  font-size: 11px;
+  color: var(--kms-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
 .activated-action {
   flex: 0 0 auto;
   font-size: 12px;
@@ -548,5 +729,17 @@ getCookie();
 .login-code-img {
   height: 40px;
   padding-left: 12px;
+}
+</style>
+
+<style>
+/* 「切换绑定节点」确认框是 MessageBox 挂到 body 上的，**不在本组件的 DOM 里**，
+   scoped 样式到不了；而多行文案 + 节点编号在默认宽度下会被折成很难读的样子。
+   这里收窄字号、放开行高，让那段说明是一次能读完的。 */
+.node-switch-confirm .el-message-box__message {
+  line-height: 1.7;
+}
+.node-switch-confirm .el-message-box__message p {
+  white-space: pre-line;
 }
 </style>

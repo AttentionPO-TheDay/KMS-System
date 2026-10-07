@@ -47,6 +47,15 @@ export const DEVICE_AUTH_ALGORITHM = 'ECDSA-P256'
 /** 设备公钥 JWK 那一份副本的 ref 后缀（公开量，见 device-credential.js）。 */
 export const DEVICE_PUB_SUFFIX = '-pub'
 
+// 设备命名空间的**保留后缀**。`node-{id}-device-auth` 是设备凭据本体；
+// `-pub` 是它的公钥副本。两者之外还有一样东西挂在同一个命名空间下：
+// 登录后的**绑定文件**（`node-binding.js`，meta store 里的记录名）。
+//
+// ⚠️ 判定"这是不是设备凭据"的地方必须把保留后缀全部排掉 ——
+//    少排一个**不会报错**，只会让绑定文件记录被当成"已激活节点"
+//    （或反过来，真凭据被当成无关记录跳过）。两种表现都像"列表莫名其妙"。
+export const BINDING_SUFFIX = '-binding'
+
 // 错误码取值与后端 api_contract.py 的 ERR_* 一致（跨语言各写一份，改一处要改两处）。
 /** 本机没有这把密钥的私钥（换了设备 / 清过站点数据）。 */
 export const ERR_KEY_LOCAL_MISSING = 'KEY_LOCAL_MISSING'
@@ -203,6 +212,49 @@ export function parseDeviceRef(ref) {
     return null
   }
   return { nodeId: match[1], pub: Boolean(match[2]) }
+}
+
+// ---------------------------------------------------------------------------
+// 设备命名空间下的**其余记录**（绑定文件）
+// ---------------------------------------------------------------------------
+// 记录名：`node-{id}-binding`。
+//
+// 为什么不复用设备凭据后缀：那条正则 `-device-auth(-pub)?` 是有意的**白名单**，
+// 加一个只读的解析器比放宽它安全 —— 放宽后 `node-A-device-auth-x` 这类形状
+// 会被"顺带"解析成设备引用，而它既不是凭据也不是绑定，是垃圾。
+//
+// ⚠️ 与设备凭据 keyRef 同一条纪律：**字节形式不得改动**。已登录浏览器的
+//    绑定记录就是这串名字，改一个字符 = 老浏览器上"绑定没了"（静默）。
+
+/** 拼绑定记录名。空节点编号直接拒绝 —— 绑定必须能定位到具体节点。 */
+export function buildBindingRecord(nodeId) {
+  const id = String(nodeId ?? '').trim()
+  if (!id) {
+    throw new KeyRefError('缺少节点编号：绑定文件必须挂在具体节点下')
+  }
+  if (id.includes('/')) {
+    throw new KeyRefError(`节点编号不能包含 "/"：绑定记录与其它本地记录共用同一套节点编号规则（${id}）`)
+  }
+  return `node-${id}${BINDING_SUFFIX}`
+}
+
+/**
+ * 解析绑定记录名；不是绑定记录返回 `null`。
+ *
+ * ⚠️ 判定顺序与 `parseDeviceRef` 一致：设备凭据在前。这里其实不会互相吃掉
+ *    （凭据的正则要求 `-device-auth`，绑定要求 `-binding`），但顺序写反的
+ *    代价是将来加新后缀时两边的判定开始打架 —— 所以按"谁更具体谁先"排。
+ */
+export function parseBindingRecord(name) {
+  const text = typeof name === 'string' ? name : ''
+  if (!text.endsWith(BINDING_SUFFIX)) {
+    return null
+  }
+  const id = text.slice(0, -BINDING_SUFFIX.length)
+  if (!id.startsWith('node-') || id.length <= 'node-'.length) {
+    return null
+  }
+  return { nodeId: id.slice('node-'.length) }
 }
 
 /**

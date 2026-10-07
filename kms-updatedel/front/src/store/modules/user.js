@@ -1,6 +1,7 @@
 import { login, logout, getInfo } from '@/api/login'
 import { activateNode, getNodeChallenge, loginWithDevice } from '@/api/pqkds/node-self'
 import { DEVICE_AUTH_ALGORITHM, ensureDeviceKey, signChallenge } from '@/utils/crypto/device-credential'
+import { recordNodeLogin } from '@/utils/crypto/node-binding'
 import { getToken, setToken, removeToken } from '@/utils/auth'
 import { isHttp, isEmpty } from "@/utils/validate"
 import { resetNodeInitStatusCache } from '@/utils/node-init-status'
@@ -114,13 +115,17 @@ const useUserStore = defineStore(
        * 节点用**一次性激活凭证**完成首次激活（文档 §3）。
        *
        * 与 login() 的区别：这条路**没有口令**（节点账号的口令是随机且不披露的）。
-       * 它做两件事，顺序不能反：
+       * 它做三件事，顺序不能反：
        *   1. 在本机生成设备认证密钥对（私钥不可导出，只留在本机）
        *   2. 把**公钥** + 激活凭证交给服务端，换回登录令牌
+       *   3. 写下/刷新本机的**绑定文件**（`node-binding.js`）
        *
        * ⚠️ 第 1 步失败就不要走第 2 步 —— 否则凭证被消耗掉了、
        *    而本机没有对应的私钥，那个节点就再也不能用这台设备登录
        *    （只能找管理员重签凭证）。所以这里先确保密钥就绪再发请求。
+       *
+       * ⚠️ 第 3 步**不阻断**：令牌都已经发下来了，一次记账失败不该把
+       *    已经成立的激活判成失败（`recordNodeLogin` 自己也不抛）。
        *
        * @param {{nodeId: string, code: string}} payload
        */
@@ -145,7 +150,9 @@ const useUserStore = defineStore(
             }
             setToken(token)
             this.token = token
-            return { token, nodeId: res.nodeId, name: res.name }
+            return recordNodeLogin(nodeId, { name: res.name }).then(() => ({
+              token, nodeId: res.nodeId, name: res.name,
+            }))
           })
           .catch((error) => {
             // 激活失败同样不能留旧 token
@@ -159,6 +166,10 @@ const useUserStore = defineStore(
        *
        * 这就是"已激活节点列表里点一下就进去"背后的动作 ——
        * 用户不需要输入任何东西，因为证明身份的是**本机那把不可导出的私钥**。
+       *
+       * ⚠️ 登录成功后**立即刷新建档**：本机只保留"最后登录的那个节点"的
+       *    绑定文件（首登时间保留，`loginCount` +1）。写失败不阻断登录，
+       *    理由同 `activateNodeWithCode`。
        *
        * @param {string} nodeId
        */
@@ -183,7 +194,9 @@ const useUserStore = defineStore(
             }
             setToken(token)
             this.token = token
-            return { token, nodeId: res.nodeId, name: res.name }
+            return recordNodeLogin(id, { name: res.name }).then(() => ({
+              token, nodeId: res.nodeId, name: res.name,
+            }))
           })
           .catch((error) => {
             this.clearSession()

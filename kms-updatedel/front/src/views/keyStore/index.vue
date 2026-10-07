@@ -94,6 +94,53 @@
           不参与 SM4 分发、Kyber 封装、Falcon 签名或 SM2 / SSCL 无证书生成（文档 §3.1）。
           它不可导出，因此这里只能报告"是否在场"，无法显示其内容。
         </p>
+
+        <div class="section-title">登录绑定文件</div>
+        <!--
+          本机（IndexedDB）的登录记账：每次节点登录成功后写下/刷新一份。
+          它回答"这台浏览器现在的绑定是哪个节点、绑在哪台设备上、上次什么时候登录的"。
+
+          ⚠️ 绑定文件里**没有任何秘密**（设备私钥在 deviceKeys store，指纹是公开量），
+             所以这里可以整份展示；它也不是登录的**依据** —— 登录靠设备私钥签名。
+        -->
+        <p class="note">
+          每次节点登录成功后，本机写下/刷新一份绑定文件（节点、设备公钥指纹、首次与最近登录时间）。
+          本机只保留最近登录的那一个节点：登录别的节点时会先确认、再清除旧的绑定与登录身份。
+        </p>
+        <el-alert
+          v-if="bindingMismatch"
+          class="mb16"
+          type="warning"
+          :closable="false"
+          show-icon
+          :title="`本机的绑定属于另一个节点：${machineBinding.nodeId}`"
+          :description="`当前节点是 ${nodeId}，但本机最近一次登录的是 ${machineBinding.nodeId}。切回 ${nodeId} 登录会清除那一份绑定。`"
+        />
+        <el-descriptions v-if="binding" :column="2" border class="mb16">
+          <el-descriptions-item label="绑定节点">
+            <span class="mono">{{ binding.nodeId }}</span>
+            <span v-if="binding.nodeName" class="hint">（{{ binding.nodeName }}）</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="设备公钥指纹">
+            <span class="mono">{{ binding.deviceFingerprint || '-' }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="首次登录">
+            {{ formatTime(binding.createdAt) }}
+          </el-descriptions-item>
+          <el-descriptions-item label="最近登录">
+            {{ formatTime(binding.lastLoginAt) }}
+            <span v-if="binding.loginCount" class="hint">第 {{ binding.loginCount }} 次</span>
+          </el-descriptions-item>
+        </el-descriptions>
+        <el-alert
+          v-else-if="!loading && nodeId"
+          class="mb16"
+          type="info"
+          :closable="false"
+          show-icon
+          title="本机还没有该节点的绑定文件"
+          description="不影响登录与密钥使用 —— 登录一次即会写上。多见于绑定功能上线之前激活的节点。"
+        />
       </template>
     </el-card>
   </div>
@@ -115,6 +162,7 @@ import { ElMessage } from 'element-plus'
 import { getSelfNode } from '@/api/pqkds/node-self'
 import { deviceFingerprint, hasDeviceKey } from '@/utils/crypto/device-credential'
 import { inspectNodeKeys } from '@/utils/crypto/node-key-store'
+import { currentBinding, readBinding } from '@/utils/crypto/node-binding'
 
 const loading = ref(false)
 const node = ref({})
@@ -125,6 +173,26 @@ const hasCredential = ref(false)
 const fingerprint = ref('')
 /** 本机密钥库里出现了哪些算法（小写：sm2/sscl/kyber/falcon） */
 const localAlgorithms = ref([])
+/** 本机（IndexedDB）的登录绑定文件；没有则为 null（见 node-binding.js） */
+const binding = ref(null)
+/**
+ * 本机**最近一次登录**绑定的那个节点（可能不是当前节点）。
+ *
+ * ⚠️ 变量名不能叫 `currentBinding` —— 那会遮蔽从 node-binding.js 引入的
+ *    同名函数，`load()` 里的调用会静默变成"读这个 ref 的值"（它此刻是 null），
+ *    于是本机绑定永远显示不出来，且不报任何错。
+ */
+const machineBinding = ref(null)
+
+const bindingMismatch = computed(
+  () => Boolean(machineBinding.value?.nodeId) && machineBinding.value.nodeId !== nodeId.value
+)
+
+function formatTime(value) {
+  if (!value) return '-'
+  const d = new Date(String(value))
+  return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleString('zh-CN', { hour12: false })
+}
 /** 本机密钥库是否因为浏览器不支持而不可用 */
 const storeUnavailable = ref(false)
 
@@ -174,8 +242,15 @@ async function load() {
       // 与"新设备什么都没有"是两回事，处置也不同（前者续做，后者要重新初始化）。
       const found = await inspectNodeKeys(nodeId.value)
       localAlgorithms.value = (found?.algorithms || []).map((a) => String(a).toLowerCase())
+      // 绑定文件：该节点这一份（显示细节）与本机当前那一份（判是否换了节点）。
+      // 两者各查一次而不是从同一个列表里挑 —— 前者按节点精确取，
+      // 后者按"最近登录"取，口径不同，混成一个列表会少一种情形。
+      binding.value = await readBinding(nodeId.value)
+      machineBinding.value = await currentBinding()
     } else {
       localAlgorithms.value = []
+      binding.value = null
+      machineBinding.value = null
     }
   } catch (error) {
     // 浏览器不支持 WebCrypto / IndexedDB 时，读本地密钥库会失败。
@@ -186,6 +261,9 @@ async function load() {
     }
     storeUnavailable.value = true
     localAlgorithms.value = []
+    // 密钥库都读不到时，绑定文件同样读不到 —— 如实清空，而不是留着上一次的旧值
+    binding.value = null
+    machineBinding.value = null
   } finally {
     loading.value = false
   }
@@ -204,6 +282,11 @@ onMounted(load)
 .mono {
   font-family: 'JetBrains Mono', Consolas, monospace;
   font-size: 13px;
+}
+.hint {
+  margin-left: 8px;
+  color: var(--kms-text-secondary);
+  font-size: 12px;
 }
 .section-title {
   margin: 20px 0 10px;

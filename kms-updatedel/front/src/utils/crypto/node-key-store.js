@@ -297,6 +297,48 @@ function metaPut(value) {
   return tx(STORE_META, 'readwrite', (store) => req(store.put(value)))
 }
 
+// ---------------------------------------------------------------------------
+// meta store 的**通用**读写出口（保护密钥、设备标识、绑定文件共用同一座 store）
+// ---------------------------------------------------------------------------
+// 为什么要开出来：本模块是这座 IndexedDB 的**唯一 schema 所有者**
+// （见文首那条纪律），别的模块不得自己 `indexedDB.open`。
+// 绑定文件（`node-binding.js`）与设备标识、保护密钥同住 `meta` store ——
+// 它的记录形状由绑定模块自己定义，本模块只保证"存取在同一个库、同一把锁下"。
+
+/** 读一条 meta 记录；不存在返回 null。 */
+export async function readMetaRecord(key) {
+  const record = await metaGet(String(key))
+  return record ?? null
+}
+
+/**
+ * 写一条 meta 记录。**必须带 `k`**（本 store 的主键）。
+ *
+ * 少写 `k` 的记录不是"报错"，是**写进去之后再也取不出来** ——
+ * 读的一方只会看到"没有这条记录"，与"从没写过"完全不可区分。
+ * 所以在这里拦下，而不是等调用方发现绑定莫名其妙丢了。
+ */
+export async function writeMetaRecord(record) {
+  const key = String(record?.k ?? '')
+  if (!key) {
+    throw new Error('meta 记录必须带 k（主键），否则写进去取不出来')
+  }
+  await metaPut(record)
+  return record
+}
+
+/** 删一条 meta 记录（幂等：不存在也算删成功）。 */
+export async function deleteMetaRecord(key) {
+  await tx(STORE_META, 'readwrite', (store) => req(store.delete(String(key))))
+}
+
+/** 按前缀列出 meta 记录（`''` = 全部）。用于"本机有哪些绑定"这类枚举。 */
+export async function listMetaRecords(prefix = '') {
+  const all = await tx(STORE_META, 'readonly', (store) => req(store.getAll()))
+  const head = String(prefix ?? '')
+  return (all || []).filter((r) => String(r?.k || '').startsWith(head))
+}
+
 /**
  * 取（或首次生成）保护密钥。
  *

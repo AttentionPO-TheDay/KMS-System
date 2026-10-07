@@ -185,6 +185,24 @@ try {
   console.log('  （建节点中，需等待服务端处理…）')
   await sleep(20000)
 
+  // ⚠️ 激活凭证 2026-10-08 起**默认打码**（按密码展示）：直接读 `.code-text`
+  //    拿到的是点阵，拿它去激活必然失败，而现象只是"激活被拒"。
+  //    所以先断言"默认没露明文"，再点「显示」读原文。
+  const maskedState = await ev(`(() => {
+    const el=document.querySelector('.el-dialog .code-text')
+    const btn=[...document.querySelectorAll('.el-dialog button')].find(x=>x.innerText.trim()==='显示')
+    return el ? {text: el.innerText.trim(), masked: el.classList.contains('is-masked'), hasReveal: Boolean(btn)} : null
+  })()`)
+  check('激活凭证默认打码（按密码展示，不是明文）',
+    Boolean(maskedState) && maskedState.masked === true && /^[•·*]+$/.test(maskedState.text) && maskedState.hasReveal,
+    JSON.stringify(maskedState))
+  if (maskedState?.hasReveal) {
+    await ev(`(() => {
+      const b=[...document.querySelectorAll('.el-dialog button')].find(x=>x.innerText.trim()==='显示')
+      if(b) b.click(); return true })()`)
+    await sleep(600)
+  }
+
   const dialogState = await ev(`(() => {
     const msgs=[...document.querySelectorAll('.el-message')].map(m=>m.innerText.trim())
     const codes=[...document.querySelectorAll('.code-text')].map(e=>e.innerText.trim())
@@ -192,8 +210,8 @@ try {
     const alerts=[...document.querySelectorAll('.el-alert__title')].map(e=>e.innerText.trim())
     return {msgs, codes, dlgTitle, alerts, path: location.pathname}
   })()`)
-  const shownCode = (dialogState?.codes || []).find((c) => c && c.length > 20) || ''
-  check('界面上弹出了激活凭证', Boolean(shownCode),
+  const shownCode = (dialogState?.codes || []).find((c) => /^[A-Za-z0-9_-]{30,}$/.test(c)) || ''
+  check('界面上弹出了激活凭证（点「显示」后现出原文）', Boolean(shownCode),
     shownCode ? `长度 ${shownCode.length}` : JSON.stringify(dialogState).slice(0, 220))
   check('凭证弹窗明确提示"只显示这一次"',
     (dialogState?.alerts || []).some((a) => /只显示这一次/.test(a))
