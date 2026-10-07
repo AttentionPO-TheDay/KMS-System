@@ -670,6 +670,17 @@ class NodeViewSet(CustomModelViewSet):
         # 生成公钥对/发现节点等），它们本来就是给节点侧在拿到令牌之前
         # 做能力探测用的。**收窄的是能改数据的与能读密钥的**，
         # 不是把整个接口关掉 —— 那会打断既有的节点自注册流程。
+        #
+        # ⚠️ 2026-10-08 修正（这是本视图一个**长期存在**的缺陷）：
+        #    上面那次收窄是把它们交给 `super().get_permissions()`，而那条链
+        #    在本仓的配置下**恒判未认证**（`SIMPLE_JWT.AUTH_HEADER_TYPES=('JWT',)`
+        #    与全系统的 `Bearer` 前缀不匹配，见 `_introspect_identity`）——
+        #    于是管理端一点删除/重签就回「身份认证信息未提供。」，**没有人**
+        #    能通过这些动作，包括管理员。KMS-014 在 `SessionKeyViewSet` 上
+        #    绕过了同一条链，但这个视图的收窄发生在更早、且没有被那个修正覆盖。
+        #
+        #    现在这些动作的闸门走 `_NODE_ADMIN_ACTIONS` + `initial()`（introspect
+        #    链，与 `/key-pool/*` 同一套路），语义不变、方向更严。
         open_actions = [
             'list', 'retrieve', 'stats', 'register',
             'generate_falcon_keys', 'generate_falcon_keys_v2', 'generate_falcon_keypair',
@@ -677,7 +688,62 @@ class NodeViewSet(CustomModelViewSet):
         ]
         if self.action in open_actions:
             return []
-        return super().get_permissions()
+        # ⚠️ 其余动作的闸门在 `initial()` 里（见 `_NODE_ADMIN_ACTIONS` 与 `_node_admin`）：
+        #    身份链是 `introspect`（RuoYi 令牌 → kms.sys_user），不是 DRF 的
+        #    认证后端 —— 那个默认的 `CustomPermission` 在本仓的令牌前缀下
+        #    **恒判未认证**（`SIMPLE_JWT.AUTH_HEADER_TYPES=('JWT',)` 与全系统的
+        #    `Bearer` 不匹配），所以不能走 `super().get_permissions()`。
+        #    返回空列表只是"这里不拦"，拦的动作在 `initial()` 里做，**两者是一对**：
+        #    少了 `initial()` 那段，这里就变成了真正的放行。
+        return []
+
+    #: 需要**管理员身份**的动作 → 人话标签（`initial()` 用它）。
+    #:
+    #: 覆盖三类：
+    #:   * 生命周期：删除 / 批量删除 / 重签凭证 / 清理链上数据；
+    #:   * 密钥材料：`keys` / `key_details` / `update_keys`；
+    #:   * 节点资料编辑：`update` / `partial_update`。
+    #:
+    #: ⚠️ 这份名单是 `open_actions` 的**补集**，两边要一起看。不在任何一边的
+    #:    action（将来新增的）会走上面那个 `return []` —— 也就是**不设防**。
+    #:    所以新增 action 时**必须**在这张表里登记，或明确列进 `open_actions`。
+    #:    （这与 `KeyPoolViewSet._POOL_PERMISSION_MODES` 的约定相反：那边兜底取
+    #:     最严档位、忘登记等于拒绝；这里没有兜底档位可选，只能靠登记。）
+    #:
+    #: ⚠️ 2026-10-08 之前，这些动作走 `super().get_permissions()`，而那条链
+    #:    在本仓配置下恒拒 —— 表现是**管理端**自己也点不动：删除/重签回
+    #:    「身份认证信息未提供。」，密钥弹窗、编辑弹窗同样如此。KMS-014 在
+    #:    `SessionKeyViewSet` 上绕开过同一条链，但没覆盖这个视图。
+    _NODE_ADMIN_ACTIONS = {
+        'destroy': '删除节点',
+        'batch_delete': '批量删除节点',
+        'reissue_activation_code': '重新签发激活凭证',
+        'cleanup_blockchain_data': '清理链上数据',
+        'keys': '查看节点密钥',
+        'key_details': '查看节点密钥详情',
+        'update_keys': '更新节点密钥',
+        'update': '编辑节点',
+        'partial_update': '编辑节点',
+    }
+
+    def initial(self, request, *args, **kwargs):
+        """管理员闸门（见 `get_permissions` 与 `_NODE_ADMIN_ACTIONS` 的说明）。
+
+        ⚠️ 顺序是**先设权限、再调 `super().initial()`**：`super()` 内部会跑
+        `check_permissions`，之后才轮到 action。若把设权限放在 `super()` 之后，
+        检查已经用着空权限列表跑完了 —— 行为与"没设"完全一样（而这段代码看起来
+        像设了），正是本轮那个"改了却没生效"的坑。
+        """
+        action = getattr(self, 'action', '') or ''
+        if action in self._NODE_ADMIN_ACTIONS:
+            _, err = _node_admin(request, action_label=self._NODE_ADMIN_ACTIONS[action])
+            if err is not None:
+                raise PermissionDenied(detail=err)
+            # 身份已由 introspect 证实（且是管理员）。DRF 那一层此刻仍是
+            # AnonymousUser（见 `_introspect_identity`），所以**必须**给一个
+            # 放行的权限类，否则随后的 check_permissions 会把它拒掉。
+            self.permission_classes = [AllowAny]
+        super().initial(request, *args, **kwargs)
     def get_serializer_class(self):
         if self.action == 'create':
             return NodeCreateSerializer
@@ -1786,14 +1852,9 @@ class SessionKeyViewSet(CustomModelViewSet):
         super().initial(request, *args, **kwargs)
         if (getattr(self, 'action', '') or '') not in ('list', 'retrieve'):
             return
-        from . import kms_service_client as kms
-        token = kms.extract_bearer_token(request)
-        if not token:
-            raise PermissionDenied(detail='未登录：缺少 Authorization: Bearer <token>')
-        try:
-            kms.introspect(token)
-        except kms.KmsTokenInvalid as exc:
-            raise PermissionDenied(detail=f'登录状态无效：{exc}')
+        _, err = _introspect_identity(request)
+        if err is not None:
+            raise PermissionDenied(detail=err)
     def get_serializer_class(self):
         if self.action == 'create':
             return SessionKeyCreateSerializer
@@ -3383,6 +3444,77 @@ def batch_verify_falcon_public_keys(request):
 # ================================================================
 #  密钥预分配 (Key Pool) ViewSet
 # ================================================================
+# ---------------------------------------------------------------------------
+# 身份解析与管理员闸门（供 /key-pool/* 与 /nodes/* 的运维动作共用）
+# ---------------------------------------------------------------------------
+def _introspect_identity(request):
+    """把请求里的令牌换成身份。返回 `(identity, error_msg_or_None)`。
+
+    ⚠️ **为什么不能指望 DRF 的认证**（这是 2026-10-08 那次「身份认证信息未提供」
+       的根因，不是风格选择）：本仓的 `SIMPLE_JWT["AUTH_HEADER_TYPES"] = ("JWT",)`，
+       而全系统（前端 `@/api/pqkds/http`、验收脚本、节点侧）一律发
+       `Authorization: Bearer <token>`。于是 `JWTAuthentication` 拿到头、却因
+       前缀不是 `JWT` 而**返回 None** —— 请求成了匿名，走 `CustomPermission`
+       的端点一律回 4000「身份认证信息未提供。」。现象是"登录着却说你没登录"，
+       而排查方向会被引向令牌本身（令牌其实是好的）。
+
+       所以凡是**需要身份**的端点都走这里：`kms_service_client.introspect`
+       经内部通道向主 KMS 解析同一枚令牌 —— 那条路只认 `Bearer`，与调用方一致。
+
+    ⚠️ 与 `user_distribution_views.require_kms_user` 的分工：那个是装饰器、返回
+       **真 HTTP 状态码**（`/user-*` 命名空间的约定）；这里是元组、由调用方翻成
+       `PermissionDenied`（本模块 `CustomExceptionHandler` 收成 `{code:4000}`）。
+       两套响应约定是既有事实，不要在这里统一。
+    """
+    from . import kms_service_client as kms
+
+    token = kms.extract_bearer_token(request)
+    if not token:
+        return None, '未登录：缺少 Authorization: Bearer <token>'
+    try:
+        return kms.introspect(token), None
+    except kms.KmsTokenInvalid as exc:
+        return None, f'登录状态无效：{exc}'
+    except kms.KmsServiceError as exc:
+        logger.error('KMS 自省失败: %s', exc)
+        return None, '身份服务暂时不可用，请稍后重试'
+
+
+def _is_admin_identity(identity) -> bool:
+    """管理员判据：`roleLevel <= 0`（0=管理员、2=普通用户，见 `utils/role.js`）。
+
+    ⚠️ 用身份里的 roleLevel，**不**用 `request.user` —— 本模块不经过 DRF 认证，
+    那个对象恒是 AnonymousUser（见 `_introspect_identity`）。
+    等级缺失时按**最小权限**处理，但要显式 log：等级缺失是配置问题，
+    "默认当普通用户"必须看得见。
+    """
+    try:
+        role_level = int((identity or {}).get('roleLevel'))
+    except (TypeError, ValueError):
+        logger.warning('身份 %s 没有 roleLevel，按普通用户处理', (identity or {}).get('userName'))
+        return False
+    return role_level <= 0
+
+
+def _node_admin(request, *, action_label):
+    """`/nodes/*` 运维动作（删除/批量删除/重签凭证）的管理员闸门。
+
+    返回 `(identity_or_None, error_msg_or_None)`；出错时调用方抛
+    `PermissionDenied(detail=msg)`。
+
+    ⚠️ 这几个动作原先靠 `super().get_permissions()`（`CustomPermission`）把关，
+       而那条链在 `Bearer` 令牌下**恒判未认证**（见 `_introspect_identity`）——
+       表现是管理员点删除/重签回「身份认证信息未提供。」。
+       闸门挪到这里之后语义不变、方向更严：未登录/令牌无效一律拒绝。
+    """
+    identity, err = _introspect_identity(request)
+    if err is not None:
+        return None, err
+    if not _is_admin_identity(identity):
+        return None, f'该操作（{action_label}）仅管理员可执行'
+    return identity, None
+
+
 def _pool_actor(request, *, mode, node_ids=None):
     """`/key-pool/*` 的身份与能力闸门（KMS-014，计划 §7 阶段 6）。
 
@@ -3399,43 +3531,18 @@ def _pool_actor(request, *, mode, node_ids=None):
       * `admin`  —— 维护动作（过期清理、批量删除、单条删除）。只管理员可做：
                     它们不是节点通信的一部分，是池子的运维操作。
 
-    ⚠️ 刻意**不用** DRF 的 `IsAuthenticated`：本模块的令牌经
-       `kms_service_client.introspect` 解析（RuoYi / kms.sys_user 那一套），
-       与 DRF 配置的 JWT/Session 认证不是同一条链路 —— 换成 IsAuthenticated
-       会把管理员控制台与节点用户**一起**挡在门外。
-    ⚠️ 管理员判据用身份里的 `roleLevel`（0=管理员、2=普通用户，见
-       `utils/role.js` 的说明与 `kms_service_client.introspect` 的返回），
-       **不**用 django 的 `request.user`：本视图不经过 DRF 认证，
-       那个对象恒是 AnonymousUser。
+    ⚠️ 刻意**不用** DRF 的 `IsAuthenticated` —— 见 `_introspect_identity` 的说明。
 
     返回 `(node_or_None, error_msg_or_None)`；出错时由调用方抛
     `PermissionDenied(detail=msg)` —— 本模块的 `CustomExceptionHandler`
     会把它收成 `{code: 4000, msg: <明细>}`（与其他 DRF 异常同一形状），
     所以**失败原因必须写在 msg 里**，不能让调用方只看到"没有权限"。
     """
-    from . import kms_service_client as kms
-    from .node_permission import NodePermissionError, CAP_DISTRIBUTE, require_capability
+    identity, err = _introspect_identity(request)
+    if err is not None:
+        return None, err
 
-    token = kms.extract_bearer_token(request)
-    if not token:
-        return None, '未登录：缺少 Authorization: Bearer <token>'
-    try:
-        identity = kms.introspect(token)
-    except kms.KmsTokenInvalid as exc:
-        return None, f'登录状态无效：{exc}'
-    except kms.KmsServiceError as exc:
-        logger.error('KMS 自省失败: %s', exc)
-        return None, '身份服务暂时不可用，请稍后重试'
-
-    try:
-        role_level = int(identity.get('roleLevel'))
-    except (TypeError, ValueError):
-        # 拿不到等级按**最小权限**处理（与 node_permission.DEFAULT_LEVEL 同一取舍），
-        # 但要显式 log：等级缺失是配置问题，"默认当普通用户"必须看得见。
-        logger.warning('身份 %s 没有 roleLevel，按普通用户处理', identity.get('userName'))
-        role_level = None
-    is_admin = role_level is not None and role_level <= 0
-
+    is_admin = _is_admin_identity(identity)
     if mode == 'read':
         return (None, None)  # 登录即可
 
@@ -3449,6 +3556,7 @@ def _pool_actor(request, *, mode, node_ids=None):
     # mode == 'work'：普通用户必须映射到节点并具备分发能力。
     if node is None:
         return None, '当前账号未映射到任何节点，无法执行预分配/分发/取用'
+    from .node_permission import NodePermissionError, CAP_DISTRIBUTE, require_capability
     try:
         require_capability(node, CAP_DISTRIBUTE)
     except NodePermissionError as exc:
