@@ -9,7 +9,7 @@
             <h2 class="hero-name">{{ greeting }}，{{ userStore.name || '未登录用户' }}</h2>
             <div class="hero-meta">
               <el-tag size="small" effect="plain">{{ levelText }}</el-tag>
-              <span class="hero-tip">以下数据仅统计你本人的密钥与权限申请</span>
+              <span class="hero-tip">以下数据仅统计你本人的密钥与分发记录</span>
             </div>
           </div>
         </div>
@@ -75,9 +75,12 @@
       </el-col>
     </el-row>
 
-    <!-- 生成趋势 + 算法分布 -->
+    <!-- 生成趋势 + 算法分布 + 基础密钥状态 -->
     <el-row :gutter="16">
-      <el-col :xs="24" :lg="16">
+      <!-- ⚠️ 三列等宽（原为 16/8 两列）：新增的「基础密钥状态」与它们同级。
+           趋势图从 2/3 宽缩到 1/3 宽，7 个点的折线仍然读得清；
+           换来的是三张图对齐，不再有"一张特别宽"的突兀感。 -->
+      <el-col :xs="24" :lg="8">
         <el-card shadow="never" class="section-card">
           <template #header>
             <div class="section-head">
@@ -109,6 +112,14 @@
           </div>
         </el-card>
       </el-col>
+      <!--
+        ⚠️ 这里**不再**新增一张「基础密钥状态」图。
+           工作台有硬约束：**KPI 4 张 / 图表 5 张**（tools/verify-workbench-shape.mjs
+           钉着，是用户明确要求保留的数字）。基础密钥的"状态"已经由下面
+           「基础密钥」区块逐行列全（算法 / 状态 / keyId / 版本 / 指纹）——
+           再补一张状态饼图是重复表达，而代价是破坏那个数字。
+           要看历史版本的分布时，区块里那句「共 N 版」已经在回答。
+      -->
     </el-row>
 
     <!-- 密钥状态 / 上链状态 / 分发状态 -->
@@ -163,29 +174,61 @@
       </el-col>
     </el-row>
 
-    <!-- 权限申请 -->
+    <!--
+      基础密钥（原「权限申请」区块）。
+
+      ⚠️ 这个位置原本是一整套「权限申请」进度条 —— 那是阶段 8 下线的审批流
+         （`35_remove_permission_request_menu.sql`），接口早已删除，页面把
+         `permissionRows` 硬编码成空数组，于是它**永远**显示"暂无权限申请记录"。
+         一块永远空着的区块比没有更糟：用户会以为"我还没有申请资格"。
+
+      换成**本节点自己那四套基础密钥**的明细 —— 那是节点一切能力的地基
+      （生成/更新/分发都建立在它们之上），也回答了"初始化生成的密钥在哪"：
+      它们登记在**分发模块**的 `NodeLongTermKey`（`/node-self/keys/`），
+      而不是下面那几张图所用的 generate / lifecycle 两套记录。
+    -->
     <el-row :gutter="16">
       <el-col :span="24">
         <el-card shadow="never" class="section-card">
           <template #header>
             <div class="section-head">
-              <span>权限申请</span>
-              <span class="section-sub">临时授权的审批进度与当前可用能力</span>
+              <span>基础密钥</span>
+              <span class="section-sub">
+                节点首次初始化时在本机生成、公钥登记于此（私钥不出本机）
+              </span>
             </div>
           </template>
-          <div v-loading="isLoading('permission')" class="perm-layout">
-            <div>
-              <div v-for="item in permissionStatusItems" :key="item.code" class="perm-row">
-                <span class="perm-label">{{ item.label }}</span>
-                <span class="perm-track">
-                  <span class="perm-fill" :class="item.className" :style="{ width: item.percent + '%' }"></span>
+          <div v-loading="isLoading('nodeKey')" class="base-key-layout">
+            <div class="base-key-list">
+              <div v-for="item in baseKeys" :key="item.algo" class="base-key-row">
+                <span class="base-key-name">{{ item.label }}</span>
+                <el-tag
+                  size="small"
+                  :type="baseKeyTagType(item)"
+                  effect="plain"
+                >
+                  {{ item.current ? item.current.statusLabel : '未登记' }}
+                </el-tag>
+                <span class="base-key-id mono">
+                  <template v-if="item.current">
+                    {{ item.current.keyId }} · v{{ item.current.keyVersion }}
+                  </template>
+                  <template v-else>—</template>
                 </span>
-                <span class="perm-count">{{ item.count }}</span>
+                <span class="base-key-meta">
+                  <!-- 有历史版本就说出来：只显示"当前那把"会让人以为旧版本不存在，
+                       而"上一版已被取代"恰恰是密钥更新要看的 -->
+                  <template v-if="item.versions > 1">共 {{ item.versions }} 版 · </template>
+                  <template v-if="item.current?.publicKeyHash">
+                    指纹 {{ String(item.current.publicKeyHash).slice(0, 16) }}…
+                  </template>
+                </span>
               </div>
-              <p v-if="permissionNotice" class="perm-notice">{{ permissionNotice }}</p>
+              <p v-if="nodeKeyNotice" class="base-key-notice">{{ nodeKeyNotice }}</p>
             </div>
 
             <div class="feature-list">
+              <div class="feature-heading">当前可用能力</div>
               <div v-for="item in featureItems" :key="item.code" class="feature-item">
                 <div>
                   <div class="feature-name">{{ item.name }}</div>
@@ -214,6 +257,7 @@ import useUserStore from '@/store/modules/user'
 import { batchGetGenerateChainStatus, listGenerateKeys } from '@/services/generate-api'
 import { listLifecycleKeys } from '@/services/lifecycle-api'
 import { listDistributionBatches } from '@/services/user-distribution-api'
+import { getSelfNode, listSelfNodeKeys } from '@/api/pqkds/node-self'
 import { permissionFeatures } from '@/services/permission-api'
 import { isAdminLevel, roleLevelText } from '@/utils/role'
 import usePermissionStore from '@/store/modules/permission'
@@ -303,13 +347,8 @@ const DISTRIBUTE_STATUS_META = [
   { code: '3', label: '分发失败', color: CHART_COLORS.danger }
 ]
 
-// 权限申请状态：0 待审批 / 1 已通过 / 2 已拒绝 / 3 已回退
-const PERMISSION_STATUS_META = [
-  { code: '0', label: '待审批', className: 'is-pending' },
-  { code: '1', label: '已通过', className: 'is-approved' },
-  { code: '2', label: '已拒绝', className: 'is-rejected' },
-  { code: '3', label: '已回退', className: 'is-rolled' }
-]
+// （原「权限申请状态」的 PERMISSION_STATUS_META 已随阶段 8 下线的审批流一并删除：
+//   它喂的进度条恒为空，留着只会让人以为"还有这么个流程"。）
 
 const STAT_LOADING = 'loading'
 const STAT_READY = 'ready'
@@ -333,7 +372,9 @@ const sourceState = reactive({
   generate: STAT_LOADING,
   lifecycle: STAT_LOADING,
   distribute: STAT_LOADING,
-  permission: STAT_LOADING
+  // 权限申请那一路（`permission`）在阶段 8 之后恒为空 —— 它原先只喂一张死卡片。
+  // 现在这一格归**本节点的基础密钥**（`NodeLongTermKey`，走 `/node-self/keys/`）。
+  nodeKey: STAT_LOADING
 })
 
 const generateKeys = ref([])
@@ -342,7 +383,7 @@ const lifecycleKeys = ref([])
 const lifecycleTotal = ref(null)
 const distributeRecords = ref([])
 const distributeTotal = ref(null)
-const permissionRows = ref([])
+const nodeKeys = ref([])
 const featureAccess = reactive({
   AUTO_UPDATE: false
 })
@@ -435,10 +476,16 @@ const kpiCards = computed(() => [
     hint: sourceHint('distribute', `分发成功 ${distributeSucceeded.value} 条`)
   },
   {
-    title: '待审批申请',
+    title: '基础密钥',
     icon: markRaw(Bell),
-    value: displayCount('permission', pendingPermissionCount.value),
-    hint: sourceHint('permission', `累计申请 ${permissionRows.value.length} 条`)
+    value: displayCount('nodeKey', baseKeyReadyCount.value),
+    hint: sourceHint(
+      'nodeKey',
+      baseKeyReadyCount.value === BASE_KEY_ALGOS.length
+        ? `四套齐全：${BASE_KEY_ALGOS.map((a) => a.label).join(' / ')}`
+        : `缺失：${BASE_KEY_ALGOS.filter((a) => !baseKeys.value.find((b) => b.algo === a.algo)?.current)
+          .map((a) => a.label).join('、') || '—'}`
+    )
   }
 ])
 
@@ -512,28 +559,68 @@ const revokedKeyCount = computed(() => countByStatus('3'))
 const distributeSucceeded = computed(
   () => distributeRecords.value.filter((row) => String(row?.distributeStatus) === '2').length
 )
-const pendingPermissionCount = computed(
-  () => permissionRows.value.filter((row) => String(row?.status) === '0').length
-)
 
-const permissionStatusItems = computed(() => {
-  const total = permissionRows.value.length
-  return PERMISSION_STATUS_META.map((meta) => {
-    const count = permissionRows.value.filter((row) => String(row?.status) === meta.code).length
+// ---------------------------------------------------------------------------
+// 基础密钥（本节点那四套）
+// ---------------------------------------------------------------------------
+/** 四套基础密钥的固定顺序与展示名。与初始化页/「当前节点」页同一套口径。 */
+const BASE_KEY_ALGOS = [
+  { algo: 'KYBER', label: 'Kyber', role: '后量子密钥封装' },
+  { algo: 'SSCL', label: 'SSCL', role: '保护 SM4 会话密钥' },
+  { algo: 'SM2', label: 'SM2', role: '保护 SM4 会话密钥' },
+  { algo: 'FALCON', label: 'Falcon', role: '签名与验签' }
+]
+
+/**
+ * 每个算法当前那把 + 版本数。
+ *
+ * ⚠️ "当前"的判据用服务端下发的 `allowsNewWork`（只有 ACTIVE 为真），
+ *    **不在前端按 status 字符串自己判** —— 那是 `api_contract` 的取值，
+ *    前端另写一份必然漂移，而漂移的表现是"界面说能用、实际已被取代"。
+ */
+const baseKeys = computed(() =>
+  BASE_KEY_ALGOS.map((def) => {
+    const rows = nodeKeys.value.filter((k) => String(k?.algorithm || '').toUpperCase() === def.algo)
     return {
-      ...meta,
-      count,
-      percent: total ? Math.round((count / total) * 100) : 0
+      ...def,
+      versions: rows.length,
+      current: rows.find((k) => k?.allowsNewWork === true) || null
+      // 没有 allowsNewWork 的行（全部已被取代/回收）时 current 为 null，
+      // 页面显示「未登记」—— 这是如实的（当前确实没有可用的那一把）。
     }
   })
+)
+
+/** 四套里当前可用的套数。 */
+const baseKeyReadyCount = computed(() => baseKeys.value.filter((item) => item.current).length)
+
+const baseKeyNotice = computed(() => {
+  if (sourceState.nodeKey === STAT_NA) {
+    return '管理员账号不映射到节点，因此没有本机基础密钥。'
+  }
+  if (sourceState.nodeKey !== STAT_READY) {
+    return STATE_TEXT[sourceState.nodeKey] || ''
+  }
+  return nodeKeys.value.length ? '' : '当前节点尚未登记基础密钥 —— 请到「节点首次初始化」完成四套密钥的生成。'
 })
 
-const permissionNotice = computed(() => {
-  if (sourceState.permission === STAT_READY) {
-    return permissionRows.value.length ? '' : '暂无权限申请记录'
+/**
+ * 基础密钥行上状态标签的颜色。
+ *
+ * ⚠️ 按服务端下发的**状态文案**（`statusLabel`）判颜色，而不是按 status 码
+ *    在前端再写一张表 —— 那张表必然与 `api_contract.KEY_STATUS_CHOICES` 漂移，
+ *    而漂移的表现是"已回收的密钥显示成绿色"。文案本身就是后端契约的一部分
+ *    （`KEY_STATUS_CHOICES`），这里只是给它上色。
+ */
+function baseKeyTagType(item) {
+  if (!item.current) {
+    return 'info'
   }
-  return STATE_TEXT[sourceState.permission] || ''
-})
+  const label = String(item.current.statusLabel || '')
+  if (label.includes('可用')) return 'success'
+  if (label.includes('回收') || label.includes('过期')) return 'danger'
+  return 'warning'
+}
 
 const featureItems = computed(() => [
   {
@@ -772,25 +859,52 @@ async function loadDistribute() {
 }
 
 /**
- * 阶段 8：权限申请已整体下线，这里**不再调用**已删除的审批接口。
+ * 「当前可用能力」那一列的数据来源。
  *
- * 原实现会去拉 `listPermissionRequests('AUTO_UPDATE')`，失败时把
- * `sourceState.permission` 置成 STAT_ERROR —— 接口删掉之后，工作台
- * 每次打开都会挂一条错误提示，看起来像故障，实际是"这个功能没有了"。
+ * ⚠️ 它**不是**一个"拉数据"的函数，也不该再往 `sourceState` 里写东西：
+ *    审批流阶段 8 已整体下线，"密钥自动更新是否需要申请"这个问题
+ *    现在的答案是**恒不需要** —— 准入由资源属主决定（`LifecycleKeyController`
+ *    的 `canAccess`：属主或管理员），不再有"管理员或持有临时授权"这种中间态。
  *
- * 新的判定口径：密钥自动更新不再需要申请。
- * 准入由**资源属主**决定（LifecycleKeyController 的 canAccess：
- * 属主或管理员），不再是"管理员或持有临时授权"。
- * 所以这里直接按属主为真的口径展示，不再有"待审批"这类状态。
+ *    它的前身会把 `sourceState.permission` 置成 READY，而那一格现在归
+ *    **基础密钥**（`loadNodeKeys`）。两件事挤在同一格的状态机会互相覆盖 ——
+ *    所以这里只写 `featureAccess`，不碰 `sourceState`。
  */
-async function loadPermission() {
-  permissionRows.value = []
+function loadPermission() {
   featureAccess.AUTO_UPDATE = true
-  sourceState.permission = STAT_READY
 }
 
 // 阶段 8：hasApprovedTemporaryRequest 已随审批流一并移除
 // （不再有"已批准的临时申请"这个概念可供判断）。
+
+/**
+ * 本节点的**基础密钥**（Kyber / SM2 / SSCL / Falcon）。
+ *
+ * ⚠️ 为什么单独一个数据源：这四套是**节点首次初始化**时生成、登记在
+ *    分发模块的 `NodeLongTermKey`（`GET /node-self/keys/`）。而上面那几张图／卡
+ *    用的是 **generate / lifecycle 两个子系统**的记录（`kms` 库）——
+ *    两套是不同的事实来源。用户在"初始化完却看不到密钥"时踩的正是这个缝：
+ *    数据一直在，只是工作台从来没问过它。
+ *
+ * ⚠️ 管理员账号不映射到节点（`mapped=false`）——那不是"加载失败"，是**不适用**，
+ *    所以走 STAT_NA 而不是 STAT_ERROR（否则管理员打开工作台会看到一句红字）。
+ */
+async function loadNodeKeys() {
+  try {
+    const self = await getSelfNode()
+    if (!self?.mapped) {
+      nodeKeys.value = []
+      sourceState.nodeKey = STAT_NA
+      return
+    }
+    const data = await listSelfNodeKeys()
+    nodeKeys.value = Array.isArray(data?.keys) ? data.keys : []
+    sourceState.nodeKey = STAT_READY
+  } catch {
+    nodeKeys.value = []
+    sourceState.nodeKey = STAT_ERROR
+  }
+}
 
 async function loadAll() {
   loading.value = true
@@ -802,8 +916,10 @@ async function loadAll() {
       })
       return
     }
-    // 四个数据源并行拉取，单个失败只影响对应卡片
-    await Promise.allSettled([loadGenerate(), loadLifecycle(), loadDistribute(), loadPermission()])
+    // 数据源并行拉取，单个失败只影响对应卡片
+    await Promise.allSettled([
+      loadGenerate(), loadLifecycle(), loadDistribute(), loadPermission(), loadNodeKeys()
+    ])
     updatedAt.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
   } finally {
     loading.value = false
@@ -1331,71 +1447,63 @@ onBeforeUnmount(() => {
   color: var(--kms-text-tertiary);  font-size: var(--kms-font-size-sm);
 }
 
-.perm-layout {
+/* 基础密钥区块：左列四套明细、右列当前可用能力。
+   左列份额略大（原来的 1.15fr）—— 每行有 算法名 / 状态标签 / keyId / 指纹，
+   比右侧那两行"名称 + 状态标签"宽。 */
+.base-key-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
   gap: var(--kms-space-6);
 }
 
-.perm-row {
+.base-key-list {
   display: grid;
-  grid-template-columns: 56px minmax(0, 1fr) 56px;
-  align-items: center;
+  align-content: start;
   gap: var(--kms-space-3);
 }
 
-.perm-row + .perm-row {
-  margin-top: var(--kms-space-3);
+.base-key-row {
+  display: grid;
+  grid-template-columns: 72px 88px minmax(0, 1fr) minmax(0, auto);
+  align-items: center;
+  gap: var(--kms-space-3);
+  padding: var(--kms-space-3) 0;
+  border-bottom: 1px solid var(--kms-border);
 }
 
-.perm-label {
+.base-key-row:last-of-type {
+  border-bottom: none;
+}
+
+.base-key-name {
+  font-weight: 600;
+  color: var(--kms-text-primary);
+}
+
+.base-key-id {
   color: var(--kms-text-secondary);
   font-size: var(--kms-font-size-sm);
-}
-
-.perm-track {
-  display: block;
-  height: 8px;
-  border-radius: var(--kms-radius-pill);
-  background: var(--kms-surface-3);
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.perm-fill {
-  display: block;
-  height: 100%;
-  border-radius: var(--kms-radius-pill);
-  background: var(--kms-border-strong);
-  transition: width var(--kms-transition);
-}
-
-.perm-fill.is-pending {
-  background: var(--kms-warning);
-}
-
-.perm-fill.is-approved {
-  background: var(--kms-success);
-}
-
-.perm-fill.is-rejected {
-  background: var(--kms-danger);
-}
-
-.perm-fill.is-rolled {
-  background: var(--kms-text-tertiary);
-}
-
-.perm-count {
+.base-key-meta {
   text-align: right;
-  color: var(--kms-text-primary);
-  font-size: var(--kms-font-size-sm);
-  font-variant-numeric: tabular-nums;
+  color: var(--kms-text-tertiary);
+  font-size: var(--kms-font-size-xs, 12px);
 }
 
-.perm-notice {
-  margin: var(--kms-space-4) 0 0;
+.base-key-notice {
+  margin: var(--kms-space-3) 0 0;
   color: var(--kms-text-tertiary);
   font-size: var(--kms-font-size-sm);
+}
+
+.feature-heading {
+  color: var(--kms-text-secondary);
+  font-size: var(--kms-font-size-sm);
+  font-weight: 600;
 }
 
 .feature-list {
