@@ -87,14 +87,19 @@ public class UpdatedelChainConsumer {
                     || ChainSyncEvent.TYPE_KEY_REVOKED.equals(actionType)
                     || ChainSyncEvent.TYPE_KEY_CREATED.equals(actionType)) {
                     taskCount += handleKeys(actionType, event.getKeys());
-                } else if (ChainSyncEvent.SESSION_TRAIL_ONLY_TYPES.contains(actionType)) {
-                    // KMS-014：三个会话类事件**显式**只留痕、不改状态 ——
-                    // 会话状态由 PQKDS 侧的状态机负责（链上消费者若也去改，
-                    // 系统里就有两套"会话现在是什么状态"的答案）。
+                } else if (ChainSyncEvent.SESSION_TRAIL_ONLY_TYPES.contains(actionType)
+                    || ChainSyncEvent.AUTH_TRAIL_ONLY_TYPES.contains(actionType)) {
+                    // KMS-014 / 节点多级授权：这些事件**显式**只留痕、不改状态 ——
+                    // 会话状态由 PQKDS 侧的状态机负责、授权状态由 pqkds 的授权表负责
+                    // （链上消费者若也去改，系统里就有两套"现在是什么状态"的答案）。
                     // 写成显式分支而不是靠 else 兜底：兜底分支的语义是
-                    // "不认识"，而这三个是**认识的**，只是不该动状态 ——
+                    // "不认识"，而这些是**认识的**，只是不该动状态 ——
                     // 混在一起之后，"新增事件忘了处理"与"刻意不处理"就无法区分。
-                    log.info("UpdatedelChainConsumer session event trail-only, actionType={} keys={}",
+                    //
+                    // ⚠️ 授权类事件的 keyId 装的是**申请单主键**、不是密钥主键
+                    //    （见 `ChainSyncEvent.AUTH_TRAIL_ONLY_TYPES` 的说明），
+                    //    所以这里只记日志、绝不按 keyId 去查密钥。
+                    log.info("UpdatedelChainConsumer trail-only event, actionType={} keys={}",
                         actionType, event.getKeys().size());
                 } else {
                     // KEY_DISTRIBUTED 由分发模块产生，尚未接通投递（见 §8.6 的说明），

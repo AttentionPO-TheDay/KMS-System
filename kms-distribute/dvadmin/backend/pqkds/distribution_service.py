@@ -247,6 +247,14 @@ def _as_key_hash(raw: Any) -> str:
 def authorized_node_ids(user_id: int) -> List[int]:
     """该用户当前有效的节点授权 ID 列表（**主键**，不是业务编号）。
 
+    ⚠️ **这是全系统唯一的"能不能与某节点通信"判据。**
+       节点授权申请/审批（`node_authorization_service`）只负责往
+       `UserNodeAuthorization` 写行，**不得**在这里加任何"是否来自审批"的判断：
+       加一个这样的分支，就等于让"申请单的状态"变成第二套权限事实 ——
+       而仓库里被下线的 `permission_request` 审批流正是这么坏的
+       （见 `kms-ops/mysql/init/35_remove_permission_request_menu.sql`）。
+       申请单只记录过程，放行永远问本函数。
+
     这里返回的是 `UserNodeAuthorization.node_id` 存的东西 —— 那是个外键
     （`ForeignKey(Node)`，无 `to_field`），所以是 `Node.pk`。
     调用方拿它去比 `node.id`；写成业务编号比会**恒不命中却不报错**，

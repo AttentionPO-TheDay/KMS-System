@@ -299,6 +299,61 @@ export function closeSelfSession(sessionId) {
 }
 
 // ---------------------------------------------------------------------------
+// 节点多级授权（任务书「节点多级授权」）：名录 + 授权申请
+// ---------------------------------------------------------------------------
+// 流程：节点看到**全网**名录 → 选对端 → 申请 → 管理员审批 → 双向放行。
+//
+// ⚠️ 收到授权之前，`/node-self/peers/<节点>/keys/` 会回
+//    `data.error_code = NOT_AUTHORIZED`（403）——那是**预期**，不是故障。
+//    页面把它呈现成"尚未授权，可发起申请"，而不是一句红色的"加载失败"。
+
+/**
+ * 我的授权申请（我发起的 + 别人发来的）。
+ *
+ * @returns {Promise<{outgoing: object[], incoming: object[]}>}
+ *   `outgoing` = 我发起、等管理员审批的；`incoming` = 别的节点想与我通信，
+ *   我**无权批**（决定权在管理员），但看得见 —— 否则对方那边显示"待审批"、
+ *   我这边一片空白，两边对不上。
+ */
+export function listSelfAuthorizationRequests() {
+  return http.get('/node-self/authorization-requests/').then(unwrap)
+}
+
+/**
+ * 全网节点名录（排除自己），每行带与我的授权关系。
+ *
+ * ⚠️ 只回**身份性字段**（编号/名字/状态/域/类型/等级）+ 关系；
+ *    **不含** ip/端口/sys_user_id/公钥 —— 服务端刻意如此，页面别指望拿到。
+ */
+export function listNodeDirectory() {
+  return http.get('/node-self/directory/').then(unwrap)
+}
+
+/**
+ * 发起授权申请。
+ *
+ * @param {string} targetNodeId 目标节点的**业务编号**（`Node.node_id`，如 `Node-001`）
+ * @param {string} reason 申请理由（审批人据此判断；服务端要求非空、≤200 字）
+ *
+ * 幂等由服务端保证：这一对节点已有待审批申请时回**同一条**（`created:false`），
+ * 两个方向都已授权时回 `alreadyGranted:true` 且不建单。所以调用方不必自己防重
+ * —— 重复提交不会产生第二条。
+ */
+export function requestNodeAuthorization(targetNodeId, reason) {
+  return http.post('/node-self/authorization-requests/', { targetNodeId, reason }).then(unwrap)
+}
+
+/**
+ * 撤回自己发起的待审批申请。
+ *
+ * ⚠️ 只能撤**自己发起**的、且仍在 `pending` 的：服务端按 requester 判定，
+ *    被申请方（哪怕是对方节点）也撤不了。
+ */
+export function cancelNodeAuthorizationRequest(requestId) {
+  return http.post(`/node-self/authorization-requests/${encodeURIComponent(requestId)}/cancel/`).then(unwrap)
+}
+
+// ---------------------------------------------------------------------------
 // 设备凭据认证（文档 §3 激活 / §5 登录）
 // ---------------------------------------------------------------------------
 // ⚠️ 这三个接口与上面几个的**根本区别**：上面都要求已登录（带令牌），

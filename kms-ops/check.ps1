@@ -156,6 +156,9 @@ Test-MySqlTable -TableName "permission_request"
 Test-MySqlTable -TableName "dvadmin_pqkds_distribution_batches" -Database "falcon_kds"
 Test-MySqlTable -TableName "dvadmin_pqkds_user_key_envelopes" -Database "falcon_kds"
 Test-MySqlTable -TableName "dvadmin_pqkds_user_node_authorizations" -Database "falcon_kds"
+# 节点多级授权（任务书指标）：节点发起申请 → 管理员审批。不登记的话，
+# 迁移没跑成功时健康检查是绿的，而「申请授权」会在页面上直接报错。
+Test-MySqlTable -TableName "dvadmin_pqkds_node_authorization_requests" -Database "falcon_kds"
 
 Write-Host "`nAll checks passed."
 }

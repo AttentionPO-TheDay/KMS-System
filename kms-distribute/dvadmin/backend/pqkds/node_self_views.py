@@ -829,3 +829,219 @@ def node_self_distributions(request, identity):
         },
         msg='分发完成（信封已验签）',
     )
+
+
+# ---------------------------------------------------------------------------
+# 任务书「节点多级授权」：节点名录 + 授权申请（节点侧）
+# ---------------------------------------------------------------------------
+# 流程：节点看到**全网**名录 → 选对端 → 发起申请 → 管理员审批 → 双向放行。
+#
+# ⚠️ 这是本命名空间里**唯一**让节点看到"自己没被授权"的节点的接口，边界必须清楚：
+#
+#   * **放行判据自始至终只有一条**：`distribution_service.authorized_node_ids`
+#     （`UserNodeAuthorization` 表）。申请单只记录过程 —— `status='approved'`
+#     不构成任何放行理由。批准动作本身就是"写那两行授权"。
+#     理由见 `models.NodeAuthorizationRequest` 的 docstring（仓库里那套被下线的
+#     权限审批就是"批了不等于授权"的反面教材）。
+#
+#   * **名录只回身份性字段**（编号/名字/状态/域/类型/等级）——
+#     **不含** ip/port/`sys_user_id`/公钥/密钥指纹。对照：
+#     `GET /pqkds-api/pqkds/nodes/`（DRF 列表）把这些全回给**未认证**调用方，
+#     那是另一处历史包袱，不能拿它当本接口的形状参考。
+#     对端**密钥版本**仍然要授权后才可见（`node_peer_keys` 的归属校验不动）。
+#
+#   * 三个端点都是**函数视图**（`require_kms_user` 链），不是 DRF action ——
+#     所以不需要登记进 `views.py` 的 `open_actions`/`_NODE_ADMIN_ACTIONS`。
+
+def _authorization_state(node: Node, *, peer: Node, pending: dict) -> dict:
+    """`node` 视角下与 `peer` 的授权关系（**两个方向分别判**）。
+
+    ⚠️ 不合成一个"已授权"布尔：管理员手工只授单向是允许的（既有页面做得到），
+       届时 A 能发给 B、B 回不了 —— 合成之后这种不对称在界面上就消失了，
+       而用户看到的会是"已授权"却发不出去（或者反过来，明明能发却显示未授权）。
+    """
+    from .node_authorization_service import effective_authorizations
+
+    directions = effective_authorizations(node, peer)
+    entry = pending.get(peer.id) or {}
+
+    def state(active: bool, direction: str) -> str:
+        if active:
+            return 'granted'
+        return 'pending' if entry.get('direction') == direction else 'none'
+
+    return {
+        # `granted` 是"两个方向都通"的便捷布尔，仅供界面显示"已互通"标签；
+        # 判断能不能发（outgoing）与对方能不能回（incoming）请分别看下面两项。
+        'granted': directions['outgoing'] and directions['incoming'],
+        'outgoing': state(directions['outgoing'], 'outgoing'),
+        'incoming': state(directions['incoming'], 'incoming'),
+        'pendingRequestId': entry.get('id'),
+    }
+
+
+def _load_pending_map(node: Node) -> dict:
+    """这一节点参与的全部 pending 申请 → `{对方节点主键: {'direction', 'id'}}`。
+
+    方向是**以 `node` 为视角**的：`outgoing` = 我发起的，`incoming` = 对方发起的。
+    同一对节点无序去重（服务层保证同时只有一条 pending），所以一个对方只会出现一次。
+    """
+    from django.db.models import Q
+
+    from .models import NodeAuthorizationRequest
+
+    rows = NodeAuthorizationRequest.objects.filter(
+        Q(requester=node) | Q(target=node), status='pending',
+    ).values('id', 'requester_id', 'target_id')
+    out = {}
+    for row in rows:
+        if row['requester_id'] == node.id:
+            out[row['target_id']] = {'direction': 'outgoing', 'id': row['id']}
+        else:
+            out[row['requester_id']] = {'direction': 'incoming', 'id': row['id']}
+    return out
+
+
+def _request_payload(row) -> dict:
+    """一条申请 → 页面需要的形状（**节点侧视角**，不带任何内部 id 之外的量）。"""
+    return {
+        'id': row.pk,
+        'status': row.status,
+        'statusLabel': row.get_status_display(),
+        'reason': row.reason,
+        'requesterNodeId': row.requester.node_id,
+        'requesterName': row.requester.name,
+        'targetNodeId': row.target.node_id,
+        'targetName': row.target.name,
+        'decidedBy': row.decided_by or '',
+        'decidedAt': _iso(row.decided_at),
+        'decisionRemark': row.decision_remark or '',
+        # 链上存证哈希：空 = 未成功（如实为空，不粉饰）
+        'chainTx': row.chain_tx or '',
+        'createdAt': _iso(row.create_datetime),
+    }
+
+
+@csrf_exempt
+@require_http_methods(['GET'])
+@require_kms_user
+def node_directory(request, identity):
+    """**全网节点名录**（任务书「节点多级授权」）。
+
+    节点要能表达"我想和谁建会话"，就必须先看到有哪些节点 —— 在此之前
+    `/user-nodes/` 只回**已被授权**的节点，"没授权"与"不存在"在界面上无法区分。
+    本接口回全部（排除自己），并逐行带上与我的授权关系。
+
+    暴露边界（见本段开头的说明）：只回身份性字段，不回 ip/port/sys_user_id/密钥材料。
+    """
+    node = _find_node(identity)
+    if node is None:
+        return _error('当前账号未关联任何节点，无法查看节点名录', 403)
+
+    pending = _load_pending_map(node)
+    rows = (
+        Node.objects.exclude(pk=node.pk)
+        .only('id', 'node_id', 'name', 'status', 'domain_id', 'node_type', 'permission_level')
+        .order_by('node_id')
+    )
+    items = []
+    for peer in rows:
+        items.append({
+            'nodeCode': peer.node_id,
+            'name': peer.name,
+            'status': _public_status(peer),
+            'domainId': peer.domain_id,
+            'nodeType': peer.node_type,
+            'permissionLevel': peer.permission_level,
+            'relationship': _authorization_state(node, peer=peer, pending=pending),
+            # 停用节点不给申请入口：申请了也建不了会话（create_request 也会拒）。
+            'canRequest': _public_status(peer) != 'DISABLED',
+        })
+    return _ok({
+        'nodeId': node.node_id,
+        'nodes': items,
+        'total': len(items),
+        # 与 /user-nodes/ 同一口径：一次分发的接收方数量上限（页面据此提示）。
+        'maxSelectable': 10,
+    })
+
+
+@csrf_exempt
+@require_http_methods(['GET', 'POST'])
+@require_kms_user
+def node_authorization_requests(request, identity):
+    """我的授权申请：GET 列表 / POST 发起。
+
+    GET 返回 `{outgoing: [...], incoming: [...]}`：
+      * outgoing —— 我发起的（正在等审批 / 已出结果）；
+      * incoming —— 别的节点想与我通信（我无权批，但看得见；决定权在管理员）。
+    """
+    from .node_authorization_service import AuthorizationRequestError, create_request
+    from .models import NodeAuthorizationRequest
+
+    node = _find_node(identity)
+    if node is None:
+        return _error('当前账号未关联任何节点，无法使用授权申请', 403)
+
+    if request.method == 'GET':
+        base = NodeAuthorizationRequest.objects.select_related('requester', 'target')
+        outgoing = base.filter(requester=node).order_by('-create_datetime')[:100]
+        incoming = base.filter(target=node).order_by('-create_datetime')[:100]
+        return _ok({
+            'outgoing': [_request_payload(r) for r in outgoing],
+            'incoming': [_request_payload(r) for r in incoming],
+        })
+
+    # ---- POST：发起申请 ----
+    try:
+        payload = json.loads(request.body or b'{}')
+    except (ValueError, TypeError):
+        return _error('请求体不是合法 JSON')
+    if not isinstance(payload, dict):
+        return _error('请求体应为 JSON 对象')
+
+    target_code = str(payload.get('targetNodeId') or payload.get('target_node_id') or '').strip()
+    if not target_code:
+        return _error('缺少 targetNodeId（目标节点的业务编号）')
+    target = Node.objects.filter(node_id=target_code).first()
+    if target is None:
+        return _error(f'节点不存在：{target_code}', 404, error_code=C.ERR_KEY_NOT_FOUND)
+
+    if _public_status(node) == 'DISABLED':
+        return _error('本节点已被停用，无法发起授权申请', 403)
+
+    try:
+        result = create_request(node, target, payload.get('reason') or '')
+    except AuthorizationRequestError as exc:
+        return _error(exc.message, C.ERROR_HTTP_STATUS.get(exc.code, 400), error_code=exc.code)
+
+    if result.get('alreadyGranted'):
+        return _ok(
+            {'alreadyGranted': True, 'request': None},
+            msg=f'已与节点 {target.node_id} 双向授权，无需申请',
+        )
+    row = result['request']
+    return _ok(
+        {'alreadyGranted': False, 'created': result['created'], 'request': _request_payload(row)},
+        msg=(f'申请已提交，等待管理员审批（{target.node_id}）' if result['created']
+             else f'这一对节点已有待审批的申请（#{row.pk}），未重复创建'),
+    )
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+@require_kms_user
+def node_authorization_request_cancel(request, request_id, identity):
+    """撤回自己发起的待审批申请。"""
+    from .node_authorization_service import AuthorizationRequestError, cancel_request
+
+    node = _find_node(identity)
+    if node is None:
+        return _error('当前账号未关联任何节点，无法撤回申请', 403)
+
+    try:
+        row = cancel_request(node, request_id)
+    except AuthorizationRequestError as exc:
+        return _error(exc.message, C.ERROR_HTTP_STATUS.get(exc.code, 400), error_code=exc.code)
+
+    return _ok({'request': _request_payload(row)}, msg='申请已撤回')

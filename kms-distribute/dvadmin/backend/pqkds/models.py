@@ -150,9 +150,14 @@ class Node(CoreModel):
     # 主键值并**在应用层维护一致性**，而不是声明一个建不出来的约束。
     #
     # 与 UserNodeAuthorization 的区别要说清楚，否则会被误当成同一个东西：
-    #   那张表是「某个用户**被授权**可以向某个节点分发」—— 用户与节点是**两个实体**；
-    #   本字段是「这个节点**就是**这个账号」—— 节点与账号是**同一实体**。
-    #   文档 §3 明确前者与设定二冲突，属于待删语义；本字段才是目标模型。
+    #   那个模型**是通信授权**（"谁可以向谁分发/与谁建会话"）—— 用户与节点是
+    #   **两个实体**；本字段是「这个节点**就是**这个账号」—— 节点与账号是**同一实体**。
+    #
+    #   ⚠️ 早先这里写的是"前者与设定二冲突、属于待删语义"（因为当时只有用户腿）。
+    #      节点多级授权落地后那句话不再成立：节点场景下 `UserNodeAuthorization.user_id`
+    #      填的就是本字段（`Node.sys_user_id`），这是它要**长期承担**的关系，
+    #      不是过渡写法。两张表的分工没变：本字段回答"这个节点是哪个账号"，
+    #      那张表回答"这个账号能跟哪些节点通信"。
     sys_user_id = models.BigIntegerField(
         null=True, blank=True, db_index=True, unique=True,
         verbose_name="关联登录账号ID",
@@ -1025,10 +1030,22 @@ class SessionKeyInvalidation(CoreModel):
 
 
 class UserNodeAuthorization(CoreModel):
-    """用户 ↔ 节点授权（即「节点鉴权」，计划 §4.2）。
+    """**通信授权**：某个登录主体可以向某个节点分发 / 与它建立会话。
 
-    `Node` 模型原本**没有任何 user 外键**，而 D5 要求用户只能选择"自己有权的节点"。
-    分发接口必须据此在**服务端**校验，不能只靠前端下拉过滤。
+    这张表同时承担两种关系，`user_id` 在两处都指 `kms.sys_user.user_id`：
+
+    * **节点 ↔ 节点（当前）**：`user_id` 就是发起方节点的 `Node.sys_user_id`
+      （建节点时由 `node_account_service.ensure_node_account` 建好，一一对应）。
+      节点侧的「节点授权」页发起申请、管理员批准后写在这里 —— 见
+      `NodeAuthorizationRequest`。
+    * **用户 ↔ 节点（历史）**：旧「用户腿」分发里，`user_id` 是普通用户账号。
+      `user_distribution_views` 那条路径还在用它。
+
+    ⚠️ 早先本类的注释写的是"用户与节点是两个实体、属于待删语义"（因为当时
+       只有用户腿）。节点多级授权落地后这句话不再成立：节点场景下 `user_id`
+       与本节点是**同一实体**，这不是过渡写法，而是本表要长期承担的关系。
+       **判据仍然只有一条**：`distribution_service.authorized_node_ids(user_id)`
+       —— 申请审批只写本表，不做第二套放行判据（理由见 `NodeAuthorizationRequest`）。
     """
 
     STATUS_CHOICES = [
@@ -1036,13 +1053,13 @@ class UserNodeAuthorization(CoreModel):
         ('revoked', '已撤销'),
     ]
 
-    user_id = models.BigIntegerField(verbose_name="用户ID", help_text="kms.sys_user.user_id（逻辑引用，不建跨库外键）")
+    user_id = models.BigIntegerField(verbose_name="用户ID", help_text="kms.sys_user.user_id（逻辑引用，不建跨库外键）；节点场景下即 Node.sys_user_id")
     node = models.ForeignKey(
         Node, on_delete=models.CASCADE, related_name='user_authorizations',
         verbose_name="节点", help_text="被授权的节点",
     )
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='active', verbose_name="状态")
-    granted_by = models.CharField(max_length=64, null=True, blank=True, verbose_name="授权人", help_text="执行授权的管理员")
+    granted_by = models.CharField(max_length=64, null=True, blank=True, verbose_name="授权人", help_text="执行授权的管理员；节点审批路径写「审批:管理员名」")
     granted_at = models.DateTimeField(default=timezone.now, verbose_name="授权时间")
     revoked_at = models.DateTimeField(null=True, blank=True, verbose_name="撤销时间")
     remark = models.CharField(max_length=500, null=True, blank=True, verbose_name="备注")
@@ -1060,6 +1077,95 @@ class UserNodeAuthorization(CoreModel):
 
     def __str__(self):
         return f"用户{self.user_id}-节点{self.node_id}({self.status})"
+
+
+class NodeAuthorizationRequest(CoreModel):
+    """节点发起的**通信授权申请**（任务书「节点多级授权」）。
+
+    流程：节点看到全网名录 → 选对端 → 发起申请（本表 `pending`）
+          → 管理员批准/驳回 → 批准时**真的写出** `UserNodeAuthorization` 两行。
+
+    <h2>为什么不复用已下线的 permission_request</h2>
+    仓库原先有一整套申请审批（`kms-ops/mysql/init/06_permission_request.sql`），
+    阶段 8 被整体下线，理由写在 `35_remove_permission_request_menu.sql`：
+    它的 `approve()` **刻意不调用 `updateRoleLevel`** —— "审批通过不授予任何权限"，
+    保留只会形成**第二套权限语义**（出事时没人能说清"当时到底凭什么被允许"）。
+
+    ⚠️ 本表**不重蹈那个覆辙**：它只记录**过程**，一行权限都不表达。
+       放行判据永远是 `UserNodeAuthorization`（唯一读点
+       `distribution_service.authorized_node_ids`）。本表 `status='approved'`
+       不构成任何放行理由 —— 批准动作本身就是"写那两行授权"。
+
+    <h2>方向</h2>
+    批准时默认**双向**：`requester.sys_user_id → target` 与
+    `target.sys_user_id → requester` 各写一行。因此本表一条申请代表"这一对节点
+    之间的互通"，而不是单向。管理员手工只授单向是允许的（既有页面做得到），
+    名录会如实显示不对称并允许补齐 —— 见 `node_self_views.node_directory`。
+
+    <h2>唯一性（含并发）</h2>
+    同一对节点（**无序**）同时只允许一条 `pending`。`unique_together` 表达不了
+    "无序对"，而**只在视图里查一遍是不够的** —— 同一个节点的两个标签页同时点
+    「申请」时，`select_for_update` 锁的是**已存在的行**，两边的行都还不存在，
+    于是两边都插入成功。所以唯一性落在下面这个列上：
+
+      * `pending_key` 在 `status='pending'` 时是 `"{申请人id}-{目标id}"`，
+        离开 pending（批准/驳回/撤回）即置 `NULL`；
+      * 列上有 `unique=True`，而 MySQL（与 SQLite/PostgreSQL）的唯一索引
+        **允许多个 NULL** —— 于是"同时只有一条 pending"由数据库保证，
+        而历史行（NULL）不受任何限制。
+
+    ⚠️ 写入/清除 `pending_key` **只允许经 `node_authorization_service`** ——
+       在别处手写会漏掉某条路径（比如新加一种终态时忘了置 NULL），
+       而漏掉的表现是"这一对节点再也申请不了"（旧 pending 的键一直占着）。
+
+    被拒/撤回后可以再次申请：新起一行，旧行保留作审计。
+    """
+
+    STATUS_CHOICES = [
+        ('pending', '待审批'),
+        ('approved', '已批准'),
+        ('rejected', '已驳回'),
+        ('cancelled', '已撤回'),
+    ]
+
+    requester = models.ForeignKey(
+        Node, on_delete=models.CASCADE, related_name='authorization_requests_out',
+        verbose_name="申请节点", help_text="发起申请的节点",
+    )
+    target = models.ForeignKey(
+        Node, on_delete=models.CASCADE, related_name='authorization_requests_in',
+        verbose_name="目标节点", help_text="希望与之建立会话的节点",
+    )
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending',
+                              verbose_name="状态")
+    reason = models.CharField(max_length=200, verbose_name="申请理由",
+                              help_text="节点侧填写的用途，展示给审批人")
+    decided_by = models.CharField(max_length=64, null=True, blank=True, verbose_name="审批人")
+    decided_at = models.DateTimeField(null=True, blank=True, verbose_name="审批时间")
+    decision_remark = models.CharField(max_length=500, null=True, blank=True, verbose_name="审批意见")
+    #: 批准/驳回的链上哈希。空串 = 存证未成功（链不可用等），**如实留空** ——
+    #: 与分发/更新/回收同一口径：不把"存证未成功"混成一句"成功"。
+    chain_tx = models.CharField(max_length=128, null=True, blank=True, verbose_name="链上存证哈希")
+    #: 只在 `status='pending'` 时有值（`"{申请人id}-{目标id}"`），其余状态为 NULL。
+    #: 见类 docstring「唯一性（含并发）」—— 这是"一对节点同时只有一条 pending"
+    #: 落在数据库上的表达；MySQL 唯一索引允许多个 NULL，历史行因此不受限。
+    pending_key = models.CharField(max_length=64, null=True, blank=True, unique=True,
+                                   verbose_name="未决去重键",
+                                   help_text="pending 时 = {申请人id}-{目标id}，其余状态为 NULL")
+
+    class Meta:
+        verbose_name = "节点授权申请"
+        verbose_name_plural = "节点授权申请"
+        db_table = f"{table_prefix}pqkds_node_authorization_requests"
+        ordering = ['-create_datetime']
+        indexes = [
+            models.Index(fields=['status', 'create_datetime']),
+            models.Index(fields=['requester', 'status']),
+            models.Index(fields=['target', 'status']),
+        ]
+
+    def __str__(self):
+        return f"{self.requester_id}→{self.target_id}({self.status})"
 
 
 class UserKeyEnvelope(CoreModel):

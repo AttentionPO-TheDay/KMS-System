@@ -38,7 +38,7 @@
 
           <el-alert
             v-else-if="!nodesLoading && !nodes.length"
-            title="你还没有被授权任何节点。请联系管理员在「节点鉴权」里为你授权后再分发。"
+            title="你还没有被授权任何节点。可以到「密钥分发 → 节点授权」挑选对端发起申请，管理员批准后即可分发。"
             type="warning"
             :closable="false"
             show-icon
@@ -563,7 +563,7 @@ function describeError(error) {
   const fallback = error?.message || String(error) || '未知错误'
   switch (error?.errorCode) {
     case 'NOT_AUTHORIZED':
-      return '当前账号没有向该节点分发的权限（或未关联节点）。请联系管理员在「节点鉴权」里授权。'
+      return '当前账号没有向该节点分发的权限（或未关联节点）。到「密钥分发 → 节点授权」发起申请，管理员批准后即可分发。'
     case 'KEY_NOT_FOUND':
       return '接收方的这一版密钥不存在 —— 它可能刚被更新或回收。列表已刷新，请重选一版。'
     case 'KEY_REVOKED':

@@ -11,7 +11,18 @@ from .views import (
     batch_verify_falcon_public_keys, kms_generate_key, kms_generate_record, kms_lifecycle_record
 )
 from . import chat_urls
-from .admin_node_authorization_views import admin_users, node_authorizations, revoke_node_authorization
+# ⚠️ 别名不是洁癖，是**必须的**：节点侧 `node_self_views` 里也有一个
+#    `node_authorization_requests`（节点看自己的申请），而本文件后面又 import 了它 ——
+#    两个同名名字被先后导入，**后者静默覆盖前者**，于是管理端那条路由指向了
+#    节点侧视图（现象：管理员调审批列表被告知"当前账号未关联任何节点"，
+#    而路由看起来完全正确）。下面两处都用带命名空间的前缀，杜绝这类覆盖。
+from .admin_node_authorization_views import (
+    admin_users,
+    decide_node_authorization_request as admin_decide_authorization_request,
+    node_authorization_requests as admin_authorization_requests,
+    node_authorizations,
+    revoke_node_authorization,
+)
 from .user_distribution_views import (
     distribute_to_user,
     distribution_batches,
@@ -21,6 +32,9 @@ from .user_distribution_views import (
 )
 # 阶段 2：节点自助（首次登录后的密钥初始化）。身份取自令牌自省，见该模块 docstring。
 from .node_self_views import (
+    node_authorization_request_cancel,
+    node_authorization_requests,
+    node_directory,
     node_peer_keys,
     node_self,
     node_self_distributions,
@@ -118,6 +132,17 @@ urlpatterns = [
     path('node-self/distributions/', node_self_distributions,
          name='node-self-distributions'),
 
+    # --- 任务书「节点多级授权」：名录 + 授权申请 ---
+    # 节点看到全网名录 → 申请与某节点建立会话 → 管理员审批 → 双向放行。
+    # 三条同样必须排在 router 之前（理由见本文件顶部说明）。
+    # ⚠️ `<int:request_id>` 约束成 int：`authorization-requests/` 本身无通配段，
+    #    两者不会互吃（与 envelopes 那对同一写法）。
+    path('node-self/directory/', node_directory, name='node-self-directory'),
+    path('node-self/authorization-requests/', node_authorization_requests,
+         name='node-self-authorization-requests'),
+    path('node-self/authorization-requests/<int:request_id>/cancel/',
+         node_authorization_request_cancel, name='node-self-authorization-request-cancel'),
+
     # --- §3 激活 / §5 登录（设备凭据）---
     # ⚠️ 这三条**必须**排在 router 之前，且必须排在上面那些
     #    `node-self/` 路由**之前或之列**都可以 —— 它们路径不同，互不吃掉。
@@ -145,6 +170,13 @@ urlpatterns = [
     path('admin/node-authorizations/', node_authorizations, name='admin-node-authorizations'),
     path('admin/node-authorizations/<int:pk>/revoke/', revoke_node_authorization,
          name='admin-node-authorization-revoke'),
+    # 任务书「节点多级授权」：审批节点发起的授权申请。
+    # ⚠️ `node-authorization-requests/` 与上面的 `node-authorizations/` **不是同一条**，
+    #    名字只差一个词，改路由时别串了（串了的现象是"申请列表"返回授权列表）。
+    path('admin/node-authorization-requests/', admin_authorization_requests,
+         name='admin-node-authorization-requests'),
+    path('admin/node-authorization-requests/<int:pk>/decide/',
+         admin_decide_authorization_request, name='admin-node-authorization-request-decide'),
 
     path('', include(router.urls)),
     path('kms/generate-record/', kms_generate_record, name='kms-generate-record'),

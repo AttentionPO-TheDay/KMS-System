@@ -72,6 +72,10 @@ public class ChainSyncEvent {
     public static final String TYPE_SESSION_ESTABLISHED = "SESSION_ESTABLISHED";
     /** KMS-014：会话关闭（终态）。 */
     public static final String TYPE_SESSION_CLOSED = "SESSION_CLOSED";
+    /** 任务书「节点多级授权」：授权申请被批准（双向放行）。 */
+    public static final String TYPE_AUTH_GRANTED = "AUTH_GRANTED";
+    /** 任务书「节点多级授权」：授权申请被驳回（未授予任何权限）。 */
+    public static final String TYPE_AUTH_REJECTED = "AUTH_REJECTED";
 
     /**
      * KMS-014：只留痕、不改状态的会话类事件集合。
@@ -83,6 +87,35 @@ public class ChainSyncEvent {
     public static final java.util.Set<String> SESSION_TRAIL_ONLY_TYPES =
         java.util.Collections.unmodifiableSet(new java.util.LinkedHashSet<>(java.util.Arrays.asList(
             TYPE_ENVELOPE_VERIFIED, TYPE_SESSION_ESTABLISHED, TYPE_SESSION_CLOSED)));
+
+    /**
+     * 「节点多级授权」的两个事件：也只留痕、不改状态。
+     *
+     * <p>与 {@link #SESSION_TRAIL_ONLY_TYPES} <b>分开命名</b>而不是塞进那个集合：
+     * 那个名字是"会话类"，把授权事件混进去会让注释说谎 —— 本仓库对
+     * 「名字与内容不符」是明确拒绝的（历史上有过文件名与内容不符的坑）。
+     * 消费端两处都判，见 {@code UpdatedelChainConsumer}。
+     *
+     * <h2>⚠️ keyId 位的边界（链上读者必读）</h2>
+     * 这两个事件**没有对应的密钥**：授权发生在两个节点之间，不涉及任何一把
+     * 长期密钥。链上契约的 {@code keyId} 是 uint256、必须给整数，所以这里装的是
+     * **授权申请单的整数主键**（{@code NodeAuthorizationRequest.pk}）。
+     *
+     * <p>由此推出三条约束：
+     * <ol>
+     *   <li>该整数与 {@code NodeLongTermKey.pk} / {@code keymanage.key_id}
+     *       <b>不是同一个 id 空间</b>，数值会重叠 —— 任何按 keyId 回查密钥表的
+     *       读者，必须<b>先按 eventType 分支</b>再解释 keyId；</li>
+     *   <li>这两个事件<b>不得</b>进入任何"按 keyId 反查受影响密钥/会话/池项"的
+     *       分析（泄漏分析、密钥健康度）—— 那会静默串到无关的密钥上；</li>
+     *   <li>单条事件只锚定"某张申请单被批准/驳回"这一个事实，<b>不含两个方向</b>。
+     *       双向效果由 DB 的两行授权 + 审批响应里的 {@code granted} 表达；
+     *       不接受"把两个方向编进 publicMaterialHash"这种扩展。</li>
+     * </ol>
+     */
+    public static final java.util.Set<String> AUTH_TRAIL_ONLY_TYPES =
+        java.util.Collections.unmodifiableSet(new java.util.LinkedHashSet<>(java.util.Arrays.asList(
+            TYPE_AUTH_GRANTED, TYPE_AUTH_REJECTED)));
 
     // ------------------------------------------------------------------
     // 历史值（只读兼容，不再产生）

@@ -62,3 +62,36 @@ export function grantNodeAuthorization(data) {
 export function revokeNodeAuthorization(id) {
   return http.post(`/admin/node-authorizations/${id}/revoke/`).then(unwrap)
 }
+
+// ---------------------------------------------------------------------------
+// 节点授权申请（任务书「节点多级授权」）
+// ---------------------------------------------------------------------------
+// 节点在「节点授权」页发起申请，管理员在这里审批。
+// ⚠️ 批准 = **真的写授权行**（默认双向各一行），不是改一个状态字 ——
+//    放行判据自始至终只有 `UserNodeAuthorization` 一处。
+
+/**
+ * 授权申请列表。默认只看待审批（审批人先看要动手的）。
+ *
+ * 每行带 `existingForward` / `existingBackward`（这对节点已有的授权行，含已撤销的）
+ * 与 `requesterUserMissing` / `targetUserMissing`（批准必然失败的前置条件）——
+ * 前者决定批准时会"新建"还是"重新激活"，后者让界面先把按钮禁掉而不是等报错。
+ */
+export function listAuthorizationRequests(params) {
+  return http.get('/admin/node-authorization-requests/', { params }).then(unwrap)
+}
+
+/**
+ * 批准 / 驳回一条授权申请。
+ *
+ * @param {number} id 申请单主键
+ * @param {{decision: 'approve'|'reject', remark?: string, bidirectional?: boolean}} payload
+ *   `bidirectional` 缺省 true（申请表达的是"两个节点互通"）；显式 false 才是单授。
+ *   驳回时 `remark` **必填** —— 节点侧看到的只有这句话。
+ *
+ * 回执里 `granted.created` / `granted.reactivated` 如实地分开说"这次改变了什么"，
+ * `chainHash` 为空表示存证未成功（同时带 `chainWarning`），两者不要混成一句成功。
+ */
+export function decideAuthorizationRequest(id, payload) {
+  return http.post(`/admin/node-authorization-requests/${id}/decide/`, payload).then(unwrap)
+}
