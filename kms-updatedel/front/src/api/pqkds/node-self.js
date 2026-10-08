@@ -1,4 +1,4 @@
-import http, { unwrap } from '@/api/pqkds/http'
+import http, { unwrap, pqkdsBaseURL } from '@/api/pqkds/http'
 
 /**
  * 节点自助接口（阶段 2）。对应后端 `pqkds/node_self_views.py`。
@@ -360,6 +360,49 @@ export function cancelNodeAuthorizationRequest(requestId) {
 //    下面三个恰恰是**用来产生令牌**的，所以**不带令牌**调用。
 //    `@/api/pqkds/http` 的请求拦截器会自动加 Authorization —— 这里没关系，
 //    服务端不读它（`node_auth_views` 里这三个视图没有 `require_kms_user`）。
+
+/**
+ * 校验一批节点**在服务端还在不在**（登录页校对本机缓存用）。
+ *
+ * 一台设备只应保留一个节点的登录信息，而本机记录与服务端事实会分叉：
+ * 管理员删了节点、库被重置、节点被重建 —— 浏览器里仍留着点进去必然失败的条目。
+ * 登录页在**拿到令牌之前**没有带鉴权的接口可用，所以这条免鉴权、只回存在性。
+ *
+ * ⚠️ **绝不抛错**：这是一个"顺手校对"的旁路。网络抖动、服务不可用、
+ *    返回体不符合预期，一律当作"无法判断"（返回 null），调用方据此**不做任何清理**
+ *    —— 宁可留着一条点不动、会在点上给出明确报错的条目，也不能因为一次探测失败
+ *    就把用户唯一那条能用的登录记录删掉。
+ *
+ * @param {string[]} nodeIds 业务编号
+ * @returns {Promise<Object<string, boolean>|null>} `{节点编号: 是否存在}`；无法判断时 null
+ */
+export async function probeNodesExist(nodeIds) {
+  const ids = (nodeIds || []).map((x) => String(x || '').trim()).filter(Boolean).slice(0, 50)
+  if (!ids.length) {
+    return {}
+  }
+  try {
+    const params = new URLSearchParams({ nodeIds: ids.join(',') })
+    // ⚠️ 用**裸 fetch** 而不是本模块的 axios 实例：它挂的响应拦截器会把
+    //    非 200 的 code 转成 reject，而这里要的是"能把三种情况分开"：
+    //    不是节点（false）／问不出来（null）。走拦截器会把两者都变成异常。
+    const res = await fetch(`${pqkdsBaseURL}/node-self/still-exists/?${params.toString()}`, {
+      headers: { Accept: 'application/json' }
+    })
+    if (!res.ok) {
+      return null
+    }
+    const body = await res.json()
+    const exists = body?.data?.exists
+    if (!exists || typeof exists !== 'object') {
+      // 形状不对 = 问不出来（也可能是老版本后端还没这条路由）→ 不清理。
+      return null
+    }
+    return exists
+  } catch {
+    return null
+  }
+}
 
 /**
  * 首次激活：节点名 + 一次性激活凭证 → 登记设备公钥 + 换发登录令牌。

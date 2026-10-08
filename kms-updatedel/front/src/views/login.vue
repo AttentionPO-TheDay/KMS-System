@@ -32,7 +32,7 @@
            这正是文档 §4 的设计（一个浏览器 ≠ 一个节点，而是一个可托管多身份的环境）。
       -->
       <template v-if="isNodeMode">
-        <div v-if="activatedNodes.length" class="activated-block">
+        <div v-if="hasActivated" class="activated-block">
           <div class="activated-title">已激活节点</div>
           <div class="activated-list">
             <button
@@ -54,6 +54,26 @@
               <span class="activated-action">{{ busyNode === id ? '登录中…' : '点击登录' }}</span>
             </button>
           </div>
+          <!--
+            这台设备已经有可免密登录的节点时，**默认把表单收起来**。
+
+            理由：节点侧登进来几乎总是"就登这一个节点"，而表单那两个框
+            （节点名 + 一次性凭证）看着像"每次都得填"，很容易让人以为
+            免密登录失效了、又一次次去敲凭证。收起来之后这一页的语义是
+            「点一下就进」，表单变成**按需展开**的次要路径。
+
+            ⚠️ 按钮只在"有已激活节点**且**表单当前是收起状态"时出现 ——
+               展开着还留一个开关，它就变成了"点了没反应"的装饰。
+          -->
+          <el-button
+            v-if="!showActivateForm"
+            class="switch-node-btn"
+            plain
+            :disabled="anyNodeBusy"
+            @click="openActivateForm"
+          >
+            登录其它节点
+          </el-button>
         </div>
         <div v-else class="activated-empty">
           本机还没有已激活的节点。用管理员给的激活凭证在下方完成首次激活。
@@ -72,8 +92,15 @@
         </el-input>
       </el-form-item>
 
-      <!-- 节点首次激活：节点名 + 一次性凭证，没有口令 -->
-      <template v-else>
+      <!-- 节点首次激活：节点名 + 一次性凭证，没有口令。
+           ⚠️ `nodeFormVisible`：已有可免密登录的节点时这张表单**默认收起**
+              （见上方「登录其它节点」按钮的说明）；下面那句提示同理。 -->
+      <template v-else-if="nodeFormVisible">
+        <div v-if="hasActivated" class="form-context">
+          新节点登录需用管理员签发的激活凭证；完成激活后自动切到它，
+          本机不再保留 <span class="mono">{{ activatedNodes.join('、') }}</span> 的登录信息。
+          <el-button link type="primary" size="small" @click="closeActivateForm">收起</el-button>
+        </div>
         <el-form-item prop="nodeId">
           <el-input
             v-model="loginForm.nodeId"
@@ -156,7 +183,7 @@
           <span v-else>登 录 中...</span>
         </el-button>
         <el-button
-          v-else
+          v-else-if="nodeFormVisible"
           :loading="loading"
           size="large"
           type="primary"
@@ -180,8 +207,9 @@ import { getCodeImg } from "@/api/login";
 import Cookies from "js-cookie";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { encrypt, decrypt } from "@/utils/jsencrypt";
-import { listActivatedNodes } from '@/utils/crypto/device-credential';
-import { clearOtherBindings, listBindings } from '@/utils/crypto/node-binding';
+import { listActivatedNodes, removeDeviceKey } from '@/utils/crypto/device-credential';
+import { clearOtherBindings, listBindings, removeBinding } from '@/utils/crypto/node-binding';
+import { probeNodesExist } from '@/api/pqkds/node-self';
 import useUserStore from '@/store/modules/user'
 
 const userStore = useUserStore()
@@ -225,6 +253,30 @@ const loginRules = {
  */
 const activatedNodes = ref([])
 /**
+ * 本机**确实还能登录**的节点（= `activatedNodes` 非空）。
+ * 它就是"默认展示免密登录、收起表单"的判据 —— 用一个具名 computed 而不是
+ * 到处写 `.length`，因为这条件将来若变（比如要求绑定文件也在），只改一处。
+ */
+const hasActivated = computed(() => activatedNodes.value.length > 0)
+/**
+ * 节点侧「新节点登录」表单是否展开。
+ *
+ * 默认收起（有已激活节点时）—— 见模板里「登录其它节点」按钮的说明。
+ * ⚠️ 每次切回「节点」页签都重置为 false：用户上次展开了表单、这次切过来
+ *    是因为想点免密登录，还留着一张开着的表单就把默认路径又盖住了。
+ */
+const showActivateForm = ref(false)
+/** 表单实际可见 = 没有可免密登录的节点（必须填）**或**用户主动展开了它。 */
+const nodeFormVisible = computed(() => !hasActivated.value || showActivateForm.value)
+
+function openActivateForm() {
+  showActivateForm.value = true
+}
+
+function closeActivateForm() {
+  showActivateForm.value = false
+}
+/**
  * 本机各节点的**绑定文件**，按节点编号索引（`node-binding.js`）。
  *
  * 登录成功后本机会写下绑定文件（节点名、设备指纹、首次/最近登录时间）。
@@ -266,6 +318,7 @@ async function refreshActivatedNodes() {
     return
   }
   activatedNodes.value = await listActivatedNodes()
+  await reconcileLocalNodes()
   // ⚠️ 只保留**本机确实还能登录**的那些节点的绑定：绑定文件可能比设备凭据
   //    活得久（本机凭据被单独清掉、或用户手工删过 deviceKeys 记录）。
   //    不过滤的话，"当前绑定"会指向一个列表里根本不存在、也点不进去的节点，
@@ -278,8 +331,49 @@ async function refreshActivatedNodes() {
   )
 }
 
+/**
+ * 用**服务端事实**校对本机的"已激活节点"列表，清掉服务端已经没有的。
+ *
+ * 为什么需要：数据库被重置 / 管理员删了节点之后，浏览器里仍留着那个节点的
+ * 设备凭据与绑定文件 —— 它出现在「已激活节点」里，点下去只会得到一句
+ * "节点不存在"，而用户看不出它已经作废，也删不掉（界面上没有删除入口）。
+ *
+ * ⚠️ 探测**失败时不清理**（`probeNodesExist` 返回 null）。这是刻意的：
+ *    网络抖动、后端还没升级到带这条路由的版本，都会让"存在性"无从判断 ——
+ *    此时若按"查不到就删"处理，会把用户**唯一那条能用的登录记录**删掉，
+ *    而那是不可逆的（私钥不可导出，删了就只剩重新激活一条路）。
+ *    宁可留着一条点不动的条目。
+ *
+ * ⚠️ 只清本机，**不动服务端**：服务端没这个节点是它的现状，不需要我们去"修正"。
+ */
+async function reconcileLocalNodes() {
+  const ids = activatedNodes.value
+  if (!ids.length) {
+    return
+  }
+  const exists = await probeNodesExist(ids)
+  if (!exists) {
+    return // 问不出来 → 什么都不做（见上）
+  }
+  const stale = ids.filter((id) => exists[id] === false)
+  if (!stale.length) {
+    return
+  }
+  // ⚠️ 逐个删，**不要**图省事调 `clearOtherBindings('')` —— 那个函数的语义是
+  //    "保留 keepNodeId、清掉其余全部"，传空串等于"全清"，会把**能用的那条**
+  //    也一起删掉（本机私钥不可导出，删了就只剩重新激活）。
+  for (const id of stale) {
+    await removeDeviceKey(id)
+    await removeBinding(id)
+  }
+  activatedNodes.value = await listActivatedNodes()
+  console.info(`[login] 已清理 ${stale.length} 个服务端已不存在的本地节点记录：${stale.join('、')}`)
+}
+
 watch(isNodeMode, (nodeMode) => {
   if (nodeMode) {
+    // 每次切到「节点」都回到"先看免密登录"的默认形态（见 showActivateForm 说明）。
+    showActivateForm.value = false
     refreshActivatedNodes()
   } else {
     activatedNodes.value = []
@@ -702,6 +796,29 @@ getCookie();
   font-size: 12px;
   line-height: 1.6;
   color: var(--kms-text-secondary);
+}
+
+/* 「登录其它节点」：有可免密登录的节点时才出现，占满宽度、弱化（plain），
+   让视线先落在上面的节点条目上。 */
+.switch-node-btn {
+  width: 100%;
+  margin-top: 4px;
+}
+
+/* 展开新节点表单时的上下文说明：说清"这一步会替换掉上面那个节点的登录信息"，
+   否则用户以为"多登一个"只是多一份，不会想到是**换**。 */
+.form-context {
+  margin-bottom: 14px;
+  padding: 8px 10px;
+  border-radius: var(--kms-radius-md, 8px);
+  background: var(--kms-surface-2, #fafafa);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--kms-text-secondary);
+}
+.form-context .mono {
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  color: var(--kms-text-primary);
 }
 
 .login-code {

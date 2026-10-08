@@ -252,6 +252,47 @@ def node_challenge(request):
 
 
 @csrf_exempt
+@require_http_methods(['GET'])
+def node_still_exists(request):
+    """批量问"这些节点还在不在"（登录页校对**本机缓存**用）。
+
+    查询参数：`?nodeIds=A,B,C`（业务编号，逗号分隔，上限 50）
+    返回：`{'exists': {'A': true, 'B': false}}`
+
+    <h2>为什么需要它</h2>
+    一台设备只应保留**一个**节点的登录信息（本机绑定文件 + 设备凭据），
+    而"本机记录"与"服务端事实"会分叉：管理员删了节点、整个库被重置、
+    节点被重建 —— 这时浏览器里仍留着一个点进去必然失败的条目，
+    而用户看不出它已经作废。
+
+    登录页在**拿到令牌之前**没有任何带鉴权的接口可用（这时它还没登录），
+    所以这条校对接口必须免鉴权。它**只回答存在性**，不回名字/状态/公钥/IP ——
+    需要的只是"还要不要留着这条本地记录"。
+
+    <h2>信息暴露的边界（如实记录，不粉饰）</h2>
+    本接口是一个**存在性 oracle**，与 `node_challenge` 已有的
+    "节点不存在或尚未激活"是同一量级。之所以可接受：
+      * 只对**已知编号**回答，不能枚举（不知道编号就问不出什么）；
+      * 不回任何可用信息（拿到 true 也没法登录 —— 登录要设备私钥签名）；
+      * 限流由网关承担，与其它免鉴权端点一致。
+    即便如此也**不扩围**：不要在这里加"节点列表"或任何字段。
+    """
+    raw = str(request.GET.get('nodeIds') or '')
+    wanted = [part.strip() for part in raw.split(',') if part.strip()]
+    if not wanted:
+        return _error('缺少 nodeIds')
+    if len(wanted) > 50:
+        # 上限不是性能考量（这条查询很便宜），是**防枚举**：一次问 50 个
+        # 与一个个问，成本相同；但没有上限就等于给了一个批量探测口。
+        return _error('一次最多校对 50 个节点', 400)
+
+    found = set(
+        Node.objects.filter(node_id__in=wanted).values_list('node_id', flat=True)
+    )
+    return _ok({'exists': {node_id: node_id in found for node_id in wanted}})
+
+
+@csrf_exempt
 @require_http_methods(['POST'])
 def node_login(request):
     """挑战-应答登录（文档 §5）。

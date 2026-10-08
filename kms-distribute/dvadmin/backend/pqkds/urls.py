@@ -55,7 +55,7 @@ from .node_session_views import (
 )
 # §3 激活 / §5 登录：设备凭据认证（节点**唯一的**登录方式，节点没有口令）。
 # ⚠️ 这两个端点刻意**不要求登录态** —— 它们就是用来产生令牌的。
-from .node_auth_views import node_activate, node_challenge, node_login
+from .node_auth_views import node_activate, node_challenge, node_login, node_still_exists
 # 阶段 6：长期密钥回收后连带失效预分配池项（内部通道，X-Internal-Token 鉴权）
 from .internal_pool_views import revoke_pool_by_key
 # 阶段 7 §8.7：安全监控总览
@@ -151,6 +151,9 @@ urlpatterns = [
     #    下面三条恰恰是用来产生登录态的，不能要求登录态。
     path('node-self/activate/', node_activate, name='node-self-activate'),
     path('node-self/challenge/', node_challenge, name='node-self-challenge'),
+    # 登录页校对**本机缓存**用：一台设备只保留一个节点的登录信息，而库里
+    # 那个节点可能已经被删/被重置 —— 这条免鉴权，只回答"还在不在"（见其 docstring）。
+    path('node-self/still-exists/', node_still_exists, name='node-self-still-exists'),
     path('node-self/login/', node_login, name='node-self-login'),
 
     # 阶段 6：内部通道（X-Internal-Token 鉴权，不对外暴露）。

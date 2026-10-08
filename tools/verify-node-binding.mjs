@@ -331,6 +331,16 @@ try {
   await rpc('Page.navigate', { url: `${ORIGIN}${BASE}/login` })
   await sleep(3500)
   await switchToNodeTab()
+  // ⚠️ 本机此刻已有可免密登录的节点 A，而登录页因此**默认收起**了激活表单
+  //    （2026-10-08 改：有已登录节点时先展示免密登录）。不点开这个按钮，
+  //    下面的 fillB 会往**不存在的输入框**里填值 → 一句"填入失败"，
+  //    看起来像"表单坏了"，其实是没展开。
+  const expandForm = await ev(`(() => {
+    const b=[...document.querySelectorAll('button')].find(x=>(x.innerText||'').trim()==='登录其它节点')
+    if(!b) return 'NO_BUTTON'; b.click(); return 'CLICKED'
+  })()`)
+  check('★ 有已激活节点时表单默认收起，点「登录其它节点」展开', expandForm === 'CLICKED', String(expandForm))
+  await sleep(800)
   const inputsB = `[...document.querySelectorAll('.login-form input:not([type=radio]):not([type=checkbox])')]`
   const fillB = `(() => { const set=${SET}; const ins=${inputsB}
     set(ins[0],${JSON.stringify(NODE_B)}); set(ins[1],${JSON.stringify(codeB)}); return true })()`
