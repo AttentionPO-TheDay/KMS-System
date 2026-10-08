@@ -131,20 +131,22 @@ try {
   await rpc('Runtime.enable'); await rpc('Page.enable'); await rpc('Network.enable')
   hookCaptcha()
 
-  // ===== 1. 建三个节点并各自登录取令牌 =====
-  console.log('\n== 1. 建节点 A/B/C 并激活 ==')
+  // ===== 1. 建四个节点并各自登录取令牌 =====
+  // ⚠️ 四个（不是三个）：D 是**批量批准**那一组需要的第二个待审批目标 ——
+  //    批量至少要有两条才谈得上"一次处置多条"（12b 组）。
+  console.log('\n== 1. 建节点 A/B/C/D 并激活 ==')
   adminToken = await login(ORIGIN, '/updatedel-api', 'admin', 'admin123')
   const lib = await import('../kms-updatedel/front/tools/lib/node-session.mjs')
-  for (const tag of ['A', 'B', 'C']) {
+  for (const tag of ['A', 'B', 'C', 'D']) {
     const created = await lib.createNode(adminToken, { prefix: `NAV${tag}`, domainId: DOMAIN })
     const act = await lib.activateNode(created.nodeId, created.activationCode)
     // `fingerprint` 是激活时算出的**设备公钥指纹** —— 后面登记四套公钥时要用它，
     // 少了它服务端会以 DEVICE_MISMATCH 拒（夹具的 activateNode 直接把它算好了）。
     sessions.push({ tag, nodeId: created.nodeId, token: act.token, fingerprint: act.fingerprint })
   }
-  const [A, B, C] = sessions
-  check('三个节点已建好并各自拿到令牌',
-    sessions.every((s) => Boolean(s.token)) && new Set(sessions.map((s) => s.nodeId)).size === 3,
+  const [A, B, C, D] = sessions
+  check('四个节点已建好并各自拿到令牌',
+    sessions.every((s) => Boolean(s.token)) && new Set(sessions.map((s) => s.nodeId)).size === 4,
     sessions.map((s) => s.nodeId).join(' / '))
 
   // ===== 2. 名录：可见 + 不泄漏 =====
@@ -409,6 +411,95 @@ try {
   check('★★ 两个并发申请都成功、指向**同一条**、库里只有 1 条 pending',
     bothOk && sameId && onlyOne,
     `codes=${race1.body?.code}/${race2.body?.code} ids=${race1.body?.data?.request?.id}/${race2.body?.data?.request?.id} pending=${onlyOne}`)
+
+  // ===== 12b. 批量提交 + 批量批准（任务书「选对应的节点列表提交权限确认请求」）=====
+  // 这一组钉住"多选一次提交"的语义，以及**批量不是一个事务**：
+  // 逐条独立、一条失败不回滚其余。
+  console.log('\n== 12b. 批量申请与批量批准 ==')
+  // 先把 A→C 的待审批撤掉（12 组留下的那条），让 B/C 都处于"可申请"。
+  const pendingNow = await api('/pqkds-api/pqkds/node-self/authorization-requests/', { token: A.token })
+  for (const row of (pendingNow.body?.data?.outgoing || [])) {
+    if (row.status === 'pending') {
+      await api(`/pqkds-api/pqkds/node-self/authorization-requests/${row.id}/cancel/`, {
+        method: 'POST', token: A.token
+      })
+    }
+  }
+  // A 与 B 已双向授权（前面批过）→ 批量里 B 应进 `ALREADY_GRANTED`，C 建新单。
+  const batchSub = await api('/pqkds-api/pqkds/node-self/authorization-requests/', {
+    method: 'POST', token: A.token,
+    body: { targetNodeIds: [B.nodeId, C.nodeId], reason: '批量用例' }
+  })
+  const batchCreated = batchSub.body?.data?.created || []
+  const batchSkipped = batchSub.body?.data?.skipped || []
+  const batchId = batchSub.body?.data?.batchId || ''
+  check('★★ 一次提交多个目标：新建的那条带同一个 batchId，已授权的那条进 skipped',
+    batchSub.body?.code === 200 && batchCreated.length === 1
+    && batchCreated[0]?.targetNodeId === C.nodeId
+    && batchCreated[0]?.batchId === batchId
+    && batchSkipped.length === 1 && batchSkipped[0]?.reason === 'ALREADY_GRANTED',
+    `created=${JSON.stringify(batchCreated.map((r) => r.targetNodeId))} batchId=${batchId} skipped=${JSON.stringify(batchSkipped)}`)
+
+  // 幂等：同一批再提交一次 → 不再新建（`ALREADY_PENDING`）。
+  const batchAgain = await api('/pqkds-api/pqkds/node-self/authorization-requests/', {
+    method: 'POST', token: A.token,
+    body: { targetNodeIds: [C.nodeId], reason: '重复提交' }
+  })
+  check('★ 重复的批量提交不建第二条（ALREADY_PENDING）',
+    (batchAgain.body?.data?.created || []).length === 0
+    && (batchAgain.body?.data?.skipped || [])[0]?.reason === 'ALREADY_PENDING'
+    && Number(sqlScalar(
+      `SELECT COUNT(*) FROM ${REQ} WHERE status='pending' AND requester_id=${nodePk(A.nodeId)} AND target_id=${nodePk(C.nodeId)};`)) === 1,
+    `skipped=${JSON.stringify(batchAgain.body?.data?.skipped)}`)
+
+  // 批量批准（另一对：再建一条 A→D 的申请，与 C 那条一起批）。
+  const batchSub2 = await api('/pqkds-api/pqkds/node-self/authorization-requests/', {
+    method: 'POST', token: A.token,
+    body: { targetNodeIds: [D.nodeId], reason: '批量批准用例' }
+  })
+  const dReqId = batchSub2.body?.data?.created?.[0]?.id
+  const cReqId = batchCreated[0]?.id
+  const batchDecide = await api('/pqkds-api/admin/node-authorization-requests/decide-batch/', {
+    method: 'POST', token: adminToken,
+    body: { ids: [cReqId, dReqId], decision: 'approve', remark: '批量验收' }
+  })
+  const decideResults = batchDecide.body?.data?.results || []
+  check('★★ 批量批准逐条回报（每条各自的状态与链上哈希）',
+    batchDecide.body?.code === 200
+    && decideResults.length === 2
+    && decideResults.every((r) => r.ok && r.status === 'approved')
+    && decideResults.some((r) => r.chainHash),
+    `decided=${batchDecide.body?.data?.decided} results=${JSON.stringify(decideResults.map((r) => `${r.id}:${r.status}`))}`)
+  // 批准后确实放行（判据仍是授权表）。
+  const afterBatch = await api(`/pqkds-api/pqkds/node-self/peers/${C.nodeId}/keys/?algorithm=KYBER`, { token: A.token })
+  check('★ 批量批准后 A 能取 C 的密钥（放行真的发生）',
+    afterBatch.body?.code === 200, `code=${afterBatch.body?.code}`)
+
+  // 部分批准：**只批一条**，另一条仍 pending（批量不是全或无）。
+  // 造两条新的待审批（A→C、A→D 都已在上面被批过，所以先用新的对：C→A、D→A）。
+  const partialSub = await api('/pqkds-api/pqkds/node-self/authorization-requests/', {
+    method: 'POST', token: C.token,
+    body: { targetNodeIds: [B.nodeId, D.nodeId], reason: '部分批准用例' }
+  })
+  const partialIds = (partialSub.body?.data?.created || []).map((r) => r.id)
+  const partialDecide = await api('/pqkds-api/admin/node-authorization-requests/decide-batch/', {
+    method: 'POST', token: adminToken,
+    body: { ids: [partialIds[0]], decision: 'approve', remark: '只批第一条' }
+  })
+  const stillPending = Number(sqlScalar(
+    `SELECT COUNT(*) FROM ${REQ} WHERE status='pending' AND requester_id=${nodePk(C.nodeId)};`))
+  check('★★ 批量**不是全或无**：只传一条时，另一条仍是待审批',
+    partialSub.body?.code === 200 && partialIds.length === 2
+    && partialDecide.body?.data?.decided === 1 && stillPending === 1,
+    `created=${partialIds.length} decided=${partialDecide.body?.data?.decided} 仍pending=${stillPending}`)
+
+  // 非管理员不能批量批准。
+  const batchForbidden = await api('/pqkds-api/admin/node-authorization-requests/decide-batch/', {
+    method: 'POST', token: A.token, body: { ids: [1], decision: 'approve' }
+  })
+  check('★ 节点令牌调批量批准被拒（403）',
+    batchForbidden.status === 403 || batchForbidden.body?.code === 403,
+    `status=${batchForbidden.status} code=${batchForbidden.body?.code}`)
 
   // ===== 13. 界面级 =====
   console.log('\n== 11. 界面级：菜单与两个页面 ==')

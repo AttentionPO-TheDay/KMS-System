@@ -658,6 +658,12 @@ class KeyDistributionLog(CoreModel):
         ('blockchain_store', '区块链存储'),
         ('key_update', '密钥更新'),
         ('key_revoke', '密钥撤销'),
+        # 任务书「预分配」：从池子里取用一条资源并建立会话。
+        # ⚠️ 这两个值此前**没有任何写入点**，是本次补上的：新流程（节点到节点、
+        #    节点侧生成 K）在这之前一条流水都不写，于是「分发记录」页恒空 ——
+        #    页面没错，是没人写它。
+        ('pool_consume', '预分配取用（建立会话）'),
+        ('pool_prealloc', '预分配上传'),
     ]
     falcon_keypair = models.ForeignKey(FalconKeyPair, on_delete=models.CASCADE, null=True, blank=True, verbose_name="Falcon密钥对", help_text="关联的Falcon密钥对")
     node = models.ForeignKey(Node, on_delete=models.CASCADE, verbose_name="相关节点", help_text="操作相关的节点")
@@ -962,7 +968,7 @@ class PreDistributedKey(CoreModel):
     )
     recipient_type = models.CharField(
         max_length=10, default='node', verbose_name="收件人类型",
-        help_text="node=节点间预分配；user=分发给用户本人",
+        help_text="pool=预分配池里的待取用资源；node=已取用/已交付给接收节点的信封；user=分发给用户本人",
     )
     recipient_user_id = models.BigIntegerField(
         null=True, blank=True, verbose_name="收件用户ID",
@@ -1152,6 +1158,17 @@ class NodeAuthorizationRequest(CoreModel):
     pending_key = models.CharField(max_length=64, null=True, blank=True, unique=True,
                                    verbose_name="未决去重键",
                                    help_text="pending 时 = {申请人id}-{目标id}，其余状态为 NULL")
+    #: 一次**批量提交**的组号（`authreq-<yyyyMMddHHmmss>-<8hex>`，由节点侧生成）。
+    #: NULL = 单目标申请（本列引入之前的历史行，以及仍走单目标路径的调用）。
+    #:
+    #: ⚠️ 组**只用于展示与批量操作**，**没有组级状态** —— 每条申请仍是独立一行、
+    #:    独立生命周期。理由：管理员部分批准是真实需求（10 个里有一个不该放行），
+    #:    而一旦引入"组已批准"，它就变成了第二个放行判据 ——
+    #:    正是本类 docstring 开头那段"第二套权限语义"的历史教训。
+    batch_id = models.CharField(max_length=64, null=True, blank=True, verbose_name="批量申请组号",
+                                help_text="一次多选提交共用一个组号；单目标申请为 NULL")
+    batch_seq = models.IntegerField(null=True, blank=True, verbose_name="组内序号",
+                                    help_text="仅用于按提交顺序展示，不参与任何判据")
 
     class Meta:
         verbose_name = "节点授权申请"

@@ -29,8 +29,58 @@
         <div class="pending-head">
           <span class="pending-title">待审批的授权申请</span>
           <el-tag size="small" type="warning">{{ pendingRequests.length }} 条待处理</el-tag>
+          <!--
+            勾选多条**一次处置**（任务书「管理端通过这个请求」的批量侧）。
+            ⚠️ 逐条独立：一条失败/已被别人处置**不影响**其余（服务端就是这么做的），
+               结果按条回显，不压成一句"批量成功"。
+          -->
+          <span class="pending-batch">
+            <el-input
+              v-model="batchRemark"
+              size="small"
+              placeholder="批量审批意见（驳回必填）"
+              style="width: 240px"
+            />
+            <el-button
+              type="primary"
+              size="small"
+              :loading="batchDeciding"
+              :disabled="!selectedPending.length"
+              @click="handleBatchDecide('approve')"
+            >
+              批量批准（{{ selectedPending.length }}）
+            </el-button>
+            <el-button
+              type="danger"
+              size="small"
+              plain
+              :loading="batchDeciding"
+              :disabled="!selectedPending.length"
+              @click="handleBatchDecide('reject')"
+            >
+              批量驳回
+            </el-button>
+          </span>
         </div>
-        <el-table :data="pendingRequests" size="small" v-loading="pendingLoading">
+        <el-alert
+          v-if="batchFeedback"
+          :type="batchFeedback.ok ? 'success' : 'warning'"
+          :closable="true"
+          show-icon
+          class="mb8"
+          @close="batchFeedback = null"
+        >
+          <template #title>{{ batchFeedback.title }}</template>
+          <div class="batch-detail">{{ batchFeedback.detail }}</div>
+        </el-alert>
+        <el-table
+          ref="pendingTable"
+          :data="pendingRequests"
+          size="small"
+          v-loading="pendingLoading"
+          @selection-change="(rows) => { selectedPending = rows }"
+        >
+          <el-table-column type="selection" width="42" :selectable="(row) => !row.requesterUserMissing && !row.targetUserMissing" />
           <el-table-column label="申请节点" min-width="160">
             <template #default="{ row }">
               <span class="mono">{{ row.requesterNodeCode }}</span>
@@ -42,6 +92,13 @@
             </template>
           </el-table-column>
           <el-table-column label="申请理由" min-width="200" prop="reason" show-overflow-tooltip />
+          <el-table-column label="批量组" width="120">
+            <template #default="{ row }">
+              <!-- 组号只用于展示"这几条是一次提交的"，**不是**判据 -->
+              <span v-if="row.batchId" class="mono muted">{{ shortBatch(row.batchId) }}</span>
+              <span v-else class="muted">—</span>
+            </template>
+          </el-table-column>
           <el-table-column label="提交时间" width="170">
             <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
           </el-table-column>
@@ -195,6 +252,7 @@ import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   decideAuthorizationRequest,
+  decideAuthorizationRequestsBatch,
   grantNodeAuthorization,
   listAdminUsers,
   listAuthorizationRequests,
@@ -217,6 +275,11 @@ const loading = ref(false)
  */
 const pendingRequests = ref([])
 const pendingLoading = ref(false)
+// ---- 批量处置（任务书「管理端通过这个请求」的批量侧）----
+const selectedPending = ref([])
+const batchRemark = ref('')
+const batchDeciding = ref(false)
+const batchFeedback = ref(null)
 
 const filter = reactive({ userId: null, status: null })
 
@@ -411,6 +474,70 @@ async function handleReject(row) {
   }
 }
 
+/** 只显示组号的短形（`authreq-20261008153012-4b7e1b0a` → 尾 8 位 + 时间）。 */
+function shortBatch(batchId) {
+  const text = String(batchId || '')
+  return text.length > 22 ? `…${text.slice(-13)}` : text
+}
+
+/**
+ * **勾选多条，一次处置**（任务书「管理端通过这个请求」的批量侧）。
+ *
+ * ⚠️ 结果**按条**回显：服务端是逐条独立处置的（一条失败/已被别人处置不影响其余），
+ *    压成一句"批量成功"会把"3 条里成功了 2 条"这种事抹掉 ——
+ *    而管理员下一步的动作（要不要再点一次）取决于这个差别。
+ * ⚠️ 驳回必须给理由（与逐条路径同一条规则，服务端也强制）。
+ */
+async function handleBatchDecide(decision) {
+  const rows = selectedPending.value
+  if (!rows.length) {
+    return
+  }
+  const remark = batchRemark.value.trim()
+  if (decision === 'reject' && !remark) {
+    ElMessage.warning('批量驳回必须填写审批意见（对方会看到）')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      decision === 'approve'
+        ? `将批准 ${rows.length} 条申请，每条都**双向**写入授权记录。`
+        : `将驳回 ${rows.length} 条申请（不授予任何权限）。`,
+      decision === 'approve' ? '批量批准' : '批量驳回',
+      { confirmButtonText: '确 定', cancelButtonText: '取 消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  batchDeciding.value = true
+  batchFeedback.value = null
+  try {
+    const data = await decideAuthorizationRequestsBatch({
+      ids: rows.map((r) => r.id), decision, remark
+    })
+    const results = data?.results || []
+    const failures = results.filter((r) => !r.ok)
+    const noChain = results.filter((r) => r.ok && !r.alreadyDecided && !r.chainHash)
+    batchFeedback.value = {
+      ok: !failures.length,
+      title: `已处置 ${data?.decided ?? 0} 条`
+        + (data?.skipped ? `，跳过 ${data.skipped} 条（此前已处置）` : '')
+        + (failures.length ? `，${failures.length} 条失败` : ''),
+      detail: [
+        ...failures.map((r) => `#${r.id}：${r.message || r.code || '失败'}`),
+        ...(noChain.length ? ['（部分条目链上存证未成功，授权本身已生效）'] : [])
+      ].join('；')
+    }
+    batchRemark.value = ''
+    selectedPending.value = []
+    await Promise.all([loadPendingRequests(), load()])
+  } catch (error) {
+    batchFeedback.value = { ok: false, title: '批量处置失败', detail: error?.message || '' }
+  } finally {
+    batchDeciding.value = false
+  }
+}
+
 onMounted(async () => {
   await Promise.all([loadUsers(), loadNodes()])
   await Promise.all([load(), loadPendingRequests()])
@@ -473,6 +600,19 @@ onMounted(async () => {
   align-items: center;
   gap: 10px;
   margin-bottom: 10px;
+}
+
+/* 批量处置那一组控件靠右；换行时也不挤压标题与计数 */
+.pending-batch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.batch-detail {
+  font-size: 12px;
+  line-height: 1.6;
 }
 .pending-title {
   font-weight: 600;

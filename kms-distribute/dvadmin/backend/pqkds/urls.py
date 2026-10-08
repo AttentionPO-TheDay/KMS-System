@@ -19,6 +19,7 @@ from . import chat_urls
 from .admin_node_authorization_views import (
     admin_users,
     decide_node_authorization_request as admin_decide_authorization_request,
+    decide_node_authorization_requests_batch as admin_decide_authorization_requests_batch,
     node_authorization_requests as admin_authorization_requests,
     node_authorizations,
     revoke_node_authorization,
@@ -36,6 +37,9 @@ from .node_self_views import (
     node_authorization_requests,
     node_directory,
     node_peer_keys,
+    node_pool_consume,
+    node_pool_preallocate,
+    node_pool_summary,
     node_self,
     node_self_distributions,
     node_self_init,
@@ -46,6 +50,7 @@ from .node_self_views import (
 # §10.10：节点自己的会话列表（服务端按外键隔离，见该函数的 docstring）
 from .node_session_views import (
     node_envelope_recover,
+    node_envelope_sign,
     node_envelope_verify,
     node_envelopes,
     node_session_close,
@@ -120,6 +125,13 @@ urlpatterns = [
          name='node-self-envelope-verify'),
     path('node-self/envelopes/<int:envelope_pk>/recover/', node_envelope_recover,
          name='node-self-envelope-recover'),
+    # ⚠️ **必须**与上面两条 `envelopes/<int:...>/` 紧挨着写，不能挪到文件的
+    #    别处去：本路由表里有一条 `node-self/<something>/` 的通配（`node_self`、
+    #    `node_self_keys` 那一族之前的写法），把这条放到它们后面会被整段吃掉
+    #    —— 现象是 Django 直接 404，而日志只说 "Not Found: /api/pqkds/node-self/<...>/"，
+    #    看不出是被哪一条匹配走的（实测过一次）。
+    path('node-self/envelopes/<int:envelope_pk>/sign/', node_envelope_sign,
+         name='node-self-envelope-sign'),
 
     # --- KMS-008：节点间分发的新请求契约（§16）---
     # `peers/<...>/keys/` 与 `distributions/` 都是**无通配段的固定前缀 +
@@ -143,6 +155,16 @@ urlpatterns = [
     path('node-self/authorization-requests/<int:request_id>/cancel/',
          node_authorization_request_cancel, name='node-self-authorization-request-cancel'),
 
+    # --- 任务书「预分配」：上传保护包 / 看余量 / 取用 / 补签名 ---
+    # 生成与封装在**节点侧**（计划 §2.1：服务端不接触 SM4 明文），服务端只
+    # 保存、调度、管理保护包。四条同样必须排在 router 之前。
+    # ⚠️ `envelopes/<int:pk>/sign/` 与既有的 `envelopes/<int:envelope_pk>/verify/`、
+    #    `.../recover/` 是**同一段通配路径上的兄弟**：三个转换器都约束成 int，
+    #    末段不同，互不吃掉。
+    path('node-self/pool/preallocate/', node_pool_preallocate,
+         name='node-self-pool-preallocate'),
+    path('node-self/pool/summary/', node_pool_summary, name='node-self-pool-summary'),
+    path('node-self/pool/consume/', node_pool_consume, name='node-self-pool-consume'),
     # --- §3 激活 / §5 登录（设备凭据）---
     # ⚠️ 这三条**必须**排在 router 之前，且必须排在上面那些
     #    `node-self/` 路由**之前或之列**都可以 —— 它们路径不同，互不吃掉。
@@ -180,6 +202,12 @@ urlpatterns = [
          name='admin-node-authorization-requests'),
     path('admin/node-authorization-requests/<int:pk>/decide/',
          admin_decide_authorization_request, name='admin-node-authorization-request-decide'),
+    # 勾选多条、一次处置（任务书「多选提交权限确认请求」的批量侧）。
+    # ⚠️ 必须排在 `<int:pk>/decide/` 之后**但仍在 router 之前**；路径里没有 pk，
+    #    与上面那条不冲突（`decide-batch` 不会被 `<int:pk>` 吃掉 —— 那个转换器只认数字）。
+    path('admin/node-authorization-requests/decide-batch/',
+         admin_decide_authorization_requests_batch,
+         name='admin-node-authorization-requests-decide-batch'),
 
     path('', include(router.urls)),
     path('kms/generate-record/', kms_generate_record, name='kms-generate-record'),

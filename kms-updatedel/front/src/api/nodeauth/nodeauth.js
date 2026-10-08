@@ -95,3 +95,20 @@ export function listAuthorizationRequests(params) {
 export function decideAuthorizationRequest(id, payload) {
   return http.post(`/admin/node-authorization-requests/${id}/decide/`, payload).then(unwrap)
 }
+
+/**
+ * **勾选多条、一次处置**（任务书「管理端通过这个请求」的批量侧）。
+ *
+ * @param {{ids: number[], decision: 'approve'|'reject', remark?: string}} payload
+ * @returns {Promise<{results: {id, ok, status, alreadyDecided, granted, chainHash, message}[],
+ *                    total, decided, skipped, failed}>}
+ *
+ * ⚠️ 这一批**不是一个事务**：服务端逐条独立处置，一条失败**不回滚**已批准的 ——
+ *    否则"10 条里有一条已被别人处置"会让另外 9 条一起作废。
+ *    所以页面必须**按条**回显结果，不能只报一句"批量成功"。
+ * ⚠️ 组号（`batchId`）只是展示用的分组，`ids` 可以来自一次多选提交、也可以是
+ *    管理员自己勾的任意几条 —— 服务端不读组号，更不存在"组已批准"这种判据。
+ */
+export function decideAuthorizationRequestsBatch(payload) {
+  return http.post('/admin/node-authorization-requests/decide-batch/', payload).then(unwrap)
+}

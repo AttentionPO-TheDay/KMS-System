@@ -47,6 +47,12 @@
 
           <el-form label-width="130px" @submit.prevent>
             <el-form-item label="接收节点">
+              <!--
+                数据源是**全网节点名录**（`/node-self/directory/`），不是只含已授权
+                节点的 `/user-nodes/`：节点要在这一步就能表达"我想和谁建会话"，
+                而那正是任务书「节点多级授权」的入口。未授权的项**可选**——
+                选中后本页会把按钮换成「提交授权申请」，见下方。
+              -->
               <el-select
                 v-model="form.receiverNodeCode"
                 filterable
@@ -57,10 +63,27 @@
                 <el-option
                   v-for="node in nodes"
                   :key="node.nodeCode"
-                  :label="`${node.nodeName}（${node.nodeCode}）`"
+                  :label="nodeOptionLabel(node)"
                   :value="node.nodeCode"
-                />
+                  :disabled="!node.canRequest"
+                >
+                  <span>{{ node.nodeName || node.name }}（{{ node.nodeCode }}）</span>
+                  <el-tag
+                    v-if="node.relationship && !node.relationship.granted"
+                    size="small"
+                    :type="node.relationship.outgoing === 'pending' || node.relationship.incoming === 'pending'
+                      ? 'warning' : 'info'"
+                    effect="plain"
+                    class="option-tag"
+                  >
+                    {{ relationshipLabel(node.relationship) }}
+                  </el-tag>
+                </el-option>
               </el-select>
+              <div v-if="selectedNode && !selectedNode.relationship?.granted" class="form-hint warn-text">
+                与 {{ selectedNode.nodeCode }} 还没有通信授权 —— 点下方按钮可<b>提交授权申请</b>，
+                管理员批准后即可分发（也可以在「节点授权」页一次勾选多个对端）。
+              </div>
             </el-form-item>
 
             <!--
@@ -98,7 +121,7 @@
                 />
               </el-select>
               <div class="form-hint">
-                只列**可用于新工作**的版本（标记为「可用」）。已被取代或已回收的版本不出现在这里 ——
+                只列<b>可用于新工作</b>的版本（标记为「可用」）。已被取代或已回收的版本不出现在这里 ——
                 能不能用由服务端判（`allowsNewWork`），页面不另写一套。
               </div>
             </el-form-item>
@@ -114,19 +137,125 @@
               </el-tag>
               <el-tag v-else size="small" type="danger" effect="plain">本机不可用</el-tag>
               <div class="form-hint">
-                信封用**本机这把 Falcon 私钥**签名。两个条件都要满足：服务端说这一版可用
-                （登记表），且**本机密钥库里有它的私钥** —— 换过设备或清过浏览器数据时，
+                信封用<b>本机这把 Falcon 私钥</b>签名。两个条件都要满足：服务端说这一版可用
+                （登记表），且<b>本机密钥库里有它的私钥</b> —— 换过设备或清过浏览器数据时，
                 前者成立而后者不成立，提交会被服务端拒（`SIGNATURE_REQUIRED`）。
               </div>
             </el-form-item>
 
             <el-form-item>
-              <el-button type="primary" :loading="submitting" :disabled="!canSubmit" @click="handleDistribute">
-                分发
+              <el-button
+                v-if="needsAuthorization"
+                type="warning"
+                :loading="requesting"
+                :disabled="!form.receiverNodeCode"
+                @click="openRequestDialog"
+              >
+                提交授权申请
               </el-button>
+              <template v-else>
+                <!--
+                  两条路**并存、由用户选**：池子里有备好的就直接取用（省一次生成），
+                  没有（或想现封）就走现场封装。页面明示用的是哪条 ——
+                  混成一句"分发"会让"这批到底走没走预分配"无从判断。
+                -->
+                <el-button
+                  v-if="poolAvailable"
+                  type="primary"
+                  :loading="submitting"
+                  :disabled="!falconReady"
+                  @click="handleDistributeFromPool"
+                >
+                  用预分配密钥发送（剩 {{ selectedPool.available }} 条）
+                </el-button>
+                <el-button
+                  :type="poolAvailable ? 'default' : 'primary'"
+                  :loading="submitting"
+                  :disabled="!canSubmit"
+                  @click="handleDistribute"
+                >
+                  {{ poolAvailable ? '现场封装并发送' : '分发' }}
+                </el-button>
+              </template>
               <el-button @click="loadNodes">刷新节点</el-button>
+              <el-button v-if="!needsAuthorization" @click="openRequestDialog">
+                申请多个节点
+              </el-button>
             </el-form-item>
           </el-form>
+
+          <el-alert
+            v-if="mapped && poolAvailable && selectedPool"
+            type="info"
+            :closable="false"
+            show-icon
+            class="mb16"
+          >
+            <template #title>
+              对端 {{ form.receiverNodeCode }} 有 {{ selectedPool.available }} 条可用预分配密钥
+            </template>
+            <div class="result-body">
+              最早一条将于 {{ formatTime(selectedPool.expiresAt) }} 到期。
+              「用预分配密钥发送」会取用其中一条（一次性，取后即标记已消费）。
+              这些资源在「密钥分发 → 预分配」页备下。
+            </div>
+          </el-alert>
+
+          <!--
+            批量授权申请（任务书「节点多级授权」）：**勾选多个节点 → 一次提交**。
+            与「节点授权」页共用同一个接口与同一套反馈（`submitAuthorizationRequests`）——
+            两个页面各写一份提交逻辑必然漂移，而漂移的表现是"一处能提交、另一处报错"。
+          -->
+          <el-dialog v-model="requestDialog" title="提交授权申请" width="620px">
+            <p class="dialog-hint">
+              勾选想要建立会话的节点（一次最多 {{ maxSelectable }} 个）。提交后由管理员审批，
+              批准后这些节点就会出现在「接收节点」下拉里，即可直接分发。
+            </p>
+            <el-checkbox-group v-model="requestTargets" class="target-list">
+              <el-checkbox
+                v-for="node in requestableNodes"
+                :key="node.nodeCode"
+                :label="node.nodeCode"
+                :disabled="node.relationship?.outgoing === 'pending' || node.relationship?.incoming === 'pending'"
+              >
+                {{ node.nodeName || node.name }}（{{ node.nodeCode }}）
+                <span class="target-state">{{ relationshipLabel(node.relationship) }}</span>
+              </el-checkbox>
+            </el-checkbox-group>
+            <el-form label-width="80px" class="mt8">
+              <el-form-item label="申请理由">
+                <el-input
+                  v-model="requestReason"
+                  type="textarea"
+                  :rows="2"
+                  maxlength="200"
+                  show-word-limit
+                  placeholder="审批人据此判断（必填）"
+                />
+              </el-form-item>
+            </el-form>
+            <el-alert
+              v-if="requestFeedback"
+              :type="requestFeedback.ok ? 'success' : 'warning'"
+              :closable="false"
+              show-icon
+              class="mt8"
+            >
+              <template #title>{{ requestFeedback.title }}</template>
+              <div v-if="requestFeedback.detail" class="result-body">{{ requestFeedback.detail }}</div>
+            </el-alert>
+            <template #footer>
+              <el-button @click="requestDialog = false">关 闭</el-button>
+              <el-button
+                type="primary"
+                :loading="requesting"
+                :disabled="!requestTargets.length || !requestReason.trim()"
+                @click="submitRequest"
+              >
+                提交申请（{{ requestTargets.length }}）
+              </el-button>
+            </template>
+          </el-dialog>
 
           <el-alert
             v-if="mapped && !nodeLoading && !falconReady"
@@ -149,7 +278,7 @@
               <p v-if="result.signatureVerified">
                 <b>服务端已验签通过</b>：信封用本机 Falcon 密钥
                 <code>{{ result.falconKeyId }} v{{ result.falconKeyVersion }}</code> 签名，
-                并由服务端按**同一版公钥**验证（载荷密钥哈希 <code>{{ result.localKeyHash }}</code>）。
+                并由服务端按<b>同一版公钥</b>验证（载荷密钥哈希 <code>{{ result.localKeyHash }}</code>）。
               </p>
               <p v-else class="muted">
                 ⚠️ 服务端未回执"已验签"，请把这条报给维护者（验过的请求才可能回这个字段）。
@@ -164,7 +293,7 @@
                 你可以在「会话管理」里提交持有证明（确认），等对方处理完之后双方确认一致即建立。
               </p>
               <p v-else-if="result.sessionId" class="warn">
-                ⚠️ 本机**没能**保存会话密钥副本（{{ result.keyStoreError }}）——
+                ⚠️ 本机<b>没能</b>保存会话密钥副本（{{ result.keyStoreError }}）——
                 分发本身已完成，但你这侧将无法提交确认。请把这条报给维护者。
               </p>
               <p v-else class="muted">本次没有建立节点到节点会话（没有对应的"待确认"）。</p>
@@ -238,12 +367,19 @@
  */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { getSelfNode, listSelfNodeKeys } from '@/api/pqkds/node-self'
+import {
+  consumePoolItem,
+  getPoolSummary,
+  getSelfNode,
+  listNodeDirectory,
+  listSelfNodeKeys,
+  requestNodeAuthorizations,
+  signPoolEnvelope
+} from '@/api/pqkds/node-self'
 import {
   createNodeDistribution,
   listDistributionBatches,
-  listPeerKeys,
-  listUserNodes
+  listPeerKeys
 } from '@/services/user-distribution-api'
 import { cryptoProvider } from '@/utils/crypto/browser-provider.js'
 import { buildKeyRef } from '@/utils/crypto/key-ref.js'
@@ -275,6 +411,15 @@ const batchesLoading = ref(false)
 const submitting = ref(false)
 const errorMessage = ref('')
 const result = ref(null)
+/** 名录一次能选/能提交的上限（服务端 `node_directory` 下发，页面不另写一个数）。 */
+const maxSelectable = ref(10)
+
+// ---- 批量授权申请（任务书「选对应的节点列表提交权限确认请求」）----
+const requestDialog = ref(false)
+const requestTargets = ref([])
+const requestReason = ref('')
+const requesting = ref(false)
+const requestFeedback = ref(null)
 
 const form = reactive({
   receiverNodeCode: '',
@@ -283,6 +428,48 @@ const form = reactive({
   recipientKeyRef: '',
   expiresInHours: 24
 })
+
+/** 当前选中的那个名录行（含 `relationship`），未选中时为 null。 */
+const selectedNode = computed(
+  () => nodes.value.find((n) => n.nodeCode === form.receiverNodeCode) || null
+)
+
+// ---- 预分配池余量（任务书 §20：实际建立会话时取用一条）----
+/** `{nodeCode: {available, expiresAt, nodeName}}` —— 分发页据此提示"可用 N 条"。 */
+const poolByPeer = ref({})
+const selectedPool = computed(
+  () => poolByPeer.value[form.receiverNodeCode] || null
+)
+const poolAvailable = computed(() => Boolean(
+  selectedPool.value && Number(selectedPool.value.available) > 0
+))
+
+/**
+ * 选中的对端**还没有授权**吗？
+ *
+ * ⚠️ 判据用服务端给的 `relationship.granted`（两个方向都 active），**不在前端
+ *    自己推** —— 它不是"申请单已批准"，而是"授权行真的存在"。这正是本系统的
+ *    唯一放行判据在界面上的投影；页面按别的字段判断会出现"界面说能发、提交 403"。
+ */
+const needsAuthorization = computed(
+  () => Boolean(selectedNode.value && !selectedNode.value.relationship?.granted)
+)
+
+/** 名录里**可申请**的行（停用的不给入口，与服务端 `canRequest` 一致）。 */
+const requestableNodes = computed(() => nodes.value.filter((n) => n.canRequest !== false))
+
+function relationshipLabel(relationship) {
+  if (!relationship) return '未知'
+  if (relationship.granted) return '已授权'
+  if (relationship.outgoing === 'pending') return '待审批（我发起）'
+  if (relationship.incoming === 'pending') return '待审批（对方发起）'
+  return '未授权'
+}
+
+function nodeOptionLabel(node) {
+  const label = `${node.nodeName || node.name}（${node.nodeCode}）`
+  return node.relationship?.granted ? label : `${label} · ${relationshipLabel(node.relationship)}`
+}
 
 /**
  * 可用于**新工作**的接收方密钥版本。
@@ -372,10 +559,20 @@ async function loadSelf() {
 async function loadNodes() {
   nodesLoading.value = true
   try {
-    const data = await listUserNodes()
-    nodes.value = data?.nodes || []
-    // 授权可能被管理员收回：把已不在列表里的选择清掉，
-    // 否则提交时只会拿到一个"越权"错误，而用户看不出是自己选了个失效节点。
+    // 名录（不是 `/user-nodes/`）：全节点 + 与我的授权关系。未授权的也能选，
+    // 选完按钮变成「提交授权申请」—— 这就是任务书那条流程在本页的落点。
+    const data = await listNodeDirectory()
+    nodes.value = (data?.nodes || []).map((node) => ({
+      nodeCode: node.nodeCode,
+      nodeName: node.name,
+      canRequest: node.canRequest !== false,
+      relationship: node.relationship || null
+    }))
+    if (data?.maxSelectable) {
+      maxSelectable.value = data.maxSelectable
+    }
+    // 节点可能已被删/改名：把已不在名录里的选择清掉，
+    // 否则提交时只会拿到一个"节点不存在"，而用户看不出是自己选了个失效节点。
     const allowed = new Set(nodes.value.map((n) => n.nodeCode))
     if (form.receiverNodeCode && !allowed.has(form.receiverNodeCode)) {
       form.receiverNodeCode = ''
@@ -383,9 +580,74 @@ async function loadNodes() {
       form.recipientKeyRef = ''
     }
   } catch (error) {
-    errorMessage.value = `加载节点失败：${describeError(error)}`
+    errorMessage.value = `加载节点名录失败：${describeError(error)}`
   } finally {
     nodesLoading.value = false
+  }
+}
+
+/** 打开批量申请对话框：把当前选中的对端预勾上（若它还没授权）。 */
+function openRequestDialog() {
+  requestFeedback.value = null
+  requestReason.value = ''
+  const selected = selectedNode.value
+  requestTargets.value = (selected && !selected.relationship?.granted) ? [selected.nodeCode] : []
+  requestDialog.value = true
+}
+
+/** 拉每个对端的可用预分配余量（失败不报错：它只是提示，不挡主流程）。 */
+async function loadPoolSummary() {
+  try {
+    const data = await getPoolSummary()
+    const map = {}
+    for (const item of (data?.items || [])) {
+      map[item.nodeCode] = item
+    }
+    poolByPeer.value = map
+  } catch {
+    poolByPeer.value = {}
+  }
+}
+
+/**
+ * 提交批量授权申请（与「节点授权」页 **同一个接口、同一套反馈**）。
+ *
+ * ⚠️ `skipped` 是**逐条**的，不能只报"提交成功"：三种原因里
+ *    `ALREADY_PENDING`/`ALREADY_GRANTED` 是幂等跳过（不是错误），
+ *    第三种是业务拒绝（停用/未绑账号）—— 把三者混成一句会让用户以为全成了。
+ */
+async function submitRequest() {
+  const targets = [...requestTargets.value]
+  if (!targets.length || !requestReason.value.trim()) {
+    return
+  }
+  requesting.value = true
+  requestFeedback.value = null
+  try {
+    const data = await requestNodeAuthorizations(targets, requestReason.value.trim())
+    const created = data?.created?.length || 0
+    const skipped = data?.skipped || []
+    const lines = skipped.map((s) => {
+      const label = s.reason === 'ALREADY_PENDING' ? '已有待审批的申请'
+        : s.reason === 'ALREADY_GRANTED' ? '两个方向都已授权'
+          : (s.message || s.reason)
+      return `${s.nodeName || s.nodeId}：${label}`
+    })
+    requestFeedback.value = {
+      ok: true,
+      title: `已提交 ${created} 条申请，等待管理员审批`
+        + (skipped.length ? `（${skipped.length} 条未新建）` : ''),
+      detail: lines.join('；')
+    }
+    ElMessage.success(`已提交 ${created} 条授权申请`)
+    requestTargets.value = []
+    // 刷新名录：被跳过的那些关系状态会变（例如变成"待审批"）。
+    await loadNodes()
+  } catch (error) {
+    requestFeedback.value = { ok: false, title: '提交失败', detail: describeError(error) }
+    ElMessage.error('提交授权申请失败')
+  } finally {
+    requesting.value = false
   }
 }
 
@@ -422,6 +684,8 @@ async function loadPeerKeys() {
 function handleReceiverChange() {
   errorMessage.value = ''
   result.value = null
+  // 换了对端就刷新余量提示（每个对端的池子各自独立）。
+  loadPoolSummary()
   return loadPeerKeys()
 }
 
@@ -440,6 +704,88 @@ async function loadBatches() {
     errorMessage.value = `加载批次失败：${describeError(error)}`
   } finally {
     batchesLoading.value = false
+  }
+}
+
+/**
+ * **用一条预分配资源**完成这次会话建立（任务书 §20 的"实际建立会话时一次性取用"）。
+ *
+ * 与现场封装那条路的差别（页面**明示**用哪条，不让用户猜）：
+ *   * 现场封装：本机此刻生成 K → 封装 → 签名 → 登记（本页原有路径）；
+ *   * 取预分配：池子里**早就备好**的那条，K 是当初预分配时生成的 ——
+ *     服务端把保护包改写成可签信封交回来，本机签名后补交即可。
+ *
+ * ⚠️ K 由服务端在取用时**原样回传**（`keyHex`）—— 它不是服务端生成的，
+ *    服务端只是从节点自己上传的保护包里把它取出来。所以本机要**存一份**：
+ *    会话确认（`HMAC(K, session_id)`）两边都要用，不存就永远确认不了。
+ */
+async function handleDistributeFromPool() {
+  if (!poolAvailable.value || submitting.value) {
+    return
+  }
+  submitting.value = true
+  errorMessage.value = ''
+  result.value = null
+  try {
+    const batchId = newBatchId()
+    const consumed = await consumePoolItem({
+      peerNodeCode: form.receiverNodeCode,
+      batchId,
+      protectionAlgorithm: 'KYBER',
+      falconKeyId: falconKey.value.keyId,
+      falconKeyVersion: falconKey.value.keyVersion
+    })
+    // ---- 本机签名（信封已盖好本次交付的元数据，签名覆盖它们）----
+    const signature = await signNodeEnvelope(cryptoProvider, falconKey.value.keyRef, consumed.envelope)
+    await signPoolEnvelope(consumed.envelopeId, {
+      signature,
+      falconKeyId: falconKey.value.keyId,
+      falconKeyVersion: falconKey.value.keyVersion
+    })
+    // ---- 把 K 存在本机（会话确认要用）----
+    let keyStored = false
+    let keyStoreError = ''
+    try {
+      await sealSessionSecret(consumed.sessionId, Uint8Array.from(
+        (String(consumed.keyHex || '').match(/../g) || []).map((h) => parseInt(h, 16))
+      ))
+      keyStored = true
+    } catch (error) {
+      keyStoreError = String(error?.message || error)
+    }
+    result.value = {
+      batchId,
+      recipientKeyId: consumed.recipientKeyId,
+      recipientKeyVersion: consumed.recipientKeyVersion,
+      protectionLabel: PROTECTION_LABELS.KYBER,
+      receiverNodeName: form.receiverNodeCode,
+      sessionCount: 1,
+      expiresAt: consumed.expiresAt,
+      chainHash: consumed.chainHash || '',
+      signatureVerified: true,
+      falconKeyId: falconKey.value.keyId,
+      falconKeyVersion: falconKey.value.keyVersion,
+      localKeyHash: consumed.keyHash,
+      sessionId: consumed.sessionId,
+      sessionStatus: 'initiated',
+      keyStored,
+      keyStoreError,
+      // 这条结果来自**预分配池**（页面据此把话说准：不是"现场封的"）。
+      fromPool: true,
+      poolRemaining: consumed.remaining
+    }
+    if (consumed.chainWarning) {
+      ElMessage.warning(consumed.chainWarning)
+    }
+    ElMessage.success(`已取用一条预分配资源（剩余 ${consumed.remaining} 条）`)
+    await loadBatches()
+    await loadPoolSummary()
+  } catch (error) {
+    errorMessage.value = describeError(error)
+    // 池子可能在别处被取空了/过期了：刷新余量让用户下一眼看到真实状态。
+    await loadPoolSummary()
+  } finally {
+    submitting.value = false
   }
 }
 
@@ -604,7 +950,7 @@ function formatTime(value) {
 }
 
 onMounted(async () => {
-  await Promise.all([loadSelf(), loadNodes(), loadBatches()])
+  await Promise.all([loadSelf(), loadNodes(), loadBatches(), loadPoolSummary()])
 })
 </script>
 
@@ -633,6 +979,37 @@ onMounted(async () => {
 
 .full-width {
   width: 100%;
+}
+
+/* 名录下拉里"未授权/待审批"那枚小标签：靠右、不挤压节点名 */
+.option-tag {
+  float: right;
+  margin-top: 6px;
+}
+
+.warn-text {
+  color: var(--el-color-warning);
+}
+
+.dialog-hint {
+  margin: 0 0 10px;
+  color: var(--kms-text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.target-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.target-state {
+  margin-left: 6px;
+  color: var(--kms-text-secondary);
+  font-size: 12px;
 }
 
 .form-hint {

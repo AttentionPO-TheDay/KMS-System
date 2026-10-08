@@ -270,7 +270,8 @@ def create_initiated_sessions(sender_node, node_map, succeeded_node_ids, batch_i
                               expires_at, *, dispatch: str = 'user_distribution',
                               session_type: str = 'kyber_kem',
                               recipient_key=None, falcon_key=None,
-                              recipient_key_versions=None) -> int:
+                              recipient_key_versions=None,
+                              session_id_suffix: str = '') -> int:
     """为本次分发成功送达的每个节点登记一条 **initiated** 会话（文档 §6.5）。
 
     发起方是**发送节点**。取不到发送节点时（管理员发起的旧流程）**不建会话**：
@@ -296,6 +297,11 @@ def create_initiated_sessions(sender_node, node_map, succeeded_node_ids, batch_i
     @param recipient_key_versions  备用形状（批量）—— 目前调用方都按"整批同一版"传
                         `recipient_key`，本参数留给"一批里各节点版本不同"的将来；
                         给了它就**不读** `recipient_key`。
+    @param session_id_suffix  会话号里插在批次号与 `-n{节点}` 之间的片段。
+                        **预分配取用**那条路径传 `f'-k{key_index}'` —— 一个池子里有
+                        N 条密钥、每条取用都建一条会话，都用 `{pool}-n{id}` 会从第 2 条
+                        起撞 `session_id` 的唯一约束。现场封装的分发保持默认空串，
+                        会话号形状与以前**逐字节相同**（既有验收脚本依赖它）。
     """
     if sender_node is None:
         logger.info('分发批次 %s：发起方未映射到节点，不建会话', batch_id)
@@ -307,7 +313,7 @@ def create_initiated_sessions(sender_node, node_map, succeeded_node_ids, batch_i
         if target is None or target.id == sender_node.id:
             # 自己和自己不建会话（节点向自己分发的场景没有意义）
             continue
-        session_id = f'{batch_id}-n{target.id}'
+        session_id = f'{batch_id}{session_id_suffix}-n{target.id}'
         # 每个接收节点取自己那一版（批量形状优先，否则整批同一版）。
         target_recipient_key = recipient_key
         if recipient_key_versions:

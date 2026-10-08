@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from django.db import IntegrityError, transaction
 from django.utils import timezone
@@ -123,8 +123,13 @@ def effective_authorizations(requester: Node, target: Node) -> Dict[str, bool]:
     return out
 
 
-def create_request(requester: Node, target: Node, reason: str) -> Dict[str, Any]:
+def create_request(requester: Node, target: Node, reason: str,
+                   batch_id: Optional[str] = None,
+                   batch_seq: Optional[int] = None) -> Dict[str, Any]:
     """节点发起申请。返回 `{'request': ..., 'created': bool, 'alreadyGranted': bool}`。
+
+    @param batch_id / batch_seq  一次**批量提交**的组号与序号（`create_requests` 用）。
+        组只用于展示与批量操作，**没有任何判据读它** —— 见 `create_requests` 的说明。
 
     ⚠️ 幂等：这一对已有 pending 时**返回那一行**，不新建（`created=False`）。
     ⚠️ 两个方向都已 active 时**不建申请**，回 `alreadyGranted=True` ——
@@ -187,6 +192,7 @@ def create_request(requester: Node, target: Node, reason: str) -> Dict[str, Any]
             row = NodeAuthorizationRequest.objects.create(
                 requester=requester, target=target, status='pending', reason=reason,
                 pending_key=_pending_key(requester, target),
+                batch_id=batch_id, batch_seq=batch_seq,
             )
             created = True
     except IntegrityError:
@@ -211,6 +217,64 @@ def create_request(requester: Node, target: Node, reason: str) -> Dict[str, Any]
 
     logger.info('节点授权申请：%s → %s（%s）', requester.node_id, target.node_id, reason[:40])
     return {'request': row, 'created': True, 'alreadyGranted': False}
+
+
+def new_batch_id() -> str:
+    """批量申请组号。形状与服务端其它批次号同类（`<前缀>-<yyyyMMddHHmmss>-<8位hex>`），便于人眼核对。
+
+    ⚠️ 由**服务端**生成（与分发批次号由页面生成不同）：这个组号不参与任何密码学
+       （不进签名、不进摘要），所以没有"签名要覆盖它就必须由调用方给"的约束；
+       放在服务端生成可以保证唯一性与形状，调用方也不必自己拼。
+    """
+    import os
+    from datetime import datetime as _dt
+    stamp = _dt.now().strftime('%Y%m%d%H%M%S')
+    return f'authreq-{stamp}-{os.urandom(4).hex()}'
+
+
+def create_requests(requester: Node, targets: List[Node], reason: str) -> Dict[str, Any]:
+    """**一次提交多个目标**（任务书「节点多级授权」的多选批量提交）。
+
+    逐目标调 `create_request` —— 全部校验（自我、停用、无登录账号、理由长度）、
+    无序去重（`pending_key` 唯一索引 + savepoint 兜底）**都是同一份实现**，
+    本函数只负责:分一个组号 + 汇总逐条结果。
+
+    @return `{batchId, created: [row, ...], skipped: [{node, reason}], total}`
+      * `created` —— 这次真正新建的申请（都带同一个 `batchId`）；
+      * `skipped` —— 没新建的，附**可区分的原因**：
+          - `ALREADY_PENDING`：这一对已有待审批的申请（幂等返回那一行，不重复建）；
+          - `ALREADY_GRANTED`：两个方向都已授权，申请没有意义。
+
+    ⚠️ **组只用于展示与批量操作，没有任何放行判据读它。** 每条申请仍是独立一行、
+       独立状态，管理员可以只批其中几条 —— 部分批准是真实需求。一旦引入"组已批准"
+       并让它参与放行，就是本模块开头写的第二套权限语义（仓库为此下线过一整套审批）。
+    ⚠️ 逐条**不做同一个大事务**：一条目标撞上并发/唯一键，不该让其它目标一起回滚
+       （那会把"一次提交 10 个"变成全或无，与逐条独立处置的语义矛盾）。
+    """
+    reason = str(reason or '').strip()
+    batch_id = new_batch_id()
+    created, skipped = [], []
+    for seq, target in enumerate(targets or []):
+        try:
+            result = create_request(requester, target, reason,
+                                    batch_id=batch_id, batch_seq=seq)
+        except AuthorizationRequestError as exc:
+            # 单条被业务规则拒（停用/无账号/与自己）——如实记下这一条，继续处理其余。
+            skipped.append({'node': target, 'reason': exc.code, 'message': exc.message})
+            continue
+        if result['created']:
+            created.append(result['request'])
+        elif result.get('alreadyGranted'):
+            skipped.append({'node': target, 'reason': 'ALREADY_GRANTED'})
+        else:
+            skipped.append({'node': target, 'reason': 'ALREADY_PENDING'})
+
+    logger.info(
+        '节点授权批量申请：%s 一次提交 %d 个目标，新建 %d 条，跳过 %d 条（组 %s）',
+        requester.node_id, len(targets or []), len(created), len(skipped), batch_id,
+    )
+    return {'batchId': batch_id, 'created': created, 'skipped': skipped,
+            'total': len(targets or [])}
 
 
 def cancel_request(requester: Node, request_id: int) -> NodeAuthorizationRequest:

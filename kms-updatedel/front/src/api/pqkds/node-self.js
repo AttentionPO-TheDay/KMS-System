@@ -344,6 +344,25 @@ export function requestNodeAuthorization(targetNodeId, reason) {
 }
 
 /**
+ * **一次提交多个目标**的授权申请（任务书「选对应的节点列表提交权限确认请求」）。
+ *
+ * 与单目标那条（`requestNodeAuthorization`）并存，不是替代：单个走原路径
+ * （既有页面与验收都依赖它的响应形状），多个走这条。
+ *
+ * @returns {Promise<{batchId, created: object[], skipped: {nodeId,nodeName,reason,message}[], total}>}
+ *   `skipped[].reason` 是**可编程**的三种：`ALREADY_PENDING`（这一对已有待审批）、
+ *   `ALREADY_GRANTED`（两个方向都已授权，申请没有意义）、或某个 `ERR_*` 业务码
+ *   （目标停用 / 未绑账号 / 就是自己）—— 后一种的 `message` 有原始文案。
+ *   逐条独立：一条失败不牵连其余（服务端就是这么做的）。
+ *
+ * ⚠️ 组号（`batchId`）只用于**展示与批量勾选**，不构成任何放行判据 ——
+ *    真正放行永远是管理员批准时写下的授权行。页面别按"组已批准"判断权限。
+ */
+export function requestNodeAuthorizations(targetNodeIds, reason) {
+  return http.post('/node-self/authorization-requests/', { targetNodeIds, reason }).then(unwrap)
+}
+
+/**
  * 撤回自己发起的待审批申请。
  *
  * ⚠️ 只能撤**自己发起**的、且仍在 `pending` 的：服务端按 requester 判定，
@@ -432,4 +451,63 @@ export function getNodeChallenge(nodeId) {
  */
 export function loginWithDevice(payload) {
   return http.post('/node-self/login/', payload).then(unwrap)
+}
+
+// ---------------------------------------------------------------------------
+// 预分配密钥池（任务书「预分配」）
+// ---------------------------------------------------------------------------
+// 规范：发送节点在实际通信之前**在本机**生成 SM4、用接收节点的 Kyber 公钥封成
+// 保护包、签名后上传；服务端只保存/调度/管理保护包（它既解不开、也不生成）。
+// 实际建立会话时取用一条 → 本机签名 → 补交 → 接收方验签解封。
+//
+// ⚠️ 这三个接口与 `/pqkds-api/key-pool/*`（`@/api/pqkds/distribution`）**不是一回事**：
+//    那一套是**管理面**（列表/统计/清理），走的是服务端生成的老路径；
+//    下面三条是**节点面**，身份取自令牌（传不了也不该传节点编号）。
+
+/**
+ * 上传一批保护包（本机已生成并封好）。
+ *
+ * @param {{targetNodeCode: string, poolId: string, expiresAt: string,
+ *          items: {envelope: object, signature: string, keyHash: string}[],
+ *          falconKeyId: string, falconKeyVersion: number}} payload
+ *   `poolId` 与 `expiresAt` 由**页面**生成 —— 它们进签名（`batch_id`/`expires_at`），
+ *   服务端事后赋值的话，节点签的就是一份"还不知道自己属于哪个池子"的信。
+ * @returns {Promise<{poolId, generated, requested, failed: {index,errorCode,message}[],
+ *                    serverMs, serverThroughputPerSec, avgServerLatencyMs, expiresAt}>}
+ *   `failed` 是**逐条**的（部分成功语义）：一条坏了不该让另外 199 条一起作废。
+ */
+export function preallocatePool(payload) {
+  return http.post('/node-self/pool/preallocate/', payload).then(unwrap)
+}
+
+/**
+ * 每个对端可用的预分配资源条数（分发页据此显示"可用预分配 N 条"）。
+ *
+ * 只回计数与最近过期时间，**不回密文**（密文本来就是封给接收方的）。
+ */
+export function getPoolSummary() {
+  return http.get('/node-self/pool/summary/').then(unwrap)
+}
+
+/**
+ * 取用一条预分配资源（标记消费 + 建 initiated 会话 + 归还待签信封）。
+ *
+ * @returns {Promise<{envelopeId, poolId, keyIndex, keyHash, wrappingAlgorithm,
+ *                    recipientKeyId, recipientKeyVersion, expiresAt, sessionId,
+ *                    remaining, envelope, chainHash, chainWarning}>}
+ *   `envelope` 是**已盖好本次交付元数据、待签名**的信封 —— 调用方在本地用它
+ *   （连同本机的 K）签名后调 `signPoolEnvelope` 补交，接收方那边才验得了签。
+ */
+export function consumePoolItem(payload) {
+  return http.post('/node-self/pool/consume/', payload).then(unwrap)
+}
+
+/**
+ * 补交签名（取用之后）。
+ *
+ * 幂等：同一份签名重复提交如实回 `alreadySigned: true`；**不同**的签名会被拒
+ * （409 / `ENVELOPE_TAMPERED`）—— 静默覆盖会让"信封在签名之后又被改过"不可见。
+ */
+export function signPoolEnvelope(envelopeId, payload) {
+  return http.post(`/node-self/envelopes/${encodeURIComponent(envelopeId)}/sign/`, payload).then(unwrap)
 }

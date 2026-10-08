@@ -31,7 +31,9 @@ import json
 import logging
 import re
 
+from django.db import IntegrityError, transaction
 from django.http import JsonResponse
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
@@ -59,6 +61,57 @@ logger = logging.getLogger(__name__)
 _STATUS_LABELS = dict(C.KEY_STATUS_CHOICES)
 
 _HEX_RE = re.compile(r'[0-9a-fA-F]+')
+
+#: 一次能选/能提交的节点数上限。名录的 `maxSelectable` 与授权申请的批量提交
+#: **共用这一处** —— 两处各写一个数必然漂移，而漂移的表现是"页面让你选 10 个、
+#: 提交却报超过上限"，看起来像服务端算错了。
+NODE_DIRECTORY_MAX_SELECT = 10
+
+#: 一次上传的预分配保护包条数上限。页面按它分批（每批 50）——
+#: 上限存在的理由是**单次请求的验签是逐条同步做的**：一批大到几千条会让
+#: 响应时间不可控，而分批上传是渐进填池的正常做法（补传成本很低）。
+MAX_POOL_ITEMS_PER_BATCH = 200
+
+#: 池号形状：`pool_<16~32 位十六进制>`。由**节点侧**生成（它进签名），
+#: 服务端只校验形状 —— 形状不对时早拒，别让一条永远进不了池子的批次白生成。
+_POOL_ID_RE = re.compile(r'^pool_[0-9a-fA-F]{16,32}$')
+
+#: 交付批次号形状：与 `envelope-signing.newBatchId` 逐字符同形
+#: （`dist-<yyyyMMddHHmmss>-<8位hex>`）。服务端只有这一个来源，前端不再自己拼。
+_DIST_BATCH_RE = re.compile(r'^dist-\d{14}-[0-9a-fA-F]{8}$')
+
+_SHA256_RE = re.compile(r'^[0-9a-f]{64}$')
+
+#: 预分配资源的有效期上界（小时）。任务书 §20 的示例是 24h；给到 720h（30 天）
+#: 与密钥池页的既有上限一致 —— 更长的"预分配"已经不是短期会话密钥了。
+_MAX_POOL_EXPIRY_HOURS = 720
+
+
+def _as_future_expiry(raw):
+    """把请求里的有效期解析成**未来**的时间点（`USE_TZ=False`，见 models）。
+
+    收绝对的 ISO 时间串（与 `distributions` 端点同一形状）：签名要覆盖它，
+    所以必须是调用方在签名前就定下的值。这里只校验"是个未来时间、且不超过上界"。
+    """
+    from datetime import datetime as _dt, timedelta as _td
+    if raw in (None, ''):
+        raise ValueError('缺少 expiresAt（有效期，ISO 时间串）')
+    text = str(raw).strip()
+    parsed = None
+    try:
+        parsed = _dt.fromisoformat(text.replace('Z', '+00:00'))
+    except ValueError:
+        raise ValueError(f'expiresAt 不是合法的 ISO 时间串：{text!r}')
+    if timezone.is_aware(parsed):
+        # 本仓 `USE_TZ=False`（见 models 顶部说明）：带时区的时间与 naive 的
+        # `timezone.now()` 相比会直接抛错，所以统一转成 naive 本地时间。
+        parsed = timezone.make_naive(parsed)
+    now = timezone.now()
+    if parsed <= now:
+        raise ValueError('expiresAt 必须是将来的时间（这是"短期"会话密钥资源的有效期）')
+    if parsed > now + _td(hours=_MAX_POOL_EXPIRY_HOURS):
+        raise ValueError(f'expiresAt 超出上界（最多 {_MAX_POOL_EXPIRY_HOURS} 小时）')
+    return parsed
 
 
 def _public_key_hex(record) -> str:
@@ -919,6 +972,10 @@ def _request_payload(row) -> dict:
         # 链上存证哈希：空 = 未成功（如实为空，不粉饰）
         'chainTx': row.chain_tx or '',
         'createdAt': _iso(row.create_datetime),
+        # 一次多选提交共用的组号；单目标申请为 None（页面据此把"一次提交的若干条"
+        # 折叠成一组，而**不**据此判断权限 —— 判据只有授权表）。
+        'batchId': row.batch_id or '',
+        'batchSeq': row.batch_seq,
     }
 
 
@@ -962,7 +1019,7 @@ def node_directory(request, identity):
         'nodes': items,
         'total': len(items),
         # 与 /user-nodes/ 同一口径：一次分发的接收方数量上限（页面据此提示）。
-        'maxSelectable': 10,
+        'maxSelectable': NODE_DIRECTORY_MAX_SELECT,
     })
 
 
@@ -975,8 +1032,16 @@ def node_authorization_requests(request, identity):
     GET 返回 `{outgoing: [...], incoming: [...]}`：
       * outgoing —— 我发起的（正在等审批 / 已出结果）；
       * incoming —— 别的节点想与我通信（我无权批，但看得见；决定权在管理员）。
+
+    POST 支持两种入参（**并存**，单个走的是本功能最早的那条路径：
+    `targetNodeId`，数组是"多选一次提交"扩展）：
+      * `{targetNodeId: "节点编号", reason}` —— 单个目标；
+      * `{targetNodeIds: [...], reason}` —— 一次提交多个目标（任务书「多选节点提交
+        权限确认请求」）。走 `create_requests`，逐条独立成行、共用一个 `batchId`。
     """
-    from .node_authorization_service import AuthorizationRequestError, create_request
+    from .node_authorization_service import (
+        AuthorizationRequestError, create_request, create_requests,
+    )
     from .models import NodeAuthorizationRequest
 
     node = _find_node(identity)
@@ -1000,15 +1065,63 @@ def node_authorization_requests(request, identity):
     if not isinstance(payload, dict):
         return _error('请求体应为 JSON 对象')
 
+    if _public_status(node) == 'DISABLED':
+        return _error('本节点已被停用，无法发起授权申请', 403)
+
+    # ---- 批量：targetNodeIds 数组 ----
+    raw_ids = payload.get('targetNodeIds') or payload.get('target_node_ids')
+    if raw_ids is not None:
+        if not isinstance(raw_ids, list) or not raw_ids:
+            return _error('targetNodeIds 应为非空数组（单个目标请用 targetNodeId）')
+        # 上限与名录的 `maxSelectable` 同口径：一次提交 10 个。
+        if len(raw_ids) > NODE_DIRECTORY_MAX_SELECT:
+            return _error(f'一次最多提交 {NODE_DIRECTORY_MAX_SELECT} 个目标（收到 {len(raw_ids)} 个）')
+
+        codes, targets, missing = [], [], []
+        for raw in raw_ids:
+            code = str(raw or '').strip()
+            if not code or code in codes:
+                continue
+            codes.append(code)
+            peer = Node.objects.filter(node_id=code).first()
+            if peer is None:
+                missing.append(code)
+            else:
+                targets.append(peer)
+        if missing:
+            return _error(f'节点不存在：{", ".join(missing)}', 404, error_code=C.ERR_KEY_NOT_FOUND)
+        if not targets:
+            return _error('没有有效的目标节点')
+
+        result = create_requests(node, targets, payload.get('reason') or '')
+        created, skipped = result['created'], result['skipped']
+        return _ok(
+            {
+                'batchId': result['batchId'],
+                'created': [_request_payload(r) for r in created],
+                'skipped': [
+                    {
+                        'nodeId': item['node'].node_id,
+                        'nodeName': item['node'].name,
+                        'reason': item['reason'],
+                        # 业务拒绝（停用/无账号）带原始文案；两种幂等跳过没有 message。
+                        'message': item.get('message', ''),
+                    }
+                    for item in skipped
+                ],
+                'total': result['total'],
+            },
+            msg=(f'已提交 {len(created)} 条申请，等待管理员审批'
+                 + (f'（{len(skipped)} 条未新建，见明细）' if skipped else '')),
+        )
+
+    # ---- 单个（原有路径，行为不变）----
     target_code = str(payload.get('targetNodeId') or payload.get('target_node_id') or '').strip()
     if not target_code:
         return _error('缺少 targetNodeId（目标节点的业务编号）')
     target = Node.objects.filter(node_id=target_code).first()
     if target is None:
         return _error(f'节点不存在：{target_code}', 404, error_code=C.ERR_KEY_NOT_FOUND)
-
-    if _public_status(node) == 'DISABLED':
-        return _error('本节点已被停用，无法发起授权申请', 403)
 
     try:
         result = create_request(node, target, payload.get('reason') or '')
@@ -1045,3 +1158,428 @@ def node_authorization_request_cancel(request, request_id, identity):
         return _error(exc.message, C.ERROR_HTTP_STATUS.get(exc.code, 400), error_code=exc.code)
 
     return _ok({'request': _request_payload(row)}, msg='申请已撤回')
+
+
+# ---------------------------------------------------------------------------
+# 预分配密钥池：上传保护包 / 看余量 / 取用一条（任务书「预分配」）
+# ---------------------------------------------------------------------------
+# 规范（用户定义）："发送节点在实际通信之前，提前生成一定数量的随机 SM4 会话密钥，
+# 利用接收节点的 Kyber 公钥形成加密保护包，并将保护包上传至 KMS 预分配密钥池。
+# 服务端仅负责保存、调度和管理保护包。实际建立会话时，发送节点取用一条预分配资源，
+# 使用 Falcon 私钥签名并发送…"
+#
+# ⚠️ 与 `KeyPoolViewSet`（管理端的 `/key-pool/*`）的分工：那套是**管理面**
+#    （列表、统计、清理、删除），它调的是服务端生成的那条老路径
+#    （`generate_kyber_pool` 自己生成 K），与计划 §2.1「服务端禁止接触 SM4 明文」
+#    相抵 —— 那正是本次把**生成与封装搬到节点侧**的原因。三个新端点在此，
+#    接收方与发送方都由令牌映射，传不了也不该传。
+
+@csrf_exempt
+@require_http_methods(['POST'])
+@require_kms_user
+def node_pool_preallocate(request, identity):
+    """**上传一批保护包**（节点侧生成并封好的预分配资源）。
+
+    请求体：
+    ```json
+    { "targetNodeCode": "KRB-XXXX",       // 接收方（业务编号）
+      "poolId": "pool_<32hex>",           // 由**节点侧**生成：它进签名，服务端不能事后赋值
+      "expiresAt": "2026-10-09T15:30:12+08:00",
+      "items": [ { "envelope": {...}, "signature": "<base64>", "keyHash": "<64hex>" }, ... ] }
+    ```
+
+    <h2>为什么 poolId 由节点侧生成</h2>
+    签名覆盖 `batch_id`（`NODE_ENVELOPE_SIGNED_FIELDS` 的第一项），而池项的
+    `batch_id` 就是池号 —— 服务端事后赋值的话，节点签的是一份"还不知道自己
+    属于哪个池子"的信（KMS-009 定下的同一口径，见 `envelope-signing.js`）。
+
+    <h2>逐条：先验签，再落库</h2>
+    每条保护包都必须用**请求指定的那一版发送方 Falcon 公钥**验得过
+    （`verify_node_envelope`，与现场分发**同一个函数**），验不过的**不落库**、
+    计入 `failed` 并附错误码。本端点是**部分成功**语义：一条坏了不该让
+    另外 199 条一起作废（池子是渐进填的，用户接着补即可）。
+
+    ⚠️ 每条独立落库（不是一个大事务）：`pool_id + key_index` 上有唯一约束，
+       重复上传同一批时撞约束的那几条如实计入 `failed`（`DUPLICATE_ITEM`），
+       而不是把整批回滚 —— 后者会让"补传第 51 条"变成不可能。
+    """
+    from .envelope_signature import verify_node_envelope
+    from .key_pool_service import KeyPoolService
+    from .node_key_registry import require_key_version, require_usable_key
+    from .models import PreDistributedKey
+
+    node = _find_node(identity)
+    if node is None:
+        return _error('当前账号未关联任何节点，无法上传预分配资源', 403,
+                      error_code=C.ERR_NOT_AUTHORIZED)
+
+    try:
+        payload = json.loads(request.body or b'{}')
+    except (ValueError, TypeError):
+        return _error('请求体不是合法 JSON')
+    if not isinstance(payload, dict):
+        return _error('请求体应为 JSON 对象')
+
+    target_code = str(payload.get('targetNodeCode') or payload.get('target_node_code') or '').strip()
+    if not target_code:
+        return _error('缺少 targetNodeCode（接收节点的业务编号）')
+    receiver = Node.objects.filter(node_id=target_code).first()
+    if receiver is None:
+        return _error(f'节点不存在：{target_code}', 404, error_code=C.ERR_KEY_NOT_FOUND)
+    if receiver.id == node.id:
+        return _error('不能给自己预分配密钥', error_code=C.ERR_INVALID_PARAMETER)
+
+    # 授权闸门：与 `/node-self/distributions/` **同一判据**（不另写一套）。
+    from .distribution_service import authorized_node_ids
+    if receiver.id not in set(authorized_node_ids(identity['userId'])):
+        return _error(
+            f'你没有与节点 {receiver.node_id} 的通信权限（预分配是分发的前置动作）',
+            403, error_code=C.ERR_NOT_AUTHORIZED,
+        )
+
+    pool_id = str(payload.get('poolId') or payload.get('pool_id') or '').strip()
+    if not pool_id or not _POOL_ID_RE.match(pool_id):
+        return _error(
+            'poolId 形状不对（期望 pool_<16~32 位十六进制>）—— 它进签名，必须由节点侧生成',
+            error_code=C.ERR_INVALID_PARAMETER,
+        )
+
+    try:
+        expires_at = _as_future_expiry(payload.get('expiresAt') if payload.get('expiresAt') is not None
+                                      else payload.get('expires_at'))
+    except ValueError as exc:
+        return _error(str(exc), error_code=C.ERR_INVALID_PARAMETER)
+
+    raw_items = payload.get('items')
+    if not isinstance(raw_items, list) or not raw_items:
+        return _error('items 应为非空数组（每条是一个保护包 + 签名）')
+    if len(raw_items) > MAX_POOL_ITEMS_PER_BATCH:
+        return _error(f'单次最多上传 {MAX_POOL_ITEMS_PER_BATCH} 条（收到 {len(raw_items)} 条）')
+
+    # 接收方**当前可用**的那一版 Kyber 长期密钥：封装用的就是它，引用必须如实落库
+    # （回收时的精确失效全靠这两列，见 KMS-007 D3）。
+    try:
+        recipient_key = require_usable_key(receiver, 'KYBER')
+    except C.ContractError as exc:
+        return _error(f'接收节点 {receiver.node_id} 的 Kyber 密钥不可用：{exc.message}',
+                      C.ERROR_HTTP_STATUS.get(exc.code, 400), error_code=exc.code)
+
+    # 发送方用于签名的 Falcon 版本：**每条显式携带**（与现场分发同一读法）。
+    falcon_key_id = payload.get('falconKeyId') if payload.get('falconKeyId') is not None \
+        else payload.get('falcon_key_id')
+    falcon_key_version = payload.get('falconKeyVersion') \
+        if payload.get('falconKeyVersion') is not None else payload.get('falcon_key_version')
+    signing_key = None
+    if falcon_key_id is not None and falcon_key_version is not None:
+        try:
+            signing_key = require_key_version(node, 'FALCON', falcon_key_id, falcon_key_version,
+                                             for_new_work=False)
+        except C.ContractError as exc:
+            return _error(f'发送方 Falcon 密钥不可用：{exc.message}',
+                          C.ERROR_HTTP_STATUS.get(exc.code, 400), error_code=exc.code)
+
+    import hashlib
+    import time as _time
+
+    generated, failed, latencies = 0, [], []
+    created_rows = []
+    for index, raw in enumerate(raw_items):
+        t0 = _time.perf_counter()
+        if not isinstance(raw, dict):
+            failed.append({'index': index, 'errorCode': 'INVALID_PARAMETER',
+                           'message': 'item 应为对象'})
+            continue
+        envelope = raw.get('envelope')
+        signature = str(raw.get('signature') or '').strip()
+        if not isinstance(envelope, dict) or not envelope:
+            failed.append({'index': index, 'errorCode': 'INVALID_PARAMETER',
+                           'message': '缺少 envelope'})
+            continue
+        if not signature:
+            failed.append({'index': index, 'errorCode': C.ERR_SIGNATURE_REQUIRED,
+                           'message': '缺少 signature（保护包必须由发送节点本地签名）'})
+            continue
+
+        # 信封里必须**自洽**：池号、收发节点、接收方密钥版本都要与本次请求一致 ——
+        # 不一致的信封意味着节点签的是另一批东西（或页面拼错了），此时落库会留下
+        # 一条"谁也对不上"的池项。
+        if str(envelope.get('batch_id') or '') != pool_id:
+            failed.append({'index': index, 'errorCode': C.ERR_ENVELOPE_TAMPERED,
+                           'message': '信封里的 batch_id 与本批 poolId 不一致'})
+            continue
+        if str(envelope.get('sender_node_id') or '') != node.node_id \
+                or str(envelope.get('receiver_node_id') or '') != receiver.node_id:
+            failed.append({'index': index, 'errorCode': C.ERR_ENVELOPE_TAMPERED,
+                           'message': '信封里的收发节点与本次请求不一致'})
+            continue
+        if envelope.get('recipient_key_id') not in (None, recipient_key.key_id) \
+                or (envelope.get('recipient_key_version') is not None
+                    and str(envelope.get('recipient_key_version')) != str(recipient_key.key_version)):
+            failed.append({'index': index, 'errorCode': C.ERR_KEY_VERSION_MISMATCH,
+                           'message': f'信封标注的接收方密钥版本不是当前可用的那一版'
+                                      f'（{recipient_key.key_id} v{recipient_key.key_version}）'})
+            continue
+
+        # 验签：用**请求指定的那一版**发送方 Falcon 公钥（缺版本时退回"当前可用"，
+        # 与 KMS-010 之前的现场分发同一条兜底 —— 但如实记一条日志，因为它弱于显式版本）。
+        verify_key = signing_key
+        if verify_key is None:
+            try:
+                verify_key = require_usable_key(node, 'FALCON')
+            except C.ContractError as exc:
+                failed.append({'index': index, 'errorCode': exc.code,
+                               'message': f'无法取到发送方 Falcon 公钥：{exc.message}'})
+                continue
+            logger.warning('预分配上传未携带 falconKeyId/Version，按当前可用版本 %s v%s 验签（弱于显式版本）',
+                           verify_key.key_id, verify_key.key_version)
+        if not verify_node_envelope(envelope, signature, verify_key.public_key):
+            failed.append({'index': index, 'errorCode': C.ERR_SIGNATURE_INVALID,
+                           'message': '签名校验失败（与发送节点的 Falcon 公钥不匹配）'})
+            continue
+
+        key_hash = str(raw.get('keyHash') or raw.get('key_hash')
+                       or envelope.get('key_hash') or '').strip().lower()
+        if not _SHA256_RE.match(key_hash or ''):
+            failed.append({'index': index, 'errorCode': 'INVALID_PARAMETER',
+                           'message': '缺少 keyHash（64 位十六进制）'})
+            continue
+
+        try:
+            with transaction.atomic():
+                PreDistributedKey.objects.create(
+                    pool_id=pool_id,
+                    key_index=index,
+                    # 方向：`node1` = 收件方（与现场分发的信封腿同一列语义），
+                    # 这样"谁取信封"的既有查询不用改。
+                    node1=receiver,
+                    node2=node,
+                    algorithm='kyber_kem',
+                    wrapping_algorithm='kyber_kem',
+                    payload_algorithm='sm4',
+                    # 保护包本体（密文 + 签名）。取用时才改写成可签的节点信封。
+                    encrypted_key_data=json.dumps(
+                        {**envelope, 'signature': signature},
+                        ensure_ascii=False, sort_keys=True,
+                    ),
+                    key_hash=key_hash,
+                    status=C.POOL_READY,
+                    # ⚠️ 池项是一种**独立的资源形态**，不是"已经交出去的信封"：
+                    # 取用（consume）的那一刻才翻成 'node'，接收方此时才看得见它。
+                    # 用默认值 'node' 会让**还没发**的资源立刻出现在接收方列表里。
+                    recipient_type='pool',
+                    expires_at=expires_at,
+                    generation_time_ms=round((_time.perf_counter() - t0) * 1000, 2),
+                    long_term_key_id=recipient_key.key_id,
+                    long_term_key_version=recipient_key.key_version,
+                )
+        except IntegrityError:
+            # `pool_id + key_index` 唯一：这是**重复上传**（页面重试、或两条并发的
+            # 同一批）。如实计入 failed，不把整批回滚 —— 见 docstring。
+            failed.append({'index': index, 'errorCode': 'DUPLICATE_ITEM',
+                           'message': '这一条已经在池子里（同一批同一序号）'})
+            continue
+        except Exception as exc:  # noqa: BLE001
+            logger.warning('预分配上传第 %d 条落库失败：%s', index, exc)
+            failed.append({'index': index, 'errorCode': 'INVALID_PARAMETER',
+                           'message': f'落库失败：{exc}'})
+            continue
+
+        generated += 1
+        created_rows.append(index)
+        latencies.append((_time.perf_counter() - t0) * 1000)
+
+    # 任务书 §20 的六项读数（服务端只度量**管理侧**这一步：验签 + 落库）。
+    # ⚠️ 节点侧的封装耗时不在服务端 —— 它由页面自己度量并显示（`localMs`），
+    #    两者不混成一句"吞吐"（服务端的 2933 条/秒与浏览器的 2600 条/秒
+    #    说的是两件不同的事，合成一个数就没人能解释了）。
+    total_sec = sum(latencies) / 1000.0
+    # 审计流水（「分发记录」页的数据源）。上传这一步在**取用之前**，
+    # 链上存证留给取用那条（`KEY_DISTRIBUTED` 的口径是"一把密钥被用于建立会话"，
+    # 上传时还没有会话 —— 为它上链会把"存证"变成一笔糊涂账）。
+    if generated:
+        _write_pool_log(node, 'pool_prealloc', {
+            'poolId': pool_id, 'targetNodeCode': receiver.node_id,
+            'generated': generated, 'requested': len(raw_items),
+            'algorithm': 'kyber_kem',
+            'recipientKeyId': recipient_key.key_id,
+            'recipientKeyVersion': recipient_key.key_version,
+        })
+    return _ok({
+        'poolId': pool_id,
+        'targetNodeCode': receiver.node_id,
+        'generated': generated,
+        'requested': len(raw_items),
+        'failed': failed,
+        'serverMs': round(total_sec * 1000, 1),
+        'serverThroughputPerSec': round(generated / total_sec, 1) if total_sec > 0 else 0,
+        'avgServerLatencyMs': round(sum(latencies) / len(latencies), 2) if latencies else 0,
+        'expiresAt': expires_at.isoformat(),
+        'recipientKeyId': recipient_key.key_id,
+        'recipientKeyVersion': recipient_key.key_version,
+    }, msg=(f'已上传 {generated}/{len(raw_items)} 条预分配资源'
+            + (f'，{len(failed)} 条未通过（见明细）' if failed else '')))
+
+
+def _write_pool_log(node, action: str, details: dict, tx_hash: str = '') -> None:
+    """给预分配两条动作写一条「分发记录」流水。
+
+    ⚠️ **失败不抛出**：流水是旁路审计，写不进去不该让一次已经成立的取用/上传
+       变成失败（与链上存证同一条口径 —— 见 `record_distribution_chain_event`
+       的 docstring：存证失败不改变分发结论）。
+    ⚠️ **明文的 K 绝不进这里**：`details` 只放标识与计数（池号、序号、算法、
+       `key_hash` 这类摘要），不放任何密钥材料 —— 这一列会出现在页面上。
+    """
+    from .models import KeyDistributionLog
+    try:
+        detail = dict(details)
+        if tx_hash:
+            detail['chainTx'] = tx_hash
+        KeyDistributionLog.objects.create(
+            node=node, action=action,
+            details=json.dumps(detail, ensure_ascii=False),
+            blockchain_tx_hash=tx_hash or '',
+            success=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning('预分配流水写入失败（不影响本次动作）：action=%s node=%s %s',
+                       action, node.node_id, exc)
+
+
+@csrf_exempt
+@require_http_methods(['GET'])
+@require_kms_user
+def node_pool_summary(request, identity):
+    """每个对端**可用**的预分配资源条数（分发页据此显示"可用预分配 N 条"）。
+
+    只回计数与最近过期时间，**不回密文** —— 密文本来就是封给接收方的，
+    对发送方没有用途；回出去只是扩大暴露面。
+    """
+    from .pool_consume_service import pool_summary
+
+    node = _find_node(identity)
+    if node is None:
+        return _error('当前账号未关联任何节点', 403)
+
+    from .distribution_service import authorized_node_ids
+    allowed = set(authorized_node_ids(identity['userId']))
+    peers = list(Node.objects.filter(pk__in=allowed).only('id', 'node_id', 'name'))
+    items = pool_summary(node, peers)
+    return _ok({'items': items, 'total': sum(i['available'] for i in items)})
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+@require_kms_user
+def node_pool_consume(request, identity):
+    """**取用一条预分配资源**：标记消费 + 归一成可签信封 + 建 initiated 会话。
+
+    请求体：
+    ```json
+    { "peerNodeCode": "KRB-XXXX",      // 对端（本次会话的另一方）
+      "batchId": "dist-20261008...",   // 本次交付的批次号（由节点侧生成，进签名）
+      "falconKeyId": "...", "falconKeyVersion": 1,   // 发送方用于签名的 Falcon 版本
+      "protectionAlgorithm": "KYBER" }
+    ```
+
+    响应里的 `envelope` 是**已盖好本次交付元数据、待签名**的信封 ——
+    发送方在本地用 Falcon 私钥签完，调 `/node-self/envelopes/<id>/sign/` 补交，
+    接收方那边才验得了签。**在这一步之前，接收方的信封列表里还没有它。**
+
+    ⚠️ `keyHash` 一并回给发送方：签名要覆盖它，而它是池项在上传时就定下的
+       （节点自己声称的那把 K 的摘要），所以发送方不需要重新算 —— 它本地
+       存着 K，可以核对（页面对账用）。
+    """
+    from .pool_consume_service import PoolConsumeError, consume_pool_item
+
+    node = _find_node(identity)
+    if node is None:
+        return _error('当前账号未关联任何节点，无法取用预分配资源', 403,
+                      error_code=C.ERR_NOT_AUTHORIZED)
+
+    try:
+        payload = json.loads(request.body or b'{}')
+    except (ValueError, TypeError):
+        return _error('请求体不是合法 JSON')
+    if not isinstance(payload, dict):
+        return _error('请求体应为 JSON 对象')
+
+    peer_code = str(payload.get('peerNodeCode') or payload.get('peer_node_code') or '').strip()
+    if not peer_code:
+        return _error('缺少 peerNodeCode（对端的业务编号）')
+    peer = Node.objects.filter(node_id=peer_code).first()
+    if peer is None:
+        return _error(f'节点不存在：{peer_code}', 404, error_code=C.ERR_KEY_NOT_FOUND)
+
+    # 授权闸门：与上传/分发**同一判据**。
+    from .distribution_service import authorized_node_ids
+    if peer.id not in set(authorized_node_ids(identity['userId'])):
+        return _error(
+            f'你没有与节点 {peer.node_id} 的通信权限', 403, error_code=C.ERR_NOT_AUTHORIZED,
+        )
+
+    batch_id = str(payload.get('batchId') if payload.get('batchId') is not None
+                   else payload.get('batch_id') or '').strip()
+    if not batch_id or not _DIST_BATCH_RE.match(batch_id):
+        return _error('缺少或非法的 batchId（形状 dist-<14位时间>-<8位hex>，由节点侧生成）',
+                      error_code=C.ERR_INVALID_PARAMETER)
+
+    try:
+        result = consume_pool_item(
+            sender=node, receiver=peer, batch_id=batch_id,
+            protection_algorithm=payload.get('protectionAlgorithm')
+            or payload.get('protection_algorithm') or 'KYBER',
+            falcon_key_id=payload.get('falconKeyId') if payload.get('falconKeyId') is not None
+            else payload.get('falcon_key_id'),
+            falcon_key_version=payload.get('falconKeyVersion')
+            if payload.get('falconKeyVersion') is not None
+            else payload.get('falcon_key_version'),
+        )
+    except PoolConsumeError as exc:
+        return _error(exc.message, exc.http_status, error_code=exc.code)
+
+    item = result['item']
+    # 链上存证 + 审计流水（都在**事务提交之后**）：与现场分发同一口径 ——
+    # `keyId` 位放**接收方那一版长期密钥**（保护 SM4 的正是它），`nodeId` 位放它的
+    # 归属节点（接收方）。⚠️ 别在这里改成发送方：链上"哪台机器的哪把钥匙"一旦
+    # 分叉，回读时就无法回答"谁受影响"（`record_distribution_chain_event` 的注释）。
+    chain_tx = ''
+    try:
+        from .distribution_service import record_distribution_chain_event
+        recipient_key = result['recipient_key']
+        chain_tx = record_distribution_chain_event(
+            'KEY_DISTRIBUTED', int(recipient_key.pk), int(recipient_key.key_version),
+            peer.node_id, item.key_hash, batch_id,
+        ) or ''
+    except Exception as exc:  # noqa: BLE001
+        # 存证失败**不影响取用结论**（信封已经交给发送方、会话已经建了）——
+        # 与 `record_distribution_chain_event` 的 docstring 同一条纪律。
+        logger.warning('预分配取用存证未成功（不影响本次取用）：%s#%s %s',
+                       item.pool_id, item.key_index, exc)
+    # 审计流水只记**摘要与标识**，绝不记 K（见 `_write_pool_log` 的说明）。
+    _write_pool_log(node, 'pool_consume', {
+        'poolId': item.pool_id, 'keyIndex': item.key_index,
+        'batchId': batch_id, 'sessionId': result['session_id'],
+        'peerNodeCode': peer.node_id, 'algorithm': 'kyber_kem',
+        'keyHash': item.key_hash,
+    }, tx_hash=chain_tx)
+    return _ok({
+        # 发送方本地要存 K（会话确认要用），所以它得知道这些：
+        'envelopeId': item.pk,
+        'poolId': item.pool_id,
+        'keyIndex': item.key_index,
+        # `keyHash` 是**发送方自己**在预分配时声称的那把 K 的摘要 ——
+        # 服务端自始至终没有解开保护包，只是把它原样回传，供发送方对本机 K 自查
+        # （服务端既不知道 K、也算不出 K）。
+        'keyHash': item.key_hash,
+        'wrappingAlgorithm': 'kyber_kem',
+        'recipientKeyId': getattr(result['recipient_key'], 'key_id', None),
+        'recipientKeyVersion': getattr(result['recipient_key'], 'key_version', None),
+        'expiresAt': item.expires_at.isoformat() if item.expires_at else None,
+        'sessionId': result['session_id'],
+        'remaining': result['remaining'],
+        'envelope': result['envelope'],
+        # 与分发同一条口径：拿不到时是空串并附 warning，**不混成一句成功**。
+        'chainHash': chain_tx,
+        'chainWarning': '' if chain_tx else '已取用，但链上存证未成功（链不可用或未配置）',
+    }, msg=f'已取用一条预分配资源（{item.pool_id}#{item.key_index}），'
+           f'请在本机签名后补交（会话 {result["session_id"]}）')

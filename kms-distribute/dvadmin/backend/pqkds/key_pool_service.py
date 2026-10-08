@@ -331,6 +331,16 @@ class KeyPoolService:
                     # 旧值 'unused' 仍留在库里（历史行），读取侧经
                     # POOL_STATUS_READY_VALUES 一并纳入，不会漏掉它们。
                     status='READY',
+                    # ⚠️ `recipient_type='pool'`：池项是一种**独立的资源形态**，
+                    # 不是"已经交出去的信封"。取用（consume）的那一刻才翻成
+                    # `'node'`，接收方的 `/node-self/envelopes/` 才开始看得见它。
+                    #
+                    # 不写这一列的后果（本列引入前就是这个 bug）：默认值 `'node'`
+                    # 让**未取用**的池项立刻出现在接收方的信封列表里 —— 也就是
+                    # "还没发就已经收到"，而页面看不出来（它只是多了一条）。
+                    # 同时它也会出现在**发送方**的列表里，而发送方根本解不开
+                    # （那是封给接收方的），点验签只会得到一个签名缺失的报错。
+                    recipient_type='pool',
                     expires_at=expires_at,
                     generation_time_ms=latency_ms,
                     # KMS-007 D3：记下"这一项是用哪把长期密钥封的"。
@@ -465,35 +475,43 @@ class KeyPoolService:
         # ---- 整个临界区在一个事务里（见 docstring 断口 2）----
         # `MAX_PROBE`：同一次消费内最多探测的候选条数。池子被大规模污染时
         # 不做无界扫描 —— 与 `skip_locked` 的组合意味着探测本身也不等待。
+        #
+        # ⚠️ **候选用无锁读选，锁定只发生在那一行上**（KMS-013 之后的实测修正）。
+        #    曾经写成 `q.order_by('key_index').select_for_update(skip_locked=True)[:n]`
+        #    一把抓一批，理由是不想锁太多行 —— 而它**恰好锁住了能锁的全部**：
+        #    InnoDB 为了排序会先把候选行读出来，**读到的行都被加上锁**，
+        #    然后才把结果截到你给的上界。于是池子小于上界时，第一个并发请求
+        #    把整个池子点着，第二个请求扫到的全是已锁行、`skip_locked` 全部跳过 ——
+        #    它看到的是"一条可用的都没有"，而池子里明明还有 19 条。
+        #    现象是"并发取两条，一条 200、一条 409（该节点对仍有可用条目）"，
+        #    实测三次全中。拆成"无锁挑候选 + 逐行锁"之后，锁的粒度才与
+        #    "取用一条"这件事对齐。
         MAX_PROBE = 64
         with transaction.atomic():
-            candidates = list(
-                q.order_by('key_index').select_for_update(skip_locked=skip_locked)[:MAX_PROBE]
-            )
-            if not candidates:
-                # 区分"池子空了"与"正被其它请求取用"：两者的处置不同
-                # （补货 vs 稍后重试）。skip_locked 下拿不到行锁的那一眼
-                # 与真没有行的表现相同，这里用一次无锁计数把话说清楚 ——
-                # 计数会瞬时过时，所以措辞是"可能"。
-                contended = PreDistributedKey.objects.filter(
-                    status__in=KeyPoolService.POOL_STATUS_READY_VALUES, expires_at__gt=now,
-                ).filter(
-                    models.Q(node1__node_id=node1_id, node2__node_id=node2_id) |
-                    models.Q(node1__node_id=node2_id, node2__node_id=node1_id)
-                ).exists()
-                hint = '（该节点对仍有可用条目，但正被其它请求同时取用）' if contended else ''
-                return {
-                    'success': False,
-                    'code': C.ERR_POOL_ITEM_UNAVAILABLE,
-                    'message': f'节点对 {node1_id} ↔ {node2_id} 没有可用的预分配密钥{hint}',
-                }
+            # ---- 候选：无锁读选出 pk，再**逐条**锁定并判定（见下）----
+            # ⚠️ 选出 pk 用的是普通读（不加锁），锁定只发生在一个 pk 上。
+            #    早先的写法是把候选**全部**锁下来再逐条判 —— 那等于一次取用
+            #    把整个池子点着（实测：并发两条时第二条探到的 18 条全是
+            #    `contested=18`，它看到的是"没有可用"），而池子里还有货。
+            #    判据与锁必须**同步推进**：锁一条、判一条，够用就停。
+            candidate_pks = list(q.order_by('key_index').values_list('pk', flat=True)[:MAX_PROBE])
 
             from .models import NodeLongTermKey
             key = None
             skipped = []
             first_dead = None
             first_dead_reason = None
-            for candidate in candidates:
+            contested = 0
+            for pk in candidate_pks:
+                locked = list(
+                    q.filter(pk=pk).select_for_update(skip_locked=skip_locked)[:1]
+                )
+                if not locked:
+                    # 这一行正被别的事务锁着（或已被它改成 CONSUMED）——
+                    # `skip_locked` 下两者都表现为"拿不到"。跳过它继续挑下一条。
+                    contested += 1
+                    continue
+                candidate = locked[0]
                 # 状态机守卫：消费只允许从 READY 出发（旧拼写归一后判定）。
                 # 走到的行已经是 READY（WHERE 只放行它），这里防的是"将来有人
                 # 把 WHERE 放宽"—— 表在 `api_contract.POOL_TRANSITIONS`。
@@ -574,6 +592,19 @@ class KeyPoolService:
                 break
 
             if key is None:
+                # 一条活件都没有。三种原因**分开说**（处置不同）：
+                #   * 有死件 → 按第一条死件的错误码（KEY_REVOKED / ALGORITHM_NOT_ALLOWED）
+                #   * `contested>0` → 并发：这一眼拿不到锁，**重试**即可
+                #   * 都没有 → 池子真空了（补货）
+                if first_dead is None and contested and not skipped:
+                    return {
+                        'success': False,
+                        'code': C.ERR_POOL_ITEM_UNAVAILABLE,
+                        'message': (
+                            f'节点对 {node1_id} ↔ {node2_id} 的可用条目正被其它请求'
+                            f'取用（本次 {contested} 条未拿到锁），请稍后重试'
+                        ),
+                    }
                 # 探测完没有活件：按**第一条死件的错误码**拒 —— 两条路径的
                 # 处置不同（`KEY_REVOKED` → 重新预分配；`ALGORITHM_NOT_ALLOWED`
                 # → 这一批是历史错误算法，不该再被消费，重试也没用）。
@@ -612,7 +643,13 @@ class KeyPoolService:
             key.used_at = now
             if session:
                 key.used_by_session = session
-            key.save(update_fields=['status', 'used_at', 'used_by_session'])
+            # 取用即交付：池项在进入池子时是与**这两种信封都不同**的资源
+            # （`recipient_type='pool'`），取用的那一刻才成为"交给接收方的信封"
+            # —— 见 `generate_kyber_pool` 那段说明。不改的话，接收方的
+            # `/node-self/envelopes/` 恒看不见它（那个查询按 `recipient_type='node'` 过滤），
+            # 表现是"发送方说发了、接收方说没有"。
+            key.recipient_type = 'node'
+            key.save(update_fields=['status', 'used_at', 'used_by_session', 'recipient_type'])
             consumed = {
                 'key_id': key.id,
                 'pool_id': key.pool_id,

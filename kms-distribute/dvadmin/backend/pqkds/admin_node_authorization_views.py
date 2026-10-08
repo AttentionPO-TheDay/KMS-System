@@ -293,6 +293,9 @@ def _request_admin_payload(row: NodeAuthorizationRequest) -> dict:
         'decidedAt': row.decided_at.isoformat() if row.decided_at else None,
         'decisionRemark': row.decision_remark or '',
         'chainTx': row.chain_tx or '',
+        # 一次多选提交的组号（同上：**只用于展示与勾选**，页面按它把若干条折叠成一组）。
+        'batchId': row.batch_id or '',
+        'batchSeq': row.batch_seq,
         # 批准必然失败的前置条件 —— 摆在列表上，别让管理员点完才知道。
         'requesterUserMissing': not row.requester.sys_user_id,
         'targetUserMissing': not row.target.sys_user_id,
@@ -416,4 +419,118 @@ def decide_node_authorization_request(request, pk):
         msg=('已批准：' + ('、'.join(result['granted']['created'] + result['granted']['reactivated'])
                            or '授权此前已存在'))
         if decision == 'approve' else '已驳回（未授予任何权限）',
+    )
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+@require_admin
+def decide_node_authorization_requests_batch(request):
+    """**勾选多条，一次批准/驳回**（任务书「节点多级授权」的批量侧）。
+
+    请求体：`{"ids": [1,2,3], "decision": "approve"|"reject", "remark": "..."}`
+
+    <h2>为什么这一批**不是一个事务**</h2>
+    逐条走 `decide_request`（各自一个事务、各自写授权行、各自上链），
+    一条失败**不回滚**已经批准的 —— 否则"10 条里有一条已被别人处置"
+    会让另外 9 条一起作废，而管理员看到的是"整批失败"。响应逐条如实回报
+    （`results: [{id, ok, status, granted, chainHash, message}]`），
+    页面按条列出，**不把逐条结果压成一句"批量成功"**。
+
+    <h2>组只用于展示</h2>
+    请求里的 `ids` 可以来自一次批量提交（同一个 `batchId`），也可以是管理员
+    自己勾的任意几条 —— 本端点**不读** `batch_id`，更不引入"组已批准"这类
+    组级状态（那是第二套权限语义，见 `models.NodeAuthorizationRequest` 的说明）。
+
+    上限 50 条/次：一次点太多会让前端的逐条回显失去意义，也让单次请求的
+    上链调用变成一串串行等待。
+    """
+    from . import api_contract as C
+    from .node_authorization_service import (
+        AuthorizationRequestError, decide_request as decide_one,
+    )
+
+    try:
+        payload = json.loads(request.body or b'{}')
+    except (ValueError, TypeError):
+        return _error('请求体不是合法 JSON')
+    if not isinstance(payload, dict):
+        return _error('请求体应为 JSON 对象')
+
+    raw_ids = payload.get('ids')
+    if not isinstance(raw_ids, list) or not raw_ids:
+        return _error('缺少 ids（要处置的申请主键数组）')
+    ids = []
+    for raw in raw_ids:
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            return _error(f'ids 里有非整数：{raw!r}')
+        if value not in ids:
+            ids.append(value)
+    if len(ids) > 50:
+        return _error(f'一次最多处置 50 条（收到 {len(ids)} 条）')
+
+    decision = str(payload.get('decision') or '').strip().lower()
+    if decision not in ('approve', 'reject'):
+        return _error(f'decision 只能是 approve / reject，收到 {decision!r}')
+    remark = str(payload.get('remark') or '').strip()
+    if decision == 'reject' and not remark:
+        return _error('驳回必须填写理由')
+    bidirectional = payload.get('bidirectional')
+    bidirectional = True if bidirectional is None else bool(bidirectional)
+
+    identity = getattr(request, 'kms_identity', {})
+    results = []
+    for pk in ids:
+        try:
+            result = decide_one(pk, decision=decision, identity=identity,
+                                remark=remark, bidirectional=bidirectional)
+        except AuthorizationRequestError as exc:
+            # 单条被业务规则拒（不存在 / 驳回没给理由…）——如实记这一条，继续。
+            results.append({'id': pk, 'ok': False, 'code': exc.code,
+                            'message': exc.message, 'status': '', 'granted': None,
+                            'chainHash': ''})
+            continue
+
+        row = result['request']
+        chain_tx = ''
+        if result['decided'] and result['chain_payload']:
+            p = result['chain_payload']
+            chain_tx = record_chain_event(
+                p['event_type'], p['key_id'], 0, p['node_id'], p['material_hash'],
+            ) or ''
+            if chain_tx:
+                NodeAuthorizationRequest.objects.filter(pk=row.pk).update(chain_tx=chain_tx)
+            else:
+                logger.warning('授权申请 #%s 的 %s 存证未成功（链不可用或未配置）',
+                               row.pk, p['event_type'])
+
+        results.append({
+            'id': row.pk,
+            'ok': True,
+            'code': '',
+            'status': row.status,
+            'alreadyDecided': result['alreadyDecided'],
+            'granted': result['granted'],
+            'chainHash': chain_tx,
+            'message': ('已是「%s」，未重复处置' % row.get_status_display()
+                        if result['alreadyDecided'] else ''),
+        })
+
+    decided_n = sum(1 for r in results if r['ok'] and not r.get('alreadyDecided'))
+    skipped_n = sum(1 for r in results if r['ok'] and r.get('alreadyDecided'))
+    failed_n = sum(1 for r in results if not r['ok'])
+    # ⚠️ 文案**不**说"全部成功"：逐条计数才是事实（有跳过、有失败时也如实）。
+    return _ok(
+        {
+            'results': results,
+            'total': len(results),
+            'decided': decided_n,
+            'skipped': skipped_n,
+            'failed': failed_n,
+        },
+        msg=(f'已处置 {decided_n} 条'
+             + (f'，跳过 {skipped_n} 条（已处置过）' if skipped_n else '')
+             + (f'，{failed_n} 条失败（见明细）' if failed_n else '')),
     )

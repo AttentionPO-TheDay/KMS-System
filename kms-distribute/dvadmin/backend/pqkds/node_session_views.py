@@ -60,6 +60,7 @@ import logging
 import re
 from typing import Optional
 
+from django.db import transaction
 from django.db.models import Count, Q
 from django.http import JsonResponse
 from django.utils import timezone
@@ -635,6 +636,134 @@ def node_envelope_verify(request, envelope_pk, identity):
 @csrf_exempt
 @require_http_methods(['POST'])
 @require_kms_user
+def node_envelope_sign(request, envelope_pk, identity):
+    """**补交签名**：发送方对刚取用的预分配信封签名后提交（任务书「使用 Falcon 私钥签名并发送」）。
+
+    请求体：`{"signature": "<base64>", "falconKeyId": "...", "falconKeyVersion": 1}`
+
+    <h2>为什么是两步（取用 → 本地签名 → 补交）</h2>
+    签名覆盖的规范字节串里含 `batch_id` 等**取用那一刻才定下**的元数据，而封装
+    （生成 K、用接收方 Kyber 公钥封）发生在**预分配**那一刻 —— 两者之间可能隔着
+    任意长的时间。所以顺序只能是：取用拿到成品信封 → 本地签名 → 补交。
+    （现场分发那条路径没有这个问题：封装与签名在同一次点击里完成。）
+
+    <h2>服务端先验一遍再落库</h2>
+    `verify_node_envelope`（与现场分发**同一个函数**）不通过就拒、**不落** ——
+    否则会给接收方留下一条"服务端明知验不过、它必然拒收"的信封，
+    而发送方那边显示的是"已发送"。
+
+    <h2>谁能补、补几次</h2>
+    * 只有这条信封的**发送方**（取用者，池项 `node2`）能补；别人一律 403；
+    * 已有签名的**不覆盖**：重复提交**同一份**如实回 ok（幂等），提交**不同**的
+      报冲突 —— 静默覆盖会让"信封在签名之后又被改过"变得不可见。
+    """
+    from .envelope_signature import verify_node_envelope
+    from .models import PreDistributedKey
+
+    node = _find_node(identity)
+    if node is None:
+        return _error('当前账号未关联任何节点，无法提交签名', 403, error_code=C.ERR_NOT_AUTHORIZED)
+
+    record = PreDistributedKey.objects.filter(pk=envelope_pk).first()
+    if record is None or record.recipient_type != 'node':
+        # ⚠️ `recipient_type != 'node'` 一并算"不存在"：还没取用的池项
+        #    （`'pool'`）不该有签名，它的状态就不是"待签名"。
+        return _error(f'信封不存在或尚未取用：{envelope_pk}', 404,
+                      error_code=C.ERR_ENVELOPE_NOT_FOUND)
+    if record.node2_id != node.id:
+        # 发送方才是签名者。回 403 而不是 404：这条信封的存在性对参与方不是秘密
+        # （接收方的列表里就有它）。
+        return _error('只有该信封的发送方可以提交签名', 403, error_code=C.ERR_NOT_AUTHORIZED)
+
+    try:
+        payload = json.loads(request.body or b'{}')
+    except (ValueError, TypeError):
+        return _error('请求体不是合法 JSON')
+    if not isinstance(payload, dict):
+        return _error('请求体应为 JSON 对象')
+
+    signature = str(payload.get('signature') or '').strip()
+    if not signature:
+        return _error('缺少 signature', error_code=C.ERR_SIGNATURE_REQUIRED)
+
+    try:
+        stored = json.loads(record.encrypted_key_data or '{}')
+    except (ValueError, TypeError):
+        stored = {}
+    if not isinstance(stored, dict) or not stored:
+        return _error('这条信封的内容无法解析', error_code=C.ERR_ENVELOPE_TAMPERED)
+
+    existing = str(stored.get('signature') or '').strip()
+    if existing:
+        if existing == signature:
+            return _ok({'envelopeId': record.pk, 'poolId': record.pool_id,
+                        'keyIndex': record.key_index,
+                        'signatureAttached': True, 'alreadySigned': True},
+                       msg='该信封此前已提交过同一份签名，未重复写入')
+        return _error('该信封已有另一个签名（信封在签名之后可能被改动过），拒绝覆盖', 409,
+                      error_code=C.ERR_ENVELOPE_TAMPERED)
+
+    falcon_key_id = payload.get('falconKeyId') if payload.get('falconKeyId') is not None \
+        else payload.get('falcon_key_id')
+    falcon_key_version = payload.get('falconKeyVersion') \
+        if payload.get('falconKeyVersion') is not None else payload.get('falcon_key_version')
+    try:
+        if falcon_key_id is not None and falcon_key_version is not None:
+            signing_key = require_key_version(node, 'FALCON', falcon_key_id, falcon_key_version,
+                                             for_new_work=False)
+        else:
+            signing_key = require_usable_key(node, 'FALCON')
+    except C.ContractError as exc:
+        return _error(f'发送方 Falcon 密钥不可用：{exc.message}',
+                      C.ERROR_HTTP_STATUS.get(exc.code, 400), error_code=exc.code)
+
+    if not verify_node_envelope(stored, signature, signing_key.public_key):
+        return _error(
+            f'签名校验失败：与发送节点 {node.node_id} 的 FALCON 密钥 '
+            f'{signing_key.key_id} v{signing_key.key_version} 不匹配，或信封被改动过',
+            error_code=C.ERR_SIGNATURE_INVALID,
+        )
+
+    with transaction.atomic():
+        locked = PreDistributedKey.objects.select_for_update().get(pk=record.pk)
+        try:
+            current = json.loads(locked.encrypted_key_data or '{}')
+        except (ValueError, TypeError):
+            current = {}
+        if str(current.get('signature') or '').strip():
+            # 并发下另一个请求先落进签名了 —— 与上面同一条幂等口径，不覆盖。
+            if str(current.get('signature')).strip() == signature:
+                return _ok({'envelopeId': locked.pk, 'signatureAttached': True,
+                            'alreadySigned': True}, msg='该信封已提交过同一份签名')
+            return _error('该信封已有另一个签名，拒绝覆盖', 409,
+                          error_code=C.ERR_ENVELOPE_TAMPERED)
+        # 把签名放到最后合并，而不是原地赋值：`ensure_ascii=False, sort_keys=True`
+        # 是既有落库口径，但**顺序无关**（sort_keys 会重排），所以两种写法等价；
+        # 写成合并是为了让"信封 + 签名"这件事在代码里看得出来。
+        locked.encrypted_key_data = json.dumps({**current, 'signature': signature},
+                                               ensure_ascii=False, sort_keys=True)
+        locked.save(update_fields=['encrypted_key_data'])
+
+    logger.info('预分配信封补签名：%s#%s（发送方 %s，Falcon %s v%s）',
+                record.pool_id, record.key_index, node.node_id,
+                signing_key.key_id, signing_key.key_version)
+    return _ok({
+        'envelopeId': record.pk,
+        'poolId': record.pool_id,
+        'keyIndex': record.key_index,
+        'signatureAttached': True,
+        'alreadySigned': False,
+        'falconKeyId': signing_key.key_id,
+        'falconKeyVersion': signing_key.key_version,
+    }, msg='签名已提交，接收方现在可以验签取信封了')
+
+
+
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+@require_kms_user
 def node_envelope_recover(request, envelope_pk, identity):
     """接收方回报"我在本机解封成功"（KMS-011，§6.5 的第 ② 条）。
 
@@ -717,15 +846,41 @@ def node_envelope_recover(request, envelope_pk, identity):
 
 
 def _session_of_batch(batch_id: str, node: Node):
-    """按批次号找"发给这个节点"的会话（`{batch_id}-n{node.id}`）。
+    """按批次号找"发给这个节点"的会话。**两种命名形状**都要认：
 
-    ⚠️ 会话 ID 由 `distribution_service.create_initiated_sessions` 按
-       `f'{batch_id}-n{target.id}'` 生成，pk 是**主键**（不是业务编号）。
-       这里与那条命名规则**耦合**；一旦规则改动，两边要一起改。
-       （会话行上同时记了各自那条信封的批次关联，反查也可行，但那需要
-       再多一列；命名规则是本仓库既有约定，先用它，并把耦合写在这里。）
+    * `{batch_id}-n{node.id}` —— 现场封装的分发（`create_initiated_sessions`
+      的既有规则）；
+    * `{pool_id}-k{index}-n{node.id}` —— **预分配资源取用**建的会话
+      （`{池号}-k{序号}-n{接收节点主键}`，见 `pool_consume_service`）。
+
+    为什么取用那条不能用同一条规则：一个池子里有 N 条密钥，每条取用都会建
+    一条会话 —— 都用 `{pool_id}-n{id}` 的话，同一池子的第 2 条起会与第 1 条
+    **撞唯一约束**（`session_id` 上有 unique）。所以池项那条把 `key_index`
+    编进会话号，一批 N 条 = N 个会话。
+
+    ⚠️ 会话 ID 由建会话的一方生成，这里与那两处命名规则**耦合**；
+       规则一改，两边要一起改。调用方给进来的 `batch_id` 在两条路径上分别
+       是"分发批次号"与"池号"（两者的列都叫 `pool_id`，值也是同一种形状）。
     """
-    return SessionKey.objects.filter(session_id=f'{batch_id}-n{node.id}').first()
+    session = SessionKey.objects.filter(session_id=f'{batch_id}-n{node.id}').first()
+    if session is not None:
+        return session
+    # 池项形状：同一个池子里可能已经取用过好几条，取最近的一条（`-id` 倒序）。
+    # ⚠️ 不能用 `session_id__startswith` 之外的模糊匹配 —— 池号本身以
+    #    `-n` 结尾的可能性没有，但 `-k` 段必须精确到 `-k<数字>-n`，
+    #    否则 `pool_x-k1-n1` 会命中 `pool_x-k11-n1`（前缀相同）。
+    prefix = f'{batch_id}-k'
+    suffix = f'-n{node.id}'
+    candidates = (
+        SessionKey.objects
+        .filter(session_id__startswith=prefix, session_id__endswith=suffix)
+        .order_by('-id')
+    )
+    for candidate in candidates[:20]:
+        middle = candidate.session_id[len(prefix):-len(suffix)]
+        if middle.isdigit():
+            return candidate
+    return None
 
 
 # ---------------------------------------------------------------------------

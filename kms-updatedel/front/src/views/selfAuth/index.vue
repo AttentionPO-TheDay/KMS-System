@@ -35,8 +35,9 @@
       <template v-else>
         <div class="section-title">全网节点名录</div>
         <p class="note">
-          这里是平台上的全部节点（不含自己）。选一个对端发起申请，管理员批准后
-          两个方向同时放行 —— 你**和**对方都能看到对方的密钥版本并建立会话。
+          这里是平台上的全部节点（不含自己）。<b>勾选多个对端可以一次提交申请</b>，
+          管理员批准后两个方向同时放行 —— 你<b>和</b>对方都能看到对方的密钥版本并建立会话。
+          也可以在「发起分发」页选好接收节点后直接提交（那是同一个接口）。
         </p>
 
         <el-form :inline="true" class="filter-bar">
@@ -55,9 +56,29 @@
               <el-option label="已授权" value="granted" />
             </el-select>
           </el-form-item>
+          <el-form-item>
+            <el-button
+              type="primary"
+              :disabled="!selectedNodes.length"
+              @click="openBatchRequest"
+            >
+              提交授权申请（{{ selectedNodes.length }}）
+            </el-button>
+          </el-form-item>
         </el-form>
 
-        <el-table :data="filteredNodes" size="small" v-loading="loading" empty-text="没有匹配的节点">
+        <el-table
+          :data="filteredNodes"
+          size="small"
+          v-loading="loading"
+          empty-text="没有匹配的节点"
+          @selection-change="(rows) => { selectedNodes = rows }"
+        >
+          <el-table-column
+            type="selection"
+            width="42"
+            :selectable="(row) => canRequest(row)"
+          />
           <el-table-column label="节点" min-width="200">
             <template #default="{ row }">
               <div class="node-cell">
@@ -163,15 +184,21 @@
       </template>
     </el-card>
 
-    <!-- 发起申请 -->
+    <!-- 发起申请（单个 / 一次多个共用同一个对话框：目标是**列表**，单条时只有一个元素） -->
     <el-dialog v-model="requestOpen" title="发起授权申请" width="520px" :close-on-click-modal="false">
       <el-descriptions :column="1" border class="mb16">
         <el-descriptions-item label="目标节点">
-          <span class="mono">{{ requestTarget?.nodeCode || '-' }}</span>
-          <span v-if="requestTarget?.name" class="hint">（{{ requestTarget.name }}）</span>
+          <span class="mono">{{ requestTargets.join('、') || '-' }}</span>
+          <span class="hint">（共 {{ requestTargets.length }} 个）</span>
         </el-descriptions-item>
         <el-descriptions-item label="批准后">
           两个方向同时放行：你可以看到它的密钥版本并向它分发，它也可以向你分发。
+          <!--
+            ⚠️ 一次提交的 N 条申请**各自独立处置**：管理员可以只批其中几条
+               （部分批准是真实需求）。所以这里说的是"每一条都会…"，
+               而不是"这一批会…" —— 后者会让用户以为必须整批通过。
+          -->
+          <b>每一条</b>批准后都按双向放行；管理员也可以只批其中几条。
         </el-descriptions-item>
       </el-descriptions>
       <el-form label-width="80px">
@@ -186,9 +213,20 @@
           />
         </el-form-item>
       </el-form>
+      <el-alert
+        v-if="requestFeedback"
+        :type="requestFeedback.ok ? 'success' : 'warning'"
+        :closable="false"
+        show-icon
+      >
+        <template #title>{{ requestFeedback.title }}</template>
+        <div v-if="requestFeedback.detail" class="feedback-detail">{{ requestFeedback.detail }}</div>
+      </el-alert>
       <template #footer>
         <el-button @click="requestOpen = false">取 消</el-button>
-        <el-button type="primary" :loading="submitting" @click="submitRequest">提交申请</el-button>
+        <el-button type="primary" :loading="submitting" @click="submitRequest">
+          提交申请（{{ requestTargets.length }}）
+        </el-button>
       </template>
     </el-dialog>
   </div>
@@ -213,7 +251,8 @@ import {
   cancelNodeAuthorizationRequest,
   listNodeDirectory,
   listSelfAuthorizationRequests,
-  requestNodeAuthorization
+  requestNodeAuthorization,
+  requestNodeAuthorizations
 } from '@/api/pqkds/node-self'
 import { getSelfNode } from '@/api/pqkds/node-self'
 
@@ -225,9 +264,13 @@ const keyword = ref('')
 const onlyFilter = ref('')
 
 const requestOpen = ref(false)
-const requestTarget = ref(null)
+/** 本次要申请的对端编号列表（单个 = 一个元素，多个 = 勾选的那批）。 */
+const requestTargets = ref([])
 const requestReason = ref('')
+const requestFeedback = ref(null)
 const submitting = ref(false)
+/** 名录表格里勾中的行（批量提交用）。 */
+const selectedNodes = ref([])
 
 const NODE_STATUS_LABELS = {
   ACTIVE: '已激活',
@@ -343,8 +386,17 @@ async function load() {
 }
 
 function openRequest(row) {
-  requestTarget.value = row
+  requestTargets.value = [row.nodeCode]
   requestReason.value = ''
+  requestFeedback.value = null
+  requestOpen.value = true
+}
+
+/** 批量入口：把表格里勾中的行一起提交（与单个走**同一个对话框、同一个提交函数**）。 */
+function openBatchRequest() {
+  requestTargets.value = selectedNodes.value.map((row) => row.nodeCode)
+  requestReason.value = ''
+  requestFeedback.value = null
   requestOpen.value = true
 }
 
@@ -354,15 +406,43 @@ async function submitRequest() {
     ElMessage.warning('请填写申请理由（审批人据此判断）')
     return
   }
+  const targets = [...requestTargets.value]
+  if (!targets.length) {
+    return
+  }
   submitting.value = true
+  requestFeedback.value = null
   try {
-    const data = await requestNodeAuthorization(requestTarget.value.nodeCode, reason)
-    requestOpen.value = false
-    if (data?.alreadyGranted) {
-      ElMessage.info('已与对方双向授权，无需申请')
+    if (targets.length === 1) {
+      // 单个仍走**原路径**（响应形状与既有页面/脚本一致）。
+      const data = await requestNodeAuthorization(targets[0], reason)
+      if (data?.alreadyGranted) {
+        requestFeedback.value = { ok: true, title: '已与对方双向授权，无需申请', detail: '' }
+      } else {
+        requestFeedback.value = {
+          ok: true,
+          title: data?.created === false ? '已有待审批的申请（未重复创建）' : '申请已提交，等待管理员审批',
+          detail: ''
+        }
+      }
     } else {
-      ElMessage.success(data?.created === false ? '已有待审批的申请' : '申请已提交，等待管理员审批')
+      // 多个走批量端点：**逐条**回报，跳过/失败的原因如实列出。
+      const data = await requestNodeAuthorizations(targets, reason)
+      const skipped = data?.skipped || []
+      requestFeedback.value = {
+        ok: true,
+        title: `已提交 ${data?.created?.length || 0} 条申请，等待管理员审批`
+          + (skipped.length ? `（${skipped.length} 条未新建）` : ''),
+        detail: skipped.map((s) => {
+          const label = s.reason === 'ALREADY_PENDING' ? '已有待审批的申请'
+            : s.reason === 'ALREADY_GRANTED' ? '两个方向都已授权'
+              : (s.message || s.reason)
+          return `${s.nodeId}：${label}`
+        }).join('；')
+      }
     }
+    ElMessage.success('申请已提交')
+    selectedNodes.value = []
     await load()
   } catch (error) {
     // 按错误码分支而不是匹配文案（文案随时会改）。`@/api/pqkds/http` 已把
@@ -410,6 +490,13 @@ onMounted(load)
   justify-content: space-between;
 }
 .mb16 { margin-bottom: 16px; }
+/* 批量提交的逐条反馈：可能有好几行，允许换行、不与标题挤在一行 */
+.feedback-detail {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.6;
+  word-break: break-all;
+}
 .mono {
   font-family: 'JetBrains Mono', Consolas, monospace;
   font-size: 13px;

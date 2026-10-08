@@ -3017,6 +3017,22 @@ class KeyDistributionLogViewSet(CustomModelViewSet):
     queryset = KeyDistributionLog.objects.all()
     serializer_class = KeyDistributionLogSerializer
     ordering = ['-timestamp']
+    #: ⚠️ **刻意清空**（覆盖基类的 `[DataLevelPermissionsFilter]`）：那个过滤器按
+    #: 主 KMS 的**部门数据权限**逐行筛 `dept_belong_id`，而它读的 `request.user`
+    #: 走 DRF 认证后端 —— 本仓 `SIMPLE_JWT["AUTH_HEADER_TYPES"] = ("JWT",)` 而全系统
+    #: 发 `Bearer`，于是 `request.user` 是 AnonymousUser：既不是 superuser、又取不到
+    #: `dept_id` → `queryset.none()`。
+    #
+    #: 实测后果：库里明明有 5 行（含本次新写的 `pool_consume`），接口恒回
+    #: `{total: 0, msg: "暂无数据"}` —— 「分发记录」页一直空着。**根因不在页面、
+    #: 也不在"没人写流水"，而在这一层按行过滤**（这条是查了 `filters.py` 的
+    #: `_extracted_from_filter_queryset_33` 才定位到的：`if not user_dept_id:
+    #: return queryset.none()`）。
+    #
+    #: 这张表是**审计流水**、按 `node` 归属，没有部门概念；可见性由 `get_permissions`
+    #: 与前端菜单决定（与「分发记录」页既有的角色可见性一致）。搜索/排序/字段筛选
+    #: 等其它后端**全部保留**，摘掉的只有这一条。
+    extra_filter_class = []
     def get_permissions(self):
         if self.action in ['list', 'stats']:
             return []
@@ -3645,6 +3661,9 @@ class KeyPoolViewSet(CustomModelViewSet):
                 # ⚠️ 漏掉它们不会报错，只会让**每一行**各触发一次补查 ——
                 # 42 行的页面上正是本节注释里记录的那种"慢到前端超时"。
                 'long_term_key_id', 'long_term_key_version', 'used_by_session',
+                # 任务书「预分配」：池项与"已交付的信封"靠这一列区分
+                # （`pool` vs `node`）。序列化器读它，漏了同样会逐行补查。
+                'recipient_type',
                 'node1__node_id', 'node1__name', 'node2__node_id', 'node2__name',
             )
         )
