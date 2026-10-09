@@ -219,8 +219,23 @@ function formatTime(value) {
 async function load() {
   loading.value = true
   try {
-    const res = await listKeymanage({ pageNum: 1, pageSize: 500 })
-    all.value = Array.isArray(res?.rows) ? res.rows : Array.isArray(res) ? res : []
+    // 异常复核需要覆盖候选全集；单页 500 条会在密钥量增长后静默漏项。
+    // 按后端返回的 total 继续翻页，空页时提前结束以兼容非分页响应。
+    const pageSize = 500
+    const first = await listKeymanage({ pageNum: 1, pageSize })
+    const firstRows = Array.isArray(first?.rows) ? first.rows : Array.isArray(first) ? first : []
+    const total = Number(first?.total)
+    const rows = [...firstRows]
+    const expected = Number.isFinite(total) && total > 0 ? total : rows.length
+    let pageNum = 2
+    while (rows.length < expected) {
+      const page = await listKeymanage({ pageNum, pageSize })
+      const pageRows = Array.isArray(page?.rows) ? page.rows : Array.isArray(page) ? page : []
+      if (!pageRows.length) break
+      rows.push(...pageRows)
+      pageNum += 1
+    }
+    all.value = rows
   } catch (error) {
     ElMessage.error(error?.message || '加载密钥列表失败')
     all.value = []

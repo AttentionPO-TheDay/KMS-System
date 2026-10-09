@@ -25,7 +25,11 @@ const rpc = (m, p = {}) => new Promise((res, rej) => {
   ws.addEventListener('message', on)
   ws.send(JSON.stringify({ id: n, method: m, params: p }))
 })
-const ev = async (e) => (await rpc('Runtime.evaluate', { expression: e, awaitPromise: true, returnByValue: true })).result?.value
+const ev = async (e) => {
+  const result = await rpc('Runtime.evaluate', { expression: e, awaitPromise: true, returnByValue: true })
+  if (result.exceptionDetails) throw new Error(result.exceptionDetails.text || '浏览器脚本执行失败')
+  return result.result?.value
+}
 
 const results = []
 const check = (n, p, d = '') => { results.push({ n, p, d }); console.log(`  ${p ? '[PASS]' : '[FAIL]'} ${n}${d ? '  → ' + d : ''}`) }
@@ -47,7 +51,8 @@ const CLICK_TAB = (label) => `(() => {
 })()`
 
 const READ = `(() => {
-  const hint=document.querySelector('.principal-hint')?.innerText.trim()||''
+  const hints=[...document.querySelectorAll('.principal-hint')]
+  const hint=hints.at(-1)?.innerText.trim()||''
   const ph=${NODE_FIELDS}.map(i=>i.placeholder)
   const btns=[...document.querySelectorAll('.principal-switch .el-radio-button')].map(b=>b.innerText.trim())
   // 只取 el-message（提示条）的文本，不要整页文本 ——
@@ -84,12 +89,15 @@ try {
 
   // ---- 节点身份：无效一次性凭证必须停留在登录页 ----
   console.log('\n== 节点身份：无效激活凭证应被拒绝 ==')
+  const invalidBefore = await ev(READ)
   const invalidNodeFilled = await ev(FILL_NODE('admin', 'invalid-activation-code'))
   check('节点表单已填入名称和激活凭证', invalidNodeFilled >= 2, `实际 ${invalidNodeFilled}`)
   await ev(`(() => { const b=[...document.querySelectorAll('.login-form button')].find(x=>x.innerText.includes('激活并登录')); if(!b)return false;b.click();return true })()`)
   await sleep(1200)
   const invalidNode = await ev(READ)
   check('无效激活凭证被拒后仍停在登录页', invalidNode.url.includes('/login'), invalidNode.url)
+  check('无效激活凭证收到服务端拒绝提示', invalidNode.msgs.length > invalidBefore.msgs.length,
+    invalidNode.msgs.join(' | '))
 
   // ---- 对照：传入节点名称 + 一次性激活凭证才执行真实激活登录 ----
   console.log('\n== 对照：节点使用一次性激活凭证登录 ==')

@@ -7,6 +7,7 @@ import com.ruoyi.updatedel.domain.Keymanage;
 import com.ruoyi.updatedel.mapper.KeymanageMapper;
 import com.ruoyi.updatedel.mapper.KeyOperationRecordMapper;
 import java.util.List;
+import java.util.Comparator;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -167,13 +168,14 @@ public class KeyHealthService {
 
         r.observe("操作记录 " + records.size() + " 条");
 
-        KeyOperationRecord latest = records.get(0);
-        for (KeyOperationRecord rec : records) {
-            if (rec.getKeyVersion() != null
-                && (latest.getKeyVersion() == null || rec.getKeyVersion() > latest.getKeyVersion())) {
-                latest = rec;
-            }
-        }
+        // Mapper 已按 action_time DESC、record_id DESC 返回；健康检查的“最近操作”
+        // 必须按时间选择，不能按最大版本号选择。补录、重试或历史数据修复时，
+        // 版本号可能高于当前最新操作，按版本取最大值会把旧记录误判成最新记录。
+        KeyOperationRecord latest = records.stream()
+            .filter(rec -> rec.getActionTime() != null)
+            .max(Comparator.comparing(KeyOperationRecord::getActionTime)
+                .thenComparing(rec -> rec.getRecordId() == null ? Long.MIN_VALUE : rec.getRecordId()))
+            .orElse(records.get(0));
 
         Integer current = key.getVersion();
         Integer recorded = latest.getKeyVersion();
