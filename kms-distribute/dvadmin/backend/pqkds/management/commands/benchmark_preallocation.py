@@ -20,7 +20,7 @@
 
 import time
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
 from pqkds.key_pool_service import KeyPoolService
 from pqkds.models import Node, PreDistributedKey
@@ -47,16 +47,14 @@ class Command(BaseCommand):
             if len(nodes) < 2:
                 nodes = list(Node.objects.all()[:2])
             if len(nodes) < 2:
-                self.stderr.write('需要至少 2 个节点才能测预分配吞吐')
-                return
+                raise CommandError('需要至少 2 个节点才能测预分配吞吐')
             a, b = nodes[0], nodes[1]
 
         self.stdout.write(f'节点对：{a.node_id} ↔ {b.node_id}')
         self.stdout.write(f'Kyber 公钥就绪：A={bool(a.kyber_public_key)} B={bool(b.kyber_public_key)}')
         if not (a.kyber_public_key and b.kyber_public_key):
-            self.stderr.write('两个节点都需要 Kyber 公钥才能做预分配 —— '
-                              '请先让它们完成首次初始化（/node-self/init/）')
-            return
+            raise CommandError('两个节点都需要 Kyber 公钥才能做预分配 —— '
+                               '请先让它们完成首次初始化（/node-self/init/）')
 
         self.stdout.write('')
         self.stdout.write(f'{"条数":>8} {"成功":>8} {"失败":>8} {"耗时(s)":>10} {"吞吐(条/s)":>12} {"P50(ms)":>10} {"P95(ms)":>10}')
@@ -81,6 +79,11 @@ class Command(BaseCommand):
         best = max(r['rate'] for r in summary) if summary else 0
         self.stdout.write('')
         self.stdout.write(f'最高吞吐 {best:.2f} 条/s')
+        failed = [r for r in summary if r['rate'] < target or r['ok'] < r['count']]
+        if failed:
+            raise CommandError('预分配吞吐未达标：' + ', '.join(
+                f'{r["count"]}条={r["rate"]:.2f}/s, READY={r["ok"]}' for r in failed
+            ))
 
     def _run_one(self, node_a, node_b, count):
         """跑一组，返回该组的统计。
@@ -96,15 +99,13 @@ class Command(BaseCommand):
         result = KeyPoolService.generate_kyber_pool(
             node_a.node_id, node_b.node_id, count=count
         )
-        t1 = time.perf_counter()
-
         pool_id = (result or {}).get('pool_id')
         if not pool_id:
+            t1 = time.perf_counter()
             return {'count': count, 'ok': 0, 'failed': count, 'seconds': t1 - t0,
                     'rate': 0.0, 'p50': 0.0, 'p95': 0.0,
                     'note': f'未返回 pool_id：{str(result)[:120]}'}
 
-        seconds = t1 - t0
         # 以**数据库里实际为 READY 的条数**为准，不用函数返回值 ——
         # 返回的 generated 只说明"函数认为生成了"，不代表真的落库了。
         persisted = PreDistributedKey.objects.filter(pool_id=pool_id, status='READY').count()
@@ -113,8 +114,13 @@ class Command(BaseCommand):
             persisted += PreDistributedKey.objects.filter(
                 pool_id=pool_id, status='unused'
             ).count()
+        persisted = min(persisted, count)
 
         lat = self._latencies(pool_id)
+        # 端到端计时终点是 READY/unused 已从数据库读到，确保服务端持久化
+        # 已经完成后才计算吞吐；查询和验证属于验收完成点的一部分。
+        t1 = time.perf_counter()
+        seconds = t1 - t0
         rate = (persisted / seconds) if seconds > 0 else 0.0
         return {
             'count': count,

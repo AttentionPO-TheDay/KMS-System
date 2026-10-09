@@ -136,7 +136,8 @@ try {
   const expiresAt = new Date(Date.now() + 24 * 3600 * 1000).toISOString()
   const localKeys = []
   const items = []
-  const t0 = performance.now()
+  const e2eT0 = performance.now()
+  const localT0 = performance.now()
   for (let i = 0; i < N; i++) {
     const K = sign.generatePayloadKey()
     localKeys.push(K)
@@ -149,12 +150,8 @@ try {
     const signature = await sign.signNodeEnvelope(cryptoProvider, falconRef, built.envelope)
     items.push({ envelope: built.envelope, signature, keyHash: built.keyHash })
   }
-  const localMs = performance.now() - t0
+  const localMs = performance.now() - localT0
   const localRate = Math.round((N / localMs) * 1000)
-  // ⚠️ 这是**任务书 §20 的量化指标**。达不到就报实测值（判据会红），
-  //    绝不四舍五入或换个口径把它凑过 —— 那等于把指标做成了装饰。
-  check(`★★ 本机（节点侧）生成 + 封装 + 签名吞吐 ≥ 50 条/秒（实测 ${localRate} 条/秒）`,
-    localRate >= 50, `${N} 条 / ${localMs.toFixed(0)}ms = ${localRate} 条/秒`)
 
   const up = await api('/pqkds-api/pqkds/node-self/pool/preallocate/', {
     method: 'POST', token: A.token,
@@ -169,12 +166,22 @@ try {
 
   // 落库形状：READY + pool + node1=B(收件方) + long_term_key 引用 = B 那一版
   const row = sql(`SELECT status, recipient_type, node1_id, node2_id, long_term_key_id, long_term_key_version, key_hash FROM ${POOL_ITEMS} WHERE pool_id='${poolId}' ORDER BY key_index LIMIT 1;`)
+  const readyCount = Number(sqlScalar(`SELECT COUNT(*) FROM ${POOL_ITEMS} WHERE pool_id='${poolId}' AND status IN ('READY','unused');`))
   const bPk = nodePk(B.nodeId)
   const aPk = nodePk(A.nodeId)
+  const e2eMs = performance.now() - e2eT0
+  const e2eRate = Math.round((readyCount / e2eMs) * 1000)
+  // 任务书指标必须覆盖生成、封装、签名、上传及服务端 READY 落库，
+  // 本地算法计时只作诊断，不能替代端到端吞吐。
+  check(`★★ 端到端预分配吞吐 ≥ 50 条/秒（实测 ${e2eRate} 条/秒）`,
+    readyCount === N && e2eRate >= 50,
+    `${readyCount}/${N} READY，${N} 条 / ${e2eMs.toFixed(0)}ms = ${e2eRate} 条/秒`)
   check('★★ 落库：READY / recipient_type=pool / node1=接收方 / 长期密钥引用=B 那一版',
-    /READY/.test(row) && /\bpool\b/.test(row) && row.includes(String(bPk))
+    readyCount === N && /READY/.test(row) && /\bpool\b/.test(row) && row.includes(String(bPk))
     && row.includes(String(kyberKey.keyId)),
     row.replace(/\t/g, ' | '))
+  check(`本地生成 + 封装 + 签名吞吐（诊断 ${localRate} 条/秒）`, localRate > 0,
+    `${N} 条 / ${localMs.toFixed(0)}ms = ${localRate} 条/秒`)
 
   // 服务端**拿不到 K**：库里那份密文解不出 K（它没私钥），只有摘要。
   const cipherText = sqlScalar(`SELECT encrypted_key_data FROM ${POOL_ITEMS} WHERE pool_id='${poolId}' LIMIT 1;`)

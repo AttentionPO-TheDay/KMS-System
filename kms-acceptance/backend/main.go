@@ -183,15 +183,18 @@ type ProofRunResult struct {
 }
 
 type RunSummary struct {
-	RequestsPerSec float64 `json:"requestsPerSec"`
-	AvgLatencyMs   float64 `json:"avgLatencyMs"`
-	P99LatencyMs   float64 `json:"p99LatencyMs"`
-	TransferPerSec string  `json:"transferPerSec,omitempty"`
-	TotalRequests  int64   `json:"totalRequests"`
-	ReadBytes      string  `json:"readBytes,omitempty"`
-	ErrorCount     int64   `json:"errorCount"`
-	SuccessRate    float64 `json:"successRate"`
-	RawOutput      string  `json:"rawOutput"`
+	RequestsPerSec           float64 `json:"requestsPerSec"`
+	SuccessfulRequestsPerSec float64 `json:"successfulRequestsPerSec"`
+	AvgLatencyMs             float64 `json:"avgLatencyMs"`
+	P99LatencyMs             float64 `json:"p99LatencyMs"`
+	TransferPerSec           string  `json:"transferPerSec,omitempty"`
+	TotalRequests            int64   `json:"totalRequests"`
+	ReadBytes                string  `json:"readBytes,omitempty"`
+	Non2xxResponses          int64   `json:"non2xxResponses"`
+	SocketErrors             int64   `json:"socketErrors"`
+	ErrorCount               int64   `json:"errorCount"`
+	SuccessRate              float64 `json:"successRate"`
+	RawOutput                string  `json:"rawOutput"`
 }
 
 type MetricCheck struct {
@@ -202,6 +205,7 @@ type MetricCheck struct {
 	Source     string  `json:"source,omitempty"`
 	Message    string  `json:"message,omitempty"`
 	Collected  bool    `json:"collected"`
+	Enforced   bool    `json:"enforced"`
 	ReportedAt string  `json:"reportedAt,omitempty"`
 }
 
@@ -265,6 +269,8 @@ type acceptanceConfig struct {
 	KeyPoolLookbackMinutes int
 	LifecycleRequiredKeys  int
 	KeyPoolRetrySeconds    int
+	UpdateVerifyEnabled    bool
+	UpdateVerifyTarget     float64
 }
 
 type server struct {
@@ -298,6 +304,9 @@ func main() {
 	}
 
 	cfg := loadAcceptanceConfig()
+	if cfg.GenerateInternalToken == "" {
+		log.Fatal("ACCEPTANCE_INTERNAL_TOKEN or INTERNAL_TOKEN must be set; refusing to start with a public fallback token")
+	}
 	srv := &server{
 		runs:           make(map[string]*RunResult),
 		securityRuns:   make(map[string]*SecurityRunResult),
@@ -336,7 +345,7 @@ func main() {
 func loadAcceptanceConfig() acceptanceConfig {
 	acceptanceUser := envOrDefault("ACCEPTANCE_USER", "acceptance_user")
 	return acceptanceConfig{
-		GenerateInternalToken:  envOrDefault("ACCEPTANCE_INTERNAL_TOKEN", envOrDefault("INTERNAL_TOKEN", "kms-generate-internal-secret-2026")),
+		GenerateInternalToken:  envOrDefault("ACCEPTANCE_INTERNAL_TOKEN", strings.TrimSpace(os.Getenv("INTERNAL_TOKEN"))),
 		GenerateKeyPoolURL:     envOrDefault("ACCEPTANCE_GENERATE_KEY_POOL_URL", "http://127.0.0.1:9081/internal/generate/keys/recent"),
 		LifecycleVerifyURL:     envOrDefault("ACCEPTANCE_LIFECYCLE_VERIFY_URL", "http://127.0.0.1:9082/internal/lifecycle/key-status"),
 		LifecycleProofURL:      envOrDefault("ACCEPTANCE_LIFECYCLE_PROOF_URL", "http://127.0.0.1:9082/internal/lifecycle/batch-proof"),
@@ -352,6 +361,8 @@ func loadAcceptanceConfig() acceptanceConfig {
 		KeyPoolLookbackMinutes: envOrDefaultInt("ACCEPTANCE_KEY_POOL_LOOKBACK_MINUTES", 120),
 		LifecycleRequiredKeys:  envOrDefaultInt("ACCEPTANCE_LIFECYCLE_REQUIRED_KEYS", 0),
 		KeyPoolRetrySeconds:    envOrDefaultInt("ACCEPTANCE_KEY_POOL_RETRY_SECONDS", 30),
+		UpdateVerifyEnabled:    envOrDefaultBool("ACCEPTANCE_UPDATE_VERIFY_ENABLED", true),
+		UpdateVerifyTarget:     envOrDefaultFloat("ACCEPTANCE_UPDATE_VERIFY_TARGET", 98),
 	}
 }
 
@@ -395,6 +406,8 @@ func defaultScenarios(cfg acceptanceConfig) map[string]Scenario {
 			Connections:     50,
 			Headers:         cloneHeaders(tokenHeader),
 			BodyTemplate:    fmt.Sprintf(`{"keyId":%s,"user":"%s","keyName":"acceptance-rotate","keyUse":"性能验收","keyDomain":"acceptance","autoUpdate":"false"}`, keyIDPlaceholder, cfg.AcceptanceUser),
+			MetricKind:      "update_final_rate",
+			MetricTarget:    cfg.UpdateVerifyTarget,
 			Description:     "直接压测 kms-updatedel Go 接口，自动从最新生成结果加载 key 池，目标 TPS 不低于 5000。",
 			Notes:           []string{"执行前请先跑一次生成场景，准备足够的 keyId。", "默认按 5 秒窗口控制单轮 key 需求，避免过度消耗生成结果。"},
 		},
@@ -902,10 +915,23 @@ func (s *server) executeRun(parentCtx context.Context, wrkPath string, scenario 
 	}
 
 	summary := parseWrkOutput(stdout.String())
-	passedTPS := summary.RequestsPerSec >= scenario.TargetTPS
+	// Requests/sec includes non-2xx responses. The task-book metric is the
+	// throughput of successfully accepted requests, so threshold decisions must
+	// use the successful rate and retain raw request rate only for diagnostics.
+	if scenario.DurationSeconds > 0 {
+		// wrk's completed request count excludes socket failures. Subtract only
+		// non-2xx responses here; subtracting ErrorCount would count socket
+		// failures twice and under-report successful throughput.
+		successful := summary.TotalRequests - summary.Non2xxResponses
+		if successful < 0 {
+			successful = 0
+		}
+		summary.SuccessfulRequestsPerSec = float64(successful) / float64(scenario.DurationSeconds)
+	}
+	passedTPS := summary.SuccessfulRequestsPerSec >= scenario.TargetTPS
 	metricCheck := s.collectMetricCheck(scenario)
 	status := "passed"
-	if !passedTPS || (metricCheck.Collected && !metricCheck.Passed) {
+	if !passedTPS || (metricCheck.Enforced && (!metricCheck.Collected || !metricCheck.Passed)) {
 		status = "failed_threshold"
 	}
 
@@ -972,9 +998,11 @@ func parseWrkOutput(output string) RunSummary {
 		}
 	}
 	summary.P99LatencyMs = parseP99Latency(output)
+	summary.SocketErrors = socketErrors
+	summary.Non2xxResponses = non2xx
 	summary.ErrorCount = socketErrors + non2xx
 	totalAttempts := summary.TotalRequests + socketErrors
-	successful := summary.TotalRequests - non2xx
+	successful := summary.TotalRequests - summary.Non2xxResponses
 	if totalAttempts > 0 && successful >= 0 {
 		summary.SuccessRate = float64(successful) / float64(totalAttempts) * 100
 	}
@@ -990,16 +1018,19 @@ func parseP99Latency(output string) float64 {
 }
 
 func (s *server) collectMetricCheck(scenario Scenario) MetricCheck {
-	if scenario.MetricKind != "revoke_final_rate" {
+	if scenario.MetricKind != "revoke_final_rate" && scenario.MetricKind != "update_final_rate" {
 		return MetricCheck{}
 	}
+	if scenario.MetricKind == "update_final_rate" && !s.cfg.UpdateVerifyEnabled {
+		return MetricCheck{Kind: scenario.MetricKind, Target: scenario.MetricTarget, Source: s.cfg.LifecycleVerifyURL, Message: "update final-state verification disabled by ACCEPTANCE_UPDATE_VERIFY_ENABLED=false"}
+	}
 	if len(scenario.PreparedKeyIDs) == 0 {
-		return MetricCheck{Kind: scenario.MetricKind, Target: scenario.MetricTarget, Message: "no key ids prepared", Source: s.cfg.LifecycleVerifyURL}
+		return MetricCheck{Kind: scenario.MetricKind, Target: scenario.MetricTarget, Enforced: true, Message: "no key ids prepared", Source: s.cfg.LifecycleVerifyURL}
 	}
 
-	verified, err := s.waitRevokedKeys(scenario.PreparedKeyIDs)
+	verified, err := s.waitLifecycleKeys(scenario.PreparedKeyIDs, scenario.MetricKind)
 	if err != nil {
-		return MetricCheck{Kind: scenario.MetricKind, Target: scenario.MetricTarget, Source: s.cfg.LifecycleVerifyURL, Message: err.Error()}
+		return MetricCheck{Kind: scenario.MetricKind, Target: scenario.MetricTarget, Enforced: true, Source: s.cfg.LifecycleVerifyURL, Message: err.Error()}
 	}
 	value := float64(verified) / float64(len(scenario.PreparedKeyIDs)) * 100
 	return MetricCheck{
@@ -1009,12 +1040,13 @@ func (s *server) collectMetricCheck(scenario Scenario) MetricCheck {
 		Passed:     value >= scenario.MetricTarget,
 		Source:     s.cfg.LifecycleVerifyURL,
 		Collected:  true,
+		Enforced:   true,
 		ReportedAt: time.Now().Format(time.RFC3339),
 		Message:    fmt.Sprintf("最终状态核验通过 %d/%d", verified, len(scenario.PreparedKeyIDs)),
 	}
 }
 
-func (s *server) waitRevokedKeys(keyIDs []int64) (int, error) {
+func (s *server) waitLifecycleKeys(keyIDs []int64, kind string) (int, error) {
 	deadline := time.Now().Add(time.Duration(s.cfg.VerifyWaitSeconds) * time.Second)
 	if s.cfg.VerifyWaitSeconds <= 0 {
 		deadline = time.Now()
@@ -1025,7 +1057,7 @@ func (s *server) waitRevokedKeys(keyIDs []int64) (int, error) {
 		lastErr error
 	)
 	for {
-		verified, err := s.verifyRevokedKeysOnce(keyIDs)
+		verified, err := s.verifyLifecycleKeysOnce(keyIDs, kind)
 		if err == nil {
 			latest = verified
 			if verified >= len(keyIDs) || time.Now().After(deadline) {
@@ -1041,7 +1073,7 @@ func (s *server) waitRevokedKeys(keyIDs []int64) (int, error) {
 	}
 }
 
-func (s *server) verifyRevokedKeysOnce(keyIDs []int64) (int, error) {
+func (s *server) verifyLifecycleKeysOnce(keyIDs []int64, kind string) (int, error) {
 	if len(keyIDs) == 0 {
 		return 0, nil
 	}
@@ -1056,7 +1088,7 @@ func (s *server) verifyRevokedKeysOnce(keyIDs []int64) (int, error) {
 			return verified, err
 		}
 		for _, item := range items {
-			if item.Exists && item.Status == "3" {
+			if item.Exists && ((kind == "revoke_final_rate" && item.Status == "3") || (kind == "update_final_rate" && item.ChainStatus == "1")) {
 				verified++
 			}
 		}
@@ -1326,16 +1358,7 @@ func (s *server) executeSecurityRun(caseID string) SecurityRunResult {
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stdout
-	if err := cmd.Run(); err != nil {
-		return SecurityRunResult{
-			CaseID:    caseID,
-			Status:    "error",
-			Verdict:   "error",
-			Summary:   "安全攻击脚本执行失败",
-			Error:     err.Error(),
-			RawOutput: stdout.String(),
-		}
-	}
+	execErr := cmd.Run()
 
 	output := strings.TrimSpace(stdout.String())
 	if output == "" {
@@ -1353,6 +1376,9 @@ func (s *server) executeSecurityRun(caseID string) SecurityRunResult {
 
 	var result SecurityRunResult
 	if err := json.Unmarshal([]byte(jsonOutput), &result); err != nil {
+		if execErr != nil {
+			return SecurityRunResult{CaseID: caseID, Status: "error", Verdict: "error", Summary: "安全攻击脚本执行失败且没有合法结果", Error: execErr.Error(), RawOutput: output}
+		}
 		return SecurityRunResult{
 			CaseID:    caseID,
 			Status:    "error",
@@ -1361,6 +1387,13 @@ func (s *server) executeSecurityRun(caseID string) SecurityRunResult {
 			Error:     err.Error(),
 			RawOutput: output,
 		}
+	}
+	// 安全脚本在发现漏洞时按约定返回非零，但 JSON 结果仍然是可用的
+	// 验收记录；只有没有结构化输出时才把进程退出码视为执行错误。
+	if execErr != nil && result.Status == "" {
+		result.Status = "error"
+		result.Verdict = "error"
+		result.Error = execErr.Error()
 	}
 	if result.CaseID == "" {
 		result.CaseID = caseID
@@ -1493,6 +1526,30 @@ func envOrDefaultInt(key string, fallback int) int {
 	}
 	parsed, err := strconv.Atoi(value)
 	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func envOrDefaultBool(key string, fallback bool) bool {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func envOrDefaultFloat(key string, fallback float64) float64 {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil || parsed < 0 || parsed > 100 {
 		return fallback
 	}
 	return parsed

@@ -110,6 +110,38 @@ export const securitySuites = [
         ]
       }
     ]
+  },
+  {
+    id: 'quantum-simulations',
+    name: '量子攻击模拟 3 类',
+    accent: 'accent-purple',
+    summary: '协议层量子威胁模拟：算法降级、重复搜索压力与长期截获后解密场景，验证拒绝策略和合法请求回归。',
+    cases: [
+      {
+        caseId: 'quantum-shor',
+        title: 'Shor 算法降级模拟',
+        mode: '自动化',
+        target: '拒绝 RSA-512 等经典弱算法降级',
+        expected: '弱算法请求被拒绝，攻击后合法 SSCL 请求仍可受理。',
+        steps: ['发送 RSA-512 降级请求', '检查拒绝结果', '发送合法 SSCL 控制请求']
+      },
+      {
+        caseId: 'quantum-grover',
+        title: 'Grover 重复搜索模拟',
+        mode: '自动化',
+        target: '重复样本请求压力与服务可用性',
+        expected: '32 次样本请求均得到明确响应，攻击后合法请求仍可受理。',
+        steps: ['连续提交 32 个搜索样本', '统计拒绝和错误', '发送合法 SSCL 控制请求']
+      },
+      {
+        caseId: 'quantum-hndl',
+        title: 'HNDL 截获后解密模拟',
+        mode: '自动化',
+        target: '生成响应中的私密材料泄露检查',
+        expected: '响应不包含私钥、SM4 密钥或其他秘密材料，攻击后合法请求仍可受理。',
+        steps: ['提交带秘密字段的模拟请求', '扫描响应敏感字段', '发送合法 SSCL 控制请求']
+      }
+    ]
   }
 ]
 

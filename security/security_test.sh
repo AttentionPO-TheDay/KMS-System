@@ -361,6 +361,7 @@ run_algo_tamper() {
     else
         res_summary="所有被篡改的算法参数都已被成功拦截，且缺少内部身份头的请求被正确拒绝（401）。"
     fi
+	run_generate_control_probe "algo-tamper"
 }
 
 run_algo_weak_param() {
@@ -409,6 +410,7 @@ run_algo_weak_param() {
     else
         res_summary="弱算法与参数降级请求都已被成功拦截。"
     fi
+	run_generate_control_probe "algo-weak-param"
 }
 
 run_algo_malformed() {
@@ -462,6 +464,96 @@ run_algo_malformed() {
     else
         res_summary="所有畸形载荷都已被安全拦截并拒绝。"
     fi
+	run_generate_control_probe "algo-malformed"
+}
+
+# =====================================================================
+# Quantum attack simulations (protocol-level, not claims of breaking PQC)
+# =====================================================================
+
+run_generate_control_probe() {
+    local name="$1"
+    local url="${GenerateGoBaseUrl}/generate/request/ENROLL_KEY"
+    local headers
+    headers=$(jq -n --arg t "$InternalToken" --arg u "$AcceptanceUser" '{"X-Internal-Token": $t, "X-Kms-User": $u}')
+    local payload
+    payload=$(jq -n --arg u "$AcceptanceUser" --arg et "$ValidEncrytType" --arg ua "$ValidUa" \
+        '{user: $u, encryt_type: $et, encryt_name: "SSCL", ua: $ua, key_domain: "acceptance-control", key_name: "control", key_use: "security-control"}')
+    local res code body
+    res=$(invoke_http_request "POST" "$url" "$headers" "$payload")
+    code="${res%%|||*}"
+    body="${res#*|||}"
+    add_trace "$name control-probe" "POST" "$url" "$code" "control" "合法请求回归" "$body"
+    if [ "$code" -ge 400 ] || [[ "$body" == *'"error"'* ]]; then
+        res_status="error"
+        res_verdict="error"
+        res_passed=false
+        res_error="攻击后合法生成请求未恢复：HTTP ${code}"
+        return 1
+    fi
+    return 0
+}
+
+run_quantum_shor() {
+    local url="${GenerateGoBaseUrl}/generate/request/ENROLL_KEY"
+    local headers
+    headers=$(jq -n --arg t "$InternalToken" --arg u "$AcceptanceUser" '{"X-Internal-Token": $t, "X-Kms-User": $u}')
+    local payload
+    payload=$(jq -n --arg u "$AcceptanceUser" --arg et "$ValidEncrytType" --arg ua "$ValidUa" \
+        '{user: $u, encryt_type: $et, encryt_name: "RSA-512", ua: $ua, key_domain: "quantum-shor", key_name: "downgrade", key_use: "attack"}')
+    local res code body
+    res=$(invoke_http_request "POST" "$url" "$headers" "$payload")
+    code="${res%%|||*}"; body="${res#*|||}"
+    add_trace "quantum shor downgrade" "POST" "$url" "$code" "quantum" "模拟 Shor：拒绝经典弱算法降级" "$body"
+    if [ "$code" -lt 400 ] && [[ "$body" != *"unsupported"* ]] && [[ "$body" != *"error"* ]]; then
+        res_verdict="vulnerable"; res_passed=false
+        res_summary="Shor 模拟：系统接受了 RSA-512 弱算法降级。"
+    else
+        res_summary="Shor 模拟：弱算法降级已被拒绝。"
+    fi
+    run_generate_control_probe "quantum-shor"
+}
+
+run_quantum_grover() {
+    local url="${GenerateGoBaseUrl}/generate/request/ENROLL_KEY"
+    local headers
+    headers=$(jq -n --arg t "$InternalToken" --arg u "$AcceptanceUser" '{"X-Internal-Token": $t, "X-Kms-User": $u}')
+    local accepted=0 rejected=0 i res code body payload
+    for i in $(seq 1 32); do
+        payload=$(jq -n --arg u "$AcceptanceUser" --arg et "$ValidEncrytType" --arg ua "$ValidUa" --arg n "$i" \
+            '{user: $u, encryt_type: $et, encryt_name: "SSCL", ua: $ua, key_domain: "quantum-grover", key_name: ("search-" + $n), key_use: "attack"}')
+        res=$(invoke_http_request "POST" "$url" "$headers" "$payload")
+        code="${res%%|||*}"; body="${res#*|||}"
+        if [ "$code" -lt 400 ] && [[ "$body" != *'"error"'* ]]; then ((accepted++)); else ((rejected++)); fi
+    done
+    add_trace "quantum grover repeated-search" "POST" "$url" "$accepted" "quantum" "模拟 Grover：重复搜索样本压力" "accepted=${accepted},rejected=${rejected}"
+    if [ "$rejected" -gt 0 ]; then
+        res_verdict="vulnerable"; res_passed=false
+        res_summary="Grover 模拟样本压力期间出现请求拒绝（${rejected}/32）。"
+    else
+        res_summary="Grover 模拟样本压力 32/32 请求受理。"
+    fi
+    run_generate_control_probe "quantum-grover"
+}
+
+run_quantum_hndl() {
+    local url="${GenerateGoBaseUrl}/generate/request/ENROLL_KEY"
+    local headers
+    headers=$(jq -n --arg t "$InternalToken" --arg u "$AcceptanceUser" '{"X-Internal-Token": $t, "X-Kms-User": $u}')
+    local payload
+    payload=$(jq -n --arg u "$AcceptanceUser" --arg et "$ValidEncrytType" --arg ua "$ValidUa" \
+        '{user: $u, encryt_type: $et, encryt_name: "SSCL", ua: $ua, key_domain: "quantum-hndl", key_name: "capture", key_use: "attack", include_private: true, return_secret: true}')
+    local res code body
+    res=$(invoke_http_request "POST" "$url" "$headers" "$payload")
+    code="${res%%|||*}"; body="${res#*|||}"
+    add_trace "quantum hndl secret-disclosure" "POST" "$url" "$code" "quantum" "模拟 HNDL：检查响应不泄露私密材料" "$body"
+    if [[ "$body" =~ (privateKey|private_key|sm4Key|sm4_key|secretKey|secret_key|keyValue) ]]; then
+        res_verdict="vulnerable"; res_passed=false
+        res_summary="HNDL 模拟：响应中出现疑似私密密钥材料。"
+    else
+        res_summary="HNDL 模拟：响应未发现私密密钥材料。"
+    fi
+    run_generate_control_probe "quantum-hndl"
 }
 
 run_lifecycle_sql() {
@@ -682,6 +774,9 @@ run_case() {
         "algo-tamper") run_algo_tamper ;;
         "algo-weak-param") run_algo_weak_param ;;
         "algo-malformed") run_algo_malformed ;;
+        "quantum-shor") run_quantum_shor ;;
+        "quantum-grover") run_quantum_grover ;;
+        "quantum-hndl") run_quantum_hndl ;;
         "lifecycle-sql") run_lifecycle_sql ;;
         "lifecycle-xss") run_lifecycle_xss ;;
         "platform-scanner") run_platform_scanner ;;
@@ -732,3 +827,10 @@ else
         --argjson requests "$res_requests" \
         '{caseId: $caseId, status: $status, verdict: $verdict, passed: $passed, summary: $summary, error: $error, notes: $notes, requests: $requests}'
 fi
+
+# 供 CI/验收后台使用：只有用例通过才返回 0；漏洞、执行错误和未知用例
+# 必须返回非零，避免“输出 FAIL 但流水线仍成功”。
+if [ "$res_status" = "completed" ] && [ "$res_passed" = true ]; then
+    exit 0
+fi
+exit 1

@@ -29,7 +29,7 @@ go run .
 2. `WRK_PATH`：`wrk` 可执行文件路径，未配置时会尝试自动发现
 3. `ACCEPTANCE_GENERATE_BASE_URL`：生成压测默认基础地址
 4. `ACCEPTANCE_LIFECYCLE_BASE_URL`：生命周期压测默认基础地址
-5. `ACCEPTANCE_INTERNAL_TOKEN`：内部服务调用 token。
+5. `ACCEPTANCE_INTERNAL_TOKEN`（或 `INTERNAL_TOKEN`）：内部服务调用 token。
    **无默认值**，必须与 `kms-ops/.env` 中的 `INTERNAL_TOKEN` 一致
    （历史默认值 `kms-generate-internal-secret-2026` 为公开值，已移除）。
    直接调用 Go 入站层的压测还必须携带 `X-Kms-User`，否则会被 401 拒绝。
@@ -39,13 +39,15 @@ go run .
 9. `ACCEPTANCE_REVOKE_VERIFY_WAIT_SECONDS`：回收后等待核验秒数，默认 `30`
 10. `ACCEPTANCE_KEY_POOL_LOOKBACK_MINUTES`：查询最近生成 key 池的回看窗口分钟数，默认 `120`
 11. `ACCEPTANCE_LIFECYCLE_REQUIRED_KEYS`：更新/回收强制使用的 key 池大小，默认按目标 TPS * 时长估算
-12. `ACCEPTANCE_GENERATE_JAVA_BASE_URL`：生成 Java 服务基础地址，默认 `http://127.0.0.1:9081`
-13. `ACCEPTANCE_LIFECYCLE_JAVA_BASE_URL`：更新回收 Java 服务基础地址，默认 `http://127.0.0.1:9082`
-14. `ACCEPTANCE_ATTACK_USER_NAME` / `ACCEPTANCE_ATTACK_USER_PASSWORD`：普通用户攻击账号
-15. `ACCEPTANCE_ATTACK_ADMIN_NAME` / `ACCEPTANCE_ATTACK_ADMIN_PASSWORD`：管理员账号
-16. `ACCEPTANCE_ATTACK_FOREIGN_USER`：被攻击的 foreign user，默认 `admin`
+12. `ACCEPTANCE_UPDATE_VERIFY_ENABLED`：是否核验更新请求最终 `chainStatus=1`，默认 `true`；链路结果消费者关闭时该场景会明确判为未核验
+13. `ACCEPTANCE_UPDATE_VERIFY_TARGET`：更新最终完成率阈值，默认 `98`（百分比）
+14. `ACCEPTANCE_GENERATE_JAVA_BASE_URL`：生成 Java 服务基础地址，默认 `http://127.0.0.1:9081`
+15. `ACCEPTANCE_LIFECYCLE_JAVA_BASE_URL`：更新回收 Java 服务基础地址，默认 `http://127.0.0.1:9082`
+16. `ACCEPTANCE_ATTACK_USER_NAME` / `ACCEPTANCE_ATTACK_USER_PASSWORD`：普通用户攻击账号
+17. `ACCEPTANCE_ATTACK_ADMIN_NAME` / `ACCEPTANCE_ATTACK_ADMIN_PASSWORD`：管理员账号
+18. `ACCEPTANCE_ATTACK_FOREIGN_USER`：被攻击的 foreign user，默认 `admin`
 
-> 说明：第 15、16 项目前为**未使用的参数**——命令行会解析并转发，
+> 说明：第 17、18 项目前为**未使用的参数**——命令行会解析并转发，
 > 但后端没有任何函数读取它们（越权/foreign user 场景在
 > `securityCases.js` 中仅有注释形式）。保留是为了兼容既有调用脚本。
 
@@ -59,4 +61,4 @@ go run .
    （早前本文档写的 `16/2000/60s` 与 `12/800/60s` 与代码不符。）
 3. 更新与回收会自动加载最近一次生成压测之后的 key 池，不再使用固定 `keyId`
 4. 回收率按最终状态核验，不再依赖 Go 接入层 `/lifecycle/metrics` 的累计计数
-5. 安全攻击接口当前可执行生成 3 类攻击与更新/回收 5 类攻击，结果会回填到前端安全卡片
+5. 安全攻击接口当前可执行生成 3 类攻击、更新/回收 5 类攻击和量子模拟 3 类攻击，结果会回填到前端安全卡片
