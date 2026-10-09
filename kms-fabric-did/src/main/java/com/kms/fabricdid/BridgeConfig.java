@@ -10,7 +10,7 @@ import java.util.Map;
 import java.util.Properties;
 
 final class BridgeConfig {
-    final boolean enabled, writeEnabled, policyApproved;
+    final boolean enabled, chainWritesEnabled, writeEnabled, policyApproved;
     final String chainId, namespace, methodId, internalToken, host;
     final int port, maxMetadataBytes;
     final Properties fabric = new Properties();
@@ -19,6 +19,7 @@ final class BridgeConfig {
 
     BridgeConfig(Map<String, String> env) {
         enabled = bool(env, "FABRIC_DID_ENABLED");
+        chainWritesEnabled = bool(env, "KMS_CHAIN_WRITES_ENABLED");
         writeEnabled = bool(env, "FABRIC_DID_WRITE_ENABLED");
         policyApproved = bool(env, "FABRIC_DID_CREATE_POLICY_APPROVED");
         chainId = env.getOrDefault("FABRIC_DID_CHAIN_ID", "");
@@ -74,16 +75,22 @@ final class BridgeConfig {
     }
     private static boolean readable(Path path) { return path != null && Files.isRegularFile(path) && Files.isReadable(path); }
     boolean configured() { return missingFields.isEmpty(); }
+    boolean effectiveWriteEnabled() { return chainWritesEnabled && enabled && configured() && writeEnabled && policyApproved; }
+    String chainWriteState() { return chainWritesEnabled ? "ENABLED" : "PAUSED"; }
     String status() {
         if (!enabled) return "DISABLED";
         if (!configured()) return "NOT_CONFIGURED";
-        return writeEnabled && policyApproved ? "READY" : "READY_READ_ONLY";
+        return effectiveWriteEnabled() ? "READY" : "READY_READ_ONLY";
+    }
+    void requireChainWrites() {
+        if (!chainWritesEnabled) throw new BridgeException(503, "CHAIN_WRITES_PAUSED");
     }
     void requireRead() {
         if (!enabled) throw new BridgeException(503, "DISABLED");
         if (!configured()) throw new BridgeException(503, "NOT_CONFIGURED");
     }
     void requireWrite() {
+        requireChainWrites();
         requireRead();
         if (!writeEnabled) throw new BridgeException(403, "WRITE_DISABLED");
         if (!policyApproved) throw new BridgeException(409, "CHAIN_POLICY_NOT_APPROVED");

@@ -53,6 +53,7 @@ public class BridgeOfflineTest {
     }
     private Map<String, String> environment() {
         Map<String, String> env = new HashMap<>();
+        env.put("KMS_CHAIN_WRITES_ENABLED", "true");
         env.put("FABRIC_DID_ENABLED", "true"); env.put("FABRIC_DID_WRITE_ENABLED", "true");
         env.put("FABRIC_DID_CREATE_POLICY_APPROVED", "true"); env.put("FABRIC_DID_CHAIN_ID", "offline-test");
         env.put("FABRIC_DID_METHOD_ID", "offline"); env.put("INTERNAL_TOKEN", "offline-secret");
@@ -101,7 +102,7 @@ public class BridgeOfflineTest {
         assertEquals(0, initialized.get());
     }
     @Test public void missingConfigurationNeverInitializesSdk() {
-        Map<String, String> env = new HashMap<>(); env.put("FABRIC_DID_ENABLED", "true");
+        Map<String, String> env = new HashMap<>(); env.put("FABRIC_DID_ENABLED", "true"); env.put("KMS_CHAIN_WRITES_ENABLED", "true");
         BindingService missing = new BindingService(new BridgeConfig(env), () -> { throw new AssertionError("must not initialize"); });
         assertEquals("NOT_CONFIGURED", missing.status().get("status"));
         expect("NOT_CONFIGURED", () -> missing.prepare(binding("SM2")));
@@ -116,10 +117,79 @@ public class BridgeOfflineTest {
         env = environment(); env.put("FABRIC_DID_WRITE_ENABLED", "false");
         BindingService readonly = new BindingService(new BridgeConfig(env), () -> fake);
         assertEquals("READY_READ_ONLY", readonly.status().get("status"));
+        assertEquals("PREPARED", readonly.prepare(binding("SM2")).get("status"));
         expect("WRITE_DISABLED", () -> readonly.submit(prepared));
         env = environment(); env.put("FABRIC_DID_CREATE_POLICY_APPROVED", "false");
         BindingService unapproved = new BindingService(new BridgeConfig(env), () -> fake);
         expect("CHAIN_POLICY_NOT_APPROVED", () -> unapproved.submit(prepared));
+    }
+    @Test public void globalPauseMissingFalseAndInvalidNeverInvokeSdk() {
+        for (String value : new String[] {null, "false", "", "yes", "1", " true ", "invalid"}) {
+            Map<String, String> env = environment();
+            if (value == null) env.remove("KMS_CHAIN_WRITES_ENABLED"); else env.put("KMS_CHAIN_WRITES_ENABLED", value);
+            BindingService paused = new BindingService(new BridgeConfig(env), () -> { throw new AssertionError("paused SDK factory"); });
+            assertEquals("PAUSED", paused.status().get("chainWriteState"));
+            assertEquals(false, paused.status().get("writeEnabled"));
+            assertEquals("READY_READ_ONLY", paused.status().get("status"));
+            expect("CHAIN_WRITES_PAUSED", () -> paused.prepare(binding("SM2")));
+            expect("CHAIN_WRITES_PAUSED", () -> paused.submit(Json.MAPPER.createObjectNode()));
+        }
+        assertEquals(0, initialized.get()); assertEquals(0, fake.calls); assertEquals(0, fake.submits);
+    }
+    @Test public void globalPausePrecedesMissingConfigurationAndDisabledBridge() {
+        for (String enabled : new String[] {"true", "false"}) {
+            Map<String, String> env = new HashMap<>();
+            env.put("FABRIC_DID_ENABLED", enabled); env.put("FABRIC_DID_WRITE_ENABLED", "true");
+            env.put("FABRIC_DID_CREATE_POLICY_APPROVED", "true");
+            BindingService paused = new BindingService(new BridgeConfig(env), () -> { throw new AssertionError("missing paused SDK factory"); });
+            assertFalse(paused.config.configured());
+            expect("CHAIN_WRITES_PAUSED", () -> paused.prepare(null));
+            expect("CHAIN_WRITES_PAUSED", () -> paused.submit(null));
+            expect("true".equals(enabled) ? "NOT_CONFIGURED" : "DISABLED", () -> paused.read("did:offline:history"));
+        }
+        assertEquals(0, initialized.get()); assertEquals(0, fake.calls);
+    }
+    @Test public void pausedCachedSdkKeepsHistoricalReadAndVerifyWithoutPrepareOrSubmit() {
+        ObjectNode plan = prepare("KYBER"); service.submit(plan);
+        Map<String, String> env = environment(); env.put("KMS_CHAIN_WRITES_ENABLED", "false");
+        AtomicInteger cachedFactoryCalls = new AtomicInteger();
+        BindingService paused = new BindingService(new BridgeConfig(env), () -> { cachedFactoryCalls.incrementAndGet(); return fake; });
+        assertEquals(plan.get("did").asText(), paused.read(plan.get("did").asText()).get("did"));
+        Map<String, Object> verified = paused.verify(verifyBody(plan));
+        assertEquals("CONFIRMED", verified.get("status"));
+        assertEquals(true, verified.get("transactionValid")); assertEquals(true, verified.get("metadataMatches"));
+        int before = fake.calls;
+        expect("CHAIN_WRITES_PAUSED", () -> paused.prepare(binding("KYBER")));
+        expect("CHAIN_WRITES_PAUSED", () -> paused.submit(plan));
+        assertEquals(before, fake.calls); assertEquals(1, cachedFactoryCalls.get()); assertEquals(1, fake.submits);
+        assertEquals("CONFIRMED", verified.get("status"));
+    }
+    @Test public void globalTruePreservesLocalWriteAndPolicyGates() {
+        Map<String, String> env = environment(); env.put("KMS_CHAIN_WRITES_ENABLED", "TRUE");
+        BridgeConfig allowed = new BridgeConfig(env);
+        assertEquals("ENABLED", allowed.chainWriteState()); assertTrue(allowed.effectiveWriteEnabled());
+        env.put("FABRIC_DID_CREATE_POLICY_APPROVED", "false");
+        BindingService unapproved = new BindingService(new BridgeConfig(env), () -> fake);
+        assertEquals("PREPARED", unapproved.prepare(binding("SM2")).get("status"));
+        expect("CHAIN_POLICY_NOT_APPROVED", () -> unapproved.submit(Json.MAPPER.createObjectNode()));
+        assertEquals(false, unapproved.status().get("writeEnabled")); assertEquals(0, fake.submits);
+    }
+    @Test public void pausedHealthStatusAndWriteErrorsViaHttpNeverInitializeSdk() throws Exception {
+        Map<String, String> env = environment(); env.remove("KMS_CHAIN_WRITES_ENABLED"); env.remove("FABRIC_DID_METHOD_ID");
+        server = new BridgeServer(new BridgeConfig(env), () -> { throw new AssertionError("HTTP paused SDK factory"); }); server.start();
+        HttpReply health = http("/health", null, "GET", null);
+        assertEquals(200, health.code); assertEquals("PAUSED", health.body.get("data").get("chainWriteState").asText());
+        assertFalse(health.body.get("data").get("writeEnabled").asBoolean());
+        assertEquals(401, http("/internal/fabric-did/bindings/prepare", null, "POST", "{}").code);
+        HttpReply status = http("/internal/fabric-did/status", "offline-secret", "GET", null);
+        assertEquals("PAUSED", status.body.get("data").get("chainWriteState").asText());
+        assertFalse(status.body.get("data").get("writeEnabled").asBoolean());
+        assertEquals("NOT_CONFIGURED", status.body.get("data").get("status").asText());
+        for (String action : new String[] {"prepare", "submit"}) {
+            HttpReply reply = http("/internal/fabric-did/bindings/" + action, "offline-secret", "POST", "{}");
+            assertEquals(503, reply.code); assertEquals("CHAIN_WRITES_PAUSED", reply.body.get("data").get("errorCode").asText());
+        }
+        assertEquals(0, initialized.get()); assertEquals(0, fake.calls); assertEquals(0, fake.submits);
     }
     @Test public void onlyTransactionValidAndExactMetadataConfirms() {
         ObjectNode plan = prepare("SM2");
@@ -203,7 +273,7 @@ public class BridgeOfflineTest {
         assertEquals(plan.get("txId").asText(), response.get("txId"));
     }
     @Test public void publicHealthAuthenticatedStatusNoConfigViaHttp() throws Exception {
-        Map<String, String> env = new HashMap<>(); env.put("FABRIC_DID_ENABLED", "true"); env.put("FABRIC_DID_PORT", "0"); env.put("INTERNAL_TOKEN", "offline-secret");
+        Map<String, String> env = new HashMap<>(); env.put("FABRIC_DID_ENABLED", "true"); env.put("FABRIC_DID_PORT", "0"); env.put("INTERNAL_TOKEN", "offline-secret"); env.put("KMS_CHAIN_WRITES_ENABLED", "true");
         server = new BridgeServer(new BridgeConfig(env), () -> { throw new AssertionError("HTTP no-config must not initialize SDK"); }); server.start();
         assertEquals(200, http("/health", null, "GET", null).code);
         assertEquals(401, http("/internal/fabric-did/status", null, "GET", null).code);
@@ -248,23 +318,23 @@ public class BridgeOfflineTest {
     // 假 SDK 只存在于测试源码，生产不存在自动 CONFIRMED 的模拟开关。
     private static class FakeDidSdk implements DidSdk {
         final String txId = hex('a', 64), nonce = hex('b', 48);
-        int submits; Boolean valid = true; boolean throwSubmit; String lastDid, readError;
+        int submits, calls; Boolean valid = true; boolean throwSubmit; String lastDid, readError;
         Map<String, Object> document;
         static String hex(char value, int size) { StringBuilder text = new StringBuilder(); for (int i = 0; i < size; i++) text.append(value); return text.toString(); }
-        @Override public Map<String, Object> newTransaction() { return Json.map("txId", txId, "nonce", nonce); }
-        @Override public String transactionId(String candidate) { return nonce.equals(candidate) ? txId : hex('d', 64); }
+        @Override public Map<String, Object> newTransaction() { calls++; return Json.map("txId", txId, "nonce", nonce); }
+        @Override public String transactionId(String candidate) { calls++; return nonce.equals(candidate) ? txId : hex('d', 64); }
         @Override public Map<String, Object> read(String did) {
-            lastDid = did;
+            calls++; lastDid = did;
             if (readError != null) throw new BridgeException(502, readError);
             if (document == null) throw new BridgeException(404, "NOT_FOUND");
             return document;
         }
         @Override public String create(String did, String metadata, String nonce) {
-            submits++;
+            calls++; submits++;
             if (throwSubmit) throw new IllegalStateException("offline timeout");
             document = Json.map("id", did, "metadata", metadata, "deactivated", false, "status", "FOUND");
             return "SDK_PAYLOAD_OR_DID_NOT_A_TRANSACTION_ID";
         }
-        @Override public Boolean transactionValid(String txId) { return submits == 0 ? null : valid; }
+        @Override public Boolean transactionValid(String txId) { calls++; return submits == 0 ? null : valid; }
     }
 }

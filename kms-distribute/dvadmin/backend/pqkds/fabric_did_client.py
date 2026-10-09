@@ -19,6 +19,9 @@ def _flag(name):
 
 
 def local_configuration_error(chain_id=None, require_write=True):
+    from .chain_backend import chain_writes_enabled
+    if require_write and not chain_writes_enabled():
+        return 'CHAIN_WRITES_PAUSED'
     if not _flag('FABRIC_DID_ENABLED'):
         return 'DISABLED'
     if not (chain_id or os.environ.get('FABRIC_DID_CHAIN_ID', '').strip()):

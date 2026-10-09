@@ -131,11 +131,10 @@ restore_fisco_live_state() {
         restore_dir_from_template "$FISCO_TEMPLATE_CONSOLE_CONF" "$FISCO_LIVE_CONSOLE_CONF" "FISCO console 配置"
     fi
 
-    if [ -f "$FISCO_LIVE_STATE_ENV" ]; then
-        sync_contract_env_from_state "$FISCO_LIVE_STATE_ENV"
-    elif [ -f "$FISCO_TEMPLATE_STATE_ENV" ]; then
+    # 不上链默认启动只恢复基础设施文件，不把模板/旧状态的账户覆盖进 .env。
+    # 现有合约和历史数据保留；需要真实链身份时另行受控配置，不在启动时猜测。
+    if [ ! -f "$FISCO_LIVE_STATE_ENV" ] && [ -f "$FISCO_TEMPLATE_STATE_ENV" ]; then
         cp "$FISCO_TEMPLATE_STATE_ENV" "$FISCO_LIVE_STATE_ENV"
-        sync_contract_env_from_state "$FISCO_LIVE_STATE_ENV"
     fi
 }
 
@@ -271,31 +270,9 @@ ensure_key_operation_record_proof_path() {
 
 ensure_key_operation_record_proof_path
 
-if ! grep -q '^FISCO_CONTRACT_ADDRESS=0x' .env; then
-    if [ -f "$FISCO_LIVE_STATE_ENV" ]; then
-        sync_contract_env_from_state "$FISCO_LIVE_STATE_ENV"
-    fi
-fi
-
-# 判断是否需要部署合约：
-# 1. 没有合约地址 → 需要部署
-# 2. 有合约地址但 FISCO_PRIVATE_KEY 为空 → 也需要重新部署（否则上链必然失败）
-needs_deploy=false
-if ! grep -q '^FISCO_CONTRACT_ADDRESS=0x' .env; then
-    needs_deploy=true
-    echo "[INFO] 未检测到已部署合约地址，需要部署 KeyEvidence..."
-else
-    fisco_pk=$(grep '^FISCO_PRIVATE_KEY=' .env | tail -n 1 | cut -d '=' -f 2-)
-    if [ -z "$fisco_pk" ]; then
-        needs_deploy=true
-        echo "[INFO] FISCO_PRIVATE_KEY 为空，需要重新部署 KeyEvidence 以提取部署账户私钥..."
-    fi
-fi
-
-if [ "$needs_deploy" = true ]; then
-    echo "[INFO] 开始自动部署 KeyEvidence..."
-    bash ./deploy-keyevidence.sh
-fi
+# 默认不上链：缺地址/私钥是允许状态，绝不在启动时自动部署合约或提取账户。
+# deploy-keyevidence.sh 保留为独立的受控运维工具，不由任何默认启动流程调用。
+echo "[INFO] 真实链写入和链任务消费者已关闭，跳过合约自动部署/账户同步"
 
 echo ""
 echo "[INFO] 容器状态:"

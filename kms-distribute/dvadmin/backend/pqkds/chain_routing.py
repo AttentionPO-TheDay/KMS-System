@@ -1,8 +1,14 @@
-"""节点初始化仍能完成，但不能把 DID 待绑定包装成旧合约上传成功。
+"""业务初始化与链写入独立；暂停不实例化旧 SDK、不编造上链成功。"""
 
-Fabric 公钥绑定由登记事务的 outbox 驱动；这里不再从物化列拼旧合约入参，
-也不把 IP/端口、设备身份或私钥传到外部 DID metadata。
-"""
+
+class PausedChainUploadStatus:
+    def upload_node_registration(self, node):
+        from .chain_backend import get_chain_backend
+        return {
+            'success': False, 'provider': get_chain_backend(),
+            'code': 'CHAIN_WRITES_PAUSED', 'status': 'PAUSED',
+            'message': '真实上链已暂停，公钥与操作审计仅保留本地',
+        }
 
 
 class FabricBindingUploadStatus:

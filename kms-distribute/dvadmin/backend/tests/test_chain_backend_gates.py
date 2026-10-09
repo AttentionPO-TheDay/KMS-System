@@ -30,7 +30,7 @@ def method(relative, class_name, name, **extra):
 
 class BackendGates(unittest.TestCase):
     def setUp(self):
-        self.environment = patch.dict(os.environ, {'KMS_CHAIN_BACKEND': 'fabric-did'})
+        self.environment = patch.dict(os.environ, {'KMS_CHAIN_BACKEND': 'fabric-did', 'KMS_CHAIN_WRITES_ENABLED': 'true'})
         self.environment.start()
         self.addCleanup(self.environment.stop)
 
@@ -86,6 +86,24 @@ class BackendGates(unittest.TestCase):
         result = service.upload_service.upload_node_registration(node)
         self.assertFalse(result['success'])
         self.assertEqual(result['provider'], 'FABRIC_DID')
+
+    def test_pause_default_and_false_skip_all_legacy_node_constructors(self):
+        for selected in ('legacy', 'fabric-did'):
+            for flag in (None, 'false', 'invalid'):
+                os.environ['KMS_CHAIN_BACKEND'] = selected
+                if flag is None:
+                    os.environ.pop('KMS_CHAIN_WRITES_ENABLED', None)
+                else:
+                    os.environ['KMS_CHAIN_WRITES_ENABLED'] = flag
+                model = SimpleNamespace(objects=SimpleNamespace(get=Mock(return_value=object())), DoesNotExist=RuntimeError)
+                legacy, upload = Mock(), Mock()
+                initializer = method('pqkds/node_service.py', 'NodeService', '__init__', Node=model,
+                    OptimizedKeygenService=Mock(), BlockchainService=legacy, NodeBlockchainUploadService=upload)
+                node_service = SimpleNamespace()
+                initializer(node_service, 'offline-node')
+                legacy.assert_not_called()
+                upload.assert_not_called()
+                self.assertEqual(node_service.upload_service.upload_node_registration(None)['code'], 'CHAIN_WRITES_PAUSED')
 
     def test_node_service_default_legacy_still_uses_existing_paths(self):
         os.environ['KMS_CHAIN_BACKEND'] = 'legacy'

@@ -63,7 +63,14 @@ public class GenerateChainServiceImpl implements GenerateChainService {
     @Value("${FABRIC_DID_CHAIN_ID:}")
     private String fabricChainId = "";
 
+    @Value("${KMS_CHAIN_WRITES_ENABLED:false}")
+    private boolean chainWritesEnabled;
+
     private FiscoBcosWrapper fiscoWrapper;
+
+    public boolean isChainWriteEnabled() {
+        return chainWritesEnabled;
+    }
 
     public boolean isFabricDidBackend() {
         String selected = chainBackend == null ? "legacy" : chainBackend.trim().toLowerCase(java.util.Locale.ROOT);
@@ -83,6 +90,11 @@ public class GenerateChainServiceImpl implements GenerateChainService {
 
     @Override
     public boolean processChainSync(Keymanage keymanage) {
+        if (!isChainWriteEnabled()) {
+            // 暂停不改本地业务结果、历史存证，也不发布可能清空存证的回调。
+            log.info("CHAIN_WRITES_PAUSED: action=ENROLL_KEY");
+            return false;
+        }
         if (keymanage == null || keymanage.getKeyId() == null) {
             log.error("Invalid keymanage for chain sync");
             return false;
@@ -149,6 +161,9 @@ public class GenerateChainServiceImpl implements GenerateChainService {
     }
 
     private synchronized boolean ensureFiscoWrapper() {
+        if (!isChainWriteEnabled()) {
+            return false;
+        }
         if (isFabricDidBackend()) {
             return false;
         }

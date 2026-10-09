@@ -33,6 +33,88 @@ class ChainBackendBoundaryTest {
     }
 
     @Test
+    void pausedMutationsPreserveEvidenceAndLocalResults() {
+        Keymanage key = new Keymanage();
+        key.setKeyId(42L);
+        key.setChainStatus("1");
+        key.setChainHash("previous-confirmed-hash");
+        key.setBlockHeight(123L);
+        key.setKeyValue("not-json");
+        assertFalse(service.isChainWriteEnabled());
+        assertFalse(service.processCreateChainSync(key));
+        assertFalse(service.processRotateChainSync(key));
+        assertFalse(service.processRevokeChainSync(key));
+        assertNull(service.recordLifecycleEvent("KEY_DISTRIBUTED", 42, 1, "offline", "hash"));
+        assertEquals("1", key.getChainStatus());
+        assertEquals("previous-confirmed-hash", key.getChainHash());
+        assertEquals(Long.valueOf(123), key.getBlockHeight());
+        assertNull(ReflectionTestUtils.getField(service, "fiscoWrapper"));
+        verifyNoInteractions(mapper, kafka, records);
+    }
+
+    @Test
+    void globalAndLegacyPauseBlockEvenCachedWrapper() throws Exception {
+        Class<?> type = Class.forName(UpdatedelChainService.class.getName() + "$FiscoBcosWrapper");
+        Object wrapper = mock(type);
+        ReflectionTestUtils.setField(service, "fiscoWrapper", wrapper);
+        Method ensure = UpdatedelChainService.class.getDeclaredMethod("ensureFiscoWrapper");
+        ensure.setAccessible(true);
+        assertEquals(Boolean.FALSE, ensure.invoke(service));
+        ReflectionTestUtils.setField(service, "chainWritesEnabled", true);
+        ReflectionTestUtils.setField(service, "chainSyncEnabled", false);
+        assertFalse(service.isChainWriteEnabled());
+        assertEquals(Boolean.FALSE, ensure.invoke(service));
+        assertNull(service.recordLifecycleEvent("KEY_DISTRIBUTED", 42, 1, "offline", "hash"));
+        verifyNoInteractions(wrapper, mapper, kafka, records);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void directEndpointReportsPauseBeforeParsingOrCallingChain() {
+        com.ruoyi.updatedel.controller.InternalLifecycleController controller =
+            new com.ruoyi.updatedel.controller.InternalLifecycleController(null, records, null, null, null, null, service, null, null);
+        ReflectionTestUtils.setField(controller, "internalToken", "offline-test-token");
+        java.util.Map<String, Object> payload = controller.chainEvent("offline-test-token", null);
+        assertEquals(409, payload.get("code"));
+        java.util.Map<String, Object> data = (java.util.Map<String, Object>) payload.get("data");
+        assertEquals("PAUSED", data.get("status"));
+        assertEquals("CHAIN_WRITES_PAUSED", data.get("errorCode"));
+        assertEquals("LEGACY_FISCO", data.get("provider"));
+        assertFalse(data.containsKey("chainHash"));
+        assertNull(ReflectionTestUtils.getField(service, "fiscoWrapper"));
+        verifyNoInteractions(mapper, kafka, records);
+    }
+
+    @Test
+    void listenerRequiresBothFlagsAndPreservesQueueWhenConsumerNotEnabled() throws Exception {
+        Method method = com.ruoyi.updatedel.consumer.UpdatedelChainConsumer.class.getMethod("onMessage", java.util.List.class);
+        String template = method.getAnnotation(org.springframework.kafka.annotation.KafkaListener.class).autoStartup();
+        for (boolean writes : new boolean[] {false, true}) {
+            for (boolean consumerEnabled : new boolean[] {false, true}) {
+                for (boolean legacy : new boolean[] {false, true}) {
+                    String expression = template.replace("${KMS_CHAIN_WRITES_ENABLED:false}", String.valueOf(writes))
+                        .replace("${KMS_CHAIN_CONSUMER_ENABLED:false}", String.valueOf(consumerEnabled))
+                        .replace("${kms.lifecycle.chain-sync-enabled:true}", String.valueOf(legacy));
+                    Boolean actual = new org.springframework.expression.spel.standard.SpelExpressionParser()
+                        .parseExpression(expression, new org.springframework.expression.common.TemplateParserContext())
+                        .getValue(Boolean.class);
+                    assertEquals(writes && consumerEnabled && legacy, actual);
+                }
+            }
+        }
+        UpdatedelChainService chain = mock(UpdatedelChainService.class);
+        com.ruoyi.updatedel.consumer.UpdatedelChainConsumer consumer =
+            new com.ruoyi.updatedel.consumer.UpdatedelChainConsumer(chain, 1, 1, 1);
+        try {
+            ReflectionTestUtils.setField(consumer, "chainWritesEnabled", true);
+            consumer.onMessage(null);
+            verifyNoInteractions(chain);
+        } finally {
+            consumer.shutdown();
+        }
+    }
+
+    @Test
     void defaultIsLegacyWithoutInitializingSdk() {
         service.init();
         assertFalse(service.isFabricDidBackend());
@@ -52,6 +134,7 @@ class ChainBackendBoundaryTest {
     void fabricBlocksEvenAnExistingCachedWrapper() throws Exception {
         Class<?> wrapperType = Class.forName(UpdatedelChainService.class.getName() + "$FiscoBcosWrapper");
         ReflectionTestUtils.setField(service, "fiscoWrapper", mock(wrapperType));
+        ReflectionTestUtils.setField(service, "chainWritesEnabled", true);
         ReflectionTestUtils.setField(service, "chainBackend", "fabric-did");
         Method ensure = UpdatedelChainService.class.getDeclaredMethod("ensureFiscoWrapper");
         ensure.setAccessible(true);
@@ -60,6 +143,7 @@ class ChainBackendBoundaryTest {
 
     @Test
     void digestOnlyEventDoesNotClaimDidConfirmation() {
+        ReflectionTestUtils.setField(service, "chainWritesEnabled", true);
         ReflectionTestUtils.setField(service, "chainBackend", "fabric-did");
         assertNull(service.recordLifecycleEvent("KEY_UPDATED", 42, 2, "Node-offline", "public-hash"));
         assertNull(ReflectionTestUtils.getField(service, "fiscoWrapper"));
@@ -68,6 +152,7 @@ class ChainBackendBoundaryTest {
 
     @Test
     void threeLegacyMutationsAreExplicitlyUnsupportedAndScoped() {
+        ReflectionTestUtils.setField(service, "chainWritesEnabled", true);
         ReflectionTestUtils.setField(service, "chainBackend", "fabric-did");
         ReflectionTestUtils.setField(service, "fabricChainId", "offline-test-chain");
         Keymanage key = new Keymanage();

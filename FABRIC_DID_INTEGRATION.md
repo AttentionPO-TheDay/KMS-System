@@ -6,6 +6,34 @@
 
 默认 `KMS_CHAIN_BACKEND=legacy`，原 FISCO/Web3 代码、历史配置和交易记录保留。选择 `fabric-did` 时在旧 SDK 构造/部署/写入前拒绝，禁止悄悄回退；当前 DID 能力为读取和经批准的应用专属 create-only 绑定，当前节点可变投影、DID 更新/停用及完整旧生命周期事件等价均为 **UNSUPPORTED**。
 
+## 当前运行：全部真实上链已暂停
+
+用户暂无法提供公网链地址，现统一 `KMS_CHAIN_WRITES_ENABLED=false`，代码默认也为 false。
+这与 `KMS_CHAIN_BACKEND` 独立：FISCO、Web3 自动部署/注册、Fabric prepare/submit/显式 worker 都拦住。
+本地密钥、版本、回收/分发与审计仍工作，已有确认记录不清除，不返回假哈希；公开任务保留但不自动补发。
+链 Kafka 监听额外要求 `KMS_CHAIN_CONSUMER_ENABLED=true`，仅打开写开关不会释放历史队列；业务 Kafka 消费保持启用。
+
+**默认完整 Docker 启动已固定为不上链**：基础 Compose 中链写/链消费及生命周期专用开关为 literal `false`，可选 Fabric 配置的全局写/写入/策略批准也为固定 `false`。即使 `.env` 或宿主同名变量为 true，普通启动仍不能开启真实写入。`start.sh` 不自动部署合约或覆盖合约账户，业务重建保留历史链运行态。
+
+正常独立模式启动（仓库根）：
+
+```powershell
+docker compose -f kms-ops/docker-compose.yml up -d --build
+```
+
+需要本机 Demo 时仅额外叠加 Demo 配置，仍固定不上链：
+
+```powershell
+docker compose -f kms-ops/docker-compose.yml -f kms-ops/docker-compose.demo.yml up -d --build
+```
+
+`docker-compose.chain-paused.yml` 仍可作为维护专用覆盖，最后叠加可跳过 Django start.sh 的待审核迁移；它不再是关闭链写的必要条件。普通启动仍执行原有常规 Django 迁移。
+本机 `.env` 直接读取被权限规则禁止，原文件保持不动。恢复真实写入、链监听和处置历史积压任务需另行审核显式开启覆盖文件，不允许只改 `.env`，更不因首次缺合约参数自动部署。数据库、消息队列和链历史未清理。
+
+实测：两 Java 容器开关均 false且JAR哈希与新构建匹配，Python `legacy PAUSED`；
+旧链事件真实调用返回 `PAUSED/CHAIN_WRITES_PAUSED`、无 hash；原登录13/13和四算法完整业务22/22通过，
+专用初始化节点 ACTIVE、0 新交易/0 非空链哈希。Bridge全局暂停反证和独立容器验证也通过。
+
 ## 代码与依赖
 
 - `kms-fabric-did/`：独立 Java 8 进程、内部认证、严格 metadata、懒加载供应方 SDK、prepare/submit/verify、无配置诊断；完整 API 见该模块 README。

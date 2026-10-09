@@ -1,0 +1,30 @@
+# 暂停全部真实链写入；必须作为最后一个覆盖文件叠加，优先于 .env 原值。
+# 不覆盖凭据、不清数据库/Kafka/链，不改变业务消费者。
+services:
+  generate-java:
+    environment:
+      KMS_CHAIN_WRITES_ENABLED: "false"
+      KMS_CHAIN_CONSUMER_ENABLED: "false"
+  updatedel-java:
+    environment:
+      KMS_CHAIN_WRITES_ENABLED: "false"
+      KMS_CHAIN_CONSUMER_ENABLED: "false"
+      KMS_LIFECYCLE_CHAIN_SYNC_ENABLED: "false"
+      KMS_LIFECYCLE_CHAIN_CONSUMER_ENABLED: "false"
+  dvadmin3-django:
+    # 本次只是暂停上链，不顺带应用前一轮尚未确认的 0026 数据库迁移。
+    entrypoint: ["gunicorn", "application.asgi:application", "-c", "gunicorn_conf.py"]
+    command: []
+    environment:
+      KMS_CHAIN_WRITES_ENABLED: "false"
+      FABRIC_DID_WRITE_ENABLED: "false"
+  nginx:
+    environment:
+      KMS_CHAIN_WRITES_ENABLED: "false"
+  fabric-did-bridge:
+    image: kms-fabric-did:local
+    profiles: ["fabric-did"]
+    environment:
+      KMS_CHAIN_WRITES_ENABLED: "false"
+      FABRIC_DID_WRITE_ENABLED: "false"
+      FABRIC_DID_CREATE_POLICY_APPROVED: "false"

@@ -58,7 +58,26 @@ public class UpdatedelChainService {
     @Value("${FABRIC_DID_CHAIN_ID:}")
     private String fabricChainId = "";
 
+    @Value("${KMS_CHAIN_WRITES_ENABLED:false}")
+    private boolean chainWritesEnabled;
+
+    @Value("${kms.lifecycle.chain-sync-enabled:true}")
+    private boolean chainSyncEnabled = true;
+
     private FiscoBcosWrapper fiscoWrapper;
+
+    public boolean isChainWriteEnabled() {
+        return chainWritesEnabled && chainSyncEnabled;
+    }
+
+    private boolean chainWritesPaused(Long keyId, String action) {
+        if (isChainWriteEnabled()) {
+            return false;
+        }
+        // 暂停不是失败：保留本地业务结果及已经确认的链上存证，不发布覆盖回调。
+        log.info("CHAIN_WRITES_PAUSED: keyId={} action={}", keyId, action);
+        return true;
+    }
 
     public boolean isFabricDidBackend() {
         String selected = chainBackend == null ? "legacy" : chainBackend.trim().toLowerCase(java.util.Locale.ROOT);
@@ -126,6 +145,9 @@ public class UpdatedelChainService {
      * 或任何 SM4 明文 —— 契约里这一列叫 publicKey，字面意思就是公开量。
      */
     public boolean processCreateChainSync(Keymanage keymanage) {
+        if (chainWritesPaused(keymanage == null ? null : keymanage.getKeyId(), "CREATE_KEY")) {
+            return false;
+        }
         if (keymanage == null || keymanage.getKeyId() == null) {
             return false;
         }
@@ -184,6 +206,9 @@ public class UpdatedelChainService {
      */
     public String recordLifecycleEvent(String eventType, long keyId, int version,
                                        String nodeId, String publicMaterialHash) {
+        if (chainWritesPaused(keyId, eventType)) {
+            return null;
+        }
         if (!ensureFiscoWrapper()) {
             log.warn("记录链上事件失败：FISCO 未就绪, type={} keyId={}", eventType, keyId);
             return null;
@@ -243,6 +268,9 @@ public class UpdatedelChainService {
     }
 
     public boolean processRotateChainSync(Keymanage keymanage) {
+        if (chainWritesPaused(keymanage == null ? null : keymanage.getKeyId(), "UPDATE_KEY")) {
+            return false;
+        }
         if (keymanage == null || keymanage.getKeyId() == null) {
             return false;
         }
@@ -278,6 +306,9 @@ public class UpdatedelChainService {
     }
 
     public boolean processRevokeChainSync(Keymanage keymanage) {
+        if (chainWritesPaused(keymanage == null ? null : keymanage.getKeyId(), "REVOKE_KEY")) {
+            return false;
+        }
         if (keymanage == null || keymanage.getKeyId() == null) {
             return false;
         }
@@ -304,6 +335,9 @@ public class UpdatedelChainService {
     }
 
     private synchronized boolean ensureFiscoWrapper() {
+        if (!isChainWriteEnabled()) {
+            return false;
+        }
         // 必须在缓存命中之前判；已有 wrapper 也不能绕过明确选择的 Fabric 后端。
         if (isFabricDidBackend()) {
             return false;

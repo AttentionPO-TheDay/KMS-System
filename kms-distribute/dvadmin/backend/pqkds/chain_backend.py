@@ -24,6 +24,17 @@ def is_fabric_did():
     return get_chain_backend() == 'fabric-did'
 
 
+def chain_writes_enabled():
+    # 必须显式 true 才放行；缺失、false 或拼错均不能启动真实链客户端。
+    return os.environ.get('KMS_CHAIN_WRITES_ENABLED', 'false').strip().lower() == 'true'
+
+
+def chain_write_state():
+    return 'ENABLED' if chain_writes_enabled() else 'PAUSED'
+
+
 def require_legacy_backend(operation):
+    if not chain_writes_enabled():
+        raise NoLegacyWrite(f'{operation}: CHAIN_WRITES_PAUSED')
     if is_fabric_did():
         raise NoLegacyWrite(f'{operation}: legacy chain writes are disabled in fabric-did mode')

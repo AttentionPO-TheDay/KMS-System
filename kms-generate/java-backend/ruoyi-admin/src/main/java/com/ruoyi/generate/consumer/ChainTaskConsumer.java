@@ -29,6 +29,12 @@ public class ChainTaskConsumer {
     @Autowired
     private GenerateAuditService auditService;
 
+    @org.springframework.beans.factory.annotation.Value("${KMS_CHAIN_WRITES_ENABLED:false}")
+    private boolean chainWritesEnabled;
+
+    @org.springframework.beans.factory.annotation.Value("${KMS_CHAIN_CONSUMER_ENABLED:false}")
+    private boolean chainConsumerEnabled;
+
     /**
      * 消费 key_chain_task 消息
      * 仅处理 ENROLL 类型（生成上链），忽略 ROTATE/REVOKE/FREEZE
@@ -37,12 +43,17 @@ public class ChainTaskConsumer {
             topics = "${kms.kafka.chain-topic:key_chain_task}",
             groupId = "kms-generate-chain-consumer-group",
             concurrency = "4",
+            autoStartup = "#{${KMS_CHAIN_WRITES_ENABLED:false} && ${KMS_CHAIN_CONSUMER_ENABLED:false}}",
             properties = {
                     "max.poll.records=5",
                     "max.poll.interval.ms=600000"
             }
     )
     public void onMessage(List<ConsumerRecord<String, String>> records) {
+        if (!chainWritesEnabled || !chainConsumerEnabled) {
+            log.info("CHAIN_WRITES_PAUSED: chain consumer disabled");
+            return;
+        }
         for (ConsumerRecord<String, String> record : records) {
             try {
                 String jsonString = record.value();

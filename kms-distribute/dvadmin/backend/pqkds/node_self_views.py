@@ -209,10 +209,11 @@ def _public_status(node: Node) -> str:
 
 
 def _node_payload(node: Node) -> dict:
-    from .chain_backend import get_chain_backend
+    from .chain_backend import get_chain_backend, chain_write_state
     return {
         'nodeId': node.node_id,
         'chainBackend': get_chain_backend(),
+        'chainWriteState': chain_write_state(),
         'name': node.name,
         'status': _public_status(node),
         'rawStatus': node.status,
@@ -245,7 +246,7 @@ def _node_payload(node: Node) -> dict:
 def _long_term_key_payload(k: NodeLongTermKey) -> dict:
     """一行长期密钥 → 页面需要的形状。逐行调用，公钥只换算一次。"""
     public_key = _public_key_hex(k)
-    from .chain_backend import is_fabric_did
+    from .chain_backend import is_fabric_did, chain_write_state
     chain_binding = None
     if is_fabric_did():
         from .chain_binding_service import get_binding_status
@@ -254,6 +255,7 @@ def _long_term_key_payload(k: NodeLongTermKey) -> dict:
         'algorithm': k.algorithm,
         # 密钥可用与链上确认是两个事实；尚无配置时也不能显示成“上链成功”。
         'chainBinding': chain_binding,
+        'chainWriteState': chain_write_state(),
         'keyId': k.key_id,
         'keyVersion': k.key_version,
         'status': k.status,

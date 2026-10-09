@@ -51,13 +51,16 @@ java -DfabricSDK.configuration=/run/fabric-did/gm-sdk.properties -jar /app/app.j
 
 环境中的 `FABRIC_DID_PROPERTIES_FILE` 必须显式等于 `/run/fabric-did/fabric.config.properties`。配置中的相对文件路径以 JVM 工作目录为基准，而非以属性文件为基准；建议使用实际只读挂载的绝对路径。缺失或路径布局错误均返回 `NOT_CONFIGURED`，报告仅包含字段名，不输出凭据路径或内容。
 
+- `KMS_CHAIN_WRITES_ENABLED=false`：全局暂停（默认）。缺失、`false`、空值及其他非法值均暂停；只有明确 `true`（大小写不敏感，不接受数字/yes/前后空白）放行。该闸门独立于所有 `FABRIC_DID_*` 开关；暂停时 prepare/submit 首先返回 HTTP 503 / `CHAIN_WRITES_PAUSED`，先于配置检查与 SDK 初始化/交易创建，即使已缓存 SDK 或存在旧 prepare 计划也不能绕过。读取/验证仍按原认证和本地配置要求执行，不抹去历史交易与绑定证明。
 - `FABRIC_DID_ENABLED=false`：完全关闭，SDK 不初始化。
-- `FABRIC_DID_WRITE_ENABLED=false`：不允许提交；有效配置下可以 prepare/读取/验证。
+- `FABRIC_DID_WRITE_ENABLED=false`：不允许提交；全局闸门为 true 且有效配置下可以 prepare/读取/验证。
 - `FABRIC_DID_CREATE_POLICY_APPROVED=false`：即使允许写，仍不能提交。只有链方确认应用专属 DID 标识格式、JSON metadata/长度/权限和 create-only 语义后，才由操作人员显式批准。
 - `FABRIC_DID_METHOD_ID` **没有默认值**，必须由链方提供，不能借用其他应用 DID。
 - `FABRIC_DID_CHAIN_ID` 是应用侧来源标签，不假装是链节点自动认证出的网络标识。
 - `FABRIC_DID_HOST` 默认 `127.0.0.1`；容器内如设 `0.0.0.0`，应仅在内部网络暴露，不发布公网端口。
 - `INTERNAL_TOKEN` 未设时内部入口全部 fail closed。请求通过 `X-Internal-Token` 认证。
+
+`/health` 和认证状态均提供 `chainWriteState`（全局闸门关闭时为 `PAUSED`）与有效 `writeEnabled`（要求全局放行、启用、配置齐备、本地写开关和策略批准均成立）。暂停且配置齐备时状态为 `READY_READ_ONLY`，原 `DISABLED`/`NOT_CONFIGURED` 诊断仍保留；这些字段不修改历史 `CONFIRMED` 证据。
 
 状态中的 `READY`/`READY_READ_ONLY` **只表示本地配置与开关状态**，不表示网络、证书、metadata 链码能力已验证；`capabilities.networkChecked=false` 明确表达这一点。应用启动、`/health` 和状态入口均不会构造 SDK；首次有效配置的授权 SDK 操作才懒加载。
 

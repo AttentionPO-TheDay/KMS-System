@@ -16,7 +16,7 @@ from django.db import connection, transaction
 from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 
-from .chain_backend import is_fabric_did
+from .chain_backend import is_fabric_did, chain_writes_enabled, chain_write_state
 from .fabric_did_client import BindingError, FabricDidClient, local_configuration_error
 from .models import ChainKeyBinding, Node
 
@@ -144,6 +144,11 @@ binding_payload = get_binding_status
 
 def get_backend_status(client_factory=None):
     """配置诊断只查 Bridge 状态，不加载 SDK，更不能补任务或触发旧链构造器。"""
+    if not chain_writes_enabled():
+        return {'provider': PROVIDER if is_fabric_did() else 'LEGACY',
+                'chainId': os.environ.get('FABRIC_DID_CHAIN_ID', '') if is_fabric_did() else '',
+                'status': 'PAUSED', 'chainWriteState': 'PAUSED', 'writeEnabled': False,
+                'configured': None, 'networkChecked': False, 'lastError': 'CHAIN_WRITES_PAUSED'}
     if not is_fabric_did():
         return {'provider': 'LEGACY', 'chainId': '', 'configured': None, 'status': 'LEGACY',
                 'networkChecked': False, 'lastError': ''}
@@ -304,6 +309,8 @@ def _verify(row, client):
 
 
 def process_binding(binding_id, client_factory=FabricDidClient):
+    if not chain_writes_enabled():
+        return 'PAUSED'  # 不 claim、不改原证据、不构造 HTTP 客户端。
     if not is_fabric_did():
         return 'LEGACY_DISABLED'  # legacy 模式绝不处理 Fabric 队列。
     if connection.in_atomic_block:
@@ -389,6 +396,8 @@ def process_binding(binding_id, client_factory=FabricDidClient):
 
 
 def process_pending_bindings(limit=100):
+    if not chain_writes_enabled():
+        return {'PAUSED': 0}
     if not is_fabric_did():
         return {'LEGACY_DISABLED': 0}
     prior = ChainKeyBinding.objects.filter(

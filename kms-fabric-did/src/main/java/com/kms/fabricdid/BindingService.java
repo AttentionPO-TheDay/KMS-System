@@ -17,7 +17,8 @@ final class BindingService {
     }
     Map<String, Object> status() {
         return Json.map("provider", "FABRIC_DID", "chainId", config.chainId, "enabled", config.enabled,
-                "configured", config.configured(), "writeEnabled", config.writeEnabled,
+                "configured", config.configured(), "writeEnabled", config.effectiveWriteEnabled(),
+                "chainWriteState", config.chainWriteState(),
                 "status", config.status(), "missingFields", config.missingFields,
                 "capabilities", Json.map("immutableBinding", true, "transactionVerification", true,
                 "currentNodeProjection", false, "compareAndSet", false, "lifecycleEquivalent", false,
@@ -30,6 +31,7 @@ final class BindingService {
         return Json.map("provider", "FABRIC_DID", "chainId", config.chainId, "did", did, "document", response, "status", response.get("status"));
     }
     Map<String, Object> prepare(JsonNode body) {
+        config.requireChainWrites();
         config.requireRead();
         Binding binding = new Binding(body, config);
         Map<String, Object> transaction = sdk().newTransaction();

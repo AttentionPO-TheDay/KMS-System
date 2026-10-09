@@ -2833,14 +2833,14 @@ class BlockchainConfigViewSet(CustomModelViewSet):
 
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
-        from .chain_backend import is_fabric_did
-        if is_fabric_did() and self.action in {
+        from .chain_backend import is_fabric_did, chain_writes_enabled
+        if (is_fabric_did() or not chain_writes_enabled()) and self.action in {
             'create', 'update', 'partial_update', 'destroy', 'batch_delete',
             'deploy_contract', 'sync_database_to_blockchain', 'nodes_from_blockchain',
         }:
             # 原模型改合约地址会清掉所有 Transaction 并重置节点；原 GET 还会
             # 自动把数据库节点上传。Fabric 不是新的以太坊地址，必须拒绝这条路径。
-            raise PermissionDenied(detail='Fabric DID 模式不修改或自动同步旧合约配置；历史记录保留只读')
+            raise PermissionDenied(detail='真实链写入已暂停或当前使用 DID；旧合约配置和历史记录保留只读')
     def get_serializer_class(self):
         if self.action == 'create':
             return BlockchainConfigCreateSerializer
@@ -2866,8 +2866,8 @@ class BlockchainConfigViewSet(CustomModelViewSet):
             return ErrorResponse(msg=f"智能合约部署失败: {str(e)}")
     @action(detail=False, methods=['get'])
     def status(self, request):
-        from .chain_backend import is_fabric_did
-        if is_fabric_did():
+        from .chain_backend import is_fabric_did, chain_writes_enabled
+        if is_fabric_did() or not chain_writes_enabled():
             from .chain_binding_service import get_backend_status
             return SuccessResponse(data=get_backend_status(), msg='Fabric DID 适配状态；不表示已连通测试链')
         try:

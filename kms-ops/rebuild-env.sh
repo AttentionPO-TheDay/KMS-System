@@ -83,9 +83,8 @@ clear_dir_with_helper "$MYSQL_DATA_DIR"
 clear_dir_with_helper "$REDIS_DATA_DIR"
 clear_dir_with_helper "$KAFKA_DATA_DIR"
 
-echo "[INFO] 清理 FISCO live 运行态，后续将从模板恢复..."
-clear_dir_with_helper "$FISCO_LIVE_NODE_DIR"
-clear_dir_with_helper "$FISCO_LIVE_STATE_DIR"
+# 不上链默认方式保留链的历史运行态，不能因为重建业务镜像顺带丢掉旧存证。
+echo "[INFO] 不上链模式保留 FISCO live/历史状态，不清链、不自动重部署合约"
 
 echo "[INFO] 重新构建本地产物..."
 bash "$SCRIPT_DIR/build-local.sh"

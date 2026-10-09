@@ -409,6 +409,18 @@ public class InternalLifecycleController {
     public Map<String, Object> chainEvent(@RequestHeader(value = "X-Internal-Token", required = false) String token,
                                           @RequestBody Map<String, Object> body) {
         requireAuthorized(token);
+        if (!updatedelChainService.isChainWriteEnabled()) {
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("provider", updatedelChainService.getChainProvider());
+            data.put("chainId", updatedelChainService.getChainId());
+            data.put("status", "PAUSED");
+            data.put("errorCode", "CHAIN_WRITES_PAUSED");
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("code", 409);
+            payload.put("msg", "链写入已暂停，本地业务不受影响");
+            payload.put("data", data);
+            return payload;
+        }
         if (updatedelChainService.isFabricDidBackend()) {
             Map<String, Object> data = new LinkedHashMap<>();
             data.put("provider", updatedelChainService.getChainProvider());

@@ -33,7 +33,8 @@ public final class BridgeServer {
         try {
             String path = exchange.getRequestURI().getPath();
             if ("/health".equals(path) && "GET".equals(exchange.getRequestMethod())) {
-                reply(exchange, 200, Json.map("code", 200, "msg", "ok", "data", Json.map("status", service.config.status(), "provider", "FABRIC_DID"))); return;
+                reply(exchange, 200, Json.map("code", 200, "msg", "ok", "data", Json.map("status", service.config.status(), "provider", "FABRIC_DID",
+                        "chainWriteState", service.config.chainWriteState(), "writeEnabled", service.config.effectiveWriteEnabled()))); return;
             }
             String token = exchange.getRequestHeaders().getFirst("X-Internal-Token");
             // 未设置服务端凭据时 fail closed，绝不让空字符串变成合法认证。

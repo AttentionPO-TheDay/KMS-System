@@ -236,7 +236,10 @@ def record_chain_event(event_type: str, key_id: int, version: int = 0,
     语义完全不同：它改密钥状态，本函数只留痕。用它记 KEY_DISTRIBUTED
     会让主 KMS 把分发误当成一次轮换，把密钥版本白白推进一格。
     """
-    from .chain_backend import is_fabric_did
+    from .chain_backend import is_fabric_did, chain_writes_enabled
+    if not chain_writes_enabled():
+        logger.info('CHAIN_WRITES_PAUSED: 本地操作已记录，不提交链事件 type=%s keyId=%s', event_type, key_id)
+        return None
     if is_fabric_did():
         # 数字 keyId + 摘要不能冒充 DID 的完整公钥/版本绑定，也不能悄悄
         # 回退去发 FISCO 事件。登记事件走 durable outbox；其余语义待链方确认。

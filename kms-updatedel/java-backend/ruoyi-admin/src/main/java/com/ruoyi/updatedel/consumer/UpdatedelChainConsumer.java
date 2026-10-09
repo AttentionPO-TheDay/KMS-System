@@ -34,6 +34,12 @@ public class UpdatedelChainConsumer {
     private final int chainBatchSize;
     private final int failureSampleSize;
 
+    @Value("${KMS_CHAIN_WRITES_ENABLED:false}")
+    private boolean chainWritesEnabled;
+
+    @Value("${KMS_CHAIN_CONSUMER_ENABLED:false}")
+    private boolean chainConsumerEnabled;
+
     public UpdatedelChainConsumer(UpdatedelChainService updatedelChainService,
                                   @Value("${kms.lifecycle.chain-worker-threads:4}") int chainWorkerThreads,
                                   @Value("${kms.lifecycle.chain-batch-size:20}") int chainBatchSize,
@@ -57,12 +63,17 @@ public class UpdatedelChainConsumer {
         topics = "${kms.lifecycle.kafka.chain-task-topic:key_chain_task}",
         groupId = "kms-updatedel-chain-consumer-group",
         concurrency = "${kms.lifecycle.chain-consumer-concurrency:2}",
+        autoStartup = "#{${KMS_CHAIN_WRITES_ENABLED:false} && ${KMS_CHAIN_CONSUMER_ENABLED:false} && ${kms.lifecycle.chain-sync-enabled:true}}",
         properties = {
             "max.poll.records=${kms.lifecycle.chain-max-poll-records:10}",
             "max.poll.interval.ms=${kms.lifecycle.chain-max-poll-interval-ms:900000}"
         }
     )
     public void onMessage(List<ConsumerRecord<String, String>> records) {
+        if (!chainWritesEnabled || !chainConsumerEnabled || !updatedelChainService.isChainWriteEnabled()) {
+            log.info("CHAIN_WRITES_PAUSED: lifecycle chain consumer disabled");
+            return;
+        }
         int taskCount = 0;
         for (ConsumerRecord<String, String> record : records) {
             try {

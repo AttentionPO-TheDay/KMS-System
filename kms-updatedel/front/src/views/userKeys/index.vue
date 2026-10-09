@@ -99,13 +99,14 @@
           </el-table-column>
           <el-table-column label="DID 绑定" min-width="180">
             <template #default="{ row }">
+              <el-tag v-if="row.chainWriteState === 'PAUSED'" type="info" size="small">真实上链已暂停</el-tag>
               <template v-if="row.chainBinding">
                 <el-tag :type="row.chainBinding.status === 'CONFIRMED' ? 'success' : 'warning'" size="small">
                   {{ row.chainBinding.status === 'CONFIRMED' ? '交易及回读已验证' : (row.chainBinding.status || '未确认') }}
                 </el-tag>
                 <div class="mono" style="overflow-wrap: anywhere">{{ row.chainBinding.did || '尚无 DID' }}</div>
               </template>
-              <span v-else>旧链模式（非 DID 确认）</span>
+              <span v-else>{{ row.chainWriteState === 'PAUSED' ? '本地公钥已保留；不提交新交易' : '旧链模式（非 DID 确认）' }}</span>
             </template>
           </el-table-column>
           <el-table-column label="可用性" width="132">

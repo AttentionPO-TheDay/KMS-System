@@ -157,8 +157,12 @@ class NodeService:
             logger.warning(f"节点 {node_id} 不存在")
 
         self.keygen_service = OptimizedKeygenService()
-        from .chain_backend import is_fabric_did
-        if is_fabric_did():
+        from .chain_backend import is_fabric_did, chain_writes_enabled
+        if not chain_writes_enabled():
+            from .chain_routing import PausedChainUploadStatus
+            self.blockchain_service = None
+            self.upload_service = PausedChainUploadStatus()
+        elif is_fabric_did():
             from .chain_routing import FabricBindingUploadStatus
             self.blockchain_service = None
             self.upload_service = FabricBindingUploadStatus()

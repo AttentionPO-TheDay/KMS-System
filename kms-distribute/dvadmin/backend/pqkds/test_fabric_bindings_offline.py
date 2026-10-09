@@ -73,6 +73,8 @@ from pqkds.models import ChainKeyBinding, Node, NodeLongTermKey
 
 
 ENV = {
+    # 只有 fake Bridge 专项写测试显式放行；生产默认暂停。
+    'KMS_CHAIN_WRITES_ENABLED': 'true',
     'KMS_CHAIN_BACKEND': 'fabric-did', 'FABRIC_DID_CHAIN_ID': 'offline-channel',
     'FABRIC_DID_NAMESPACE': 'kms-key-binding-v1', 'FABRIC_DID_ENABLED': 'true',
     'FABRIC_DID_WRITE_ENABLED': 'true', 'INTERNAL_TOKEN': 'mock-internal-token',
@@ -135,6 +137,37 @@ class BindingTests(unittest.TestCase):
         return registry.register_public_key(self.node, algorithm=kwargs.pop('algorithm', 'SM2'),
                                             public_key=kwargs.pop('public_key', '04abcdef'),
                                             key_id=kwargs.pop('key_id', 'logical-key'), **kwargs)
+
+    def test_global_pause_retains_local_key_and_queue_without_claim_or_http(self):
+        os.environ.pop('KMS_CHAIN_WRITES_ENABLED', None)
+        key = self.key()
+        row = key.chain_bindings.get()
+        self.assertEqual(key.status, 'ACTIVE')
+        self.assertEqual(row.last_error, 'CHAIN_WRITES_PAUSED')
+        factory = Mock(side_effect=AssertionError('pause must not construct HTTP'))
+        with patch.object(service, '_claim', side_effect=AssertionError('pause must not claim')):
+            self.assertEqual(service.process_binding(row.pk, factory), 'PAUSED')
+            self.assertEqual(service.process_pending_bindings(), {'PAUSED': 0})
+        row.refresh_from_db()
+        self.assertEqual(row.attempts, 0)
+        self.assertFalse(row.tx_id)
+        factory.assert_not_called()
+
+    def test_global_pause_preserves_confirmed_history_and_overrides_all_backends(self):
+        key = self.key()
+        row = key.chain_bindings.get()
+        row.status = 'CONFIRMED'
+        row.tx_id = 'historical-only-not-new'
+        row.save()
+        for backend_name in ('legacy', 'fabric-did'):
+            for flag in ('false', 'invalid', ''):
+                os.environ.update(KMS_CHAIN_BACKEND=backend_name, KMS_CHAIN_WRITES_ENABLED=flag)
+                factory = Mock()
+                self.assertEqual(service.process_binding(row.pk, factory), 'PAUSED')
+                self.assertEqual(service.get_backend_status(factory)['status'], 'PAUSED')
+                factory.assert_not_called()
+                row.refresh_from_db()
+                self.assertEqual((row.status, row.tx_id), ('CONFIRMED', 'historical-only-not-new'))
 
     def test_default_legacy_and_unknown_config(self):
         os.environ.pop('KMS_CHAIN_BACKEND')

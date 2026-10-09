@@ -16,7 +16,8 @@ const read = async (path, auth = true) => {
 try {
   container = docker(['run', '--rm', '-d', '--name', name, '-p', '127.0.0.1:19094:9094',
     '-e', 'FABRIC_DID_HOST=0.0.0.0', '-e', 'FABRIC_DID_PORT=9094',
-    '-e', 'FABRIC_DID_ENABLED=true', '-e', 'FABRIC_DID_WRITE_ENABLED=false',
+    '-e', 'KMS_CHAIN_WRITES_ENABLED=false',
+    '-e', 'FABRIC_DID_ENABLED=true', '-e', 'FABRIC_DID_WRITE_ENABLED=true',
     '-e', 'FABRIC_DID_CREATE_POLICY_APPROVED=false', '-e', 'FABRIC_DID_CHAIN_ID=',
     '-e', 'FABRIC_DID_METHOD_ID=', '-e', 'FABRIC_DID_PROPERTIES_FILE=',
     '-e', 'FABRIC_DID_CONTROLLER_PUBLIC_KEY_FILE=', '-e', `INTERNAL_TOKEN=${token}`, 'kms-fabric-did:local'])
@@ -33,6 +34,14 @@ try {
     && status.body.data.writeEnabled === false && status.body.data.capabilities.networkChecked === false)
   const did = await read('/internal/fabric-did/did?did=did:offline:only-read-missing-config')
   check('容器 DID 读取不假成功或回退旧链', did.status >= 400 && did.body.data.errorCode === 'NOT_CONFIGURED')
+  check('全局暂停独立于 Fabric 写开关', status.body.data.chainWriteState === 'PAUSED')
+  for (const action of ['prepare', 'submit']) {
+    const response = await fetch(`http://127.0.0.1:19094/internal/fabric-did/bindings/${action}`, {
+      method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: '{}', signal: AbortSignal.timeout(5000)
+    })
+    const body = await response.json()
+    check(`全局暂停拒绝 DID ${action} 且不生成交易`, response.status >= 400 && body.data.errorCode === 'CHAIN_WRITES_PAUSED')
+  }
   const version = spawnSync(dockerBin, ['exec', container, 'java', '-version'], { encoding: 'utf8' })
   check('镜像使用独立 Java 8 运行时', version.status === 0 && /1\.8\.0/.test((version.stdout || '') + (version.stderr || '')))
   console.log(`Docker 离线 Bridge ${passed}/${passed} 项通过；没有提供真实 Fabric 身份。`)
