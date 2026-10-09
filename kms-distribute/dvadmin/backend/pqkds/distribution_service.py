@@ -277,8 +277,8 @@ def create_initiated_sessions(sender_node, node_map, succeeded_node_ids, batch_i
     发起方是**发送节点**。取不到发送节点时（管理员发起的旧流程）**不建会话**：
     会话是"两个节点之间"的东西，没有发起节点就不存在这条边。
 
-    只建 initiated，不建 established —— 理由见调用点的说明：
-    验签（§6.3/§6.4）尚未实现，建 established 等于宣称一个没验证过的属性。
+    只建 initiated，不建 established —— 接收方还需要完成验签、解封和双方确认；
+    这些证据由会话端点按状态机逐步提交，不能在分发成功时提前宣称 established。
 
     幂等：session_id 由 batch_id + 节点后缀构成并带唯一约束，
     重复执行同一批次不会产生重复会话（走 get_or_create）。
