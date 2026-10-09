@@ -209,8 +209,10 @@ def _public_status(node: Node) -> str:
 
 
 def _node_payload(node: Node) -> dict:
+    from .chain_backend import get_chain_backend
     return {
         'nodeId': node.node_id,
+        'chainBackend': get_chain_backend(),
         'name': node.name,
         'status': _public_status(node),
         'rawStatus': node.status,
@@ -243,8 +245,15 @@ def _node_payload(node: Node) -> dict:
 def _long_term_key_payload(k: NodeLongTermKey) -> dict:
     """一行长期密钥 → 页面需要的形状。逐行调用，公钥只换算一次。"""
     public_key = _public_key_hex(k)
+    from .chain_backend import is_fabric_did
+    chain_binding = None
+    if is_fabric_did():
+        from .chain_binding_service import get_binding_status
+        chain_binding = get_binding_status(k)
     return {
         'algorithm': k.algorithm,
+        # 密钥可用与链上确认是两个事实；尚无配置时也不能显示成“上链成功”。
+        'chainBinding': chain_binding,
         'keyId': k.key_id,
         'keyVersion': k.key_version,
         'status': k.status,
@@ -380,6 +389,21 @@ def node_self_keys(request, identity):
     except C.ContractError as exc:
         return _error(exc.message, error_code=exc.code)
 
+    if identity.get('entryMode') == 'DEMO' and _public_status(node) == 'PENDING_INIT':
+        from .demo_context import validate_init_lease
+        if not validate_init_lease(request, node.node_id):
+            return _error('初始化租约已失效，请重新进入初始化', 409,
+                          error_code='DEMO_INIT_LEASE_REQUIRED')
+        # 部分成功后只能重报同一把；不能因重试把另一浏览器已登记的钥匙换掉。
+        existing = NodeLongTermKey.objects.filter(
+            node=node, algorithm=algorithm, status=C.KEY_STATUS_ACTIVE).first()
+        if existing and (
+                existing.key_id != (payload.get('keyId') or payload.get('key_id'))
+                or existing.key_version != payload.get('keyVersion', payload.get('key_version'))
+                or _public_key_hex(existing) != str(public_key).lower()):
+            return _error('该算法已登记，请复用对应的本地材料，不得重复初始化', 409,
+                          error_code=C.ERR_KEY_VERSION_MISMATCH)
+
     try:
         service = NodeService(node.node_id)
         result = service.store_node_public_key(
@@ -392,6 +416,7 @@ def node_self_keys(request, identity):
             # 记账、服务端是 v1，两边都不报错。0 应当走到下面被拒。
             key_version=payload.get('keyVersion', payload.get('key_version')),
             rotate=rotate,
+            demo_context=identity if identity.get('entryMode') == 'DEMO' else None,
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception('节点 %s 登记公钥异常', node.node_id)
@@ -604,6 +629,12 @@ def node_self_init(request, identity):
 
     if _public_status(node) == 'DISABLED':
         return _error('该节点已被停用，无法初始化', 403)
+
+    if identity.get('entryMode') == 'DEMO' and _public_status(node) == 'PENDING_INIT':
+        from .demo_context import validate_init_lease
+        if not validate_init_lease(request, node.node_id):
+            return _error('初始化租约已失效，请重新进入初始化', 409,
+                          error_code='DEMO_INIT_LEASE_REQUIRED')
 
     try:
         service = NodeService(node.node_id)

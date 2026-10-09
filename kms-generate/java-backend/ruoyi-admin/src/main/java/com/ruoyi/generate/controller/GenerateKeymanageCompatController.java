@@ -195,7 +195,8 @@ public class GenerateKeymanageCompatController extends BaseController {
     }
 
     private boolean isCurrentAdmin() {
-        return SecurityUtils.getLoginUser().getUser() != null && SecurityUtils.getLoginUser().getUser().isAdmin();
+        return com.ruoyi.framework.web.service.DemoIdentity.isCurrentAdmin()
+                || SecurityUtils.getLoginUser().getUser() != null && SecurityUtils.getLoginUser().getUser().isAdmin();
     }
 
     private Keymanage buildReenrollRequest(Keymanage oldKey, Keymanage incoming) {

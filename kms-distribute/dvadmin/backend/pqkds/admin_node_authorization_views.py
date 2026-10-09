@@ -58,11 +58,12 @@ def require_admin(view):
     """
 
     def wrapper(request, *args, **kwargs):
+        identity = getattr(request, 'kms_identity', None)
         token = kms.extract_bearer_token(request)
-        if not token:
+        if not identity and not token:
             return _error('未登录：缺少 Authorization: Bearer <token>', 401)
         try:
-            identity = kms.introspect(token)
+            identity = identity or kms.introspect(token)
         except kms.KmsTokenInvalid as exc:
             return _error(f'登录状态无效：{exc}', 401)
         except kms.KmsServiceError as exc:

@@ -20,6 +20,10 @@ COPY nginx/nginx.conf /etc/nginx/nginx.conf
 # （nginx 的 add_header 不继承，这些片段必须在每个自带 add_header 的
 #   location 里再 include 一次，见 nginx.conf 注释）
 COPY nginx/snippets/ /etc/nginx/snippets/
+COPY nginx/demo-server.conf.template /etc/nginx/kms-demo.template
+COPY nginx/30-kms-demo.sh /docker-entrypoint.d/30-kms-demo.sh
+RUN chmod +x /docker-entrypoint.d/30-kms-demo.sh \
+    && printf '%s\n' 'server { listen 8088; server_name _; return 404; }' > /etc/nginx/kms-demo.conf
 
 # 静态资源：门户 + 2 个前端
 # （/generate/ 与 /distribute/ 两个静态前端均已退役：前者页面并入统一管理端，

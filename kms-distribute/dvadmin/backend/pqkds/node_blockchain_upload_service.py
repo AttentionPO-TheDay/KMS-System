@@ -9,6 +9,8 @@ from .models import Node
 logger = logging.getLogger(__name__)
 class NodeBlockchainUploadService:
     def __init__(self):
+        from .chain_backend import require_legacy_backend
+        require_legacy_backend('初始化旧节点公钥上传服务')
         self.blockchain_service = BlockchainService()
     def upload_node_registration(self, node: Node) -> Dict[str, Any]:
         try:

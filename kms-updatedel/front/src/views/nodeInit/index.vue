@@ -5,7 +5,10 @@
   <div class="node-init-page">
     <div class="node-init-page__bar">
       <span class="node-init-page__brand">KMS · 节点首次初始化</span>
-      <el-button link size="small" :disabled="initializing" @click="handleLogout">退出登录</el-button>
+      <div>
+        <el-button v-if="IS_DEMO" link size="small" :disabled="initializing" @click="openAdmin">管理控制台</el-button>
+        <el-button link size="small" :disabled="initializing" @click="handleLogout">退出登录</el-button>
+      </div>
     </div>
     <div class="node-init-page__inner">
       <el-card shadow="never" class="node-init__card">
@@ -57,13 +60,13 @@
             <div class="node-init__key-name">{{ k.label }}</div>
             <div class="node-init__key-role">{{ k.role }}</div>
             <el-tag :type="k.ready ? 'success' : 'info'" size="small">
-              {{ k.ready ? '已就绪' : '未生成' }}
+              {{ k.ready ? '登记一致 · 本机可读' : k.text }}
             </el-tag>
           </div>
         </div>
 
         <el-alert
-          v-if="isActive"
+          v-if="ready"
           class="node-init__done"
           type="success"
           :closable="false"
@@ -97,13 +100,20 @@
             <ul class="node-init__device-options">
               <li><strong>续用原设备</strong>：改回原设备登录，本机不做任何改动。</li>
               <li>
-                <strong>改用本机</strong>：在本机重新初始化一套新密钥。
-                注意旧密钥<strong>不会</strong>因此失效，需要你在「密钥更新与回收」里
-                另行回收 —— 否则平台仍会往旧公钥分发，而旧私钥在对方那台设备上。
+                <strong>改用本机</strong>：先恢复原本机材料，或通过明确的新版本换钥与回收流程处置。
+                本页不会自动重新生成、替换或覆盖任何已登记密钥。
               </li>
             </ul>
           </template>
         </el-alert>
+
+        <el-alert v-if="blocked" class="node-init__device" type="error" :closable="false" show-icon
+          title="密钥材料需恢复，已禁止自动初始化或覆盖">
+          <p v-for="reason in inspection.reasons" :key="reason">{{ reason }}</p>
+          <p>请返回生成这些密钥的原浏览器，或恢复原本机材料。演示与独立运行密钥库彼此隔离，不会自动复制私钥；如需换钥，应走明确的新版本更新与旧密钥回收流程。</p>
+        </el-alert>
+        <el-alert v-if="!locksAvailable" class="node-init__device" type="warning" :closable="false" show-icon
+          title="浏览器不支持 Web Locks，初始化已关闭；请使用支持安全锁的浏览器和可信入口" />
 
         <div class="node-init__actions">
           <el-button
@@ -111,12 +121,12 @@
             type="primary"
             size="large"
             :loading="initializing"
-            :disabled="loading || !mapped"
+            :disabled="loading || !mapped || blocked || deviceMismatch || !locksAvailable"
             @click="handleInit"
           >
-            {{ initializing ? '正在初始化…' : '开始初始化' }}
+            {{ initializing ? '正在初始化…' : hasPartialMaterials ? '继续初始化（复用已有材料）' : '开始初始化' }}
           </el-button>
-          <el-button v-if="isActive" type="primary" size="large" @click="goWorkbench">
+          <el-button v-if="ready" type="primary" size="large" :disabled="loading || initializing" @click="goWorkbench">
             进入工作台
           </el-button>
           <el-button :disabled="initializing" @click="load">刷新状态</el-button>
@@ -124,10 +134,11 @@
 
         <!-- 逐套的进展。四套是串行生成的，用户需要看到"卡在哪一步" ——
              否则界面上只有一个转圈的按钮，卡住时完全无从判断。 -->
-        <div v-if="initializing && progress.length" class="node-init__progress">
-          <p v-for="(line, i) in progress" :key="i" class="node-init__progress-line">
-            <el-icon class="is-loading"><Loading /></el-icon>
-            <span>{{ line }}</span>
+        <div v-if="progress.length" class="node-init__progress">
+          <p v-for="line in progress" :key="line.algorithm" class="node-init__progress-line">
+            <el-icon v-if="initializing && line.status !== 'complete' && line.status !== 'failed'" class="is-loading"><Loading /></el-icon>
+            <el-tag v-else :type="line.status === 'complete' ? 'success' : 'danger'" size="small">{{ line.status === 'complete' ? '完成' : '失败' }}</el-tag>
+            <span>{{ line.message }}</span>
           </p>
         </div>
 
@@ -140,7 +151,7 @@
         <p v-if="!isActive" class="node-init__hint">
           初始化会在<strong>本机</strong>依次生成 Kyber、SSCL、SM2、Falcon 四套密钥，
           并把<strong>公钥</strong>登记到平台（私钥留在本机，不上传）。
-          Falcon 的计算占大头，整体通常在数秒内完成。期间请勿关闭页面或重复点击。
+          已完成的算法会跳过，未登记材料会复用，只有缺失算法才会生成。期间请勿关闭页面或重复点击。
         </p>
       </template>
       </el-card>
@@ -153,10 +164,11 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
-import { getSelfNode, initSelfNodeKeys, registerSelfNodePublicKey } from '@/api/pqkds/node-self'
-import { markNodeInitialized } from '@/utils/node-init-status'
-import { cryptoProvider } from '@/utils/crypto/browser-provider.js'
-import { deviceFingerprint, hasDeviceKey } from '@/utils/crypto/device-credential.js'
+import { markNodeInitialized, resetNodeInitStatusCache } from '@/utils/node-init-status'
+import { inspectInitialization, initializeNode } from '@/utils/node-initialization'
+import { hasDeviceKey } from '@/utils/crypto/device-credential.js'
+import { IS_DEMO, entryPath } from '@/utils/entry-mode'
+import { switchDemo } from '@/utils/demo-context'
 import useUserStore from '@/store/modules/user'
 
 const router = useRouter()
@@ -166,8 +178,12 @@ const loading = ref(true)
 const initializing = ref(false)
 const mapped = ref(false)
 const node = ref({})
-/** 逐套生成的进展提示。四套是串行的，用户需要看到"卡在哪一步"。 */
 const progress = ref([])
+const inspection = ref({ ready: false, blocked: false, algorithms: [], reasons: [] })
+const ready = computed(() => inspection.value.ready)
+const blocked = computed(() => inspection.value.blocked)
+const hasPartialMaterials = computed(() => inspection.value.algorithms.some(step => step.local || step.complete))
+const locksAvailable = Boolean(globalThis.navigator?.locks?.request)
 
 const KEY_META = [
   { key: 'kyber', label: 'Kyber', role: '后量子密钥封装 / 建立共享秘密' },
@@ -176,10 +192,10 @@ const KEY_META = [
   { key: 'falcon', label: 'Falcon', role: '对分发消息签名与验签' }
 ]
 
-const keyCards = computed(() => {
-  const keys = node.value.keys || {}
-  return KEY_META.map((m) => ({ ...m, ready: Boolean(keys[m.key]) }))
-})
+const keyCards = computed(() => KEY_META.map(meta => {
+  const step = inspection.value.algorithms.find(row => row.algorithm === meta.key.toUpperCase())
+  return { ...meta, ready: Boolean(step?.complete), text: step?.blocked ? '需恢复材料' : step?.local ? '本机已封存 · 待登记' : '尚未生成' }
+}))
 
 const statusText = computed(() => {
   const s = node.value.status
@@ -214,11 +230,9 @@ const isActive = computed(() => node.value.status === 'ACTIVE')
 // 不做这件事的后果是静默的：界面一切正常，直到某天某个信封解不开，
 // 而那时已经很难追到"是因为换了设备"。
 const hasDeviceCredential = ref(false)
-/** 设备公钥指纹。与激活时服务端记进 Node.key_device_id 的是同一个值。 */
-const deviceFingerprintValue = ref('')
-const localKeys = ref({ present: false, algorithms: [] })
 
 const deviceMismatch = computed(() => {
+  if (IS_DEMO) return false
   // 服务端还没登记设备公钥 → 该节点还没在**任何**设备上激活过，
   // 谈不上"换设备"（真走那条路会先被登录页的激活流程拦住）。
   const boundOnServer = Boolean(String(node.value.keyDeviceId || '').trim())
@@ -228,123 +242,58 @@ const deviceMismatch = computed(() => {
   return !hasDeviceCredential.value
 })
 
-async function refreshLocalKeyState() {
-  try {
-    hasDeviceCredential.value = await hasDeviceKey(node.value.nodeId)
-    deviceFingerprintValue.value = await deviceFingerprint(node.value.nodeId)
-    localKeys.value = await cryptoProvider.inspectNodeKeys(node.value.nodeId)
-  } catch (error) {
-    // 密钥库不可用（隐私模式 / 浏览器禁用 IndexedDB）不该让整页打不开，
-    // 但要如实反映成"本机无凭据/无材料"，而不是假装正常。
-    console.warn('[node-init] 读取本机密钥库失败：', error?.message)
-    localKeys.value = { present: false, algorithms: [] }
-    hasDeviceCredential.value = false
-    deviceFingerprintValue.value = ''
-  }
+function acceptInspection(data) {
+  inspection.value = data
+  mapped.value = data.mapped
+  node.value = data.node
+  if (data.ready) markNodeInitialized()
+  else resetNodeInitStatusCache()
 }
 
 async function load() {
   loading.value = true
   try {
-    const data = await getSelfNode()
-    mapped.value = Boolean(data?.mapped)
-    node.value = data?.node || {}
-    // 先拿到 node.nodeId 才能按它查本机密钥库（keyRef 里含节点编号）
-    await refreshLocalKeyState()
-    // 已激活的节点若手工进到本页（书签/后退），顺手把守卫缓存同步成 ACTIVE，
-    // 免得它仍按 PENDING_INIT 把用户弹回来。
-    if (node.value.status === 'ACTIVE') {
-      markNodeInitialized()
-    }
+    acceptInspection(await inspectInitialization())
+    // Demo never reads or creates device credentials/fingerprints.
+    if (!IS_DEMO && mapped.value) hasDeviceCredential.value = await hasDeviceKey(node.value.nodeId)
   } catch (error) {
+    inspection.value = { ready: false, blocked: true, algorithms: [], reasons: [`无法安全读取节点材料：${error.message}`] }
+    resetNodeInitStatusCache()
     ElMessage.error(`读取节点状态失败：${error.message}`)
   } finally {
     loading.value = false
   }
 }
 
-/**
- * 节点首次初始化（§4.4 起：**密钥在节点侧生成**）。
- *
- * 流程与旧版的关键差别
- * --------------------
- * 旧版只调一次 `initSelfNodeKeys()`，服务端在那边生成四套密钥并落库
- * （含私钥）—— 与 §0/§4「私钥留在节点侧」直接冲突。
- *
- * 现在：浏览器逐套生成 → **只上传公钥** → 再由 init 收尾置 ACTIVE。
- * 所以这里要按顺序做四件事，任何一步失败都必须**明确说出是哪一步** ——
- * 笼统的"初始化失败"会让用户以为整个流程坏了，而实际上可能只差一套。
- *
- * ⚠️ 私钥全程留在 `NodeKeyStore`（加密 IndexedDB），**不上传**。
- *    这正是本页不能沿用旧实现的原因。
- */
+function updateProgress(step) {
+  const index = progress.value.findIndex(row => row.algorithm === step.algorithm)
+  if (index < 0) progress.value.push(step)
+  else progress.value[index] = step
+}
+
 async function handleInit() {
-  if (initializing.value) return
+  if (initializing.value || loading.value || blocked.value || deviceMismatch.value || isActive.value || !locksAvailable) return
   initializing.value = true
   progress.value = []
   try {
-    // 四套依次生成并上报。
-    // 顺序上把 **Falcon 放最后** —— 它的 keygen 最慢（约 70ms/次，
-    // 且是无证书格参数下最重的一步），放前面会让用户在前几秒里
-    // 看不到任何进展。
-    for (const item of KEY_META) {
-      const algo = item.key.toUpperCase()
-      // Kyber 变体：与既有节点保持一致用 768（NIST 3 级）。
-      // 变体由公钥长度**自描述**（服务端按长度推断），所以两边不必预先约定。
-      const options = algo === 'KYBER' ? { variant: 768 } : {}
-      // 页面不再自己拼 keyRef —— 交给格式模块按
-      // `node/{nodeId}/{algorithm}/{keyId}/{version}` 生成。
-      // 手拼的 ref 拼错不会报错，只会让私钥在「本机有没有」的检查里消失。
-      progress.value.push(`正在生成 ${item.label}…`)
-      const generated = await cryptoProvider.generate(algo, { nodeId: node.value.nodeId, ...options })
-      progress.value.push(`正在登记 ${item.label} 公钥…`)
-      await registerSelfNodePublicKey(
-        algo,
-        generated.publicKey,
-        algo === 'KYBER' ? '768' : undefined,
-        // 传**设备公钥指纹**而不是浏览器级 deviceId（改造前是后者）。
-        // 服务端在节点激活时已把同一指纹写进 Node.key_device_id，
-        // `store_node_public_key` 会比对两者；不一致会报"设备不一致"（业务码 409）。
-        deviceFingerprintValue.value,
-        // ⚠️ KMS-005：**必须**把本地铸的 keyId/version 一并上报。
-        //    不传的话服务端会自己铸一个，两边各记一个 id、各自"成功"，
-        //    而本地 keyRef `node/{节点}/{算法}/{keyId}/{版本}` 里的那一段
-        //    与库里那行从此对不上 —— 「本机这把就是登记的那把」永远核不出来，
-        //    表现为换密钥时旧 private key 被静默复用（判据④要拦的正是它）。
-        generated.keyId,
-        generated.version
-      )
-    }
-
-    progress.value.push('四套公钥齐备，正在收尾…')
-    const data = await initSelfNodeKeys()
-    node.value = data?.node || node.value
-    // 主动失效守卫里的状态缓存：不清的话它还是 PENDING_INIT，
-    // 用户一点别的页面就会被弹回引导页 —— "初始化完了还进不去"。
-    markNodeInitialized()
-    if (data?.alreadyInitialized) {
-      ElMessage.info('该节点此前已完成初始化')
-    } else {
-      ElMessage.success('四套基础公钥已登记，节点已激活')
-    }
+    acceptInspection(await initializeNode({ onProgress: updateProgress }))
+    ElMessage.success('四套基础公钥与本机材料一致，节点已激活')
   } catch (error) {
-    // 失败时保持 PENDING_INIT，允许重试 —— 明确告知可以再来一次，
-    // 而不是让用户以为节点坏了。
-    //
-    // ⚠️ 报错要带上"卡在哪一步"：四套是逐个上报的，只报一句
-    //    "初始化失败"会让用户以为前面几套也白做了（其实没有，
-    //    已登记的会保留，重试时跳过即可）。
-    const at = progress.value[progress.value.length - 1] || '初始化'
-    ElMessage.error(`${at} 失败：${error.message}（可稍后重试，已登记的公钥会保留）`)
+    const at = [...progress.value].reverse().find(row => row.status !== 'complete') || { algorithm: 'CHECK', message: '初始化检查' }
+    updateProgress({ ...at, status: 'failed', message: `${at.message} 失败：${error.message}` })
+    ElMessage.error(`${error.message}（已封存材料与已登记公钥会保留，重试不会重新生成）`)
     await load()
   } finally {
     initializing.value = false
-    progress.value = []
   }
 }
 
 function goWorkbench() {
-  router.push('/workbench')
+  if (ready.value) router.push(entryPath('/workbench', 'NODE'))
+}
+
+async function openAdmin() {
+  try { await switchDemo('ADMIN') } catch (error) { ElMessage.error(error.message) }
 }
 
 /**
@@ -359,8 +308,14 @@ function goWorkbench() {
 async function handleLogout() {
   try {
     await userStore.logOut()
-  } catch { /* 见 docstring：失败不阻断退出 */ }
-  router.push('/login')
+  } catch (error) {
+    if (IS_DEMO) {
+      ElMessage.error(`退出演示失败：${error.message}`)
+      return
+    }
+  }
+  // Demo logout owns its full-document boundary; do not override it with the old login route.
+  if (!IS_DEMO) router.push('/login')
 }
 
 onMounted(load)

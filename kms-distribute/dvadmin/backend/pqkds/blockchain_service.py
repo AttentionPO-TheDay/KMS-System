@@ -13,6 +13,10 @@ except Exception:
 logger = logging.getLogger(__name__)
 class BlockchainService:
     def __init__(self):
+        # 旧构造器会读账户、联 RPC，甚至自动部署合约。必须先判后端，
+        # 不能等一次旧链写入之后才发现当前已经选择 Fabric。
+        from .chain_backend import require_legacy_backend
+        require_legacy_backend('初始化旧 Web3 区块链服务')
         self.w3 = None
         self.contract = None
         self.account = None

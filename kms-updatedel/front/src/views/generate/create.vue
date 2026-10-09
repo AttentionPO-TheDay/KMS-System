@@ -279,6 +279,7 @@ import {
 } from '@/utils/crypto/node-key-compare.js'
 import { cryptoProvider } from '@/utils/crypto/browser-provider.js'
 import { deviceFingerprint, hasDeviceKey } from '@/utils/crypto/device-credential.js'
+import { IS_DEMO } from '@/utils/entry-mode'
 
 const loading = ref(true)
 const mapped = ref(false)
@@ -362,6 +363,7 @@ async function load() {
       ElMessage.error(`读取本机密钥库失败：${local.reason?.message || local.reason}`)
     }
 
+    if (IS_DEMO) return // Demo provenance is supplied by the trusted server context, not a device credential.
     try {
       hasDeviceCredential.value = await hasDeviceKey(node.value.nodeId)
       deviceFingerprintValue.value = await deviceFingerprint(node.value.nodeId)
@@ -428,6 +430,7 @@ const rows = computed(() =>
 // 设备一致性提示
 // ---------------------------------------------------------------------------
 const deviceWarning = computed(() => {
+  if (IS_DEMO) return null
   const bound = String(node.value.keyDeviceId || '').trim()
   // 服务端还没绑定设备 → 这台就是"第一台"，首次上报会把本机绑上去。
   if (!bound) return null

@@ -1,4 +1,5 @@
 import http, { unwrap, pqkdsBaseURL } from '@/api/pqkds/http'
+import { IS_DEMO } from '@/utils/entry-mode'
 
 /**
  * 节点自助接口（阶段 2）。对应后端 `pqkds/node_self_views.py`。
@@ -67,15 +68,13 @@ export function getSelfNode() {
  * 两边各自"登记成功"，只是从此谁也找不到谁。判据④（新逻辑密钥不复用旧
  * SM2/SSCL 的 `u`）正是靠"新 keyId 落成新的一行"来判定的。
  *
- * 不传 keyId 只在**旧调用方**（`views/nodeInit`）的历史路径里出现，
- * 那条路径依赖的是"同一把公钥重复上报是幂等无操作"。
+ * 初始化与生成页都传本地 keyId/version；登记失败重试必须复用同一份已封存材料。
  *
  * @param {string} algorithm  SM2 / SSCL / KYBER / FALCON
  * @param {string} publicKey  **十六进制**。Kyber 由服务端按长度推断变体。
  * @param {string} [securityLevel]
- * @param {string} [deviceId] §4.4 设备绑定：本机 deviceId。
- *   服务端在**第一次**上报时记下它；后续上报若与已绑定的不一致会被拒
- *   （业务码 409）。那是可处置的状态，不是参数错。
+ * @param {string} [deviceId] 独立模式传激活设备的公钥指纹；Demo 集中省略该字段，
+ *   设备来源由服务端可信上下文判断，而不是客户端自报标记。
  * @param {string} [keyId] 节点本地铸的 keyId（原样上报，服务端不做 trim/归一）。
  * @param {number} [keyVersion] 与本地 keyRef 同一版本号。
  * @param {boolean} [rotate] **更新**（KMS-006）：`true` = "同一把逻辑密钥的新版本"，
@@ -89,6 +88,7 @@ export function getSelfNode() {
  *   ⚠️ 版本只允许"等于最新（重试）"或"逐版 +1"。回退、跨版、未登记、已回收都会被拒，
  *      分别对应 `KEY_VERSION_MISMATCH` / `KEY_NOT_FOUND` / `KEY_REVOKED`；
  *      另有一个"非生产的 keyId"也报 `KEY_VERSION_MISMATCH`（见 NODE_SELF_ERR 的说明）。
+ * @param {object} [headers] 附加请求头；Demo 初始化传服务端授予的初始化租约。
  */
 export function registerSelfNodePublicKey(
   algorithm,
@@ -97,9 +97,12 @@ export function registerSelfNodePublicKey(
   deviceId,
   keyId,
   keyVersion,
-  rotate
+  rotate,
+  headers
 ) {
-  const payload = { algorithm, publicKey, securityLevel, deviceId }
+  const payload = { algorithm, publicKey, securityLevel }
+  // Demo provenance is determined by trusted server context, never by a client device marker.
+  if (!IS_DEMO) payload.deviceId = deviceId
   // 只在这两个字段**真的有值**时带上：显式传 `keyId: undefined` 会被
   // JSON.stringify 丢掉（无害），但传 `keyVersion: ''` 不会 —— 而空串在服务端
   // 是"未提供"（收敛为 1），与本地 ref 的 `/1` 一致，所以这里不额外兜底。
@@ -107,13 +110,11 @@ export function registerSelfNodePublicKey(
   if (keyVersion !== undefined && keyVersion !== null && keyVersion !== '') {
     payload.keyVersion = keyVersion
   }
-  // ⚠️ 只在**真的要更新**时才带这个字段。另外两个调用点（`views/nodeInit` 的旧式
-  //    无 keyId 路径、`views/generate/create` 的六参数位置参数调用）不传它，
-  //    请求体必须一字不变 —— KMS-005 的验收脚本按逐字节比对走生成页那条路径。
+  // 只在明确更新时才带 rotate；首次初始化和生成页保持登记语义。
   //    服务端缺省即 False，显式带 false 与不带是同一语义，没必要多写一个字段；
   //    而传 `rotate: undefined` 虽会被 JSON.stringify 丢掉，读代码的人却要多想一层。
   if (rotate === true) payload.rotate = true
-  return http.post('/node-self/keys/', payload).then(unwrap)
+  return http.post('/node-self/keys/', payload, { headers }).then(unwrap)
 }
 
 /**
@@ -185,8 +186,17 @@ export function revokeSelfNodePublicKey(algorithm, keyId, keyVersion, reason) {
  * 因此它现在**很快**（不再有 Falcon 的 15~25 秒），
  * 调用方真正需要 loading 的是前面的密钥生成。
  */
-export function initSelfNodeKeys() {
-  return http.post('/node-self/init/', null, { timeout: 60000 }).then(unwrap)
+export function initSelfNodeKeys(headers) {
+  return http.post('/node-self/init/', null, { timeout: 60000, headers }).then(unwrap)
+}
+
+/** Per-node lease, validated by the server against the current Demo session/revision. */
+export function acquireDemoInitLease() {
+  return http.post('/node-self/demo-init/lease/', {}).then(unwrap)
+}
+
+export function releaseDemoInitLease(leaseId) {
+  return http.post('/node-self/demo-init/release/', { leaseId }).then(unwrap)
 }
 
 /**

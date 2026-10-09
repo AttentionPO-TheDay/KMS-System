@@ -695,6 +695,60 @@ class NodeKeyVersion(CoreModel):
     def __str__(self):
         return f"{self.node.name} - Kyber v{self.kyber_version}, Falcon v{self.falcon_version}"
 
+class ChainKeyBinding(models.Model):
+    """登记事务中的公开量快照兼 Outbox；不是旧链 Transaction 的替身。
+
+    密钥 ACTIVE 是本地事实，CONFIRMED 是链上证据，不能拿后者覆盖前者。
+    元数据创建后不改；同节点 sequence 在锁住 Node 行后分配，避免旧投影追上新版本。
+    """
+    STATES = tuple((s, s) for s in (
+        'PENDING', 'PREPARED', 'SUBMITTED', 'PENDING_VERIFICATION',
+        'CONFIRMED', 'FAILED', 'NOT_CONFIGURED', 'UNSUPPORTED',
+    ))
+    id = models.BigAutoField(primary_key=True)
+    provider = models.CharField(max_length=20, default='FABRIC_DID')
+    chain_id = models.CharField(max_length=128, blank=True, default='')
+    namespace = models.CharField(max_length=80, default='kms-key-binding-v1')
+    # 允许原管理接口删除源节点/密钥，但链证据的公开量快照不可随 CASCADE 丢失。
+    # 未提交任务失去源行后由 worker 明确失败；已经确认的历史证据保留。
+    node = models.ForeignKey(Node, on_delete=models.SET_NULL, null=True, blank=True, related_name='chain_key_bindings')
+    long_term_key = models.ForeignKey('NodeLongTermKey', on_delete=models.SET_NULL, null=True, blank=True, related_name='chain_bindings')
+    node_id_snapshot = models.CharField(max_length=64)
+    algorithm = models.CharField(max_length=20)
+    key_id = models.CharField(max_length=64)
+    key_version = models.PositiveIntegerField()
+    key_ref = models.CharField(max_length=256)
+    event_type = models.CharField(max_length=20)
+    key_status = models.CharField(max_length=20)
+    sequence = models.PositiveBigIntegerField()
+    event_id = models.CharField(max_length=64, unique=True)
+    metadata = models.TextField()
+    metadata_digest = models.CharField(max_length=64)
+    status = models.CharField(max_length=24, choices=STATES, default='PENDING', db_index=True)
+    did = models.CharField(max_length=512, blank=True, default='')
+    tx_id = models.CharField(max_length=256, blank=True, default='')
+    nonce = models.TextField(blank=True, default='')
+    submit_started = models.BooleanField(default=False)
+    transaction_valid = models.BooleanField(default=False)
+    metadata_matches = models.BooleanField(default=False)
+    lease_token = models.CharField(max_length=32, blank=True, default='')
+    lease_until = models.DateTimeField(null=True, blank=True)
+    attempts = models.PositiveIntegerField(default=0)
+    last_error = models.CharField(max_length=255, blank=True, default='')
+    recorded_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = f'{table_prefix}pqkds_chain_key_bindings'
+        ordering = ['node_id', 'sequence']
+        constraints = [
+            models.UniqueConstraint(fields=['provider', 'chain_id', 'namespace', 'key_ref', 'event_type', 'key_status'], name='pqkds_binding_uniq_event'),
+            models.UniqueConstraint(fields=['node', 'sequence'], name='pqkds_binding_node_sequence'),
+        ]
+        indexes = [models.Index(fields=['node', 'status', 'sequence'], name='pqkds_binding_node_state')]
+
+
 class NodeLongTermKey(CoreModel):
     """节点的长期密钥版本记录（计划 §6.1 / KMS-004）。
 

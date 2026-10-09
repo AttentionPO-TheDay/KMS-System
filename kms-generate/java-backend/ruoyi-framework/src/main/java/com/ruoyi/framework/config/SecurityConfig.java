@@ -133,7 +133,7 @@ public class SecurityConfig {
                 // 添加CORS filter
                 .addFilterBefore(corsFilter, LogoutFilter.class)
                 // 添加JWT filter
-                .addFilterBefore(authenticationTokenFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(authenticationTokenFilter, LogoutFilter.class)
                 .build();
     }
 

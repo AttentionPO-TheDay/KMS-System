@@ -21,7 +21,9 @@ import { KEY_FILE_KIND, parseKeyFile, serializeKeyFile } from '@/utils/key-file'
  * 3. 这是**用户自己的**密钥环，不是服务端同步的资产。换浏览器就要重新导入文件。
  */
 
-const STORAGE_KEY = 'kms-user-keyring-v1'
+import { IS_DEMO } from '@/utils/entry-mode'
+
+const STORAGE_KEY = IS_DEMO ? 'kms-demo-user-keyring-v1' : 'kms-user-keyring-v1'
 
 function readRaw() {
   try {

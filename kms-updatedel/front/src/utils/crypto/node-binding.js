@@ -57,6 +57,7 @@ import {
   listActivatedNodes,
   removeDeviceKey,
 } from './device-credential.js'
+import { IS_DEMO } from '../entry-mode.js'
 
 /**
  * 绑定记录的 meta 主键。
@@ -200,6 +201,7 @@ export async function removeBinding(nodeId) {
  * @returns {Promise<{bindingsRemoved: string[], credentialsRemoved: string[]}>}
  */
 export async function clearOtherBindings(keepNodeId, options = {}) {
+  if (IS_DEMO) return { bindingsRemoved: [], credentialsRemoved: [] }
   const keep = String(keepNodeId ?? '').trim()
   const removeCredentials = options.removeDeviceCredentials !== false
   const result = { bindingsRemoved: [], credentialsRemoved: [] }

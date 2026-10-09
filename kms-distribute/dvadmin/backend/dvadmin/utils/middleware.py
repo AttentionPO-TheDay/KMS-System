@@ -49,7 +49,12 @@ class ApiLoggingMiddleware(MiddlewareMixin):
             'response_code': response.data.get('code'),
             'request_os': get_os(request),
             'request_browser': get_browser(request),
-            'request_msg': request.session.get('request_msg'),
+            'request_msg': (
+                ('[DEMO:%s] ' % (getattr(request, 'kms_identity', {}).get('userName') or 'NODE'))
+                + str(request.session.get('request_msg') or '')
+                if getattr(request, 'kms_identity', {}).get('entryMode') == 'DEMO'
+                else request.session.get('request_msg')
+            ),
             'status': True if response.data.get('code') in [2000, ] else False,
             'json_result': {"code": response.data.get('code'), "msg": response.data.get('msg')},
         }

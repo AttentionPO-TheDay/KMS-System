@@ -41,6 +41,7 @@ import {
 // KMS-003：设备引用的格式（`node-{id}-device-auth` / `...-pub`）与算法常量
 // 统一由 key-ref.js 定义 —— 本模块不再各存一份，避免两边定义漂移。
 import { DEVICE_AUTH_ALGORITHM, DEVICE_PUB_SUFFIX, buildDeviceRef, parseDeviceRef } from './key-ref.js'
+import { IS_DEMO } from '../entry-mode.js'
 
 /**
  * 与 `node_auth_views.DEVICE_AUTH_ALGORITHM` 必须一致，改一处要改两处。
@@ -63,6 +64,7 @@ export function deviceKeyRef(nodeId) {
  * @returns {Promise<{publicKeyJwk: object, created: boolean}>}
  */
 export async function ensureDeviceKey(nodeId) {
+  if (IS_DEMO) throw new Error('演示模式不使用设备激活或设备认证密钥')
   if (!globalThis.crypto?.subtle) {
     throw new Error('当前环境不支持 WebCrypto，无法生成设备认证密钥')
   }

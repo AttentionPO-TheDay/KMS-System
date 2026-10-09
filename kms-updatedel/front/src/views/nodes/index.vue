@@ -7,6 +7,7 @@
           <div class="panel-actions">
             <el-button size="small" :loading="loading" @click="load">刷 新</el-button>
             <el-button
+              v-if="!IS_DEMO"
               size="small"
               :disabled="!missingFalcon.length || falconBatchRunning"
               :loading="falconBatchRunning"
@@ -125,7 +126,8 @@
             <el-button link type="primary" size="small" @click="openKeys(scope.row)">密钥</el-button>
             <!-- 重签凭证：节点没有口令，凭证是它上线的唯一入口，
                  所以这个动作放在列表里常驻，而不是藏在某个二级页面 -->
-            <el-button link type="warning" size="small" @click="handleReissue(scope.row)">重签凭证</el-button>
+            <el-button v-if="!IS_DEMO" link type="warning" size="small" @click="handleReissue(scope.row)">重签凭证</el-button>
+            <el-button v-else link type="primary" size="small" @click="enterDemoNode(scope.row)">进入节点</el-button>
             <el-button link type="danger" size="small" @click="handleDelete(scope.row)">删除</el-button>
           </template>
         </el-table-column>
@@ -175,7 +177,8 @@
         新增只创建节点与登录账号，<b>不在服务端生成任何密钥</b>。
         四套基础密钥（SM2 / SSCL / Kyber / Falcon）由节点首次登录时在
         <b>本机浏览器</b>生成，私钥只留在那台设备上。
-        创建完成后会显示一次<b>激活凭证</b>，请交给节点操作者。
+        <template v-if="!IS_DEMO">创建完成后会显示一次<b>激活凭证</b>，请交给节点操作者。</template>
+        <template v-else>受控演示不签发激活凭证。登记后可在列表点「进入节点」，或使用 /demo?nodeId=节点ID 链接。</template>
       </el-alert>
       <div v-if="createError" class="dialog-error">{{ createError }}</div>
       <template #footer>
@@ -266,10 +269,11 @@
       </div>
       <template #footer>
         <el-button @click="keysOpen = false">关 闭</el-button>
-        <el-button :loading="gmGenerating" :disabled="!keysNode.id" @click="handleGenerateGm">
+        <el-button v-if="!IS_DEMO" :loading="gmGenerating" :disabled="!keysNode.id" @click="handleGenerateGm">
           {{ keysNode.gm_key_ready ? '重新生成国密密钥' : '生成国密密钥' }}
         </el-button>
         <el-button
+          v-if="!IS_DEMO"
           type="primary"
           :loading="falconGenerating"
           :disabled="!keysNode.id"
@@ -354,6 +358,8 @@
  * 公钥内容只有「密钥」弹窗（/nodes/{id}/keys/）才会取。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
+import { IS_DEMO } from '@/utils/entry-mode'
+import { enterDemo } from '@/utils/demo-context'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { batchDeleteNodes, deleteNode, generateNodeFalconKey, generateNodeGmKey, getNodeKeys, listNodes, registerNode, reissueActivationCode, updateNode } from '@/api/nodes/nodes'
 
@@ -541,7 +547,9 @@ async function submitCreate() {
       activationTarget.value = res?.node_id || createForm.node_id || ''
       // 每次打开都回到默认隐藏（见 revealActivationCode 的注释）。
       revealActivationCode.value = false
-      if (activationCode.value) {
+      if (IS_DEMO) {
+        ElMessage.success('演示节点已登记，请在列表点「进入节点」完成本机初始化')
+      } else if (activationCode.value) {
         activationOpen.value = true
       } else {
         // 签发失败不能静默 —— 节点没有口令，没有凭证就等于进不去。
@@ -557,7 +565,13 @@ async function submitCreate() {
 }
 
 /** 为已有节点补发凭证（凭证丢了/过期/换设备） */
+async function enterDemoNode(row) {
+  try { await enterDemo(row.node_id) }
+  catch (error) { ElMessage.error(error?.response?.data?.msg || error.message) }
+}
+
 async function handleReissue(row) {
+  if (IS_DEMO) return
   try {
     await ElMessageBox.confirm(
       `为节点 ${row.node_id} 重新签发激活凭证？旧凭证会立即失效。已激活设备的登录不受影响。`,

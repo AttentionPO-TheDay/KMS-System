@@ -219,7 +219,8 @@ public class GenerateController extends BaseController {
     }
 
     private boolean isCurrentAdmin() {
-        return SecurityUtils.getLoginUser().getUser() != null && SecurityUtils.getLoginUser().getUser().isAdmin();
+        return com.ruoyi.framework.web.service.DemoIdentity.isCurrentAdmin()
+                || SecurityUtils.getLoginUser().getUser() != null && SecurityUtils.getLoginUser().getUser().isAdmin();
     }
 
     private void ensureAdmin() {
@@ -237,6 +238,7 @@ public class GenerateController extends BaseController {
      * 能打开「公钥查询」页却拿不到数据，判据前后不一致。
      */
     private void ensureRoleAdmin() {
+        if (com.ruoyi.framework.web.service.DemoIdentity.isCurrentAdmin()) return;
         GenerateUser currentUser = generateUserService.selectByUserId(getUserId());
         if (currentUser == null || currentUser.getRoleLevel() == null || currentUser.getRoleLevel() > 0) {
             throw new IllegalArgumentException("仅管理员可执行该操作");

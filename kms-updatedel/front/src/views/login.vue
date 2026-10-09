@@ -2,6 +2,8 @@
   <div class="login">
     <el-form ref="loginRef" :model="loginForm" :rules="loginRules" class="login-form">
       <h3 class="title">密钥管理系统</h3>
+      <p class="principal-hint">独立运行 · 使用账号或本机设备凭据</p>
+      <p class="principal-hint"><a href="http://127.0.0.1:8088/demo">受控本机演示入口（默认关闭，需先启用）</a></p>
 
       <!--
         身份选择（单一登录入口）。
@@ -220,7 +222,7 @@ const { proxy } = getCurrentInstance();
 const loginForm = ref({
   // 身份声明：ADMIN / NODE。仅表示"我想以哪种身份进入"，
   // 服务端返回的真实身份与之不符时会被守卫拒绝（见 permission.js）。
-  declaredPrincipal: 'ADMIN',
+  declaredPrincipal: route.meta.loginIntent || 'ADMIN',
   username: "",
   password: "",
   rememberMe: false,
@@ -387,6 +389,7 @@ const captchaEnabled = ref(true);
 const redirect = ref(undefined);
 
 watch(route, (newRoute) => {
+    if (newRoute.meta.loginIntent) loginForm.value.declaredPrincipal = newRoute.meta.loginIntent;
     redirect.value = newRoute.query && newRoute.query.redirect;
 }, { immediate: true });
 

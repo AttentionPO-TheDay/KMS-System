@@ -42,6 +42,9 @@ public class SysLoginController {
     @Autowired
     private ISysUserService userService;
 
+    @Autowired
+    private com.ruoyi.framework.web.service.DemoIdentity demoIdentity;
+
     /**
      * 登录方法
      * 
@@ -64,8 +67,16 @@ public class SysLoginController {
      * @return 用户信息
      */
     @GetMapping("getInfo")
-    public AjaxResult getInfo() {
+    public AjaxResult getInfo(javax.servlet.http.HttpServletRequest request) {
         LoginUser loginUser = SecurityUtils.getLoginUser();
+        if (request.getAttribute(com.ruoyi.framework.web.service.DemoIdentity.ATTRIBUTE) != null) {
+            AjaxResult ajax = AjaxResult.success();
+            ajax.put("user", loginUser.getUser());
+            ajax.put("roles", java.util.Collections.singleton(loginUser.getUserId() == -1L ? "demo_admin" : "node"));
+            ajax.put("permissions", loginUser.getPermissions());
+            ajax.put("entryMode", "DEMO");
+            return ajax;
+        }
         Long userId = loginUser.getUserId();
 
         // 从数据库重新查询用户信息，确保获取最新的 role_level
@@ -98,7 +109,10 @@ public class SysLoginController {
      * @return 路由信息
      */
     @GetMapping("getRouters")
-    public AjaxResult getRouters() {
+    public AjaxResult getRouters(javax.servlet.http.HttpServletRequest request) {
+        if (request.getAttribute(com.ruoyi.framework.web.service.DemoIdentity.ATTRIBUTE) != null) {
+            return AjaxResult.success(menuService.buildMenus(demoIdentity.routes(SecurityUtils.getLoginUser())));
+        }
         Long userId = SecurityUtils.getUserId();
         List<SysMenu> menus = menuService.selectMenuTreeByUserId(userId);
         return AjaxResult.success(menuService.buildMenus(menus));

@@ -187,6 +187,15 @@ kms-distribute/111.7z
 # 部署同步时的上一版前端产物（临时保留以便回退；确认无需回退后可删）。
 /kms-updatedel/front/.deploy-prev-assets-*/
 
+# Fabric 供应方的定制 Maven 文件仓库是接入源码的必要依赖，不是本项目构建产物。
+# 仅放行所提供的 active SDK 依赖；旧实验版和本机 Maven 解析缓存仍不入库。
+!/jarFile/**/*.jar
+/jarFile/com/yunphant/did-sdk-gm/1.0-SNAPSHOT/
+/jarFile/**/_remote.repositories
+/jarFile/**/resolver-status.properties
+/jarFile/**/maven-metadata-local.xml
+/jarFile/**/*.lastUpdated
+
 # django 容器 /var/log 的挂载点：运行日志，以及 KMS-015 的私钥清理备份
 # （备份含明文私钥材料，只作本机回滚记录，绝不进 git）。
 /kms-ops/dvadmin-logs/

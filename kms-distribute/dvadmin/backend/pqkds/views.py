@@ -1020,7 +1020,12 @@ class NodeViewSet(CustomModelViewSet):
                     activation_code = ''
                     try:
                         created = Node.objects.filter(node_id=node_data['node_id']).first()
-                        if created is not None:
+                        demo_identity = getattr(request, 'kms_identity', None) or {}
+                        if demo_identity.get('entryMode') == 'DEMO':
+                            # 只能由已验证的入口上下文选择，不接受请求参数切换模式。
+                            if demo_identity.get('principalType') != 'ADMIN':
+                                raise PermissionDenied('需要演示管理员身份')
+                        elif created is not None:
                             from .node_auth_views import issue_activation_code
                             activation_code = issue_activation_code(created)
                         else:
@@ -1037,7 +1042,9 @@ class NodeViewSet(CustomModelViewSet):
                         'message': result.get('message'),
                         # 只此一次。为空表示签发失败，需管理员重新签发。
                         'activation_code': activation_code,
-                    }, msg="节点创建成功，请把激活凭证交给节点操作者（只显示这一次）")
+                    }, msg=("演示节点已登记，首次进入时初始化，无需激活凭证"
+                            if demo_identity.get('entryMode') == 'DEMO'
+                            else "节点创建成功，请把激活凭证交给节点操作者（只显示这一次）"))
                 else:
                     logger.error(f" 节点注册失败: {result['message']}")
                     return ErrorResponse(msg=result['message'])
@@ -2823,6 +2830,17 @@ class MessageViewSet(CustomModelViewSet):
 class BlockchainConfigViewSet(CustomModelViewSet):
     queryset = BlockchainConfig.objects.all()
     serializer_class = BlockchainConfigSerializer
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        from .chain_backend import is_fabric_did
+        if is_fabric_did() and self.action in {
+            'create', 'update', 'partial_update', 'destroy', 'batch_delete',
+            'deploy_contract', 'sync_database_to_blockchain', 'nodes_from_blockchain',
+        }:
+            # 原模型改合约地址会清掉所有 Transaction 并重置节点；原 GET 还会
+            # 自动把数据库节点上传。Fabric 不是新的以太坊地址，必须拒绝这条路径。
+            raise PermissionDenied(detail='Fabric DID 模式不修改或自动同步旧合约配置；历史记录保留只读')
     def get_serializer_class(self):
         if self.action == 'create':
             return BlockchainConfigCreateSerializer
@@ -2848,6 +2866,10 @@ class BlockchainConfigViewSet(CustomModelViewSet):
             return ErrorResponse(msg=f"智能合约部署失败: {str(e)}")
     @action(detail=False, methods=['get'])
     def status(self, request):
+        from .chain_backend import is_fabric_did
+        if is_fabric_did():
+            from .chain_binding_service import get_backend_status
+            return SuccessResponse(data=get_backend_status(), msg='Fabric DID 适配状态；不表示已连通测试链')
         try:
             blockchain_service = BlockchainService()
             result = blockchain_service.get_blockchain_status()
@@ -3047,11 +3069,15 @@ class KeyDistributionLogViewSet(CustomModelViewSet):
                 self.request._request.GET = params
         except Exception:
             pass
-        return super().get_queryset()
+        queryset = super().get_queryset()
+        identity = getattr(self.request, 'kms_identity', None) or {}
+        if identity.get('entryMode') == 'DEMO' and identity.get('principalType') == 'NODE':
+            queryset = queryset.filter(node__sys_user_id=identity['userId'])
+        return queryset
     @action(detail=False, methods=['get'])
     def stats(self, request):
         try:
-            stats = KeyDistributionLog.objects.values('action').annotate(
+            stats = self.get_queryset().values('action').annotate(
                 total=Count('id'),
                 success=Count('id', filter=Q(success=True)),
                 failed=Count('id', filter=Q(success=False))
@@ -3484,6 +3510,9 @@ def _introspect_identity(request):
     """
     from . import kms_service_client as kms
 
+    identity = getattr(request, 'kms_identity', None)
+    if identity and identity.get('entryMode') == 'DEMO':
+        return identity, None
     token = kms.extract_bearer_token(request)
     if not token:
         return None, '未登录：缺少 Authorization: Bearer <token>'
@@ -3634,7 +3663,10 @@ class KeyPoolViewSet(CustomModelViewSet):
             ),
         )
         expired_count = expired_qs.count()
-        if expired_count > 0:
+        # Demo 共享业务表，但只读浏览不应顺带清理其它测试/独立节点的资源。
+        # 保留原入口行为；演示维护由显式、已过管理员闸门的 cleanup 动作执行。
+        demo_identity = getattr(self.request, 'kms_identity', None) or {}
+        if expired_count > 0 and demo_identity.get('entryMode') != 'DEMO':
             expired_qs.delete()
             logger.info(f"[KeyPool] 列表加载时自动删除 {expired_count} 条过期密钥")
 
@@ -3667,6 +3699,9 @@ class KeyPoolViewSet(CustomModelViewSet):
                 'node1__node_id', 'node1__name', 'node2__node_id', 'node2__name',
             )
         )
+        if demo_identity.get('entryMode') == 'DEMO' and demo_identity.get('principalType') == 'NODE':
+            qs = qs.filter(models.Q(node1__sys_user_id=demo_identity['userId']) |
+                           models.Q(node2__sys_user_id=demo_identity['userId']))
         node1_id = self.request.query_params.get('node1_id', '').strip()
         node2_id = self.request.query_params.get('node2_id', '').strip()
         algorithm = self.request.query_params.get('algorithm', '').strip()
@@ -3787,9 +3822,13 @@ class KeyPoolViewSet(CustomModelViewSet):
             node2_id = request.query_params.get('node2_id', '').strip()
 
             from .key_pool_service import KeyPoolService
+            identity = getattr(request, 'kms_identity', None) or {}
             result = KeyPoolService.get_pool_stats(
                 node1_id=node1_id or None,
-                node2_id=node2_id or None
+                node2_id=node2_id or None,
+                owner_node_id=(identity.get('nodeId')
+                               if identity.get('entryMode') == 'DEMO'
+                               and identity.get('principalType') == 'NODE' else None),
             )
             return SuccessResponse(data=result, msg="获取统计成功")
         except Exception as e:

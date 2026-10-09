@@ -57,10 +57,25 @@ public class GenerateChainServiceImpl implements GenerateChainService {
     @Value("${kms.kafka.chain-result-topic:key_chain_result}")
     private String chainResultTopic;
 
+    @Value("${KMS_CHAIN_BACKEND:legacy}")
+    private String chainBackend = "legacy";
+
+    @Value("${FABRIC_DID_CHAIN_ID:}")
+    private String fabricChainId = "";
+
     private FiscoBcosWrapper fiscoWrapper;
+
+    public boolean isFabricDidBackend() {
+        String selected = chainBackend == null ? "legacy" : chainBackend.trim().toLowerCase(java.util.Locale.ROOT);
+        if (!"legacy".equals(selected) && !"fabric-did".equals(selected)) {
+            throw new IllegalStateException("KMS_CHAIN_BACKEND 必须为 legacy 或 fabric-did");
+        }
+        return "fabric-did".equals(selected);
+    }
 
     @PostConstruct
     public void init() {
+        isFabricDidBackend(); // 拼错配置不得隐式写 FISCO。
         // 上链客户端改为懒初始化，避免 FISCO SDK 在 Spring 启动阶段连接失败时打断整个服务启动。
         this.fiscoWrapper = null;
         log.info("FISCO BCOS wrapper will initialize lazily when chain sync is triggered");
@@ -70,6 +85,12 @@ public class GenerateChainServiceImpl implements GenerateChainService {
     public boolean processChainSync(Keymanage keymanage) {
         if (keymanage == null || keymanage.getKeyId() == null) {
             log.error("Invalid keymanage for chain sync");
+            return false;
+        }
+        if (isFabricDidBackend()) {
+            // 不能把旧生成记录的 PA 和数字主键伪装成 NodeLongTermKey 的 DID 绑定。
+            generateKeyService.updateChainStatus(keymanage.getKeyId(), "2", null, null);
+            publishChainResult(keymanage.getKeyId(), "ENROLL_KEY", "2", null, null, "UNSUPPORTED_LEGACY_KEY_MODEL_FOR_DID");
             return false;
         }
 
@@ -128,6 +149,9 @@ public class GenerateChainServiceImpl implements GenerateChainService {
     }
 
     private synchronized boolean ensureFiscoWrapper() {
+        if (isFabricDidBackend()) {
+            return false;
+        }
         if (this.fiscoWrapper != null) {
             return true;
         }
@@ -179,6 +203,8 @@ public class GenerateChainServiceImpl implements GenerateChainService {
         try {
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("key_id", keyId);
+            payload.put("provider", isFabricDidBackend() ? "FABRIC_DID" : "LEGACY_FISCO");
+            payload.put("chain_id", isFabricDidBackend() ? fabricChainId : "fisco:group-1:" + contractAddress);
             payload.put("action_type", actionType);
             payload.put("chain_status", chainStatus);
             payload.put("chain_hash", chainHash);

@@ -7,6 +7,7 @@ import InnerLink from '@/layout/components/InnerLink'
 import { filterSidebarByPrincipal } from '@/utils/landing'
 import { applyNoSidebarMeta } from '@/utils/subsystems'
 import useUserStore from '@/store/modules/user'
+import { namespaceRoutes } from '@/utils/entry-mode'
 
 // 匹配views里面所有的.vue文件
 const modules = import.meta.glob('./../../views/**/*.vue')
@@ -72,16 +73,17 @@ const usePermissionStore = defineStore(
         this.sidebarRouters = routes
       },
       generateRoutes(roles) {
-        return new Promise(resolve => {
+        return new Promise((resolve, reject) => {
           // 向后端请求路由数据（完整菜单树，不再做前端裁剪）
           getRouters().then(res => {
-            const sdata = JSON.parse(JSON.stringify(res.data))
-            const rdata = JSON.parse(JSON.stringify(res.data))
-            const defaultData = JSON.parse(JSON.stringify(res.data))
+            const menuRoutes = namespaceRoutes(res.data, useUserStore().principalType)
+            const sdata = JSON.parse(JSON.stringify(menuRoutes))
+            const rdata = JSON.parse(JSON.stringify(menuRoutes))
+            const defaultData = JSON.parse(JSON.stringify(menuRoutes))
             const sidebarRoutes = filterAsyncRouter(sdata)
             const rewriteRoutes = filterAsyncRouter(rdata, false, true)
             const defaultRoutes = filterAsyncRouter(defaultData)
-            const asyncRoutes = filterDynamicRoutes(dynamicRoutes)
+            const asyncRoutes = namespaceRoutes(filterDynamicRoutes(dynamicRoutes), useUserStore().principalType)
             asyncRoutes.forEach(route => { router.addRoute(route) })
             // 给"不要侧边栏"的页面打 meta 标记。
             //
@@ -119,7 +121,7 @@ const usePermissionStore = defineStore(
             // 详见 state 里 routesLoaded 的注释。
             this.routesLoaded = true
             resolve(rewriteRoutes)
-          })
+          }).catch(reject)
         })
       }
     }

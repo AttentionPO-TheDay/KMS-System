@@ -157,8 +157,14 @@ class NodeService:
             logger.warning(f"节点 {node_id} 不存在")
 
         self.keygen_service = OptimizedKeygenService()
-        self.blockchain_service = BlockchainService()
-        self.upload_service = NodeBlockchainUploadService()
+        from .chain_backend import is_fabric_did
+        if is_fabric_did():
+            from .chain_routing import FabricBindingUploadStatus
+            self.blockchain_service = None
+            self.upload_service = FabricBindingUploadStatus()
+        else:
+            self.blockchain_service = BlockchainService()
+            self.upload_service = NodeBlockchainUploadService()
 
     @staticmethod
     def recover_kyber_kem_session_key(encrypted_session_key_data: str,
@@ -394,7 +400,8 @@ class NodeService:
                               device_id: str = None,
                               key_id: str = None,
                               key_version=None,
-                              rotate: bool = False) -> Dict[str, Any]:
+                              rotate: bool = False,
+                              demo_context=None) -> Dict[str, Any]:
         """登记一个算法的**公钥**（文档 §4.4）。
 
         这是节点初始化的新入口：私钥在节点浏览器产生并留在那里，
@@ -478,9 +485,19 @@ class NodeService:
             version = int(raw_version)
 
         # --- 设备一致性检查（见 docstring 末段） ---
-        reported = str(device_id or '').strip()
+        # Demo 的入口证明来自服务端会话，不是激活设备凭据。这个参数只由
+        # 已自省的视图传入，绝不能从 body 的 demo=true 推导；旧绑定完全不改。
+        is_demo = bool(demo_context)
+        if is_demo and not (
+                demo_context.get('entryMode') == 'DEMO'
+                and demo_context.get('principalType') == 'NODE'
+                and demo_context.get('nodeId') == self.node.node_id
+                and demo_context.get('userId') == self.node.sys_user_id):
+            return {'success': False, 'code': C.ERR_NOT_AUTHORIZED,
+                    'message': '演示上下文与目标节点不一致'}
+        reported = f'demo/{self.node.node_id}' if is_demo else str(device_id or '').strip()
         bound = (self.node.key_device_id or '').strip()
-        if bound and reported and bound != reported:
+        if not is_demo and bound and reported and bound != reported:
             logger.warning(
                 '节点 %s 上报的设备标识与已绑定的不一致: 已绑定=%s 本次=%s',
                 self.node_id, bound, reported
@@ -496,7 +513,7 @@ class NodeService:
                     '或改回原设备登录。'
                 ),
             }
-        adopts_device = bool(reported) and not bound
+        adopts_device = not is_demo and bool(reported) and not bound
         if adopts_device:
             self.node.key_device_id = reported
 

@@ -12,10 +12,12 @@ import { isAdminLevel } from '@/utils/role'
 import { resolvePrincipalType, PRINCIPAL_NODE, PRINCIPAL_ADMIN } from '@/utils/principal'
 import { isAdminLanding, landingPath } from '@/utils/landing'
 import { fetchNodeInitStatus } from '@/utils/node-init-status'
+import { IS_DEMO, entryPath, originalPath, documentURL } from '@/utils/entry-mode'
+import { loadDemoContext } from '@/utils/demo-context'
 
 NProgress.configure({ showSpinner: false })
 
-const whiteList = ['/login']
+const whiteList = ['/login', '/standalone', '/standalone/admin/login', '/standalone/node/login']
 
 const isWhiteList = (path) => {
   return whiteList.some(pattern => isPathMatch(pattern, path))
@@ -89,13 +91,99 @@ function registerDynamicRoutes() {
 //   }
 // })
 
-router.beforeEach((to, from, next) => {
+let demoMaterialReady = false
+let standaloneMaterialReady = false
+
+async function standaloneMaterialsMatch() {
+  try {
+    const { inspectInitialization } = await import('@/utils/node-initialization')
+    const inspection = await inspectInitialization()
+    standaloneMaterialReady = Boolean(inspection.ready)
+  } catch {
+    // The gate itself explains unavailable or unreadable material; never replace it.
+    standaloneMaterialReady = false
+  }
+  return standaloneMaterialReady
+}
+
+async function guardDemo(to, next) {
+  if (to.path.startsWith('/standalone')) {
+    window.location.assign(documentURL(to.fullPath))
+    NProgress.done()
+    return
+  }
+  if (to.path === '/demo' || to.path === '/401') { next(); return }
+  try {
+    const context = await loadDemoContext()
+    if (!context.principalType) {
+      next({ path: '/demo', query: { reason: '请先解析已有节点，或进入管理控制台。' }, replace: true })
+      return
+    }
+    const principal = context.principalType
+    // A URL is navigation intent only. It never changes the authority's role.
+    const canonical = to.path === '/demo/node/initialize' && principal === 'NODE'
+      ? to.path : entryPath(originalPath(to.path), principal)
+    if (canonical !== to.path) {
+      next({ path: canonical, query: to.query, hash: to.hash, replace: true })
+      return
+    }
+    const userStore = useUserStore()
+    if (!userStore.roles.length) await userStore.getInfo()
+    if (principal === 'NODE') {
+      if (to.path === '/demo/node/initialize') { demoMaterialReady = false; next(); return }
+      if (!demoMaterialReady) {
+        const { inspectInitialization } = await import('@/utils/node-initialization')
+        const inspection = await inspectInitialization()
+        if (!inspection.ready || inspection.node?.status !== 'ACTIVE') {
+          next({ path: '/demo/node/initialize', replace: true })
+          return
+        }
+        demoMaterialReady = true
+      }
+    }
+    const permissionStore = usePermissionStore()
+    if (!permissionStore.routesLoaded) {
+      await registerDynamicRoutes()
+      next({ ...to, replace: true })
+      return
+    }
+    const rawPath = originalPath(to.path)
+    if (rawPath === '/' || (principal === 'NODE' && rawPath === '/index')) {
+      next({ path: landingPath({ principalType: principal }), replace: true })
+      return
+    }
+    to.meta.title && useSettingsStore().setTitle(to.meta.title)
+    next()
+  } catch (error) {
+    useUserStore().clearSession()
+    next({ path: '/demo', query: { reason: error?.message || '演示会话不可用，请重新解析节点。' }, replace: true })
+  } finally { NProgress.done() }
+}
+
+router.beforeEach(async (to, from, next) => {
   NProgress.start()
+  if (IS_DEMO) { guardDemo(to, next); return }
+  // Crossing the document mode boundary requires a fresh store/router/IDB namespace.
+  if (to.path === '/demo' || to.path.startsWith('/demo/')) {
+    window.location.assign(documentURL(to.fullPath))
+    NProgress.done()
+    return
+  }
   if (getToken()) {
+    const knownNode = useUserStore().roles.length && useUserStore().principalType === PRINCIPAL_NODE
+    if (knownNode && to.path === '/node-init') standaloneMaterialReady = false
+    if (knownNode && !isWhiteList(to.path) && to.path !== '/node-init' && !standaloneMaterialReady) {
+      if (!await standaloneMaterialsMatch()) {
+        next({ path: '/node-init', replace: true })
+        NProgress.done()
+        return
+      }
+    }
     to.meta.title && useSettingsStore().setTitle(to.meta.title)
     /* has token*/
-    if (to.path === '/login') {
-      next({ path: '/' })
+    if (['/login', '/standalone/admin/login', '/standalone/node/login'].includes(to.path)) {
+      // An existing session cannot change principal by opening another login alias.
+      next({ path: useUserStore().roles.length ? landingPath(useUserStore()) : '/' })
       NProgress.done()
     } else if (isWhiteList(to.path)) {
       next()
@@ -165,6 +253,12 @@ router.beforeEach((to, from, next) => {
             // DISABLED 节点没有可用视图；如实告知而不是给一个空控制台。
             if (status === 'DISABLED') {
               window.location.replace(`${import.meta.env.BASE_URL}401`)
+              NProgress.done()
+              return
+            }
+            // ACTIVE is server status only; all four exact local private records must be readable.
+            if (!await standaloneMaterialsMatch()) {
+              next({ path: '/node-init', replace: true })
               NProgress.done()
               return
             }

@@ -52,7 +52,41 @@ public class UpdatedelChainService {
     @Value("${kms.lifecycle.chain-detail-log-enabled:false}")
     private boolean chainDetailLogEnabled;
 
+    @Value("${KMS_CHAIN_BACKEND:legacy}")
+    private String chainBackend = "legacy";
+
+    @Value("${FABRIC_DID_CHAIN_ID:}")
+    private String fabricChainId = "";
+
     private FiscoBcosWrapper fiscoWrapper;
+
+    public boolean isFabricDidBackend() {
+        String selected = chainBackend == null ? "legacy" : chainBackend.trim().toLowerCase(java.util.Locale.ROOT);
+        if (!"legacy".equals(selected) && !"fabric-did".equals(selected)) {
+            throw new IllegalStateException("KMS_CHAIN_BACKEND 必须为 legacy 或 fabric-did");
+        }
+        return "fabric-did".equals(selected);
+    }
+
+    public String getChainProvider() {
+        return isFabricDidBackend() ? "FABRIC_DID" : "LEGACY_FISCO";
+    }
+
+    public String getChainId() {
+        return isFabricDidBackend() ? fabricChainId : "fisco:group-1:" + contractAddress;
+    }
+
+    private boolean unsupportedLegacySync(Keymanage key, String action) {
+        if (!isFabricDidBackend()) {
+            return false;
+        }
+        // 旧 Keymanage 不是节点长期密钥登记行，不能用数字主键/摘要伪造 DID 绑定。
+        // 真正的四算法公钥由 PQKDS 登记事务的 outbox 处理；这里不回退旧链。
+        markFailed(key.getKeyId());
+        publishChainResult(key.getKeyId(), action, "2", null, null, "UNSUPPORTED_LEGACY_KEY_MODEL_FOR_DID");
+        log.warn("Fabric DID 不执行旧密钥合约动作: keyId={} action={}", key.getKeyId(), action);
+        return true;
+    }
 
     public UpdatedelChainService(KeymanageMapper keymanageMapper, KafkaTemplate<String, String> kafkaTemplate,
                                  KeyOperationRecordService keyOperationRecordService) {
@@ -63,6 +97,7 @@ public class UpdatedelChainService {
 
     @PostConstruct
     public void init() {
+        isFabricDidBackend(); // 配置拼错必须启动失败，不能默认偷写旧链。
         this.fiscoWrapper = null;
         log.info("Lifecycle FISCO wrapper will initialize lazily when chain sync is triggered");
     }
@@ -92,6 +127,9 @@ public class UpdatedelChainService {
      */
     public boolean processCreateChainSync(Keymanage keymanage) {
         if (keymanage == null || keymanage.getKeyId() == null) {
+            return false;
+        }
+        if (unsupportedLegacySync(keymanage, "CREATE_KEY")) {
             return false;
         }
 
@@ -208,6 +246,9 @@ public class UpdatedelChainService {
         if (keymanage == null || keymanage.getKeyId() == null) {
             return false;
         }
+        if (unsupportedLegacySync(keymanage, "UPDATE_KEY")) {
+            return false;
+        }
 
         try {
             String finalPA = calculatePA(keymanage);
@@ -240,6 +281,9 @@ public class UpdatedelChainService {
         if (keymanage == null || keymanage.getKeyId() == null) {
             return false;
         }
+        if (unsupportedLegacySync(keymanage, "REVOKE_KEY")) {
+            return false;
+        }
 
         try {
             if (!ensureFiscoWrapper()) {
@@ -260,6 +304,10 @@ public class UpdatedelChainService {
     }
 
     private synchronized boolean ensureFiscoWrapper() {
+        // 必须在缓存命中之前判；已有 wrapper 也不能绕过明确选择的 Fabric 后端。
+        if (isFabricDidBackend()) {
+            return false;
+        }
         if (this.fiscoWrapper != null) {
             return true;
         }
@@ -364,6 +412,8 @@ public class UpdatedelChainService {
         try {
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("key_id", keyId);
+            payload.put("provider", getChainProvider());
+            payload.put("chain_id", getChainId());
             payload.put("action_type", actionType);
             payload.put("chain_status", chainStatus);
             payload.put("chain_hash", chainHash);

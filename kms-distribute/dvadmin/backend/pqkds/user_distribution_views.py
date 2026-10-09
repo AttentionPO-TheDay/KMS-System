@@ -101,6 +101,10 @@ def require_kms_user(view):
 
     @wraps(view)
     def wrapper(request, *args, **kwargs):
+        # Demo 身份只能由受控入口中间件提供；普通请求仍走原令牌自省。
+        demo_identity = getattr(request, 'kms_identity', None)
+        if demo_identity and demo_identity.get('entryMode') == 'DEMO':
+            return view(request, *args, identity=demo_identity, **kwargs)
         token = kms.extract_bearer_token(request)
         if not token:
             return _error('未登录：缺少 Authorization: Bearer <token>', 401)

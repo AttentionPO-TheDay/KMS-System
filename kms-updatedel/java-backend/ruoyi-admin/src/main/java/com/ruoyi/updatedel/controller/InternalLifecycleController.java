@@ -409,6 +409,18 @@ public class InternalLifecycleController {
     public Map<String, Object> chainEvent(@RequestHeader(value = "X-Internal-Token", required = false) String token,
                                           @RequestBody Map<String, Object> body) {
         requireAuthorized(token);
+        if (updatedelChainService.isFabricDidBackend()) {
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("provider", updatedelChainService.getChainProvider());
+            data.put("chainId", updatedelChainService.getChainId());
+            data.put("status", "UNSUPPORTED");
+            data.put("errorCode", "DID_REQUIRES_REGISTERED_PUBLIC_KEY_BINDING");
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("code", 409);
+            payload.put("msg", "旧事件摘要接口不等价于 DID 公钥绑定；请查询登记绑定任务");
+            payload.put("data", data);
+            return payload;
+        }
 
         String eventType = str(body.get("eventType"));
         if (eventType == null || eventType.trim().isEmpty()) {

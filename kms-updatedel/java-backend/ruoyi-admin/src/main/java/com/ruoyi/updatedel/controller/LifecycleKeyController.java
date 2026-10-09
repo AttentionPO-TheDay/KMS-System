@@ -48,7 +48,7 @@ public class LifecycleKeyController extends BaseController {
     @PreAuthorize("isAuthenticated()")
     @GetMapping("/list")
     public TableDataInfo list(Keymanage query) {
-        if (!SecurityUtils.isAdmin(getUserId())) {
+        if (!(SecurityUtils.isAdmin(getUserId()) || com.ruoyi.framework.web.service.DemoIdentity.isCurrentAdmin())) {
             query.setUserId(getUserId());
         }
         query.setStatus(normalizeStatusQuery(query.getStatus()));
@@ -182,7 +182,7 @@ public class LifecycleKeyController extends BaseController {
     @GetMapping("/node-key-analysis/{longTermKeyId}")
     public AjaxResult getNodeKeyAnalysis(@PathVariable String longTermKeyId,
                                          @RequestParam(required = false) Integer version) {
-        if (!SecurityUtils.isAdmin(getUserId())) {
+        if (!(SecurityUtils.isAdmin(getUserId()) || com.ruoyi.framework.web.service.DemoIdentity.isCurrentAdmin())) {
             return AjaxResult.error("无权分析节点密钥的关联面（仅平台管理员）");
         }
         try {
@@ -214,7 +214,7 @@ public class LifecycleKeyController extends BaseController {
     @PreAuthorize("isAuthenticated()")
     @PostMapping
     public AjaxResult create(@RequestBody Keymanage request) {
-        if (!SecurityUtils.isAdmin(getUserId())) {
+        if (!(SecurityUtils.isAdmin(getUserId()) || com.ruoyi.framework.web.service.DemoIdentity.isCurrentAdmin())) {
             request.setUserId(getUserId());
             request.setUserName(getUsername());
         } else if (request.getUserId() != null) {
@@ -356,7 +356,8 @@ public class LifecycleKeyController extends BaseController {
         }
         Long ownerId = keymanage.getUserId();
         Long currentId = getUserId();
-        return SecurityUtils.isAdmin(currentId) || ownerId != null && ownerId.equals(currentId);
+        return SecurityUtils.isAdmin(currentId) || com.ruoyi.framework.web.service.DemoIdentity.isCurrentAdmin()
+                || ownerId != null && ownerId.equals(currentId);
     }
 
     private String normalizeStatusQuery(String status) {

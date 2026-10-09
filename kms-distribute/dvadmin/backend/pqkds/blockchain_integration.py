@@ -8,10 +8,12 @@ import logging
 from .falcon_crypto import FalconCertificateLessKDS
 logger = logging.getLogger(__name__)
 class BlockchainKDS:
-    def __init__(self, 
+    def __init__(self,
                  provider_url: str = "http://localhost:8545",
                  contract_address: Optional[str] = None,
                  private_key: Optional[str] = None):
+        from .chain_backend import require_legacy_backend
+        require_legacy_backend('初始化旧 BlockchainKDS Web3 组件')
         self.w3 = Web3(Web3.HTTPProvider(provider_url))
         try:
             if not self.w3.is_connected():
@@ -94,6 +96,8 @@ class BlockchainKDS:
             pass
         return system_params
     def register_user_with_blockchain(self, user_id: str) -> Dict[str, Any]:
+        from .chain_backend import require_legacy_backend
+        require_legacy_backend('注册旧 BlockchainKDS 用户')
         user_data = self.falcon_kds.register_user(user_id)
         public_key_data = {
             'user_id': user_id,
@@ -114,6 +118,8 @@ class BlockchainKDS:
             user_data['blockchain_error'] = 'Blockchain not connected'
         return user_data
     def _store_public_key_on_chain(self, user_id: str, key_data: Dict[str, Any]) -> str:
+        from .chain_backend import require_legacy_backend
+        require_legacy_backend('写入旧 BlockchainKDS 公钥')
         if not self.contract or not self.account:
             raise ValueError("Contract or account not initialized")
         key_json = json.dumps(key_data, sort_keys=True)
@@ -160,6 +166,8 @@ class BlockchainKDS:
         blockchain_key = blockchain_data['key_data']['public_key']
         return local_public_key.tolist() == blockchain_key
     def update_user_key(self, user_id: str) -> Dict[str, Any]:
+        from .chain_backend import require_legacy_backend
+        require_legacy_backend('更新旧 BlockchainKDS 用户公钥')
         user_data = self.register_user_with_blockchain(user_id)
         if self.w3.isConnected() and self.contract and self.account:
             try:

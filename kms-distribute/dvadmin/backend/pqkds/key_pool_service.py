@@ -672,7 +672,8 @@ class KeyPoolService:
     #  密钥池统计
     # ================================================================
     @staticmethod
-    def get_pool_stats(node1_id: str = None, node2_id: str = None) -> Dict[str, Any]:
+    def get_pool_stats(node1_id: str = None, node2_id: str = None,
+                       *, owner_node_id: str = None) -> Dict[str, Any]:
         """获取密钥池统计信息。
 
         KMS-013 起口径归一：「未使用」= READY + 全部旧拼写别名（含未过期的
@@ -687,6 +688,11 @@ class KeyPoolService:
         now = timezone.now()
 
         base_q = PreDistributedKey.objects.all()
+        # owner_node_id 由入口的可信主体提供，不从查询参数取；节点筛选只能
+        # 在归属范围内继续缩小，不能把统计变成枚举其它节点资源的入口。
+        if owner_node_id:
+            base_q = base_q.filter(db_models.Q(node1__node_id=owner_node_id) |
+                                   db_models.Q(node2__node_id=owner_node_id))
         if node1_id and node2_id:
             base_q = base_q.filter(
                 db_models.Q(node1__node_id=node1_id, node2__node_id=node2_id) |

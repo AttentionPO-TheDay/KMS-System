@@ -20,6 +20,7 @@ from dvadmin.system.views.login import (
 from dvadmin.system.views.system_config import InitSettingsViewSet
 from dvadmin.utils.swagger import CustomOpenAPISchemaGenerator
 from pqkds.views import kms_generate_key
+from pqkds.demo_context import internal_node_context
 dispatch.init_system_config()
 dispatch.init_dictionary()
 schema_view = get_schema_view(
@@ -54,6 +55,7 @@ urlpatterns = (
             ),
             path("api/system/", include("dvadmin.system.urls")),
             path("api/pqkds/", include("pqkds.urls")),
+            path("internal/demo/node/", internal_node_context, name="internal-demo-node"),
             path("kms/generate-key/", kms_generate_key, name="kms-generate-key"),
             path("api/login/", LoginView.as_view(), name="token_obtain_pair"),
             path("api/logout/", LogoutView.as_view(), name="token_obtain_pair"),

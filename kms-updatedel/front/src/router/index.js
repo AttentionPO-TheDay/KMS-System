@@ -1,6 +1,7 @@
 import { createWebHistory, createRouter } from 'vue-router'
 /* Layout */
 import Layout from '@/layout'
+import { IS_DEMO, namespaceRoutes } from '@/utils/entry-mode'
 
 /*
  * 静态路由：只保留「框架级」页面（登录、重定向、首页、错误页、个人中心）。
@@ -16,7 +17,7 @@ import Layout from '@/layout'
  * 导致侧边栏出现重复项；且 permission.js 里的白名单又把业务菜单裁掉，
  * 管理员反而看不到业务入口。两处问题已一并移除。
  */
-export const constantRoutes = [
+const standaloneRoutes = [
   {
     path: '/redirect',
     component: Layout,
@@ -167,6 +168,19 @@ export const dynamicRoutes = [
       }
     ]
   }
+]
+
+export const constantRoutes = IS_DEMO ? [
+  { path: '/demo', component: () => import('@/views/entry/demo.vue'), hidden: true },
+  { path: '/demo/node/initialize', component: () => import('@/views/nodeInit/index.vue'), name: 'DemoNodeInit', hidden: true, meta: { title: '节点密钥环境检查' } },
+  ...namespaceRoutes(standaloneRoutes.filter(route => ['', '/user', '/redirect'].includes(route.path)), 'ADMIN'),
+  ...namespaceRoutes(standaloneRoutes.filter(route => ['/user', '/redirect'].includes(route.path)), 'NODE'),
+  ...standaloneRoutes.filter(route => route.path === '/401' || route.path.includes('pathMatch'))
+] : [
+  ...standaloneRoutes,
+  { path: '/standalone', component: () => import('@/views/entry/standalone.vue'), hidden: true },
+  { path: '/standalone/admin/login', component: () => import('@/views/login.vue'), hidden: true, meta: { loginIntent: 'ADMIN' } },
+  { path: '/standalone/node/login', component: () => import('@/views/login.vue'), hidden: true, meta: { loginIntent: 'NODE' } }
 ]
 
 const router = createRouter({

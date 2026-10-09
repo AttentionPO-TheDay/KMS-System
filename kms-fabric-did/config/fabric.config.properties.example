@@ -1,0 +1,12 @@
+# 此样例不能直接运行。由链方提供实际值后只读挂载到工作目录的父目录。
+# 路径相对 JVM 的 user.dir（不是相对本文件）；建议部署时使用绝对挂载路径。
+networkConfigPath=
+certificatePath=
+privateKeyPath=
+channelName=
+mspId=
+chaincodeId=
+userName=
+encryption=SM2
+# SDK 单位为秒。
+timeOut=30

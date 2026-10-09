@@ -11,6 +11,7 @@ from .views import (
     batch_verify_falcon_public_keys, kms_generate_key, kms_generate_record, kms_lifecycle_record
 )
 from . import chat_urls
+from .demo_context import demo_init_lease, demo_init_release
 # ⚠️ 别名不是洁癖，是**必须的**：节点侧 `node_self_views` 里也有一个
 #    `node_authorization_requests`（节点看自己的申请），而本文件后面又 import 了它 ——
 #    两个同名名字被先后导入，**后者静默覆盖前者**，于是管理端那条路由指向了
@@ -102,6 +103,8 @@ urlpatterns = [
     #    但同样必须排在 router 之前。
     path('node-self/keys/revoke/', node_self_revoke_key, name='node-self-key-revoke'),
     path('node-self/init/', node_self_init, name='node-self-init'),
+    path('node-self/demo-init/lease/', demo_init_lease, name='demo-init-lease'),
+    path('node-self/demo-init/release/', demo_init_release, name='demo-init-release'),
     # §6.5：节点取**自己那腿**信封并在本地解封（服务端不代解、也没有私钥），
     # 再提交「我已恢复 K」的证明；双方证明一致即提升为 established。
     path('node-self/envelopes/', node_envelopes, name='node-self-envelopes'),

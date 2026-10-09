@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xmlns="http://maven.apache.org/POM/4.0.0"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.yunphant</groupId>
+    <artifactId>kms-core</artifactId>
+    <version>1.0-DID</version>
+
+    <properties>
+        <maven.compiler.source>8</maven.compiler.source>
+        <maven.compiler.target>8</maven.compiler.target>
+        <jackson.version>2.13.3</jackson.version>
+        <commons-codec.version>1.15</commons-codec.version>
+        <java-jwt.version>3.10.3</java-jwt.version>
+        <hutool-crypto.version>5.8.2</hutool-crypto.version>
+        <bouncycastle.version>1.77</bouncycastle.version>
+        <junit.version>4.13.2</junit.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-core</artifactId>
+            <version>${jackson.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-annotations</artifactId>
+            <version>${jackson.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>${jackson.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>commons-codec</groupId>
+            <artifactId>commons-codec</artifactId>
+            <version>${commons-codec.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.auth0</groupId>
+            <artifactId>java-jwt</artifactId>
+            <version>${java-jwt.version}</version>
+            <exclusions>
+                <exclusion>
+                    <artifactId>commons-codec</artifactId>
+                    <groupId>commons-codec</groupId>
+                </exclusion>
+                <exclusion>
+                    <artifactId>jackson-databind</artifactId>
+                    <groupId>com.fasterxml.jackson.core</groupId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <!-- https://mvnrepository.com/artifact/cn.hutool/hutool-crypto -->
+        <dependency>
+            <groupId>cn.hutool</groupId>
+            <artifactId>hutool-crypto</artifactId>
+            <version>${hutool-crypto.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcprov-jdk15to18</artifactId>
+            <version>${bouncycastle.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+    <!--使用分发上传将项目打成jar包，上传到nexus私服上-->
+    <distributionManagement>
+        <!--发布版本仓库-->
+        <repository>
+            <!--nexus服务器中用户名：在settings.xml中和<server>的id一致-->
+            <id>nexus</id>
+            <!--自定义名称-->
+            <name>RELEASES PUBLISH</name>
+            <!--仓库地址-->
+            <url>http://192.168.8.11:18081/repository/maven-releases/</url>
+        </repository>
+        <!--快照版本仓库-->
+        <snapshotRepository>
+            <!--nexus服务器中用户名：在settings.xml中和<server>的id一致-->
+            <id>nexus</id>
+            <!--自定义名称-->
+            <name>SNAPSHOTS PUBLISH</name>
+            <!--仓库地址-->
+            <url>http://192.168.8.11:18081/repository/maven-snapshots/</url>
+        </snapshotRepository>
+    </distributionManagement>
+<!--    <build>-->
+<!--        <plugins>-->
+<!--            <plugin>-->
+<!--                <groupId>io.github.fvarrui</groupId>-->
+<!--                <artifactId>javapackager</artifactId>-->
+<!--                <version>1.7.5</version>-->
+<!--                <executions>-->
+<!--                    <execution>-->
+<!--                        <phase>package</phase>-->
+<!--                        <goals>-->
+<!--                            <goal>package</goal>-->
+<!--                        </goals>-->
+<!--                        <configuration>-->
+<!--                            <platform>linux</platform>-->
+<!--                            <mainClass>com.yunphant.core.KmsRun</mainClass>-->
+<!--                            &lt;!&ndash;打包后exe名称&ndash;&gt;-->
+<!--                            <name>kmsTool</name>-->
+<!--                            &lt;!&ndash; optional &ndash;&gt;-->
+<!--                            &lt;!&ndash; 是否将jvm一起打包到程序中 &ndash;&gt;-->
+<!--                            <bundleJre>true</bundleJre>-->
+<!--                            &lt;!&ndash;定制jre, java8不支持定制&ndash;&gt;-->
+<!--                            <customizedJre>false</customizedJre>-->
+<!--                            <jrePath>D:\Program Files\Java\jre1.8.0_144</jrePath>-->
+<!--                            &lt;!&ndash;是否打包安装包&ndash;&gt;-->
+<!--                            <copyDependencies>true</copyDependencies>-->
+<!--                            <generateInstaller>false</generateInstaller>-->
+<!--                            <vmArgs>-->
+<!--                                <vmArg>-Dfile.encoding=UTF-8</vmArg>-->
+<!--                            </vmArgs>-->
+<!--                        </configuration>-->
+<!--                    </execution>-->
+<!--                </executions>-->
+<!--            </plugin>-->
+<!--        </plugins>-->
+<!--    </build>-->
+    <!-- 打包kms工具时，需要将依赖一起打包进去 -->
+    <!--        <build>-->
+    <!--            <plugins>-->
+    <!--                <plugin>-->
+    <!--                    <groupId>org.apache.maven.plugins</groupId>-->
+    <!--                    <artifactId>maven-shade-plugin</artifactId>-->
+    <!--                    <version>3.2.4</version>-->
+    <!--                    <executions>-->
+    <!--                        <execution>-->
+    <!--                            <phase>package</phase>-->
+    <!--                            <goals>-->
+    <!--                                <goal>shade</goal>-->
+    <!--                            </goals>-->
+    <!--                            <configuration>-->
+    <!--                                <filters>-->
+    <!--                                    <filter>-->
+    <!--                                        <artifact>*:*</artifact>-->
+    <!--                                        <excludes>-->
+    <!--                                            <exclude>META-INF/*.SF</exclude>-->
+    <!--                                            <exclude>META-INF/*.DSA</exclude>-->
+    <!--                                            <exclude>META-INF/*.RSA</exclude>-->
+    <!--                                        </excludes>-->
+    <!--                                    </filter>-->
+    <!--                                </filters>-->
+    <!--                                <createDependencyReducedPom>false</createDependencyReducedPom>-->
+    <!--                            </configuration>-->
+    <!--                        </execution>-->
+    <!--                    </executions>-->
+    <!--                </plugin>-->
+    <!--            </plugins>-->
+    <!--        </build>-->
+</project>

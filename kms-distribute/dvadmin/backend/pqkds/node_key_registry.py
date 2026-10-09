@@ -41,6 +41,8 @@ from django.utils import timezone
 
 from . import api_contract as C
 from .models import Node, NodeLongTermKey
+from .chain_backend import is_fabric_did
+from .chain_binding_service import enqueue_binding, lock_registry_node
 
 #: 可以登记为长期密钥的算法。**包含 FALCON** —— 它是合法的长期密钥，
 #: 只是不能出现在保护算法字段里。这两个白名单不是一回事，别合并。
@@ -216,6 +218,9 @@ def register_public_key(
     同身份但摘要不同则抛 `ContractError`（这不是重报，是真冲突 ——
     要换公钥应当走 `rotate_public_key`，它的语义是"新版本"而不是"同名覆盖"）。
     """
+    lock_registry_node(node)
+    # Fabric 串行登记的查询也必须是当前读，不能沿用外围事务旧快照。
+    rows = NodeLongTermKey.objects.select_for_update() if is_fabric_did() else NodeLongTermKey.objects
     name = _assert_registrable(algorithm)
     material = str(public_key or '').strip()
     if not material:
@@ -226,7 +231,7 @@ def register_public_key(
     kid = _validate_key_id(key_id)
 
     if kid:
-        existing = NodeLongTermKey.objects.filter(
+        existing = rows.filter(
             node=node, algorithm=name, key_id=kid, key_version=version,
         ).first()
         if existing is not None:
@@ -246,7 +251,7 @@ def register_public_key(
         #
         # 判据用公钥摘要而不是 key_id：新生成的 key_id 每次都不同，认不出"同一把"。
         # 公钥相同即同一把 —— 随机生成的密钥不会碰巧相同。
-        existing = NodeLongTermKey.objects.filter(
+        existing = rows.filter(
             node=node, algorithm=name, public_key_hash=digest,
             status=C.KEY_STATUS_ACTIVE,
         ).first()
@@ -292,7 +297,7 @@ def register_public_key(
     #    自己的每一次合法更新也拦下了：4 组自测同时失败，报的还是"请走 rotate"，
     #    看起来像调用方用错了。要删掉 `_via_rotate` 之前先想清楚 —— 删掉它，
     #    登记口就能复活已回收的密钥、把在产那把换成调用方手里那把。
-    if kid and not _via_rotate and NodeLongTermKey.objects.filter(
+    if kid and not _via_rotate and rows.filter(
         node=node, algorithm=name, key_id=kid,
     ).exists():
         raise C.ContractError(
@@ -306,7 +311,12 @@ def register_public_key(
         kid = new_key_id(node, name)
 
     now = timezone.now()
+    retired = []
     if activate:
+        if is_fabric_did():
+            retired = list(rows.filter(
+                node=node, algorithm=name, status=C.KEY_STATUS_ACTIVE,
+            ))
         _demote_active(node, name)
 
     row = NodeLongTermKey.objects.create(
@@ -328,6 +338,11 @@ def register_public_key(
     if activate:
         _write_node_column(node, name, material)
 
+    # 与登记/物化列同事务；worker 永远不在此处调用。轮换旧版本也保留不可变状态证据。
+    for previous in retired:
+        previous.status = C.KEY_STATUS_RETIRED
+        enqueue_binding(previous, 'ROTATED')
+    enqueue_binding(row, 'ROTATED' if _via_rotate else 'REGISTERED')
     return row
 
 
@@ -408,6 +423,9 @@ def rotate_public_key(
     这三件事要么一起发生、要么一件都不发生 —— 阶段 2 判据③
     "任一步失败不得把服务端标成 ACTIVE"就落在这个原子块上。
     """
+    lock_registry_node(node)
+    # Fabric 串行登记的查询也必须是当前读，不能沿用外围事务旧快照。
+    rows = NodeLongTermKey.objects.select_for_update() if is_fabric_did() else NodeLongTermKey.objects
     name = _assert_registrable(algorithm)
     material = str(public_key or '').strip()
     if not material:
@@ -422,7 +440,7 @@ def rotate_public_key(
         )
     version = _as_version(key_version)
 
-    latest = (NodeLongTermKey.objects
+    latest = (rows
               .filter(node=node, algorithm=name, key_id=kid)
               .order_by('-key_version', '-id').first())
     if latest is None:
@@ -440,7 +458,7 @@ def rotate_public_key(
     # 生产槽位归属：该算法在产的那把必须**就是**本次要更新的 keyId。
     # 不是的话，这次"更新"会把它降级，生产版本被换成调用方手里那把 ——
     # 而当前在产那把可能是本机刚生成的新密钥、也可能属于另一台设备。
-    active = NodeLongTermKey.objects.filter(
+    active = rows.filter(
         node=node, algorithm=name, status=C.KEY_STATUS_ACTIVE,
     ).first()
     if active is not None and active.key_id != kid:
@@ -500,6 +518,10 @@ def revoke_public_key(key: NodeLongTermKey, reason: str = '') -> NodeLongTermKey
     大量既有读路径会继续把已回收的公钥当成可用。**失败是静默的** ——
     解密照样成功，只是本该被拒绝的分发成功了。
     """
+    lock_registry_node(key.node)
+    if is_fabric_did():
+        # 调用方可能拿着旧对象；锁节点后回读状态，防止旧 ACTIVE 清掉刚轮换的新公钥。
+        key = NodeLongTermKey.objects.select_for_update().get(pk=key.pk)
     if key.status == C.KEY_STATUS_REVOKED:
         return key  # 幂等
 
@@ -523,6 +545,7 @@ def revoke_public_key(key: NodeLongTermKey, reason: str = '') -> NodeLongTermKey
         # 节点的状态处置与"回收后已建立的会话怎么办"属于 KMS-007，
         # 需要跨算法信息，在存储层这一个方法里做不完整。
 
+    enqueue_binding(key, 'REVOKED')
     return key
 
 

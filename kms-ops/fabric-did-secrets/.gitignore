@@ -1,0 +1,7 @@
+# 除说明和空工作目录之外，所有真实连接/证书/私钥材料都不进 Git。
+*
+!.gitignore
+!README.md
+!work/
+work/*
+!work/.gitkeep

@@ -25,7 +25,7 @@ public class KeyOperationRecordController extends BaseController {
     @PreAuthorize("isAuthenticated()")
     @GetMapping("/list")
     public TableDataInfo list(KeyOperationRecord query) {
-        if (!SecurityUtils.isAdmin(getUserId())) {
+        if (!(SecurityUtils.isAdmin(getUserId()) || com.ruoyi.framework.web.service.DemoIdentity.isCurrentAdmin())) {
             query.setUserId(getUserId());
         }
         startPage();

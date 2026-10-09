@@ -97,6 +97,17 @@
               <el-tag :type="statusTagType(row.status)" size="small">{{ row.statusLabel }}</el-tag>
             </template>
           </el-table-column>
+          <el-table-column label="DID 绑定" min-width="180">
+            <template #default="{ row }">
+              <template v-if="row.chainBinding">
+                <el-tag :type="row.chainBinding.status === 'CONFIRMED' ? 'success' : 'warning'" size="small">
+                  {{ row.chainBinding.status === 'CONFIRMED' ? '交易及回读已验证' : (row.chainBinding.status || '未确认') }}
+                </el-tag>
+                <div class="mono" style="overflow-wrap: anywhere">{{ row.chainBinding.did || '尚无 DID' }}</div>
+              </template>
+              <span v-else>旧链模式（非 DID 确认）</span>
+            </template>
+          </el-table-column>
           <el-table-column label="可用性" width="132">
             <template #default="{ row }">{{ usableText(row) }}</template>
           </el-table-column>
@@ -152,6 +163,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import useUserStore from '@/store/modules/user'
+import { IS_DEMO } from '@/utils/entry-mode'
 import { getSelfNode, listSelfNodeKeys } from '@/api/pqkds/node-self'
 
 const { proxy } = getCurrentInstance()
@@ -175,7 +187,7 @@ const keyword = ref('')
 function handleCommand(command) {
   if (command === 'logout') {
     proxy.$confirm('确定注销并退出系统吗？', '提示', { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }).then(() => {
-      userStore.logOut().then(() => { location.href = `${import.meta.env.BASE_URL}index` })
+      userStore.logOut().then(() => { if (!IS_DEMO) location.href = `${import.meta.env.BASE_URL}index` })
     }).catch(() => {})
   }
 }

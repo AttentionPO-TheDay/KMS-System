@@ -19,6 +19,7 @@
  */
 
 import { PRINCIPAL_NODE, resolvePrincipalType } from '@/utils/principal'
+import { entryPath, originalPath } from '@/utils/entry-mode'
 
 /** 管理端的落地页（静态路由，见 router/index.js） */
 export const ADMIN_LANDING = '/index'
@@ -39,7 +40,8 @@ export const NODE_LANDING = '/workbench'
 
 /** 当前主体应落到哪一页 */
 export function landingPath(src = {}) {
-  return resolvePrincipalType(src) === PRINCIPAL_NODE ? NODE_LANDING : ADMIN_LANDING
+  const principal = resolvePrincipalType(src)
+  return entryPath(principal === PRINCIPAL_NODE ? NODE_LANDING : ADMIN_LANDING, principal)
 }
 
 /**
@@ -53,7 +55,7 @@ export function landingPath(src = {}) {
  * 在前端做全量拦截等于把授权逻辑复制一份，两份必然漂移。
  */
 export function isAdminLanding(path) {
-  return path === ADMIN_LANDING
+  return originalPath(path) === ADMIN_LANDING
 }
 
 /**
@@ -109,6 +111,12 @@ export const ADMIN_ONLY_TOP_PATHS = Object.freeze(['/index'])
  */
 export function filterSidebarByPrincipal(routes, roleLevel, principal) {
   if (!Array.isArray(routes)) return []
+  // The two static profile/redirect shells must not leak into the other Demo view.
+  routes = routes.filter(route => {
+    if (String(route.path).startsWith('/demo/admin')) return principal === 'ADMIN'
+    if (String(route.path).startsWith('/demo/node')) return principal === 'NODE'
+    return true
+  })
 
   // 节点端：摘掉管理端的静态页（仪表盘等）。
   // `constantRoutes` 对所有主体一视同仁地下发，节点只筛动态菜单是筛不掉的 ——
@@ -142,13 +150,13 @@ export function filterSidebarByPrincipal(routes, roleLevel, principal) {
 
   return routes.filter((route) => {
     // 1) 节点端的业务分区目录，直接整棵摘掉
-    if (zones.has(route.path)) return false
+    if (zones.has(originalPath(route.path))) return false
 
     // 2) 顶层 C 类型的"单页框架"：它的 path 是 `/`，真正的页面在 children 里。
     //    只有在**所有**子项都是节点端页面时才摘 —— 管理端的「系统总览」
     //    「区块链存证」「操作日志」「验收测试台」同样是 `/` 框架，不能误伤。
     const children = route.children || []
-    if (route.path === '/' && children.length) {
+    if (originalPath(route.path) === '/' && children.length) {
       const allNodeOnly = children.every((c) => frames.has(String(c.path || '').replace(/^\/+/, '')))
       if (allNodeOnly) return false
     }

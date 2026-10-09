@@ -18,7 +18,8 @@
                 批量删除{{ selected.length ? `（${selected.length}）` : '' }}
               </el-button>
             </template>
-            <el-button size="small" type="primary" @click="openDistribute">生成并分发</el-button>
+            <el-button v-if="!IS_DEMO || isAdmin" size="small" type="primary" @click="openDistribute">生成并分发</el-button>
+            <el-button v-else size="small" type="primary" @click="goPreallocate">预分配保护包</el-button>
           </div>
         </div>
       </template>
@@ -54,7 +55,7 @@
         </el-form-item>
       </el-form>
 
-      <el-table :data="rows" size="small" v-loading="loading" row-key="id" empty-text="密钥池还是空的，点右上角「生成并分发」建一批"
+      <el-table :data="rows" size="small" v-loading="loading" row-key="id" :empty-text="IS_DEMO && !isAdmin ? '暂无预分配资源，请通过「预分配保护包」创建' : '密钥池还是空的，点右上角「生成并分发」建一批'"
                 @selection-change="(v) => (selected = v)">
         <el-table-column type="selection" width="42" />
         <el-table-column label="批次号" min-width="200" prop="pool_id" show-overflow-tooltip />
@@ -202,6 +203,10 @@ import {
   listKeyPool
 } from '@/api/pqkds/distribution'
 import { listNodes } from '@/api/nodes/nodes'
+import { listNodeDirectory } from '@/api/pqkds/node-self'
+import { IS_DEMO } from '@/utils/entry-mode'
+import { findTopLevelPagePath } from '@/utils/subsystems'
+import usePermissionStore from '@/store/modules/permission'
 import { isAdminPrincipal } from '@/utils/principal'
 import useUserStore from '@/store/modules/user'
 
@@ -227,6 +232,7 @@ const distForm = reactive({ algorithm: 'kyber_kem', sender_node_id: '', receiver
  * 用**同一个** `resolvePrincipalType`，不在这里另写一套。
  */
 const userStore = useUserStore()
+const router = useRouter()
 const isAdmin = computed(() => isAdminPrincipal({
   principalType: userStore.principalType,
   roleLevel: userStore.roleLevel
@@ -323,7 +329,9 @@ async function loadAll() {
     const [list, poolStats, nodeList] = await Promise.all([
       listKeyPool(),
       getKeyPoolStats().catch(() => ({})),
-      listNodes().catch(() => [])
+      (IS_DEMO && !isAdmin.value
+        ? listNodeDirectory().then(data => (data.nodes || []).map(node => ({ node_id: node.nodeCode, name: node.name })))
+        : listNodes()).catch(() => [])
     ])
     allRows.value = list || []
     stats.value = poolStats || {}
@@ -336,6 +344,14 @@ async function loadAll() {
   } finally {
     loading.value = false
   }
+}
+
+function goPreallocate() {
+  // 演示节点走已经上线的本机 SM4/Kyber/Falcon 保护包流程，不调用旧服务端生成路径。
+  // 页面路径取同一棵服务端菜单（9471），不另维护一份 Demo 菜单或路由。
+  const path = findTopLevelPagePath(usePermissionStore().sidebarRouters, 9471)
+  if (path) router.push(path)
+  else ElMessage.error('当前主体未获得预分配页面入口')
 }
 
 function openDistribute() {

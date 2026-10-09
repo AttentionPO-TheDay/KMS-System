@@ -1,0 +1,5 @@
+# 定制 SDK 真正存在的工厂；必须通过 java -DfabricSDK.configuration=<此文件实际路径> 在加载 SDK 前指定。
+org.hyperledger.fabric.sdk.crypto.default_crypto_suite_factory=org.hyperledger.fabric.sdk.security.GMCryptoSuiteFactory
+org.hyperledger.fabric.sdk.hash_algorithm=SM3
+org.hyperledger.fabric.sdk.security_level=256
+# TLS 的根证书和客户端 TLS 参数由链方 connection.json 提供，不使用公网参考地址。

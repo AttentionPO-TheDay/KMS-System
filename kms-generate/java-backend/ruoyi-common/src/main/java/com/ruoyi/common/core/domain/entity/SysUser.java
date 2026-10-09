@@ -93,6 +93,16 @@ public class SysUser extends BaseEntity {
     /** 用户等级（0管理员 1中级用户 2普通用户） */
     private Integer roleLevel;
 
+    private String principalType;
+
+    public String getPrincipalType() {
+        return principalType;
+    }
+
+    public void setPrincipalType(String principalType) {
+        this.principalType = principalType;
+    }
+
     public String getUserType() {
         return userType;
     }

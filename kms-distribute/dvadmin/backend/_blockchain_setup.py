@@ -1,5 +1,8 @@
 import os, django, json
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'application.settings')
+from pqkds.chain_backend import require_legacy_backend
+# 此脚本随后会删除旧配置；必须在任何 Django 启动/数据库写入之前拒绝 Fabric。
+require_legacy_backend('执行旧 Ganache 初始化/删除配置脚本')
 django.setup()
 
 ACCOUNT = '0x16480bed623d72e0336A9f3B995e6F69e8eE926f'

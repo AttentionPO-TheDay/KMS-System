@@ -48,7 +48,9 @@ import {
   DEVICE_AUTH_ALGORITHM
 } from './key-ref.js'
 
-const DB_NAME = 'kms-node-keystore'
+import { KEYSTORE_DB_NAME } from '../entry-mode.js'
+
+const DB_NAME = KEYSTORE_DB_NAME
 // ⚠️ 本模块是这座 IndexedDB 的**唯一 schema 所有者**。
 //    别的模块（如 device-credential.js）只通过本模块的导出读写同一个库，
 //    **不得**自己调 `indexedDB.open(name, 别的版本号)` —— 同名不同版本会互相

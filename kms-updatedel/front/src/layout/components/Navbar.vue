@@ -6,6 +6,9 @@
     <top-nav id="topmenu-container" class="topmenu-container" v-if="settingsStore.topNav" />
 
     <div class="right-menu">
+      <el-button v-if="IS_DEMO" class="demo-switch" plain :loading="switching" :disabled="userStore.principalType === 'ADMIN' && !returnNodeId" @click="changeDemoView">
+        {{ userStore.principalType === 'ADMIN' ? '返回节点工作台' : '管理控制台' }}
+      </el-button>
       <template v-if="appStore.device !== 'mobile'">
         <header-search id="header-search" class="right-menu-item" />
 
@@ -30,7 +33,7 @@
           </div>
           <template #dropdown>
             <el-dropdown-menu>
-              <router-link to="/user/profile">
+              <router-link v-if="!IS_DEMO" to="/user/profile">
                 <el-dropdown-item>个人中心</el-dropdown-item>
               </router-link>
               <el-dropdown-item command="setLayout" v-if="settingsStore.showSettings">
@@ -48,7 +51,9 @@
 </template>
 
 <script setup>
-import { ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { IS_DEMO } from '@/utils/entry-mode'
+import { getDemoContext, switchDemo } from '@/utils/demo-context'
 import Breadcrumb from '@/components/Breadcrumb'
 import TopNav from '@/components/TopNav'
 import Hamburger from '@/components/Hamburger'
@@ -77,6 +82,15 @@ const userStore = useUserStore()
 const settingsStore = useSettingsStore()
 
 const hideSidebar = computed(() => props.hideSidebar)
+const returnNodeId = getDemoContext()?.returnNodeId
+const switching = ref(false)
+
+async function changeDemoView() {
+  switching.value = true
+  try { await switchDemo(userStore.principalType === 'ADMIN' ? 'NODE' : 'ADMIN') }
+  catch (error) { ElMessage.error(error.message) }
+  finally { switching.value = false }
+}
 
 function toggleSideBar() {
   appStore.toggleSideBar()
@@ -102,7 +116,7 @@ function logout() {
     type: 'warning'
   }).then(() => {
     userStore.logOut().then(() => {
-      location.href = `${import.meta.env.BASE_URL}index`;
+      if (!IS_DEMO) location.href = `${import.meta.env.BASE_URL}index`;
     })
   }).catch(() => { });
 }
@@ -151,6 +165,8 @@ function toggleTheme() {
     display: inline-block;
     vertical-align: top;
   }
+
+  .demo-switch { align-self: center; margin-right: 12px; }
 
   .right-menu {
     float: right;

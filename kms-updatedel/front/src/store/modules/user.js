@@ -6,6 +6,8 @@ import { getToken, setToken, removeToken } from '@/utils/auth'
 import { isHttp, isEmpty } from "@/utils/validate"
 import { resetNodeInitStatusCache } from '@/utils/node-init-status'
 import defAva from '@/assets/images/profile.jpg'
+import { IS_DEMO } from '@/utils/entry-mode'
+import { getDemoContext, logoutDemo } from '@/utils/demo-context'
 
 const useUserStore = defineStore(
   'user',
@@ -95,7 +97,8 @@ const useUserStore = defineStore(
             this.name = user.userName
             this.avatar = avatar
             this.roleLevel = user.roleLevel  // 存储用户等级
-            this.principalType = user.principalType  // 存储登录主体类型（ADMIN/NODE）
+            // Demo authority, not URL or a standalone account, owns the role.
+            this.principalType = IS_DEMO ? getDemoContext()?.principalType : user.principalType
             resolve(res)
           }).catch(error => {
             reject(error)
@@ -104,6 +107,7 @@ const useUserStore = defineStore(
       },
       // 退出系统
       logOut() {
+        if (IS_DEMO) return logoutDemo()
         // 服务端注销是尽力而为；无论请求是否成功，都必须清掉本地会话，
         // 否则失效 token 会让后续路由继续被当成已登录状态。
         return logout(this.token)

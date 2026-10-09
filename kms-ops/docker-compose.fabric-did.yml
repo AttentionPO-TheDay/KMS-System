@@ -1,0 +1,30 @@
+# 可选适配进程；未提供真实材料时保持关闭，不改变旧服务的默认链选择。
+# 准备 target/app + lib 后叠加本文件并 --profile fabric-did；不能据容器存活说实链成功。
+services:
+  fabric-did-bridge:
+    profiles: ["fabric-did"]
+    build:
+      context: .
+      dockerfile: build/fabric-did.Dockerfile
+    image: kms-fabric-did:local
+    container_name: kms_fabric_did
+    working_dir: /run/fabric-did/work
+    environment:
+      FABRIC_DID_HOST: "0.0.0.0"
+      FABRIC_DID_PORT: "9094"
+      FABRIC_DID_ENABLED: ${FABRIC_DID_ENABLED:-false}
+      FABRIC_DID_WRITE_ENABLED: ${FABRIC_DID_WRITE_ENABLED:-false}
+      FABRIC_DID_CREATE_POLICY_APPROVED: ${FABRIC_DID_CREATE_POLICY_APPROVED:-false}
+      FABRIC_DID_CHAIN_ID: ${FABRIC_DID_CHAIN_ID:-}
+      FABRIC_DID_METHOD_ID: ${FABRIC_DID_METHOD_ID:-}
+      FABRIC_DID_NAMESPACE: ${FABRIC_DID_NAMESPACE:-kms-key-binding-v1}
+      FABRIC_DID_MAX_METADATA_BYTES: ${FABRIC_DID_MAX_METADATA_BYTES:-65536}
+      FABRIC_DID_PROPERTIES_FILE: "/run/fabric-did/fabric.config.properties"
+      FABRIC_DID_CONTROLLER_PUBLIC_KEY_FILE: "/run/fabric-did/controller-public.pem"
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?必须提供已有内部令牌，不应发布 Bridge 到公网}
+    # 安全材料由运维外置；目录没有实际文件也不能被当作 READY。
+    volumes:
+      - ./fabric-did-secrets:/run/fabric-did:ro
+    expose: ["9094"]
+    restart: unless-stopped
+    networks: ["kms_net"]

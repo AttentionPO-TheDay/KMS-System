@@ -1,0 +1,15 @@
+# 仅用于反证：保留回环测试端口，但在四个入口/身份适配服务关闭 Demo。
+# 与 docker-compose.yml + docker-compose.demo.yml 叠加，验证后去掉本文件恢复。
+services:
+  updatedel-java:
+    environment:
+      KMS_DEMO_ENABLED: "false"
+  generate-java:
+    environment:
+      KMS_DEMO_ENABLED: "false"
+  dvadmin3-django:
+    environment:
+      KMS_DEMO_ENABLED: "false"
+  nginx:
+    environment:
+      KMS_DEMO_ENABLED: "false"

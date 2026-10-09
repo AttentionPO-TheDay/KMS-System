@@ -114,7 +114,7 @@ public class SecurityConfig {
                     permitAllUrl.getUrls().forEach(url -> requests.antMatchers(url).permitAll());
                     // 对于登录login 注册register 验证码captchaImage 允许匿名访问。
                     // /internal/** 保留匿名：其控制器自身校验 X-Internal-Token（必须由环境变量注入）。
-                    requests.antMatchers("/login", "/register", "/captchaImage", "/internal/**").permitAll()
+                    requests.antMatchers("/login", "/register", "/captchaImage", "/internal/**", "/demo/context", "/demo/context/**").permitAll()
                             // 静态资源，可匿名访问
                             .antMatchers(HttpMethod.GET, "/", "/*.html", "/**/*.html", "/**/*.css", "/**/*.js",
                                     "/profile/**")
@@ -132,7 +132,7 @@ public class SecurityConfig {
                 // 添加CORS filter
                 .addFilterBefore(corsFilter, LogoutFilter.class)
                 // 添加JWT filter
-                .addFilterBefore(authenticationTokenFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(authenticationTokenFilter, LogoutFilter.class)
                 .build();
     }
 

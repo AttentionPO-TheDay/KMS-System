@@ -6,6 +6,8 @@ import { tansParams, blobValidate } from '@/utils/ruoyi'
 import cache from '@/plugins/cache'
 import { saveAs } from 'file-saver'
 import useUserStore from '@/store/modules/user'
+import { IS_DEMO, documentURL } from '@/utils/entry-mode'
+import { applyDemoRequest } from '@/utils/demo-context'
 
 let downloadLoadingInstance;
 // 是否显示重新登录
@@ -19,6 +21,7 @@ export let isRelogin = { show: false };
  * 因此这里改为回到本应用自己的 /login。
  */
 function getLoginPath() {
+  if (IS_DEMO) return documentURL('/demo')
   const base = import.meta.env.BASE_URL || '/'
   return `${base.replace(/\/?$/, '/')}login`
 }
@@ -41,6 +44,7 @@ service.interceptors.request.use(config => {
   if (getToken() && !isToken) {
     config.headers['Authorization'] = 'Bearer ' + getToken() // 让每个请求携带自定义token 请根据实际情况自行修改
   }
+  if (IS_DEMO) applyDemoRequest(config)
   // get请求映射params参数
   if (config.method === 'get' && config.params) {
     let url = config.url + '?' + tansParams(config.params);

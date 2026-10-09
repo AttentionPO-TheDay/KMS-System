@@ -1,5 +1,7 @@
 import axios from 'axios'
 import { getToken } from '@/utils/auth'
+import { IS_DEMO } from '@/utils/entry-mode'
+import { applyDemoRequest } from '@/utils/demo-context'
 
 /**
  * 访问分发模块（Django / falcon_kds）的**共用** HTTP 客户端。
@@ -25,7 +27,7 @@ import { getToken } from '@/utils/auth'
  * 让调用方的 `error.message` 有意义。
  */
 
-export const pqkdsBaseURL = import.meta.env.VITE_APP_PQKDS_API || '/pqkds-api'
+export const pqkdsBaseURL = IS_DEMO ? '/demo-api/pqkds' : (import.meta.env.VITE_APP_PQKDS_API || '/pqkds-api')
 
 /** 分发模块的两种成功码：手写视图 200，DRF ViewSet 2000 */
 export const SUCCESS_CODES = [200, 2000]
@@ -59,6 +61,7 @@ http.interceptors.request.use((config) => {
   // 带上不亏，将来收紧也不用改前端。
   const token = getToken()
   if (token) config.headers['Authorization'] = 'Bearer ' + token
+  if (IS_DEMO) applyDemoRequest(config, 'pqkds')
   return config
 })
 

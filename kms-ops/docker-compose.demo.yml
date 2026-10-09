@@ -1,0 +1,17 @@
+# 仅本机/隔离测试环境。与基础配置叠加，不改 .env、不重置数据库。
+# 原 80 端口仍只提供 Standalone；新增端口明确仅绑定 IPv4 回环。
+services:
+  updatedel-java:
+    environment:
+      KMS_DEMO_ENABLED: "true"
+  generate-java:
+    environment:
+      KMS_DEMO_ENABLED: "true"
+  dvadmin3-django:
+    environment:
+      KMS_DEMO_ENABLED: "true"
+  nginx:
+    environment:
+      KMS_DEMO_ENABLED: "true"
+    ports:
+      - "127.0.0.1:8088:8088"
