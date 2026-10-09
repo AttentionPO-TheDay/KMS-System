@@ -54,7 +54,7 @@
         <el-form inline class="gen-history__filter" @submit.prevent>
           <el-form-item label="算法">
             <el-select v-model="algoFilter" clearable placeholder="全部" class="gen-history__filter-select">
-              <el-option v-for="a in algorithmOptions" :key="a" :label="a" :value="a" />
+              <el-option v-for="a in algorithmOptions" :key="a" :label="a === 'KYBER' ? 'KEM（全部生成来源）' : a === 'FALCON' ? '签名（全部生成来源）' : a" :value="a" />
             </el-select>
           </el-form-item>
           <el-form-item label="状态">
@@ -78,7 +78,9 @@
         </p>
 
         <el-table v-loading="loading" :data="filtered" size="small" border class="gen-history__table">
-          <el-table-column label="算法" width="92" prop="algorithm" />
+          <el-table-column label="生成方案" min-width="240">
+            <template #default="{ row }">{{ formatGenerationName(row.algorithm, (row.server || row.local)?.generation) }}<small v-if="!row.server && row.local?.generation">（本机声明 · 待服务端校验）</small></template>
+          </el-table-column>
           <el-table-column label="keyId" min-width="210" show-overflow-tooltip>
             <template #default="{ row }">
               <span class="mono">{{ row.keyId || '（未记录）' }}</span>
@@ -135,7 +137,9 @@
     <el-dialog title="密钥详情" v-model="detailOpen" width="780px" append-to-body destroy-on-close>
       <template v-if="detail">
         <el-descriptions :column="2" border>
-          <el-descriptions-item label="算法">{{ detail.algorithm }}</el-descriptions-item>
+          <el-descriptions-item label="生成方案">{{ formatGenerationName(detail.algorithm, (detail.server || detail.local)?.generation) }}</el-descriptions-item>
+          <el-descriptions-item label="实际核心">{{ coreDetail(detail.algorithm, KYBER_PK_LENGTHS[detail.publicKeyBytes] || detail.server?.securityLevel || detail.local?.variant || '参数未记录') }}</el-descriptions-item>
+          <el-descriptions-item label="原始签发">{{ (detail.server || detail.local)?.generation?.generationIssuanceId || '来源未记录' }}</el-descriptions-item>
           <el-descriptions-item label="版本">v{{ detail.version }}</el-descriptions-item>
           <el-descriptions-item label="keyId"><span class="mono">{{ detail.keyId || '（未记录）' }}</span></el-descriptions-item>
           <el-descriptions-item label="平台状态">
@@ -161,7 +165,7 @@
           <el-descriptions-item label="回收时间">{{ formatTime(detail.server?.revokedAt) }}</el-descriptions-item>
           <el-descriptions-item label="回收原因">{{ detail.server?.revokedReason || '—' }}</el-descriptions-item>
           <el-descriptions-item label="历史来源" :span="2">
-            {{ detail.server?.legacy ? (detail.server.legacySource || '由旧路径导入（非节点本地生成）') : '节点本地生成' }}
+            {{ detail.server?.generation ? '客户端报告生成方式；服务端校验原始发放记录（不是密码学使用证明）' : detail.local?.generation && !detail.server ? '本机封存来源（尚未服务端校验）' : (detail.server?.legacySource || '生成来源未记录，不推断为双份额方案') }}
           </el-descriptions-item>
         </el-descriptions>
 
@@ -232,6 +236,7 @@ import { ElMessage } from 'element-plus'
 import { getSelfNode, listSelfNodeKeys } from '@/api/pqkds/node-self'
 import { compareNodeKeys } from '@/utils/crypto/node-key-compare.js'
 import { cryptoProvider, KYBER_PK_LENGTHS } from '@/utils/crypto/browser-provider.js'
+import { formatGenerationName, coreDetail } from '@/utils/crypto/generation-scheme.js'
 
 /**
  * 后端 `_long_term_keys_payload(node, limit=200)` 的条数上限，**与后端同改**。

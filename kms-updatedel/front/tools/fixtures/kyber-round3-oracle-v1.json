@@ -1,0 +1,10 @@
+{
+  "oracle": "dvadmin3-django:/backend/kyber/ref/lib/libpqcrystals_kyber{512,768,1024}_ref.so keypair_derand",
+  "seedHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+  "note": "Fixed public test entropy. Frozen hashes after ALL public and private bytes were compared to native oracle; --oracle reruns complete byte equality and random KEM/Falcon interop in memory.",
+  "vectors": [
+    { "variant": 512, "pkSha256": "5c280d767365c28e4cf8b4546c4d2de98b39a88f7a7db73768df86b04b2f7ade", "skSha256": "65260c6192484930d28842240c2f0cae274ff90b9728e49ae485273748256d73" },
+    { "variant": 768, "pkSha256": "32992ebf18a03bc8efb6dc12782f0ec788dda3599580f5ffc8a52f761c7fbe5a", "skSha256": "e5d4889e39eb5d8746b348d00571a9ed38997ac789e10092962a102436bebdd3" },
+    { "variant": 1024, "pkSha256": "24ed6cde38849be6ef02d0fb2e2fc4d259c3b52053c88c24a30f6873673e42c1", "skSha256": "0d1fb5b954af9741e034a14893d5c421a8b350c596c1e2447f6eaae24db532c3" }
+  ]
+}

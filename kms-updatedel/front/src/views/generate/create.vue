@@ -43,6 +43,8 @@
           </template>
         </el-alert>
 
+        <el-alert v-if="node.keygenPolicy?.enabled === false" type="warning" :closable="false" show-icon
+          title="改进型双份额生成尚未启用：请由运维完成独立密码学验证、重建镜像并显式启用策略；不会降级为普通生成。" />
         <div class="gen-create__grid">
           <div
             v-for="c in cards"
@@ -58,6 +60,8 @@
               <el-tag v-else type="info" size="small" effect="plain">未登记</el-tag>
             </div>
             <p class="gen-create__algo-role">{{ c.role }}</p>
+            <p class="gen-create__algo-role">{{ coreDetail(c.algorithm, c.algorithm === 'KYBER' ? kyberVariant : undefined) }}</p>
+            <p v-if="c.active" class="gen-create__algo-role">当前登记来源：{{ formatGenerationName(c.algorithm, c.active.generation) }}</p>
 
             <dl class="gen-create__facts">
               <div class="gen-create__fact">
@@ -124,9 +128,9 @@
                 class="gen-create__variant"
                 :disabled="Boolean(generating)"
               >
-                <el-option label="Kyber-512（NIST 1 级）" :value="512" />
-                <el-option label="Kyber-768（NIST 3 级）" :value="768" />
-                <el-option label="Kyber-1024（NIST 5 级）" :value="1024" />
+                <el-option label="双份额 KEM v1 · 参数 512" :value="512" />
+                <el-option label="双份额 KEM v1 · 参数 768" :value="768" />
+                <el-option label="双份额 KEM v1 · 参数 1024" :value="1024" />
               </el-select>
               <el-button
                 type="primary"
@@ -164,8 +168,8 @@
           </span>
         </h3>
         <el-table :data="rows" size="small" border class="gen-create__table">
-          <el-table-column label="算法" width="90">
-            <template #default="{ row }">{{ row.algorithm }}</template>
+          <el-table-column label="生成方案" min-width="240">
+            <template #default="{ row }">{{ formatGenerationName(row.algorithm, (row.server || row.local)?.generation) }}<small v-if="!row.server && row.local?.generation">（本机声明 · 待服务端校验）</small></template>
           </el-table-column>
           <el-table-column label="keyId" min-width="220">
             <template #default="{ row }">
@@ -262,12 +266,11 @@
  * 而不是在界面上单方面拦住用户。
  */
 import { computed, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { CircleCheck } from '@element-plus/icons-vue'
 import {
   getSelfNode,
   listSelfNodeKeys,
-  registerSelfNodePublicKey,
   NODE_SELF_ERR
 } from '@/api/pqkds/node-self'
 import {
@@ -280,6 +283,8 @@ import {
 import { cryptoProvider } from '@/utils/crypto/browser-provider.js'
 import { deviceFingerprint, hasDeviceKey } from '@/utils/crypto/device-credential.js'
 import { IS_DEMO } from '@/utils/entry-mode'
+import { generateAndRegisterNodeKey } from '@/utils/node-initialization'
+import { formatGenerationName, coreDetail, GENERATION_SCHEMES } from '@/utils/crypto/generation-scheme.js'
 
 const loading = ref(true)
 const mapped = ref(false)
@@ -304,7 +309,7 @@ const kyberVariant = ref(768)
 const ALGO_META = [
   {
     algorithm: 'KYBER',
-    label: 'Kyber',
+    label: formatGenerationName('KYBER', GENERATION_SCHEMES.KYBER),
     role: '密钥封装（KEM）：与其它节点协商共享秘密。抗量子，是节点腿的默认档位。'
   },
   {
@@ -319,8 +324,8 @@ const ALGO_META = [
   },
   {
     algorithm: 'FALCON',
-    label: 'Falcon',
-    role: '对分发消息签名与验签。签名算法，不做封装 —— 要封装请选 Kyber。'
+    label: formatGenerationName('FALCON', GENERATION_SCHEMES.FALCON),
+    role: '对分发消息签名与验签。签名算法，不做封装 —— 要封装请选 KEM。'
   }
 ]
 
@@ -407,7 +412,7 @@ const cards = computed(() =>
         ? `有（${local.keyRef}）`
         : (mine.length
             ? `有 ${mine.length} 把，但都不是平台在产的那一版`
-            : (meta.algorithm === 'KYBER' ? `无（将按 Kyber-${kyberVariant.value} 生成）` : '无'))
+            : (meta.algorithm === 'KYBER' ? `无（双份额 KEM v1 · 参数 ${kyberVariant.value}）` : '无'))
     }
   })
 )
@@ -488,26 +493,17 @@ async function handleGenerate(card) {
   if (generating.value) return
   generating.value = card.algorithm
   try {
-    const options = { nodeId: node.value.nodeId }
-    if (card.algorithm === 'KYBER') options.variant = kyberVariant.value
-
-    const generated = await cryptoProvider.generate(card.algorithm, options)
-    const result = await registerSelfNodePublicKey(
-      card.algorithm,
-      generated.publicKey,
-      card.algorithm === 'KYBER' ? String(generated.variant) : undefined,
-      // 传**设备公钥指纹**（与激活时服务端写进 `Node.key_device_id` 的是同一个值），
-      // 不是浏览器级的随机串 —— 后者是自报身份，服务端验证不了。
-      deviceFingerprintValue.value,
-      generated.keyId,
-      generated.version
-    )
-
+    const { material: generated, check } = await generateAndRegisterNodeKey({
+      algorithm: card.algorithm, nodeId: node.value.nodeId,
+      variant: card.algorithm === 'KYBER' ? kyberVariant.value : undefined,
+      confirmUnusedIssuance: async record => {
+        await ElMessageBox.confirm(record.message, '确认恢复未完成签发', { type: 'warning', confirmButtonText: '弃用未使用签发并重试', cancelButtonText: '取消，不换钥' })
+        return true
+      }
+    })
     await load()
 
-    // 登记成功 = "平台收到了这把公钥"，不等于"这把真能用"。
-    // 两者分开报：生成页当场自检一次，把故障挡在第一次真实分发之前。
-    const check = await cryptoProvider.selfTest(card.algorithm, generated.keyRef)
+    // Shared workflow self-tests the sealed key before submitting its public registration.
     selfTestResults.value = { ...selfTestResults.value, [generated.keyRef]: check }
 
     const head = card.active
@@ -519,7 +515,8 @@ async function handleGenerate(card) {
       ElMessage.warning(`${head}；但自检未过：${check.detail}`)
     }
   } catch (error) {
-    ElMessage.error(`${card.label} 生成/登记失败：${describeError(error)}`)
+    ElMessage.error(`${card.label} 生成/登记失败：${describeError(error)}（已封存材料保留；重试不重新生成）`)
+    await load()
   } finally {
     generating.value = ''
   }
@@ -547,10 +544,16 @@ async function runSelfTest(algorithm, keyRef) {
 function describeError(error) {
   const message = error?.message || String(error)
   switch (error?.errorCode) {
+    case NODE_SELF_ERR.KEYGEN_POLICY_DISABLED:
+      return '双份额生成尚未启用：需完成独立密码学验证并由运维显式启用；不会降级为普通生成'
+    case NODE_SELF_ERR.KEYGEN_CONTEXT_MISMATCH:
+      return `${message}。身份或设备上下文已变化；请返回原身份恢复，不会自动换钥`
+    case NODE_SELF_ERR.KEYGEN_GENERATION_REQUIRED:
+      return `${message}。请明确恢复历史材料，不能补造双份额来源`
     case NODE_SELF_ERR.DEVICE_MISMATCH:
       return `${message}。本机不是该节点绑定的设备：请改回原设备，或在「节点首次初始化」里用本机重新生成一套`
     case NODE_SELF_ERR.KEY_VERSION_MISMATCH:
-      return `${message}。本地记录的 keyId 与平台已有行冲突，请重新生成（不要手工指定 keyId）`
+      return `${message}。本地与平台身份或版本冲突；请确认并恢复原材料，不会自动换钥`
     case NODE_SELF_ERR.ALGORITHM_NOT_ALLOWED:
       return `${message}。平台只接受 SM2 / SSCL / KYBER / FALCON 四个规范名`
     default:

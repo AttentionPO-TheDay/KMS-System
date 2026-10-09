@@ -1,0 +1,25 @@
+{
+  "contract": "KMS-SPLIT-KEYGEN-V1/HKDF-SHA256",
+  "kgcShareHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "localSecretHex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+  "vectors": [
+    {
+      "context": {
+        "schemeId": "KMS_SPLIT_KEM_V1", "schemeVersion": "1", "coreFamily": "KYBER", "variant": "768",
+        "userId": "7", "nodeId": "节点-α", "bindingKind": "DEVICE", "deviceFingerprint": "device-fingerprint-001",
+        "demoSessionId": "", "demoRevision": "", "keyId": "key-001", "keyVersion": "2", "purpose": "KEM_KEYGEN", "generationIssuanceId": "issuance-fixed-001"
+      },
+      "seedBytes": 64,
+      "seedHex": "93ccdb01c9d1dafab4f1647d85aaf40e18af8a6bedb8702c21b247b85648a92b049a5c0eb92fb677d468354704761df6b5128ab0cc4955a4038dfc3700236e1f"
+    },
+    {
+      "context": {
+        "schemeId": "KMS_SPLIT_SIGN_V1", "schemeVersion": "1", "coreFamily": "FALCON", "variant": "512",
+        "userId": "7", "nodeId": "节点-α", "bindingKind": "DEMO", "deviceFingerprint": "",
+        "demoSessionId": "aabbccddeeff00112233445566778899", "demoRevision": "3", "keyId": "sign-001", "keyVersion": "2", "purpose": "SIGN_KEYGEN", "generationIssuanceId": "issuance-fixed-002"
+      },
+      "seedBytes": 48,
+      "seedHex": "cdec1d18bc02672f10693fd105d5a30a2a60da64da3979e9f924b7d8b8098f57adbae7174015be119374935857c3e794"
+    }
+  ]
+}

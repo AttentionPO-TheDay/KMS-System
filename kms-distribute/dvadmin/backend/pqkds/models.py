@@ -749,6 +749,49 @@ class ChainKeyBinding(models.Model):
         indexes = [models.Index(fields=['node', 'status', 'sequence'], name='pqkds_binding_node_state')]
 
 
+class KeyGenerationIssuance(models.Model):
+    """Immutable public context of one contribution; no contribution/seed columns."""
+
+    generation_issuance_id = models.CharField(max_length=36, primary_key=True)
+    node = models.ForeignKey(Node, on_delete=models.PROTECT, related_name='keygen_issuances')
+    algorithm = models.CharField(max_length=20)
+    key_id = models.CharField(max_length=64)
+    key_version = models.PositiveIntegerField()
+    context = models.JSONField()
+    status = models.CharField(max_length=16, default='ISSUED')
+    public_key_hash = models.CharField(max_length=64, blank=True, default='')
+    # Nullable ordinary unique key works on MySQL; no partial indexes.
+    current_slot = models.CharField(max_length=8, null=True, default='CURRENT')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = f'{table_prefix}pqkds_keygen_issuances'
+        constraints = [models.UniqueConstraint(
+            fields=['node', 'algorithm', 'key_id', 'key_version', 'current_slot'],
+            name='pqkds_keygen_uniq_current',
+        )]
+
+
+class KeyGenerationAuthorization(models.Model):
+    """Renewable public registration authorization, never a KDF input."""
+
+    authorization_ticket_id = models.CharField(max_length=36, primary_key=True)
+    issuance = models.ForeignKey(
+        KeyGenerationIssuance, on_delete=models.PROTECT, related_name='authorizations',
+    )
+    status = models.CharField(max_length=16, default='ISSUED')
+    public_key_hash = models.CharField(max_length=64, blank=True, default='')
+    current_slot = models.CharField(max_length=8, null=True, default='CURRENT')
+    expires_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = f'{table_prefix}pqkds_keygen_authorizations'
+        constraints = [models.UniqueConstraint(
+            fields=['issuance', 'current_slot'], name='pqkds_keygen_uniq_auth',
+        )]
+
+
 class NodeLongTermKey(CoreModel):
     """节点的长期密钥版本记录（计划 §6.1 / KMS-004）。
 
@@ -845,6 +888,13 @@ class NodeLongTermKey(CoreModel):
         max_length=64, blank=True, default='', verbose_name="回填来源列",
         help_text="从 Node 的哪一列回填而来；新登记路径写的行为空",
     )
+
+    # Public, client-attested provenance plus validated server issuance; not a KDF proof.
+    generation_scheme = models.CharField(max_length=32, blank=True, default='')
+    generation_scheme_version = models.PositiveIntegerField(null=True, blank=True)
+    generation_issuance_id = models.CharField(max_length=36, blank=True, default='')
+    generation_authorization_ticket_id = models.CharField(max_length=36, blank=True, default='')
+    generation_context = models.JSONField(default=dict, blank=True)
 
     class Meta:
         verbose_name = "节点长期密钥"

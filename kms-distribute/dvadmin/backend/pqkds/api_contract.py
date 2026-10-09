@@ -44,6 +44,26 @@ PROTECTION_ALGORITHMS: Tuple[str, ...] = ('SM2', 'SSCL', 'KYBER')
 #: 只做签名/验签的算法。**不得**出现在保护算法字段里。
 SIGNATURE_ALGORITHMS: Tuple[str, ...] = ('FALCON',)
 
+# Experimental generation provenance; these are not new core algorithms or proofs.
+SPLIT_GENERATION_SCHEMES = {
+    'KYBER': 'KMS_SPLIT_KEM_V1',
+    'FALCON': 'KMS_SPLIT_SIGN_V1',
+}
+SPLIT_CONTEXT_FIELDS = (
+    'schemeId', 'schemeVersion', 'coreFamily', 'variant', 'userId', 'nodeId',
+    'bindingKind', 'deviceFingerprint', 'demoSessionId', 'demoRevision',
+    'keyId', 'keyVersion', 'purpose', 'generationIssuanceId',
+)
+ERR_KEYGEN_POLICY_DISABLED = 'KEYGEN_POLICY_DISABLED'
+ERR_KEYGEN_GENERATION_REQUIRED = 'KEYGEN_GENERATION_REQUIRED'
+ERR_KEYGEN_CONTEXT_MISMATCH = 'KEYGEN_CONTEXT_MISMATCH'
+ERR_KEYGEN_AUTHORIZATION_EXPIRED = 'KEYGEN_AUTHORIZATION_EXPIRED'
+ERR_KEYGEN_AUTHORIZATION_SUPERSEDED = 'KEYGEN_AUTHORIZATION_SUPERSEDED'
+ERR_KEYGEN_PUBLIC_KEY_CONFLICT = 'KEYGEN_PUBLIC_KEY_CONFLICT'
+ERR_KEYGEN_SCHEME_INVALID = 'KEYGEN_SCHEME_INVALID'
+ERR_KEYGEN_ISSUANCE_CONFLICT = 'KEYGEN_ISSUANCE_CONFLICT'
+ERR_KEYGEN_HTTPS_REQUIRED = 'KEYGEN_HTTPS_REQUIRED'
+
 #: 历史遗留的"保护算法"取值。**只读兼容**，新信封一律不得产生。
 LEGACY_PROTECTION_ALGORITHMS: Tuple[str, ...] = (
     'FALCON',           # 概念错误：签名算法当封装用

@@ -29,20 +29,16 @@ export const ALGORITHMS = ['SM2', 'SSCL', 'KYBER', 'FALCON']
 
 /** 归一算法名。库里历史写法混杂（`Kyber` / `KYBER` / `CL-Kyber`），统一收口。 */
 export function normalizeAlgorithm(name) {
-  const text = String(name || '').trim().toUpperCase().replace(/^CL-/, '')
-  if (text.includes('KYBER') || text === 'ML-KEM') {
-    return 'KYBER'
+  const text = String(name || '').trim().toUpperCase()
+  // Exact historical aliases only. Unknown derivative/scheme IDs must not collapse
+  // into a supported core, and ML-KEM is not the round-3 Kyber wire protocol.
+  const aliases = {
+    KYBER: 'KYBER', 'CL-KYBER': 'KYBER', KYBER_KEM: 'KYBER', PQ_KYBER: 'KYBER', PQ_CL_KYBER: 'KYBER',
+    FALCON: 'FALCON', 'CL-FALCON': 'FALCON', FALCON_LATTICE: 'FALCON', PQ_FALCON: 'FALCON', PQ_CL_FALCON: 'FALCON',
+    SSCL: 'SSCL', 'CL-SSCL': 'SSCL', GM_SSCL: 'SSCL',
+    SM2: 'SM2', 'CL-SM2': 'SM2', GM_SM2: 'SM2'
   }
-  if (text.includes('FALCON')) {
-    return 'FALCON'
-  }
-  if (text.includes('SSCL')) {
-    return 'SSCL'
-  }
-  if (text.includes('SM2')) {
-    return 'SM2'
-  }
-  return text
+  return aliases[text] || text
 }
 
 /**
@@ -59,6 +55,10 @@ export class CryptoProvider {
    *
    * @param {string} algorithm
    * @param {object} [options] 算法相关选项（如 Kyber 变体、SSCL 公共参数）
+   * @param {Function} [options.issueKeygen] KYBER/FALCON 必需的经认证发放回调；provider 不直接发网络请求
+   * @param {object} [options.generationContext] PQ 必需：当前可信 nodeId/userId/bindingKind/deviceFingerprint/demoSessionId/demoRevision，核对服务端响应
+   * 新 PQ 生成返回 generation（方案/不可变发放/可续期授权引用）和 generationContext。
+   * 已封存 keyRef 必须由生命周期层复用或恢复；generate 永不覆盖它。
    * @returns {Promise<{publicKey: string, keyRef: string, algorithm: string}>}
    */
   async generate(algorithm, options = {}) { // eslint-disable-line no-unused-vars

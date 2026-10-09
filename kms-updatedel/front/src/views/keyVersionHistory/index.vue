@@ -46,7 +46,7 @@
           </el-form-item>
           <el-form-item label="算法">
             <el-select v-model="algoFilter" clearable placeholder="全部" class="version-history__filter-select">
-              <el-option v-for="a in algorithmOptions" :key="a" :label="a" :value="a" />
+              <el-option v-for="a in algorithmOptions" :key="a" :label="a === 'KYBER' ? 'KEM（全部生成来源）' : a === 'FALCON' ? '签名（全部生成来源）' : a" :value="a" />
             </el-select>
           </el-form-item>
           <el-form-item>
@@ -64,13 +64,16 @@
         <section v-for="g in groups" :key="g.key" class="version-history__group">
           <div class="version-history__group-head">
             <span class="mono version-history__group-keyid">{{ g.keyId || '（未记录 keyId）' }}</span>
-            <el-tag size="small" effect="plain">{{ g.algorithm }}</el-tag>
+            <el-tag size="small" effect="plain">{{ formatGenerationName(g.algorithm, g.latest.generation) }}</el-tag>
             <!-- 最新一版的状态：它回答"这把密钥现在是什么处境"。
                  文案来自服务端 `statusLabel`，前端只决定颜色。 -->
             <el-tag :type="statusTagType(g.latest.status)" size="small">{{ g.latest.statusLabel }}</el-tag>
             <span class="version-history__group-note">{{ g.rows.length }} 个版本 · 最新在前</span>
           </div>
           <el-table :data="g.rows" size="small" border>
+            <el-table-column label="生成方案" min-width="240">
+              <template #default="{ row }">{{ formatGenerationName(row.algorithm, row.generation) }}</template>
+            </el-table-column>
             <el-table-column label="版本" width="80">
               <template #default="{ row }">v{{ row.keyVersion }}</template>
             </el-table-column>
@@ -128,6 +131,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getSelfNode, listSelfNodeKeys } from '@/api/pqkds/node-self'
+import { formatGenerationName } from '@/utils/crypto/generation-scheme.js'
 
 /** 后端 `_long_term_keys_payload(node, limit=200)` 的条数上限，**与后端同改**。 */
 const SERVER_ROW_LIMIT = 200

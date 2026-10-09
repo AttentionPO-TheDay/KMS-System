@@ -205,6 +205,8 @@ def register_public_key(
     legacy: bool = False,
     legacy_source: str = '',
     _via_rotate: bool = False,
+    generation=None,
+    generation_binding=None,
 ) -> NodeLongTermKey:
     """登记一把长期公钥。**这是唯一的写入入口。**
 
@@ -218,16 +220,21 @@ def register_public_key(
     同身份但摘要不同则抛 `ContractError`（这不是重报，是真冲突 ——
     要换公钥应当走 `rotate_public_key`，它的语义是"新版本"而不是"同名覆盖"）。
     """
+    # Serialize on an existing node, not a not-yet-existing key/issuance row.
+    Node.objects.select_for_update().get(pk=node.pk)
     lock_registry_node(node)
-    # Fabric 串行登记的查询也必须是当前读，不能沿用外围事务旧快照。
-    rows = NodeLongTermKey.objects.select_for_update() if is_fabric_did() else NodeLongTermKey.objects
+    rows = NodeLongTermKey.objects.select_for_update()
     name = _assert_registrable(algorithm)
     material = str(public_key or '').strip()
     if not material:
         raise C.ContractError('公钥为空', code=C.ERR_INVALID_PARAMETER)
 
+    from .keygen_issuance import (
+        consume_authorization, policy_enabled, validate_existing_provenance, validate_generation,
+    )
+    generation = validate_generation(generation, name)
     digest = hash_public_key(material)
-    version = int(key_version or 1)
+    version = _as_version(key_version)
     kid = _validate_key_id(key_id)
 
     if kid:
@@ -236,6 +243,9 @@ def register_public_key(
         ).first()
         if existing is not None:
             if existing.public_key_hash == digest:
+                if existing.key_id != kid:
+                    raise C.ContractError('keyId 必须逐字相同', code=C.ERR_KEY_VERSION_MISMATCH)
+                validate_existing_provenance(existing, node, generation_binding, generation)
                 return existing
             raise C.ContractError(
                 f'{name} 密钥 {kid} v{version} 已登记且公钥不同；'
@@ -256,6 +266,9 @@ def register_public_key(
             status=C.KEY_STATUS_ACTIVE,
         ).first()
         if existing is not None:
+            validate_existing_provenance(existing, node, generation_binding, generation)
+            if name in C.SPLIT_GENERATION_SCHEMES:
+                return existing  # Exact historical retries never alter provenance/device metadata.
             # 只补空字段。已有值是"这把密钥生成时的环境"，不该被后续上报改写
             # （换设备生成新密钥属于轮换，那是 rotate 的事）。
             touched = []
@@ -310,6 +323,18 @@ def register_public_key(
     if not kid:
         kid = new_key_id(node, name)
 
+    provenance = None
+    if name in C.SPLIT_GENERATION_SCHEMES and policy_enabled() and generation is None:
+        raise C.ContractError(
+            '新后量子公钥/版本需要有效生成来源与授权；历史未登记材料须显式恢复，禁止重新生成',
+            code=C.ERR_KEYGEN_GENERATION_REQUIRED,
+        )
+    if generation is not None:
+        provenance = consume_authorization(
+            node, generation_binding, generation, algorithm=name, key_id=kid,
+            key_version=version, public_key=material, security_level=security_level,
+        )
+
     now = timezone.now()
     retired = []
     if activate:
@@ -333,6 +358,11 @@ def register_public_key(
         expires_at=expires_at,
         legacy=legacy,
         legacy_source=(legacy_source or '')[:64],
+        generation_scheme=provenance.context['schemeId'] if provenance else '',
+        generation_scheme_version=1 if provenance else None,
+        generation_issuance_id=provenance.pk if provenance else '',
+        generation_authorization_ticket_id=generation['authorizationTicketId'] if provenance else '',
+        generation_context=provenance.context if provenance else {},
     )
 
     if activate:
@@ -386,6 +416,8 @@ def rotate_public_key(
     device_id: str = '',
     effective_at=None,
     expires_at=None,
+    generation=None,
+    generation_binding=None,
 ) -> NodeLongTermKey:
     """**更新**：保留 `key_id`，`key_version` 递增，旧版本降级为 RETIRED。
 
@@ -423,9 +455,10 @@ def rotate_public_key(
     这三件事要么一起发生、要么一件都不发生 —— 阶段 2 判据③
     "任一步失败不得把服务端标成 ACTIVE"就落在这个原子块上。
     """
+    # Serialize on an existing node, not a not-yet-existing key/issuance row.
+    Node.objects.select_for_update().get(pk=node.pk)
     lock_registry_node(node)
-    # Fabric 串行登记的查询也必须是当前读，不能沿用外围事务旧快照。
-    rows = NodeLongTermKey.objects.select_for_update() if is_fabric_did() else NodeLongTermKey.objects
+    rows = NodeLongTermKey.objects.select_for_update()
     name = _assert_registrable(algorithm)
     material = str(public_key or '').strip()
     if not material:
@@ -439,6 +472,14 @@ def rotate_public_key(
             code=C.ERR_INVALID_PARAMETER,
         )
     version = _as_version(key_version)
+    exact = rows.filter(node=node, algorithm=name, key_id=kid, key_version=version).first()
+    if exact is not None:
+        # Historical exact retries are no-ops, even after later rotations/revocation.
+        return register_public_key(
+            node, algorithm=name, public_key=material, key_id=kid, key_version=version,
+            security_level=security_level, device_id=device_id, generation=generation,
+            generation_binding=generation_binding, _via_rotate=True,
+        )
 
     latest = (rows
               .filter(node=node, algorithm=name, key_id=kid)
@@ -502,6 +543,8 @@ def rotate_public_key(
         effective_at=effective_at,
         expires_at=expires_at,
         _via_rotate=True,
+        generation=generation,
+        generation_binding=generation_binding,
     )
 
 

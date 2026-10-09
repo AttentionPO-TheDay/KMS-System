@@ -1,0 +1,11 @@
+{
+  "package": "crystals-kyber",
+  "version": "5.1.0",
+  "repository": "https://github.com/antontutoveanu/crystals-kyber-javascript",
+  "license": "MIT",
+  "files": {
+    "kyber512.js": "a3a8a4bcb307d73e9f9ebeeb1c06aa38077ddddb342a8af17d48cbb951ba7312",
+    "kyber768.js": "9c40a561522406d053c19aedd6ae39b2c322ca16cf5112e095b2542b91dfcf8c",
+    "kyber1024.js": "52dcdd5d8f0869f97b111a51491a37c2f3984d1069371c9a3b41fa542332ec27"
+  }
+}

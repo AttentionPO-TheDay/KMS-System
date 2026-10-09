@@ -41,6 +41,8 @@
           </template>
         </el-alert>
 
+        <el-alert v-if="node.keygenPolicy?.enabled === false" type="warning" :closable="false" show-icon
+          title="改进型双份额生成尚未启用：请由运维完成独立密码学验证、重建镜像并显式启用策略；不会降级为普通生成。" />
         <div class="key-update__grid">
           <div
             v-for="c in cards"
@@ -61,6 +63,8 @@
               <el-tag v-else type="info" size="small" effect="plain">未登记</el-tag>
             </div>
             <p class="key-update__algo-role">{{ c.role }}</p>
+            <p class="key-update__algo-role">{{ coreDetail(c.algorithm, c.active ? variantOf(c.active) : undefined) }}</p>
+            <p v-if="c.active" class="key-update__algo-role">当前登记来源：{{ formatGenerationName(c.algorithm, c.active.generation) }}</p>
 
             <dl class="key-update__facts">
               <div class="key-update__fact">
@@ -144,7 +148,7 @@
                 {{ updating === c.algorithm ? '更新中…' : (c.active ? `更新到 v${nextVersionOf(c)}` : '无可更新版本') }}
               </el-button>
               <span v-if="c.algorithm === 'KYBER' && c.active" class="key-update__variant-note">
-                变体继承当前生产版本：Kyber-{{ variantOf(c.active) }}
+                参数继承当前生产版本：round-3 KEM · {{ variantOf(c.active) }}
               </span>
               <el-button
                 v-if="selfTestKeyRef(c)"
@@ -216,8 +220,8 @@
           </span>
         </h3>
         <el-table :data="rows" size="small" border class="key-update__table">
-          <el-table-column label="算法" width="86">
-            <template #default="{ row }">{{ row.algorithm }}</template>
+          <el-table-column label="生成方案" min-width="240">
+            <template #default="{ row }">{{ formatGenerationName(row.algorithm, (row.server || row.local)?.generation) }}<small v-if="!row.server && row.local?.generation">（本机声明 · 待服务端校验）</small></template>
           </el-table-column>
           <el-table-column label="keyId" min-width="200">
             <template #default="{ row }">
@@ -322,12 +326,11 @@
  * 前端单方面加门禁会造出「生成页能更新、更新页不能」的自相矛盾。
  */
 import { computed, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { CircleCheck } from '@element-plus/icons-vue'
 import {
   getSelfNode,
   listSelfNodeKeys,
-  registerSelfNodePublicKey,
   NODE_SELF_ERR
 } from '@/api/pqkds/node-self'
 import {
@@ -340,6 +343,8 @@ import {
 import { KYBER_PK_LENGTHS, cryptoProvider } from '@/utils/crypto/browser-provider.js'
 import { deviceFingerprint, hasDeviceKey } from '@/utils/crypto/device-credential.js'
 import { IS_DEMO } from '@/utils/entry-mode'
+import { generateAndRegisterNodeKey } from '@/utils/node-initialization'
+import { formatGenerationName, coreDetail, GENERATION_SCHEMES } from '@/utils/crypto/generation-scheme.js'
 
 const loading = ref(true)
 const mapped = ref(false)
@@ -368,7 +373,7 @@ const lastRotate = ref(null)
 const ALGO_META = [
   {
     algorithm: 'KYBER',
-    label: 'Kyber',
+    label: formatGenerationName('KYBER', GENERATION_SCHEMES.KYBER),
     role: '密钥封装（KEM）：与其它节点协商共享秘密。更新后变体与生产版本保持一致。'
   },
   {
@@ -383,7 +388,7 @@ const ALGO_META = [
   },
   {
     algorithm: 'FALCON',
-    label: 'Falcon',
+    label: formatGenerationName('FALCON', GENERATION_SCHEMES.FALCON),
     role: '对分发消息签名与验签。更新它只影响此后的签名，已发出的签名仍按旧版本公钥验证。'
   }
 ]
@@ -603,55 +608,22 @@ async function handleRotate(card) {
   updating.value = card.algorithm
   lastRotate.value = null
   try {
-    // ---- 1. 本地先封存新版本 ----
-    const reused = card.stagedKey
-    let material
-    if (reused) {
-      material = {
-        publicKey: reused.publicKey,
-        keyRef: reused.keyRef,
-        keyId: reused.keyId,
-        version: reused.version
+    // Shared workflow re-reads production identity, recovers sealed next version,
+    // self-tests and renews ONLY expired registration authorization (never KeyGen).
+    const { material, result, check, reused } = await generateAndRegisterNodeKey({
+      algorithm: card.algorithm, nodeId: node.value.nodeId,
+      keyId: active.keyId, version: nextVersion, rotate: true,
+      variant: card.algorithm === 'KYBER' ? variantOf(active) : undefined,
+      confirmUnusedIssuance: async record => {
+        await ElMessageBox.confirm(record.message, '确认恢复未完成签发', { type: 'warning', confirmButtonText: '弃用未使用签发并重试', cancelButtonText: '取消，不换钥' })
+        return true
       }
-    } else {
-      const options = { nodeId: node.value.nodeId, keyId: active.keyId, version: nextVersion }
-      // 只给 KYBER 传 variant：`generate()` 的 SM2/SSCL 分支不看它，
-      // 而 Falcon 分支报的是自己的 512，传进去读代码的人会以为有作用。
-      if (card.algorithm === 'KYBER') options.variant = variantOf(active)
-      material = await cryptoProvider.generate(card.algorithm, options)
-    }
-
-    // ---- 2. 本机自检：往返不通就不上行 ----
-    const check = await cryptoProvider.selfTest(card.algorithm, material.keyRef)
+    })
     selfTestResults.value = { ...selfTestResults.value, [material.keyRef]: check }
-    if (!check.ok) {
-      // 本地这一版**留着**（已封存，下次更新会复用它），但**不上报** ——
-      // 平台上的生产版本因此原封不动，这是"任一步失败不得把服务端状态标成
-      // ACTIVE"在页面这一侧的落点。
-      ElMessage.error(
-        `${card.label} 新版本已在本机封存（v${nextVersion}），但自检未过：${check.detail}。`
-        + `没有上报，平台上的生产版本仍是 v${active.keyVersion}`
-      )
-      return
-    }
-
-    // ---- 3. 上报：rotate=true ----
-    const result = await registerSelfNodePublicKey(
-      card.algorithm,
-      material.publicKey,
-      // KYBER 的 securityLevel 就是变体（服务端据此写 `kyber_security_level`）。
-      // 其余算法传空 —— 服务端在更新路径上会沿用上一版的级别，不该由页面改。
-      card.algorithm === 'KYBER' ? String(variantOf(active)) : undefined,
-      // **设备公钥指纹**（与激活时服务端写进 `Node.key_device_id` 的是同一个值）。
-      deviceFingerprintValue.value,
-      material.keyId,
-      material.version,
-      true
-    )
 
     lastRotate.value = {
       algorithm: card.algorithm,
-      label: card.label,
+      label: formatGenerationName(card.algorithm, material.generation),
       keyId: result?.keyId || material.keyId,
       fromVersion: Number(active.keyVersion),
       toVersion: Number(result?.keyVersion || material.version),
@@ -729,6 +701,12 @@ async function runSelfTest(algorithm, keyRef) {
 function describeError(error, card) {
   const message = error?.message || String(error)
   switch (error?.errorCode) {
+    case NODE_SELF_ERR.KEYGEN_POLICY_DISABLED:
+      return '双份额生成尚未启用：需完成独立密码学验证并由运维显式启用；不会降级为普通生成'
+    case NODE_SELF_ERR.KEYGEN_CONTEXT_MISMATCH:
+      return `${message}。身份或设备上下文已变化；请返回原身份恢复，不会自动换钥`
+    case NODE_SELF_ERR.KEYGEN_GENERATION_REQUIRED:
+      return `${message}。请明确恢复历史材料，不能补造双份额来源`
     case NODE_SELF_ERR.KEY_REVOKED:
       return `${message}。回收是终态，更新救不回来 —— 请到「密钥生成」为 ${card.label} 生成一把新的（新 keyId）`
     case NODE_SELF_ERR.KEY_NOT_FOUND:

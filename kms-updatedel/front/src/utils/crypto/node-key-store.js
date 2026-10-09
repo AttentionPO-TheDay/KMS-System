@@ -38,6 +38,7 @@
  */
 
 import { ALGORITHMS, normalizeAlgorithm } from './provider.js'
+import { publicGeneration, publicGenerationContext } from './generation-scheme.js'
 import {
   buildKeyRef,
   parseKeyRef,
@@ -76,6 +77,8 @@ const META_DEVICE = 'deviceId'
 
 /** 私密材料在库里的形状：`{ keyRef, algorithm, version, deviceId, publicKey, iv, sealed, createdAt, nodeId, keyId, kind, migrated }` */
 const textEncoder = new TextEncoder()
+// Encode the sealed byte payload losslessly, including binary importSecret inputs.
+const secretBytesHex = bytes => [...bytes].map(value => value.toString(16).padStart(2, '0')).join('')
 
 /**
  * 本机没有私钥时给调用方的处置提示。与后端
@@ -273,6 +276,9 @@ function tx(storeName, mode, run) {
         let result
         try {
           result = run(store)
+          // Request failures (notably createOnly/add conflicts) can precede the
+          // transaction's error event; mark the inner promise handled meanwhile.
+          if (result && typeof result.catch === 'function') result.catch(() => {})
         } catch (error) {
           reject(error)
           return
@@ -361,8 +367,18 @@ async function getOrCreateProtector() {
     false, // ← 不可导出，见上方说明
     ['encrypt', 'decrypt']
   )
-  await metaPut({ k: META_PROTECTOR, key })
-  return key
+  // Generate outside the transaction, then atomically choose the already stored
+  // protector or this candidate. Concurrent new keyRefs must never replace it.
+  return tx(STORE_META, 'readwrite', (store) => new Promise((resolve, reject) => {
+    const read = store.get(META_PROTECTOR)
+    read.onerror = () => reject(read.error)
+    read.onsuccess = () => {
+      if (read.result?.key) { resolve(read.result.key); return }
+      const write = store.add({ k: META_PROTECTOR, key })
+      write.onerror = () => reject(write.error)
+      write.onsuccess = () => resolve(key)
+    }
+  }))
 }
 
 /** 本设备的标识。随机生成后持久化，用于"密钥与设备绑定"。 */
@@ -371,7 +387,7 @@ async function getDeviceId() {
   if (existing?.value) {
     return existing.value
   }
-  const id = crypto.randomUUID ? crypto.randomUUID() : `dev-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  const id = crypto.randomUUID ? crypto.randomUUID() : `dev-${[...crypto.getRandomValues(new Uint8Array(16))].map(value => value.toString(16).padStart(2, '0')).join('')}`
   await metaPut({ k: META_DEVICE, value: id })
   return id
 }
@@ -398,7 +414,9 @@ function toSummary(record) {
     keyId: record.keyId !== undefined && record.keyId !== null ? record.keyId : (nodeRef?.keyId ?? null),
     kind: record.kind || parsed?.kind || '',
     migrated: record.migrated === true,
-    migratedFrom: record.migratedFrom || ''
+    migratedFrom: record.migratedFrom || '',
+    generation: record.generation ? publicGeneration(record.generation) : null,
+    generationContext: record.generationContext ? publicGenerationContext(record.generationContext) : null
   }
 }
 
@@ -423,7 +441,7 @@ function toSummary(record) {
  * @param {number} [input.version] 版本；node ref 可省略（从 ref 派生），给了就必须与 ref 一致
  * @returns {Promise<object>} 落库后的记录（**不含明文**）
  */
-export async function sealSecret(keyRef, { algorithm, secret, publicKey = '', version } = {}) {
+export async function sealSecret(keyRef, { algorithm, secret, publicKey = '', version, generation = null, generationContext = null, createOnly = false } = {}) {
   const ref = String(keyRef ?? '')
   const parsed = parseKeyRef(ref)
   if (!parsed) {
@@ -484,10 +502,21 @@ export async function sealSecret(keyRef, { algorithm, secret, publicKey = '', ve
   if (!bytes || !bytes.length) {
     throw new Error('私密材料为空，拒绝写入 —— 存一条空记录只会让"为什么解不开"变成一个查不出来的问题')
   }
+  const source = publicGeneration(generation)
+  const context = generationContext ? publicGenerationContext(generationContext) : null
+  if (Boolean(source) !== Boolean(context)) throw new Error('封存生成来源必须同时包含方案/授权引用与完整上下文')
+  if (source && (source.schemeId !== context.schemeId || source.generationIssuanceId !== context.generationIssuanceId || context.nodeId !== parsed.nodeId || context.keyId !== parsed.keyId || context.keyVersion !== String(resolvedVersion) || context.coreFamily !== resolvedAlgorithm)) {
+    throw new Error('封存生成来源与 keyRef 不匹配')
+  }
+  // Public source is authenticated INSIDE the same encrypted record as the actual
+  // key, not just attached to pending meta. Recovery rejects altered outer copies.
+  const payload = source ? textEncoder.encode(JSON.stringify({ secretEncoding: 'hex-bytes-v1', secret: secretBytesHex(bytes), generation: source, generationContext: context, publicKey: String(publicKey || '') })) : bytes
   const protector = await getOrCreateProtector()
   // 每次都用新的随机 IV：AES-GCM 下 IV 重用会直接毁掉机密性，且**不会报错**
   const iv = crypto.getRandomValues(new Uint8Array(12))
-  const sealed = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, protector, bytes)
+  let sealed
+  try { sealed = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, protector, payload) }
+  finally { if (source) payload.fill(0); if (typeof secret === 'string') bytes.fill(0) }
   const deviceId = await getDeviceId()
 
   const record = {
@@ -504,9 +533,11 @@ export async function sealSecret(keyRef, { algorithm, secret, publicKey = '', ve
     nodeId: parsed.nodeId,
     keyId: parsed.kind === 'node' ? parsed.keyId : null,
     kind: parsed.kind,
-    migrated: false
+    migrated: false,
+    ...(source ? { generation: source, generationContext: context, payloadFormat: 'split-key-v1' } : {})
   }
-  await tx(STORE_KEYS, 'readwrite', (store) => req(store.put(record)))
+  // add is the final cross-tab conflict guard, even where Web Locks are unavailable.
+  await tx(STORE_KEYS, 'readwrite', (store) => req(createOnly ? store.add(record) : store.put(record)))
   // 返回值刻意**不带 sealed/iv 之外的任何东西**也只是形式；
   // 真正要守住的是：调用方拿不到 secret —— 它只在上面那个闭包里存在过。
   return { ...record, sealed: undefined, iv: undefined }
@@ -548,19 +579,62 @@ export async function unsealSecret(keyRef) {
   if (!record) {
     throw new Error(`本地密钥库中没有 ${ref} 的记录`)
   }
+  return decryptKeyRecord(record)
+}
+
+async function decryptKeyRecord(record) {
   const protector = await getOrCreateProtector()
+  let plain
   try {
-    const plain = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: record.iv },
-      protector,
-      record.sealed
-    )
-    return new Uint8Array(plain)
+    plain = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: record.iv }, protector, record.sealed))
+    if (record.payloadFormat !== 'split-key-v1') {
+      if (record.generation || record.generationContext) throw new Error('未认证的生成来源')
+      return plain // unchanged historical key encoding
+    }
+    const payload = JSON.parse(new TextDecoder().decode(plain))
+    const generation = publicGeneration(payload.generation)
+    const context = publicGenerationContext(payload.generationContext)
+    const ref = parseKeyRef(record.keyRef)
+    if (!generation || generation.schemeId !== context.schemeId || generation.generationIssuanceId !== context.generationIssuanceId ||
+      context.nodeId !== ref?.nodeId || context.keyId !== ref?.keyId || context.keyVersion !== String(ref?.version) || context.coreFamily !== ref?.algorithm ||
+      JSON.stringify(generation) !== JSON.stringify(publicGeneration(record.generation)) || JSON.stringify(context) !== JSON.stringify(publicGenerationContext(record.generationContext)) ||
+      payload.publicKey !== record.publicKey || payload.secretEncoding !== 'hex-bytes-v1' || typeof payload.secret !== 'string' || !/^(?:[0-9a-f]{2})+$/.test(payload.secret)) throw new Error('生成来源完整性校验失败')
+    return Uint8Array.from(payload.secret.match(/.{2}/g), value => parseInt(value, 16))
   } catch {
-    // GCM 校验失败 → 要么保护密钥不是当初那把（用户清了元数据但没清记录），
-    // 要么数据被改过。两种都不该"尽力而为"地返回半截内容。
-    throw new Error(`本地密钥库中的 ${ref} 解密失败：保护密钥不匹配或数据已被改动`)
+    throw new Error(`本地密钥库中的 ${record.keyRef} 解密失败：保护密钥不匹配或数据已被改动`)
+  } finally {
+    if (record.payloadFormat === 'split-key-v1') plain?.fill(0)
   }
+}
+
+/** Renew only the authorization reference. Actual key bytes and immutable KDF source never change. */
+export async function updateGenerationAuthorization(keyRef, authorizationTicketId) {
+  const ref = canonicalRefForLookup(keyRef)
+  const record = await tx(STORE_KEYS, 'readonly', (store) => req(store.get(ref)))
+  if (!record?.generation || record.payloadFormat !== 'split-key-v1') throw new Error('历史来源未记录的密钥不能续期双份额授权')
+  const generation = publicGeneration({ ...record.generation, authorizationTicketId })
+  const secret = await decryptKeyRecord(record)
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const payload = textEncoder.encode(JSON.stringify({ secretEncoding: 'hex-bytes-v1', secret: secretBytesHex(secret), generation, generationContext: record.generationContext, publicKey: record.publicKey }))
+  let sealed
+  try { sealed = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await getOrCreateProtector(), payload) }
+  finally { secret.fill(0); payload.fill(0) }
+  const updated = { ...record, generation, iv, sealed }
+  await tx(STORE_KEYS, 'readwrite', (store) => new Promise((resolve, reject) => {
+    const read = store.get(ref)
+    read.onerror = () => reject(read.error)
+    read.onsuccess = () => {
+      const current = read.result
+      // Compare the IV of the authenticated snapshot, not merely a mutable ticket ID.
+      if (!current || current.iv.length !== record.iv.length || current.iv.some((byte, index) => byte !== record.iv[index])) {
+        reject(new Error('封存记录已变化，请重新恢复后续期')); return
+      }
+      const write = store.put(updated)
+      write.onerror = () => reject(write.error)
+      write.onsuccess = () => resolve()
+    }
+  }))
+  return toSummary(updated)
 }
 
 /**
@@ -578,7 +652,13 @@ export async function hasSecret(keyRef) {
 /** 列出全部记录摘要（**不含任何私密材料**，用于界面展示与设备绑定判断） */
 export async function listSecrets() {
   const all = await tx(STORE_KEYS, 'readonly', (store) => req(store.getAll()))
-  return (all || []).map(toSummary)
+  return Promise.all((all || []).map(async (record) => {
+    if (record.payloadFormat === 'split-key-v1' || record.generation || record.generationContext) {
+      const secret = await decryptKeyRecord(record)
+      secret.fill(0)
+    }
+    return toSummary(record)
+  }))
 }
 
 /**
@@ -805,7 +885,9 @@ export async function inspectNodeKeys(nodeId) {
     version: r.version,
     publicKey: r.publicKey,
     createdAt: r.createdAt,
-    migrated: r.migrated
+    migrated: r.migrated,
+    generation: r.generation,
+    generationContext: r.generationContext
   }))
   return {
     present: keys.length > 0,
@@ -866,6 +948,10 @@ export async function requireLocalKey(keyRef, { nodeId = '', algorithm = '', ver
   const record = await tx(STORE_KEYS, 'readonly', (store) => req(store.get(lookupRef)))
   if (!record) {
     throw new KeyRefError(`${LOCAL_MISSING_HINT}（引用：${lookupRef}）`, ERR_KEY_LOCAL_MISSING)
+  }
+  if (record.payloadFormat === 'split-key-v1' || record.generation || record.generationContext) {
+    const secret = await decryptKeyRecord(record)
+    secret.fill(0)
   }
   return toSummary(record)
 }

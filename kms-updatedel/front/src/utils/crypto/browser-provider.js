@@ -28,6 +28,10 @@
 // 这样本模块才能被验证脚本直接 import 进 Node 跑（见 `_probe-provider.mjs`），
 // 否则只能在浏览器里靠肉眼观察，而密码学路径最不能靠肉眼。
 import { CryptoProvider, normalizeAlgorithm } from './provider.js'
+import { issueSplitSeed } from './split-keygen.js'
+import { generationScheme } from './generation-scheme.js'
+
+const inFlightGenerations = new Set()
 import { inspectNodeKeys, listSecrets, removeSecret, requireLocalKey, sealSecret, unsealSecret, hasSecret } from './node-key-store.js'
 // KMS-003：keyRef 的格式由 key-ref.js 独占定义 —— 本模块只**使用**它，绝不自己拼。
 // 之所以要收口：手拼的 ref 即使拼错也不会当场报错，只会让私钥在"本机有没有该节点的
@@ -189,40 +193,52 @@ export class BrowserCryptoProvider extends CryptoProvider {
     // "ref 不由格式模块产生"的漏洞：它看上去能用，却过不了规范格式的检查。
     // 已删除，不再保留任何手拼路径。
     const keyId = options.keyId ? String(options.keyId) : mintKeyId(nodeId, name)
-    const version = Number(options.version || 1)
+    const version = Number(options.version ?? 1)
     const keyRef = buildKeyRef({ nodeId, algorithm: name, keyId, version })
+    const run = async () => {
+      if (inFlightGenerations.has(keyRef)) throw new Error('该 keyRef 正在生成，禁止并发发放或覆盖')
+      inFlightGenerations.add(keyRef)
+      try {
+        if (await hasSecret(keyRef)) throw new Error('该 keyRef 已有封存密钥，请复用/恢复；禁止重新生成或覆盖私钥')
+        if (name === 'KYBER' || name === 'FALCON') {
+          const scheme = generationScheme(name)
+          if (options.generationScheme != null && options.generationScheme !== scheme.schemeId) throw new Error('未知或不匹配的生成方案，禁止降级')
+          const variant = Number(options.variant ?? (name === 'KYBER' ? 768 : 512))
+          if (name === 'KYBER') kyberNames(variant)
+          else if (variant !== 512) throw new Error('签名核心只支持非 padded Falcon-512')
+          const material = await issueSplitSeed({ algorithm: name, nodeId, keyId, keyVersion: version, variant }, options.issueKeygen, options.generationContext)
+          let kp
+          try {
+            if (name === 'KYBER') {
+              const { keygenRound3FromSeed } = await import('./vendor/kyber-round3/adapter.js')
+              kp = keygenRound3FromSeed(material.seed, variant)
+            } else {
+              const falcon = await loadFalcon()
+              kp = falcon.falcon512.keygen(material.seed)
+            }
+            const publicKey = toHex(kp.publicKey)
+            await sealSecret(keyRef, { algorithm: name, secret: toHex(kp.secretKey), publicKey, version, generation: material.generation, generationContext: material.generationContext, createOnly: true })
+            return { publicKey, keyRef, keyId, nodeId, version, algorithm: name, variant, generation: material.generation, generationContext: material.generationContext }
+          } finally {
+            material.seed.fill(0) // noble does not wipe caller-supplied seeds
+            kp?.secretKey.fill(0)
+          }
+        }
 
-    if (name === 'KYBER') {
-      const variant = options.variant || 768
-      const names = kyberNames(variant)
-      const kyber = await loadKyber()
-      // KeyGen 返回 [publicKey, secretKey]。**不收参数** —— 变体由函数名区分
-      // （KeyGen512/768/1024），别顺手把 variant 当参数传进去：JS 会默默忽略多余实参，
-      // 于是 512 的请求拿到 768 的密钥而没有任何报错。
-      const [pk, sk] = kyber[names.k]()
-      const publicKey = toHex(pk)
-      await sealSecret(keyRef, { algorithm: name, secret: toHex(sk), publicKey, version })
-      return { publicKey, keyRef, keyId, nodeId, version, algorithm: name, variant }
+        if (name === 'SM2' || name === 'SSCL') {
+          // 无证书路径保持不变；只增加新生成永不覆盖旧 keyRef 的共同闸门。
+          const { SM2 } = await import('gm-crypto')
+          const { publicKey, privateKey } = SM2.generateKeyPair()
+          await sealSecret(keyRef, { algorithm: name, secret: String(privateKey).toLowerCase(), publicKey, version, createOnly: true })
+          return { publicKey, keyRef, keyId, nodeId, version, algorithm: name }
+        }
+        throw new Error(`不支持的算法：${algorithm}`)
+      } finally { inFlightGenerations.delete(keyRef) }
     }
-
-    if (name === 'FALCON') {
-      const falcon = await loadFalcon()
-      const kp = falcon.falcon512.keygen()
-      const publicKey = toHex(kp.publicKey)
-      await sealSecret(keyRef, { algorithm: name, secret: toHex(kp.secretKey), publicKey, version })
-      return { publicKey, keyRef, keyId, nodeId, version, algorithm: name, variant: 512 }
+    if (globalThis.navigator?.locks?.request) {
+      return navigator.locks.request(`kms-keygen:${keyRef}`, run)
     }
-
-    if (name === 'SM2' || name === 'SSCL') {
-      // 无证书路径：节点侧只产生秘密份额 u，公开量 uA = u·G。
-      // `u` 从不外传；KGC 的返回（部分密钥）由上层合成成 d_A 后再落到这里。
-      const { SM2 } = await import('gm-crypto')
-      const { publicKey, privateKey } = SM2.generateKeyPair()
-      await sealSecret(keyRef, { algorithm: name, secret: String(privateKey).toLowerCase(), publicKey, version })
-      return { publicKey, keyRef, keyId, nodeId, version, algorithm: name }
-    }
-
-    throw new Error(`不支持的算法：${algorithm}`)
+    return run() // in-process guard + atomic IndexedDB add still prohibit overwrites
   }
 
   /**
@@ -233,7 +249,7 @@ export class BrowserCryptoProvider extends CryptoProvider {
    * 静默采纳任意一方，都会把"记录按 ref 找得到、按算法/版本却对不上"的不一致
    * 留到运行期才现形。设备凭据（`node-{id}-device-auth`）不是长期密钥，不能从这里导入。
    */
-  async importSecret(keyRef, { algorithm, secret, publicKey = '', version }) {
+  async importSecret(keyRef, { algorithm, secret, publicKey = '', version, generation = null, generationContext = null }) {
     const parsed = parseKeyRef(keyRef)
     if (!parsed || parsed.kind !== 'node') {
       throw new KeyRefError(
@@ -260,7 +276,7 @@ export class BrowserCryptoProvider extends CryptoProvider {
       )
     }
     // 算法与版本一律取 ref 的派生值，不取调用方传的 —— 两边说法不一时以 ref 为准
-    const sealed = await sealSecret(keyRef, { algorithm: parsed.algorithm, secret, publicKey, version: parsed.version })
+    const sealed = await sealSecret(keyRef, { algorithm: parsed.algorithm, secret, publicKey, version: parsed.version, generation, generationContext })
     // 返回**落库后的** ref（sealSecret 会把别名文本重建为规范文本）：调用方拿
     // 返回值去 hasKey/sign/decapsulate 才找得到。返回入参那份，遇到 `kyber_kem`
     // 这类可解析但非规范的写法就会静默查不到 —— 而那正是本任务要根除的模式。
@@ -269,7 +285,9 @@ export class BrowserCryptoProvider extends CryptoProvider {
       nodeId: parsed.nodeId,
       keyId: parsed.keyId,
       version: parsed.version,
-      algorithm: parsed.algorithm
+      algorithm: parsed.algorithm,
+      generation: sealed.generation || null,
+      generationContext: sealed.generationContext || null
     }
   }
 

@@ -1,4 +1,67 @@
 import json
+import re
+import uuid
+
+
+def _keygen_audit_payload(path, data):
+    """Separate safe audit DTO; never retain rejected secrets or malformed bodies.
+
+    Only this narrow public-key/issuance surface changes. Requests passed to the
+    view retain their original body; audit records use a validated public whitelist.
+    """
+    if '/node-self/keygen/' not in path and not path.rstrip('/').endswith('/node-self/keys'):
+        return data
+    if not isinstance(data, dict):
+        return {'redacted': True}
+    safe = {}
+    for name in ('algorithm', 'securityLevel', 'security_level', 'variant'):
+        value = data.get(name)
+        choices = {'algorithm': {'KYBER', 'FALCON', 'SM2', 'SSCL'},
+                   'securityLevel': {'512', '768', '1024', 'sm2p256v1'},
+                   'security_level': {'512', '768', '1024', 'sm2p256v1'},
+                   'variant': {'512', '768', '1024'}}[name]
+        if isinstance(value, (str, int)) and not isinstance(value, bool) and str(value) in choices:
+            safe[name] = value
+    for name in ('keyId', 'key_id'):
+        value = data.get(name)
+        if isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', value):
+            safe[name] = value
+    for name in ('keyVersion', 'key_version'):
+        value = data.get(name)
+        if type(value) is int and 1 <= value <= 4294967295:
+            safe[name] = value
+        elif isinstance(value, str) and re.fullmatch(r'[1-9][0-9]{0,9}', value):
+            safe[name] = value
+    for name in ('deviceId', 'device_id'):
+        value = data.get(name)
+        if isinstance(value, str) and re.fullmatch(r'[0-9a-f]{32}', value):
+            safe[name] = value
+    if type(data.get('rotate')) is bool:
+        safe['rotate'] = data['rotate']
+    # Public material need not be copied into operation logs; registry owns it.
+    if 'publicKey' in data or 'public_key' in data or data.get('publicKeyPresent') is True:
+        safe['publicKeyPresent'] = True
+    def public_reference(name, value, target):
+        try:
+            if isinstance(value, str) and str(uuid.UUID(value)) == value:
+                target[name] = value
+        except (ValueError, AttributeError):
+            pass
+    for name in ('generationIssuanceId', 'abandonGenerationIssuanceId'):
+        public_reference(name, data.get(name), safe)
+    generation = data.get('generation')
+    if isinstance(generation, dict):
+        provenance = {}
+        if generation.get('schemeId') in ('KMS_SPLIT_KEM_V1', 'KMS_SPLIT_SIGN_V1'):
+            provenance['schemeId'] = generation['schemeId']
+        if type(generation.get('schemeVersion')) is int and generation['schemeVersion'] == 1:
+            provenance['schemeVersion'] = 1
+        for name in ('generationIssuanceId', 'authorizationTicketId'):
+            public_reference(name, generation.get(name), provenance)
+        safe['generation'] = provenance
+    safe['redacted'] = True
+    return safe
+
 from django.conf import settings
 from django.contrib.auth.models import AnonymousUser
 from django.utils.deprecation import MiddlewareMixin
@@ -24,10 +87,10 @@ class ApiLoggingMiddleware(MiddlewareMixin):
     @classmethod
     def __handle_request(cls, request):
         request.request_ip = get_request_ip(request)
-        request.request_data = get_request_data(request)
         request.request_path = get_request_path(request)
+        request.request_data = _keygen_audit_payload(request.request_path, get_request_data(request))
     def __handle_response(self, request, response):
-        body = getattr(request, 'request_data', {})
+        body = _keygen_audit_payload(request.path, getattr(request, 'request_data', {}))
         if isinstance(body, dict) and body.get('password', ''):
             body['password'] = '*' * len(body['password'])
         if not hasattr(response, 'data') or not isinstance(response.data, dict):
@@ -58,6 +121,13 @@ class ApiLoggingMiddleware(MiddlewareMixin):
             'status': True if response.data.get('code') in [2000, ] else False,
             'json_result': {"code": response.data.get('code'), "msg": response.data.get('msg')},
         }
+
+        if '/node-self/keygen/' in request.path or request.path.rstrip('/').endswith('/node-self/keys'):
+            result = {'code': response.data.get('code'), 'msg': '公钥/生成发放请求已处理'}
+            error = (response.data.get('data') or {}).get('error_code') if isinstance(response.data.get('data'), dict) else None
+            if isinstance(error, str) and re.fullmatch(r'[A-Z_]{1,64}', error):
+                result['error_code'] = error
+            info['json_result'] = result
 
         # 处理数据库连接问题
         from django.db import connection

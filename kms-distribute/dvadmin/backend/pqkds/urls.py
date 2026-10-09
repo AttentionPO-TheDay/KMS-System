@@ -45,6 +45,8 @@ from .node_self_views import (
     node_self_distributions,
     node_self_init,
     node_self_keys,
+    node_self_keygen_issuances,
+    node_self_keygen_authorizations,
     node_self_revoke_key,
 )
 # §6.5：节点取自己的信封 + 提交「我已恢复 K」的证明
@@ -96,6 +98,8 @@ urlpatterns = [
     # §4.4：节点侧生成密钥后**只上传公钥**。必须与 init 分开 ——
     # 先逐个登记四套公钥，再由 init 收尾置 ACTIVE（见 node_service 的说明）。
     path('node-self/keys/', node_self_keys, name='node-self-keys'),
+    path('node-self/keygen/issuances/', node_self_keygen_issuances, name='node-self-keygen-issuances'),
+    path('node-self/keygen/authorizations/', node_self_keygen_authorizations, name='node-self-keygen-authorizations'),
     # KMS-007：节点侧「密钥回收」菜单的落点。改的是 `NodeLongTermKey` 那一行，
     # 并连带失效依赖它的池项与会话；在此之前那个菜单删的是另一个服务的
     # `keymanage` 旧行，长期密钥原样不动（见该 view 的 docstring）。

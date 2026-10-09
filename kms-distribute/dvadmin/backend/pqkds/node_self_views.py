@@ -209,6 +209,7 @@ def _public_status(node: Node) -> str:
 
 
 def _node_payload(node: Node) -> dict:
+    from .keygen_issuance import policy_enabled
     from .chain_backend import get_chain_backend, chain_write_state
     return {
         'nodeId': node.node_id,
@@ -230,6 +231,11 @@ def _node_payload(node: Node) -> dict:
         # 前端拿它与**本机**的 deviceId 比对，判断"我是不是那台设备"——
         # 新设备登录时本地没有私钥，靠这个才能发现，否则界面看不出任何异常。
         'keyDeviceId': node.key_device_id or '',
+        'keygenPolicy': {
+            'enabled': policy_enabled(), 'experimental': True,
+            'schemes': C.SPLIT_GENERATION_SCHEMES,
+            'provenance': 'CLIENT_ATTESTED_SERVER_ISSUANCE_VALIDATED',
+        },
         # 四套密钥各自是否就绪 —— 首次初始化引导页用它显示进度
         # ⚠️ KMS-015：Falcon 就绪判定读**规范列优先**（镜像列 `falcon_public_key`
         #    已停写；存量节点可能只有旧列，所以保留兜底）。
@@ -246,6 +252,7 @@ def _node_payload(node: Node) -> dict:
 def _long_term_key_payload(k: NodeLongTermKey) -> dict:
     """一行长期密钥 → 页面需要的形状。逐行调用，公钥只换算一次。"""
     public_key = _public_key_hex(k)
+    from .keygen_issuance import public_generation_payload
     from .chain_backend import is_fabric_did, chain_write_state
     chain_binding = None
     if is_fabric_did():
@@ -253,6 +260,7 @@ def _long_term_key_payload(k: NodeLongTermKey) -> dict:
         chain_binding = get_binding_status(k)
     return {
         'algorithm': k.algorithm,
+        **public_generation_payload(k),
         # 密钥可用与链上确认是两个事实；尚无配置时也不能显示成“上链成功”。
         'chainBinding': chain_binding,
         'chainWriteState': chain_write_state(),
@@ -323,7 +331,78 @@ def node_self(request, identity):
         # 管理员账号（未映射到任何节点）访问这里会走到这一支。
         # 这不是错误状态，而是"这个账号不是节点"—— 由前端据此决定视图分流。
         return _ok({'mapped': False, 'node': None})
-    return _ok({'mapped': True, 'node': _node_payload(node)})
+    from .keygen_issuance import trusted_binding
+    payload = _node_payload(node)
+    try:
+        payload['keygenIdentity'] = trusted_binding(request, node, identity, require_init_lease=False)
+        payload['keygenIdentityError'] = None
+    except C.ContractError as exc:
+        payload['keygenIdentity'] = None
+        payload['keygenIdentityError'] = exc.code
+    return _ok({'mapped': True, 'node': payload})
+
+
+def _keygen_response(request, identity, *, renewal):
+    from .keygen_issuance import (
+        issue_contribution, list_issuances, reject_private_fields, renew_authorization,
+        require_confidential_transport, trusted_binding,
+    )
+    node = _find_node(identity)
+    try:
+        if node is None:
+            raise C.ContractError('当前账号未关联节点', code=C.ERR_NOT_AUTHORIZED)
+        payload = ({'deviceId': request.GET.get('deviceId')} if request.method == 'GET'
+                   else json.loads(request.body or b'{}'))
+        if not isinstance(payload, dict):
+            raise C.ContractError('请求体应为 JSON 对象', code=C.ERR_INVALID_PARAMETER)
+        reject_private_fields(payload)
+        allowed = ({'generationIssuanceId', 'publicKey', 'deviceId'} if renewal else {
+            'algorithm', 'keyId', 'keyVersion', 'variant', 'deviceId',
+            'abandonGenerationIssuanceId',
+        })
+        if set(payload) - allowed:
+            raise C.ContractError('签发只接受白名单字段，可信上下文由后端确定',
+                                  code=C.ERR_INVALID_PARAMETER)
+        binding = trusted_binding(request, node, identity, payload.get('deviceId'))
+        require_confidential_transport(request, demo=binding['bindingKind'] == 'DEMO')
+        if request.method == 'GET':
+            data = list_issuances(node, binding)
+        elif renewal:
+            data = renew_authorization(
+                node, binding, generation_issuance_id=payload.get('generationIssuanceId'),
+                public_key=payload.get('publicKey'),
+            )
+        else:
+            data = issue_contribution(
+                node, binding, algorithm=payload.get('algorithm'), key_id=payload.get('keyId'),
+                key_version=payload.get('keyVersion'), variant=payload.get('variant'),
+                abandon_generation_issuance_id=payload.get('abandonGenerationIssuanceId'),
+            )
+        response = _ok(data)
+    except C.ContractError as exc:
+        response = _error(exc.message, 409, error_code=exc.code)
+    except (ValueError, TypeError):
+        response = _error('请求参数或 JSON 无效', error_code=C.ERR_INVALID_PARAMETER)
+    except Exception:  # No payloads, trace locals or secret response in logs/errors.
+        response = _error('生成发放服务暂时不可用', 503)
+    response['Cache-Control'] = 'no-store, private, max-age=0'
+    response['Pragma'] = 'no-cache'
+    response['Vary'] = 'Authorization, Cookie'
+    return response
+
+
+@csrf_exempt
+@require_http_methods(['GET', 'POST'])
+@require_kms_user
+def node_self_keygen_issuances(request, identity):
+    return _keygen_response(request, identity, renewal=False)
+
+
+@csrf_exempt
+@require_http_methods(['POST'])
+@require_kms_user
+def node_self_keygen_authorizations(request, identity):
+    return _keygen_response(request, identity, renewal=True)
 
 
 @csrf_exempt
@@ -369,15 +448,19 @@ def node_self_keys(request, identity):
     if not isinstance(payload, dict):
         return _error('请求体应为 JSON 对象')
 
-    forbidden = sorted(
-        k for k in payload
-        if str(k).lower() in {'privatekey', 'secretkey', 'private_key', 'secret_key', 'sk', 'private'}
-    )
-    if forbidden:
-        return _error(
-            '本接口只接受公钥，请求体中出现私钥字段：' + '、'.join(forbidden)
-            + '。私钥应在节点侧保管，不得上传。'
-        )
+    from .keygen_issuance import reject_private_fields, trusted_binding, validate_generation
+    try:
+        reject_private_fields(payload)
+        allowed = {
+            'algorithm', 'publicKey', 'public_key', 'securityLevel', 'security_level',
+            'deviceId', 'device_id', 'keyId', 'key_id', 'keyVersion', 'key_version',
+            'rotate', 'generation',
+        }
+        if set(payload) - allowed:
+            raise C.ContractError('登记只接受白名单公共字段', code=C.ERR_INVALID_PARAMETER)
+        validate_generation(payload.get('generation'), str(payload.get('algorithm') or '').strip().upper())
+    except C.ContractError as exc:
+        return _error(exc.message, error_code=exc.code)
 
     algorithm = payload.get('algorithm')
     public_key = payload.get('publicKey') or payload.get('public_key')
@@ -406,6 +489,18 @@ def node_self_keys(request, identity):
             return _error('该算法已登记，请复用对应的本地材料，不得重复初始化', 409,
                           error_code=C.ERR_KEY_VERSION_MISMATCH)
 
+    binding = None
+    try:
+        recorded_source = NodeLongTermKey.objects.filter(
+            node=node, algorithm=str(algorithm).strip().upper(),
+        ).exclude(generation_issuance_id='').exists()
+        if payload.get('generation') is not None or recorded_source:
+            binding = trusted_binding(
+                request, node, identity, payload.get('deviceId', payload.get('device_id')),
+            )
+    except C.ContractError as exc:
+        return _error(exc.message, 409, error_code=exc.code)
+
     try:
         service = NodeService(node.node_id)
         result = service.store_node_public_key(
@@ -419,6 +514,8 @@ def node_self_keys(request, identity):
             key_version=payload.get('keyVersion', payload.get('key_version')),
             rotate=rotate,
             demo_context=identity if identity.get('entryMode') == 'DEMO' else None,
+            generation=payload.get('generation'),
+            generation_binding=binding,
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception('节点 %s 登记公钥异常', node.node_id)
@@ -471,6 +568,7 @@ def node_self_keys(request, identity):
             'keyId': result.get('key_id'),
             'keyVersion': result.get('key_version'),
             'keyStatus': result.get('status'),
+            **(result.get('generation') or {}),
             # 与分发响应同一口径（`chainHash`，见 user_distribution_views）：
             # 回哈希而不是布尔值。拿不到哈希时页面能如实说"已更新，但存证未成功"，
             # 而不是把两者混为一谈 —— 审计缺口必须是**可见的**。

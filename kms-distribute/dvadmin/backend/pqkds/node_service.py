@@ -399,13 +399,16 @@ class NodeService:
             'sys_user_id': user_id,
         }
 
+    @transaction.atomic
     def store_node_public_key(self, algorithm: str, public_key: str,
                               security_level: str = None,
                               device_id: str = None,
                               key_id: str = None,
                               key_version=None,
                               rotate: bool = False,
-                              demo_context=None) -> Dict[str, Any]:
+                              demo_context=None,
+                              generation=None,
+                              generation_binding=None) -> Dict[str, Any]:
         """登记一个算法的**公钥**（文档 §4.4）。
 
         这是节点初始化的新入口：私钥在节点浏览器产生并留在那里，
@@ -466,6 +469,8 @@ class NodeService:
                 ),
             }
 
+        # Same existing-node serialization point as issuance and registry consumption.
+        self.node = Node.objects.select_for_update().get(pk=self.node.pk)
         value = str(public_key or '').strip()
         if not value:
             return {'success': False, 'code': C.ERR_INVALID_PARAMETER, 'message': '公钥为空'}
@@ -567,7 +572,7 @@ class NodeService:
         #
         # ⚠️ 响应丢失后的重试是**设计内**的恢复路径（页面靠本机已封存的 v+1 复用），
         #    不是异常路径，所以这条分支会被真实走到。
-        retry_same_version = bool(rotate) and NodeLongTermKey.objects.filter(
+        retry_same_version = bool(rotate) and NodeLongTermKey.objects.select_for_update().filter(
             node=self.node, algorithm=name, key_id=key_id, key_version=version,
         ).exists()
         try:
@@ -580,6 +585,8 @@ class NodeService:
                     key_version=version,
                     security_level=str(security_level or '').strip(),
                     device_id=reported or bound,
+                    generation=generation,
+                    generation_binding=generation_binding,
                 )
             else:
                 row = register_public_key(
@@ -591,6 +598,8 @@ class NodeService:
                     security_level=str(security_level or '').strip(),
                     device_id=reported or bound,
                     activate=True,
+                    generation=generation,
+                    generation_binding=generation_binding,
                 )
         except C.ContractError as exc:
             logger.warning('节点 %s %s %s 公钥被拒：%s',
@@ -637,6 +646,7 @@ class NodeService:
             message = f'{name} 公钥已更新为 v{row.key_version}'
         else:
             message = f'{name} 公钥已登记'
+        from .keygen_issuance import public_generation_payload
         return {
             'success': True,
             'algorithm': name,
@@ -647,6 +657,7 @@ class NodeService:
             'key_id': row.key_id,
             'key_version': row.key_version,
             'status': row.status,
+            'generation': public_generation_payload(row),
             # 下面三个只给**接口层**用，不进 HTTP 响应：
             #   * key_pk —— 这行在 `NodeLongTermKey` 里的整数主键。链上接口
             #     （Java `/internal/lifecycle/chain/event`）只收整数 keyId，而

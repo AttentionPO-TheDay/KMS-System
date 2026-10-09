@@ -24,20 +24,18 @@
  *
  * 需要的环境：docker 里有 `dvadmin3-django` 容器（服务端侧用真实 .so 对打）。
  * 缺环境时相关用例会明确失败，而不是静默跳过 —— "没跑"与"跑过了"必须可区分。
+ * 生成只经明确的 TEST_ONLY 假发放回调 + 全量可信测试上下文，仍走实际双份额 provider。
+ * fake IndexedDB 只在本 Node 进程内；不登记生产节点、不调用真实 KGC/API、不声称服务端认证来源。
+ * 原生验证仅 docker exec 内存 ctypes / 纯 SM4 helper，python -B 禁止字节码落盘；无 docker cp / Django / DB。
  */
 import 'fake-indexeddb/auto'
 import { execFileSync } from 'node:child_process'
-import { writeFileSync, unlinkSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
 
 // 规范化 keyRef 的构造只留这一个口子（节点段固定为 probe，与下面 generate 的
 // nodeId 一致）：格式再变（段名、大小写、版本位）只改这一行。
 // 手写的旧格式（如 `node-XXX-KYBER`）在 store 里查不到时，报错是
 // "本机没有这把密钥"，看起来像密钥丢了，其实是引用拼错。
 const kref = (algo, kid, v = 1) => `node/probe/${algo}/${kid}/${v}`
-
-const HERE = dirname(fileURLToPath(import.meta.url))
 
 const results = []
 const check = (name, pass, detail = '') => {
@@ -48,20 +46,20 @@ const check = (name, pass, detail = '') => {
 const toHex = (u8) => [...u8].map((b) => b.toString(16).padStart(2, '0')).join('')
 const fromHex = (h) => Uint8Array.from(h.match(/.{2}/g).map((b) => parseInt(b, 16)))
 
-/** 在 Django 容器里跑一段 python（用服务端真实的 .so 对打） */
-function runPy(code, tag) {
-  const local = join(HERE, `._py_${tag}.py`)
-  const remote = `/backend/_verify_${tag}.py`
-  writeFileSync(local, code, 'utf8')
-  try {
-    execFileSync('docker', ['cp', local, `dvadmin3-django:${remote}`], { encoding: 'utf8' })
-    return execFileSync('docker', ['exec', 'dvadmin3-django', 'python', remote], {
-      encoding: 'utf8',
-      env: { ...process.env, MSYS_NO_PATHCONV: '1' }
-    })
-  } finally {
-    try { unlinkSync(local) } catch { /* 忽略 */ }
-  }
+/** Read-only native/pure-math process: no temp files, docker cp, Django setup or DB access. */
+function runPy(code, payload = {}) {
+  const preamble = `import sys, json
+if sys.flags.optimize != 0:
+    raise RuntimeError('crypto verifier refuses optimized Python execution')
+sys.path.insert(0, '/backend')
+payload = json.load(sys.stdin)
+`
+  return execFileSync('docker', ['exec', '-i', 'dvadmin3-django', 'python', '-B', '-c', preamble + code], {
+    input: JSON.stringify(payload),
+    encoding: 'utf8',
+    maxBuffer: 2 * 1024 * 1024,
+    env: { ...process.env, MSYS_NO_PATHCONV: '1' }
+  })
 }
 
 function dockerAvailable() {
@@ -76,6 +74,33 @@ function dockerAvailable() {
 const store = await import('../src/utils/crypto/node-key-store.js')
 const { cryptoProvider } = await import('../src/utils/crypto/browser-provider.js')
 const { sm4EncryptBlock, sm4DecryptBlock, sm4GcmEncrypt, sm4GcmDecrypt } = await import('../src/utils/sm4.js')
+
+// TEST ONLY: isolated in-memory fake IndexedDB and an explicit fake issuer.
+// No production enrollment, HTTP issuance API, public registry or attestation claim.
+// Both contributions still use CSPRNG and the actual production split-provider path.
+const expectedIdentity = Object.freeze({
+  nodeId: 'probe', userId: '0', bindingKind: 'DEVICE',
+  deviceFingerprint: 'TEST_ONLY_FAKE_DEVICE_NOT_ENROLLED', demoSessionId: '', demoRevision: ''
+})
+let testIssuanceCount = 0
+async function issueTestKeygen(request) {
+  if (request.nodeId !== expectedIdentity.nodeId || !['KYBER', 'FALCON'].includes(request.algorithm)) throw new Error('test issuer accepts only isolated probe keys')
+  const signing = request.algorithm === 'FALCON'
+  const schemeId = signing ? 'KMS_SPLIT_SIGN_V1' : 'KMS_SPLIT_KEM_V1'
+  const purpose = signing ? 'SIGN_KEYGEN' : 'KEM_KEYGEN'
+  if (request.generationScheme !== schemeId || request.purpose !== purpose) throw new Error('test issuer core/scheme mismatch')
+  const generationIssuanceId = `TEST_ONLY_ISSUANCE_${++testIssuanceCount}`
+  const contribution = crypto.getRandomValues(new Uint8Array(32))
+  try {
+    return {
+      generationScheme: schemeId, generationIssuanceId, authorizationTicketId: `TEST_ONLY_AUTHORIZATION_${testIssuanceCount}`,
+      context: { ...expectedIdentity, schemeId, schemeVersion: '1', coreFamily: request.algorithm, variant: String(request.variant),
+        keyId: request.keyId, keyVersion: String(request.keyVersion), purpose, generationIssuanceId },
+      share: Buffer.from(contribution).toString('base64'), expiresAt: new Date(Date.now() + 600000).toISOString()
+    }
+  } finally { contribution.fill(0) }
+}
+const testGenerationOptions = { nodeId: expectedIdentity.nodeId, issueKeygen: issueTestKeygen, generationContext: expectedIdentity }
 
 // ===========================================================================
 // 0. SM4 单分组 —— 国标向量
@@ -150,24 +175,32 @@ console.log('\n=== 5. Kyber：本地生成 → 服务端封装 → 本地解封 
 if (!dockerAvailable()) {
   check('★★ 服务端对打（Kyber）', false, 'docker 容器 dvadmin3-django 不可用 —— 该项未运行')
 } else {
-  const kb = await cryptoProvider.generate('KYBER', { nodeId: 'probe', keyId: 'probe-kyber', variant: 768 })
+  const kb = await cryptoProvider.generate('KYBER', { ...testGenerationOptions, keyId: 'probe-kyber', variant: 768 })
   check('公钥长度正确（Kyber-768 = 1184B）', kb.publicKey.length === 2368, `${kb.publicKey.length} hex 字符`)
+  const source = await store.requireLocalKey(kb.keyRef)
+  check('★ 真实双份额 KEM 来源与测试发放引用一起封存', source.generation?.schemeId === 'KMS_SPLIT_KEM_V1' && source.generation.generationIssuanceId === kb.generation?.generationIssuanceId && source.generationContext?.deviceFingerprint === expectedIdentity.deviceFingerprint)
 
-  const out = runPy(`
-import os, django, binascii
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "application.settings")
-django.setup()
-from pqkds.crypto_utils import KyberCrypto
-pk = binascii.unhexlify("${kb.publicKey}")
-ct, ss = KyberCrypto(768).encrypt(pk)
-print("CT:", binascii.hexlify(ct).decode())
-print("SS:", binascii.hexlify(ss).decode())
-`, 'kyber')
+  const out = JSON.parse(runPy(`
+import ctypes
+u8 = ctypes.c_ubyte
+ptr = ctypes.POINTER(u8)
+lib = ctypes.CDLL('/backend/kyber/ref/lib/libpqcrystals_kyber768_ref.so')
+enc = lib.pqcrystals_kyber768_ref_enc
+enc.argtypes = [ptr, ptr, ptr]
+enc.restype = ctypes.c_int
+pk = bytes.fromhex(payload['publicKey'])
+if len(pk) != 1184:
+    raise ValueError('test public key length mismatch')
+ct = (u8 * 1088)(); ss = (u8 * 32)()
+if enc(ct, ss, (u8 * len(pk)).from_buffer_copy(pk)) != 0:
+    raise RuntimeError('native Kyber encapsulation failed')
+json.dump({'ctHex': bytes(ct).hex(), 'ssHex': bytes(ss).hex()}, sys.stdout)
+`, { publicKey: kb.publicKey }))
 
-  const ctHex = (out.match(/CT:\s*([0-9a-f]+)/) || [])[1]
-  const ssServer = (out.match(/SS:\s*([0-9a-f]+)/) || [])[1]
+  const ctHex = out.ctHex
+  const ssServer = out.ssHex
   if (!ctHex) {
-    check('★★ 服务端接受该公钥并封装', false, out.trim().slice(0, 140))
+    check('★★ 服务端接受该公钥并封装', false, 'native oracle returned no ciphertext')
   } else {
     check('服务端接受该公钥并封装', true)
     const ssLocal = toHex(await cryptoProvider.decapsulate('KYBER', kb.keyRef, fromHex(ctHex)))
@@ -184,36 +217,51 @@ let fb = null
 if (!dockerAvailable()) {
   check('★★ 服务端对打（Falcon）', false, 'docker 容器 dvadmin3-django 不可用 —— 该项未运行')
 } else {
-  fb = await cryptoProvider.generate('FALCON', { nodeId: 'probe', keyId: 'probe-falcon' })
+  fb = await cryptoProvider.generate('FALCON', { ...testGenerationOptions, keyId: 'probe-falcon' })
   check('公钥长度正确（Falcon-512 = 897B）', fb.publicKey.length === 1794, `${fb.publicKey.length} hex 字符`)
+  const source = await store.requireLocalKey(fb.keyRef)
+  check('★ 真实双份额签名来源与测试发放引用一起封存', source.generation?.schemeId === 'KMS_SPLIT_SIGN_V1' && source.generation.generationIssuanceId === fb.generation?.generationIssuanceId && source.generationContext?.deviceFingerprint === expectedIdentity.deviceFingerprint)
 
   const msg = new TextEncoder().encode('verify-node-crypto ' + Date.now())
   const sig = await cryptoProvider.sign('FALCON', fb.keyRef, msg)
   check('签名产出附加格式（长度 > 消息）', sig.length > msg.length, `${sig.length}B`)
 
-  const out = runPy(`
-import ctypes, binascii
+  const plain = await store.unsealSecret(fb.keyRef) // only this process's fake-IDB test key
+  let out
+  try {
+    out = JSON.parse(runPy(`
+import ctypes
 u8 = ctypes.c_ubyte
-lib = ctypes.CDLL("/backend/falcon/falcon512/falcon512int/falcon512.dll")
-pk = binascii.unhexlify("${fb.publicKey}")
-sm = binascii.unhexlify("${toHex(sig)}")
-out = (u8 * len(sm))()
-outlen = ctypes.c_ulonglong()
-r = lib.crypto_sign_open(out, ctypes.byref(outlen), (u8 * len(sm)).from_buffer_copy(sm),
-                         ctypes.c_ulonglong(len(sm)), (u8 * len(pk)).from_buffer_copy(pk))
-print("RET:", r)
-print("MSG:", binascii.hexlify(bytes(out[:outlen.value])).decode() if r == 0 else "")
-`, 'falcon')
+ptr = ctypes.POINTER(u8)
+lib = ctypes.CDLL('/backend/falcon/falcon512/falcon512.dll')
+open_fn = lib.crypto_sign_open
+open_fn.argtypes = [ptr, ctypes.POINTER(ctypes.c_ulonglong), ptr, ctypes.c_ulonglong, ptr]
+open_fn.restype = ctypes.c_int
+sign_fn = lib.crypto_sign
+sign_fn.argtypes = [ptr, ctypes.POINTER(ctypes.c_ulonglong), ptr, ctypes.c_ulonglong, ptr]
+sign_fn.restype = ctypes.c_int
+pk = bytes.fromhex(payload['publicKey']); sk = bytes.fromhex(payload['testSecretKey'])
+sm = bytes.fromhex(payload['signature']); msg = bytes.fromhex(payload['message'])
+if len(pk) != 897 or len(sk) != 1281:
+    raise ValueError('test Falcon key length mismatch')
+opened = (u8 * len(sm))(); opened_len = ctypes.c_ulonglong()
+ret = open_fn(opened, ctypes.byref(opened_len), (u8 * len(sm)).from_buffer_copy(sm), len(sm), (u8 * len(pk)).from_buffer_copy(pk))
+signed = (u8 * (len(msg) + 2048))(); signed_len = ctypes.c_ulonglong()
+if sign_fn(signed, ctypes.byref(signed_len), (u8 * len(msg)).from_buffer_copy(msg), len(msg), (u8 * len(sk)).from_buffer_copy(sk)) != 0:
+    raise RuntimeError('native Falcon test signing failed')
+json.dump({'ret': ret, 'msgHex': bytes(opened[:opened_len.value]).hex() if ret == 0 else '', 'signedHex': bytes(signed[:signed_len.value]).hex()}, sys.stdout)
+`, { publicKey: fb.publicKey, testSecretKey: new TextDecoder().decode(plain), signature: toHex(sig), message: toHex(msg) }))
+  } finally { plain.fill(0) }
 
-  check('★★ 服务端接受本地签名（crypto_sign_open 返回 0）', /RET:\s*0/.test(out),
-    /RET:\s*0/.test(out) ? '' : out.trim().slice(0, 100))
-  const recovered = (out.match(/MSG:\s*([0-9a-f]*)/) || [])[1]
-  check('恢复出的消息与原文一致', recovered === toHex(msg))
+  check('★★ 服务端接受本地签名（crypto_sign_open 返回 0）', out.ret === 0, out.ret === 0 ? '' : `native returned ${out.ret}`)
+  check('恢复出的消息与原文一致', out.msgHex === toHex(msg))
+  check('★★ 本地接受原生 round-3 附加签名', await cryptoProvider.verify('FALCON', fb.publicKey, fromHex(out.signedHex), msg))
+  check('★ 原生签名绑定消息，篡改消息拒绝', !(await cryptoProvider.verify('FALCON', fb.publicKey, fromHex(out.signedHex), new TextEncoder().encode('tampered-native-message'))))
 }
 
 console.log('\n=== 7. 本地 verify 不能只是"结构合法" ===')
 {
-  const fb = await cryptoProvider.generate('FALCON', { nodeId: 'probe', keyId: 'probe-verify' })
+  const fb = await cryptoProvider.generate('FALCON', { ...testGenerationOptions, keyId: 'probe-verify' })
   const msg = new TextEncoder().encode('probe-verify ' + Date.now())
   const sig = await cryptoProvider.sign('FALCON', fb.keyRef, msg)
   check('正确消息验签通过', (await cryptoProvider.verify('FALCON', fb.publicKey, sig, msg)) === true)
@@ -225,7 +273,7 @@ console.log('\n=== 8. 设备绑定的判断基础 ===')
 check('本地持有刚生成的密钥', fb !== null && (await cryptoProvider.hasKey(fb.keyRef)))
 check('本地不持有的引用返回 false（新设备即此情形）', (await cryptoProvider.hasKey(kref('KYBER', 'never-created'))) === false)
 
-console.log('\n=== 9. SM4-GCM 与服务端 pycryptodome 双向互通 ===')
+console.log('\n=== 9. SM4-GCM 与服务端 cryptography 双向互通 ===')
 if (!dockerAvailable()) {
   check('★★ SM4-GCM 互通', false, 'docker 容器 dvadmin3-django 不可用 —— 该项未运行')
 } else {
@@ -235,20 +283,15 @@ if (!dockerAvailable()) {
   const pt = new TextEncoder().encode('SM4 session key material 16B')
 
   // 服务端加密 → 本地解密
-  const out = runPy(`
-import binascii
+  const out = JSON.parse(runPy(`
 from pqkds.sm4_crypto import SM4Crypto
-ct, nt = SM4Crypto.encrypt(
-    binascii.unhexlify("${toHex(pt)}"),
-    binascii.unhexlify("${toHex(key)}"),
-    binascii.unhexlify("${toHex(aad)}"))
-print("CT:", binascii.hexlify(ct).decode())
-print("NT:", binascii.hexlify(nt).decode())
-`, 'sm4')
-  const ctHex = (out.match(/CT:\s*([0-9a-f]+)/) || [])[1]
-  const ntHex = (out.match(/NT:\s*([0-9a-f]+)/) || [])[1]
+ct, nt = SM4Crypto.encrypt(bytes.fromhex(payload['plaintext']), bytes.fromhex(payload['key']), bytes.fromhex(payload['aad']))
+json.dump({'ctHex': ct.hex(), 'ntHex': nt.hex()}, sys.stdout)
+`, { plaintext: toHex(pt), key: toHex(key), aad: toHex(aad) }))
+  const ctHex = out.ctHex
+  const ntHex = out.ntHex
   if (!ctHex) {
-    check('服务端 SM4-GCM 加密', false, out.trim().slice(0, 140))
+    check('服务端 SM4-GCM 加密', false, 'math helper returned no ciphertext')
   } else {
     const nt = fromHex(ntHex)
     let ok = false
@@ -260,21 +303,16 @@ print("NT:", binascii.hexlify(nt).decode())
 
   // 本地加密 → 服务端解密
   const { ciphertext, tag } = sm4GcmEncrypt(key, pt, iv, aad)
-  const out2 = runPy(`
-import binascii
+  const out2 = JSON.parse(runPy(`
 from pqkds.sm4_crypto import SM4Crypto
 try:
-    got = SM4Crypto.decrypt(
-        binascii.unhexlify("${toHex(ciphertext)}"),
-        binascii.unhexlify("${toHex(key)}"),
-        binascii.unhexlify("${toHex(iv)}") + binascii.unhexlify("${toHex(tag)}"),
-        binascii.unhexlify("${toHex(aad)}"))
-    print("OK:", binascii.hexlify(got).decode())
-except Exception as e:
-    print("ERR:", e)
-`, 'sm4b')
-  const okHex = (out2.match(/OK:\s*([0-9a-f]+)/) || [])[1]
-  check('★★ 服务端解开本地的 SM4-GCM 密文', okHex === toHex(pt), okHex === toHex(pt) ? '' : out2.trim().slice(0, 120))
+    got = SM4Crypto.decrypt(bytes.fromhex(payload['ciphertext']), bytes.fromhex(payload['key']), bytes.fromhex(payload['nonceTag']), bytes.fromhex(payload['aad']))
+    json.dump({'okHex': got.hex()}, sys.stdout)
+except Exception:
+    json.dump({'error': 'SM4-GCM math verification failed'}, sys.stdout)
+`, { ciphertext: toHex(ciphertext), key: toHex(key), nonceTag: toHex(iv) + toHex(tag), aad: toHex(aad) }))
+  const okHex = out2.okHex
+  check('★★ 服务端解开本地的 SM4-GCM 密文', okHex === toHex(pt), okHex === toHex(pt) ? '' : out2.error || 'unexpected oracle response')
 }
 
 console.log('\n=== 10. GCM 的认证标签必须真的被校验 ===')

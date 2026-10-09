@@ -1,5 +1,6 @@
 import http, { unwrap, pqkdsBaseURL } from '@/api/pqkds/http'
 import { IS_DEMO } from '@/utils/entry-mode'
+import { publicGeneration } from '@/utils/crypto/generation-scheme.js'
 
 /**
  * 节点自助接口（阶段 2）。对应后端 `pqkds/node_self_views.py`。
@@ -46,7 +47,14 @@ export const NODE_SELF_ERR = Object.freeze({
   /** 参数非法（含 keyId 带空白、版本非 ≥1 整数、rotate 认不出的值等） */
   INVALID_PARAMETER: 'INVALID_PARAMETER',
   /** 算法名不在白名单（历史别名 `falcon_lattice` 之类会被拒） */
-  ALGORITHM_NOT_ALLOWED: 'ALGORITHM_NOT_ALLOWED'
+  ALGORITHM_NOT_ALLOWED: 'ALGORITHM_NOT_ALLOWED',
+  KEYGEN_AUTHORIZATION_EXPIRED: 'KEYGEN_AUTHORIZATION_EXPIRED',
+  KEYGEN_CONTEXT_MISMATCH: 'KEYGEN_CONTEXT_MISMATCH',
+  KEYGEN_PUBLIC_KEY_CONFLICT: 'KEYGEN_PUBLIC_KEY_CONFLICT',
+  KEYGEN_AUTHORIZATION_SUPERSEDED: 'KEYGEN_AUTHORIZATION_SUPERSEDED',
+  KEYGEN_GENERATION_REQUIRED: 'KEYGEN_GENERATION_REQUIRED',
+  KEYGEN_POLICY_DISABLED: 'KEYGEN_POLICY_DISABLED',
+  KEYGEN_ISSUANCE_CONFLICT: 'KEYGEN_ISSUANCE_CONFLICT'
 })
 
 /** 当前登录账号对应的节点及其初始化状态。管理员账号会得到 mapped=false。 */
@@ -89,6 +97,7 @@ export function getSelfNode() {
  *      分别对应 `KEY_VERSION_MISMATCH` / `KEY_NOT_FOUND` / `KEY_REVOKED`；
  *      另有一个"非生产的 keyId"也报 `KEY_VERSION_MISMATCH`（见 NODE_SELF_ERR 的说明）。
  * @param {object} [headers] 附加请求头；Demo 初始化传服务端授予的初始化租约。
+ * @param {object} [options] generation 仅允许公共方案、原始签发与登记授权引用。
  */
 export function registerSelfNodePublicKey(
   algorithm,
@@ -98,7 +107,8 @@ export function registerSelfNodePublicKey(
   keyId,
   keyVersion,
   rotate,
-  headers
+  headers,
+  options = {}
 ) {
   const payload = { algorithm, publicKey, securityLevel }
   // Demo provenance is determined by trusted server context, never by a client device marker.
@@ -114,7 +124,29 @@ export function registerSelfNodePublicKey(
   //    服务端缺省即 False，显式带 false 与不带是同一语义，没必要多写一个字段；
   //    而传 `rotate: undefined` 虽会被 JSON.stringify 丢掉，读代码的人却要多想一层。
   if (rotate === true) payload.rotate = true
+  if (options.generation) payload.generation = publicGeneration(options.generation)
   return http.post('/node-self/keys/', payload, { headers }).then(unwrap)
+}
+
+/** Authenticated one-time KGC contribution. Never forward provider/private fields. */
+export function issueSelfNodeKeygen({ algorithm, keyId, keyVersion, variant, deviceId, abandonGenerationIssuanceId }, headers) {
+  const payload = { algorithm, keyId, keyVersion, variant }
+  if (!IS_DEMO) payload.deviceId = deviceId
+  if (abandonGenerationIssuanceId) payload.abandonGenerationIssuanceId = abandonGenerationIssuanceId
+  return http.post('/node-self/keygen/issuances/', payload, { headers }).then(unwrap)
+}
+
+/** Public, exact-identity recovery records only; this never retrieves a secret contribution. */
+export function listSelfNodeKeygenIssuances(deviceId, headers) {
+  const params = IS_DEMO ? {} : { deviceId }
+  return http.get('/node-self/keygen/issuances/', { params, headers }).then(unwrap)
+}
+
+/** Renew registration permission for the SAME sealed key; this endpoint issues no entropy. */
+export function renewSelfNodeKeygenAuthorization({ generationIssuanceId, publicKey, deviceId }, headers) {
+  const payload = { generationIssuanceId, publicKey }
+  if (!IS_DEMO) payload.deviceId = deviceId
+  return http.post('/node-self/keygen/authorizations/', payload, { headers }).then(unwrap)
 }
 
 /**

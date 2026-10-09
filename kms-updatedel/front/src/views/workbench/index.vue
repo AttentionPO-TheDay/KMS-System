@@ -258,6 +258,7 @@ import { batchGetGenerateChainStatus, listGenerateKeys } from '@/services/genera
 import { listLifecycleKeys } from '@/services/lifecycle-api'
 import { listDistributionBatches } from '@/services/user-distribution-api'
 import { getSelfNode, listSelfNodeKeys } from '@/api/pqkds/node-self'
+import { formatGenerationName } from '@/utils/crypto/generation-scheme.js'
 import { permissionFeatures } from '@/services/permission-api'
 import { isAdminLevel, roleLevelText } from '@/utils/role'
 import usePermissionStore from '@/store/modules/permission'
@@ -482,8 +483,8 @@ const kpiCards = computed(() => [
     hint: sourceHint(
       'nodeKey',
       baseKeyReadyCount.value === BASE_KEY_ALGOS.length
-        ? `四套齐全：${BASE_KEY_ALGOS.map((a) => a.label).join(' / ')}`
-        : `缺失：${BASE_KEY_ALGOS.filter((a) => !baseKeys.value.find((b) => b.algo === a.algo)?.current)
+        ? `四套齐全：${baseKeys.value.map((a) => a.label).join(' / ')}`
+        : `缺失：${baseKeys.value.filter((a) => !a.current)
           .map((a) => a.label).join('、') || '—'}`
     )
   }
@@ -581,10 +582,12 @@ const BASE_KEY_ALGOS = [
 const baseKeys = computed(() =>
   BASE_KEY_ALGOS.map((def) => {
     const rows = nodeKeys.value.filter((k) => String(k?.algorithm || '').toUpperCase() === def.algo)
+    const current = rows.find((k) => k?.allowsNewWork === true) || null
     return {
       ...def,
+      label: formatGenerationName(def.algo, current?.generation),
       versions: rows.length,
-      current: rows.find((k) => k?.allowsNewWork === true) || null
+      current
       // 没有 allowsNewWork 的行（全部已被取代/回收）时 current 为 null，
       // 页面显示「未登记」—— 这是如实的（当前确实没有可用的那一把）。
     }

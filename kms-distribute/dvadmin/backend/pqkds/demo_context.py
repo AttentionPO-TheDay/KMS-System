@@ -133,7 +133,8 @@ def _check_scope(request, identity):
             return _error('该节点已停用', 403, 'DEMO_NODE_DISABLED')
         if status == 'PENDING_INIT' and relative not in {
                 'node-self/', 'node-self/keys/', 'node-self/init/',
-                'node-self/demo-init/lease/', 'node-self/demo-init/release/'}:
+                'node-self/demo-init/lease/', 'node-self/demo-init/release/',
+                'node-self/keygen/issuances/', 'node-self/keygen/authorizations/'}:
             return _error('请先完成四套基础密钥初始化', 409, 'DEMO_INIT_REQUIRED')
     elif principal == 'ADMIN':
         if identity.get('nodeId'):

@@ -59,6 +59,7 @@
           >
             <div class="node-init__key-name">{{ k.label }}</div>
             <div class="node-init__key-role">{{ k.role }}</div>
+            <div v-if="k.core" class="node-init__key-role">{{ k.core }}</div>
             <el-tag :type="k.ready ? 'success' : 'info'" size="small">
               {{ k.ready ? '登记一致 · 本机可读' : k.text }}
             </el-tag>
@@ -112,6 +113,8 @@
           <p v-for="reason in inspection.reasons" :key="reason">{{ reason }}</p>
           <p>请返回生成这些密钥的原浏览器，或恢复原本机材料。演示与独立运行密钥库彼此隔离，不会自动复制私钥；如需换钥，应走明确的新版本更新与旧密钥回收流程。</p>
         </el-alert>
+        <el-alert v-if="node.keygenPolicy?.enabled === false && !ready" type="warning" :closable="false" show-icon
+          title="改进型双份额生成尚未启用：请由运维完成独立密码学验证、重建镜像并显式启用策略；不会降级为普通生成。已有登记材料不会换钥。" />
         <el-alert v-if="!locksAvailable" class="node-init__device" type="warning" :closable="false" show-icon
           title="浏览器不支持 Web Locks，初始化已关闭；请使用支持安全锁的浏览器和可信入口" />
 
@@ -149,7 +152,7 @@
              ⚠️ 模板里**不能写 Markdown**（`**粗体**` 会原样显示成星号），
                 强调要用 <strong>。 -->
         <p v-if="!isActive" class="node-init__hint">
-          初始化会在<strong>本机</strong>依次生成 Kyber、SSCL、SM2、Falcon 四套密钥，
+          初始化会生成改进型双份额 KEM / 签名（实验版 v1）及 SSCL、SM2 四套密钥；后量子新材料使用经认证的 KGC 秘密贡献与浏览器独立秘密共同派生，
           并把<strong>公钥</strong>登记到平台（私钥留在本机，不上传）。
           已完成的算法会跳过，未登记材料会复用，只有缺失算法才会生成。期间请勿关闭页面或重复点击。
         </p>
@@ -162,13 +165,14 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import { markNodeInitialized, resetNodeInitStatusCache } from '@/utils/node-init-status'
 import { inspectInitialization, initializeNode } from '@/utils/node-initialization'
 import { hasDeviceKey } from '@/utils/crypto/device-credential.js'
 import { IS_DEMO, entryPath } from '@/utils/entry-mode'
 import { switchDemo } from '@/utils/demo-context'
+import { formatGenerationName, coreDetail, GENERATION_SCHEMES } from '@/utils/crypto/generation-scheme.js'
 import useUserStore from '@/store/modules/user'
 
 const router = useRouter()
@@ -194,7 +198,11 @@ const KEY_META = [
 
 const keyCards = computed(() => KEY_META.map(meta => {
   const step = inspection.value.algorithms.find(row => row.algorithm === meta.key.toUpperCase())
-  return { ...meta, ready: Boolean(step?.complete), text: step?.blocked ? '需恢复材料' : step?.local ? '本机已封存 · 待登记' : '尚未生成' }
+  const algorithm = meta.key.toUpperCase()
+  const source = step?.server || step?.local
+  return { ...meta, label: formatGenerationName(algorithm, source ? source.generation : GENERATION_SCHEMES[algorithm]),
+    core: coreDetail(algorithm, source?.variant || source?.securityLevel),
+    ready: Boolean(step?.complete), text: step?.blocked ? '需恢复材料' : step?.local ? '本机已封存 · 待登记' : '尚未生成' }
 }))
 
 const statusText = computed(() => {
@@ -276,7 +284,12 @@ async function handleInit() {
   initializing.value = true
   progress.value = []
   try {
-    acceptInspection(await initializeNode({ onProgress: updateProgress }))
+    acceptInspection(await initializeNode({ onProgress: updateProgress,
+      confirmUnusedIssuance: async record => {
+        await ElMessageBox.confirm(record.message, '确认恢复未完成签发', { type: 'warning', confirmButtonText: '弃用未使用签发并重试', cancelButtonText: '取消，不换钥' })
+        return true
+      }
+    }))
     ElMessage.success('四套基础公钥与本机材料一致，节点已激活')
   } catch (error) {
     const at = [...progress.value].reverse().find(row => row.status !== 'complete') || { algorithm: 'CHECK', message: '初始化检查' }
