@@ -205,12 +205,6 @@
           </dl>
         </div>
 
-        <p class="key-update__note">
-          更新<strong>保留 keyId</strong>：旧版本降为「已被取代」后不再用于新会话，但仍能解开按它分发出去的旧信封 ——
-          这是"同一个节点换了把锁、旧信还读得出来"所需要的。要整把作废（不再解封任何旧信封）请走回收流程，
-          回收是终态，之后本页也更新不了它。
-        </p>
-
         <h3 class="key-update__section-title">
           本节点密钥版本对照
           <span class="key-update__section-note">
@@ -772,11 +766,6 @@ onMounted(load)
 }
 .key-update__result-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
 .key-update__result-title { font-weight: 600; }
-.key-update__note {
-  margin: 0 0 24px; padding: 10px 14px; border-radius: 6px;
-  background: var(--el-fill-color-light, #f5f7fa);
-  font-size: 13px; color: var(--kms-text-secondary, #606266); line-height: 1.8;
-}
 .key-update__section-title { margin: 0 0 12px; font-size: 15px; }
 .key-update__section-note { margin-left: 8px; font-size: 12px; font-weight: 400; color: var(--kms-text-secondary, #909399); }
 .key-update__table { margin-bottom: 12px; }
