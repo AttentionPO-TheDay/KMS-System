@@ -41,8 +41,6 @@
           </template>
         </el-alert>
 
-        <el-alert v-if="node.keygenPolicy?.enabled === false" type="warning" :closable="false" show-icon
-          title="改进型双份额生成尚未启用：请由运维完成独立密码学验证、重建镜像并显式启用策略；不会降级为普通生成。" />
         <div class="key-update__grid">
           <div
             v-for="c in cards"

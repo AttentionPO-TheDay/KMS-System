@@ -113,8 +113,6 @@
           <p v-for="reason in inspection.reasons" :key="reason">{{ reason }}</p>
           <p>请返回生成这些密钥的原浏览器，或恢复原本机材料。演示与独立运行密钥库彼此隔离，不会自动复制私钥；如需换钥，应走明确的新版本更新与旧密钥回收流程。</p>
         </el-alert>
-        <el-alert v-if="node.keygenPolicy?.enabled === false && !ready" type="warning" :closable="false" show-icon
-          title="改进型双份额生成尚未启用：请由运维完成独立密码学验证、重建镜像并显式启用策略；不会降级为普通生成。已有登记材料不会换钥。" />
         <el-alert v-if="!locksAvailable" class="node-init__device" type="warning" :closable="false" show-icon
           title="浏览器不支持 Web Locks，初始化已关闭；请使用支持安全锁的浏览器和可信入口" />
 
