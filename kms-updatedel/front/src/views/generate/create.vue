@@ -152,12 +152,6 @@
           </div>
         </div>
 
-        <!-- 说明两条硬事实：换新密钥之后旧版本还在（信封要能解），以及本页不提供导出。 -->
-        <p class="gen-create__note">
-          平台已有在产版本时，再生成一把会把它<strong>降为「已被取代」</strong>：
-          不再用于新会话，但仍能解开按它分发的旧信封 —— 需要彻底作废请用「密钥更新与回收」。
-          私钥<strong>不提供导出</strong>：它只存在于本机加密密钥库，换机器只能重新生成一套。
-        </p>
 
         <h3 class="gen-create__section-title">
           本节点密钥对照
@@ -603,11 +597,6 @@ onMounted(load)
 .gen-create__selftest { font-size: 12px; line-height: 1.6; word-break: break-all; }
 .gen-create__algo-actions { display: flex; align-items: center; gap: 8px; margin-top: auto; }
 .gen-create__variant { width: 170px; }
-.gen-create__note {
-  margin: 0 0 24px; padding: 10px 14px; border-radius: 6px;
-  background: var(--el-fill-color-light, #f5f7fa);
-  font-size: 13px; color: var(--kms-text-secondary, #606266); line-height: 1.8;
-}
 .gen-create__section-title { margin: 0 0 12px; font-size: 15px; }
 .gen-create__section-note { margin-left: 8px; font-size: 12px; font-weight: 400; color: var(--kms-text-secondary, #909399); }
 .gen-create__table { margin-bottom: 12px; }
