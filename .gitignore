@@ -119,6 +119,7 @@ __pycache__/
 # ⚠️ 只根目录的 doc/，不要误伤 kms-generate/docs/（那是代码模块的一部分）
 /doc/
 /kms-ops/nginx/logs/
+/kms-ops/nginx/tls/
 /kms-ops/runtime/
 /kms-ops/front/generate/
 /kms-ops/front/updatedel/

@@ -14,6 +14,9 @@ sys.path.insert(0, os.path.join(PLUGINS_PATH))
 ]
 DEBUG = locals().get("DEBUG", True)
 ALLOWED_HOSTS = locals().get("ALLOWED_HOSTS", ["*"])
+# Django runs behind the KMS Nginx gateway. The gateway overwrites this header
+# from its own listener scheme; direct backend ports are not published.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 COLUMN_EXCLUDE_APPS = ['channels', 'captcha'] + locals().get("COLUMN_EXCLUDE_APPS", [])
 INSTALLED_APPS = [
     "django.contrib.auth",

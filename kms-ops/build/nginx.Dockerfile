@@ -9,9 +9,15 @@ FROM nginx:alpine
 ENV TZ=Asia/Shanghai
 
 # 时区与排查用工具（wget 由 busybox 提供，健康检查够用）
-RUN apk add --no-cache tzdata \
+RUN apk add --no-cache tzdata openssl \
     && cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
-    && echo "Asia/Shanghai" > /etc/timezone
+    && echo "Asia/Shanghai" > /etc/timezone \
+    && mkdir -p /etc/nginx/tls \
+    && openssl req -x509 -nodes -newkey rsa:2048 -days 825 \
+         -keyout /etc/nginx/tls/localhost.key \
+         -out /etc/nginx/tls/localhost.crt \
+         -subj '/CN=localhost' \
+         -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1'
 
 # 主配置（覆盖镜像自带 default.conf 之外的主配置）
 COPY nginx/nginx.conf /etc/nginx/nginx.conf
