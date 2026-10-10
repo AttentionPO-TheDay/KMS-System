@@ -29,6 +29,10 @@ import { requestJson } from '@/services/http'
  * `rows`/`total` 上，而分发模块（Django）把载荷包在 `data` 里。
  * 如果页面按 `rows` 去取，就会静默拿到 `undefined`、表格空白、且**不报错** ——
  * 这类"页面空着但控制台干净"的问题最难查。所以在这里一次性对齐。
+ *
+ * ⚠️ 它**只剥信封，不认列表形状**：剥完是 `{ items, total }` 还是裸数组，
+ *    由调用方自己读。列表调用方请统一读 `items`（KMS-017：crossDomain 页
+ *    曾只认数组/`results`，读不出 `items`，表格恒空且不报错）。
  */
 function unwrap(response) {
   if (response && typeof response === 'object' && 'data' in response && 'code' in response) {

@@ -15,7 +15,8 @@
     "verify:node-init-ui": "node tools/verify-node-init-ui.mjs",
     "verify:device-binding": "node tools/verify-device-binding.mjs",
     "verify:keyupdate-rotate": "node tools/verify-keyupdate-rotate.mjs",
-    "verify:key-ref": "node tools/verify-key-ref.mjs"
+    "verify:key-ref": "node tools/verify-key-ref.mjs",
+    "verify:batches-read": "node tools/verify-batches-read.mjs"
   },
   "repository": {
     "type": "git",

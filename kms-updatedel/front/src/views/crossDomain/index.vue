@@ -156,7 +156,11 @@ async function load() {
   loading.value = true
   try {
     const res = await listDistributionBatches()
-    all.value = Array.isArray(res) ? res : Array.isArray(res?.results) ? res.results : []
+    // KMS-017：本接口经 service 层 unwrap 后是 `{ items, total }` —— 既不是裸数组，
+    // 也不是 DRF 分页的 `results`。此前两个判据都不认它，表格恒空且**不报错**
+    // （失败形态是"成功"：页面空着、控制台干净）。读法与 distribute/index.vue:702、
+    // workbench/index.vue:848 两处既有正例对齐。
+    all.value = Array.isArray(res) ? res : (res?.items || res?.results || [])
   } catch (error) {
     ElMessage.error(error?.message || '加载分发批次失败')
     all.value = []
