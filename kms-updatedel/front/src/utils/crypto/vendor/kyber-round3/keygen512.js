@@ -6,9 +6,8 @@
  * unused encapsulation/decapsulation/test functions removed. Core math/encoding retained.
  * Input validation and temporary-buffer cleanup belong to ./adapter.js.
  */
-import sha3 from 'sha3'
+import { SHA3, SHAKE } from 'sha3'
 import { Buffer } from 'buffer'
-const { SHA3, SHAKE } = sha3
 
 const nttZetas = [
     2285, 2571, 2970, 1812, 1493, 1422, 287, 202, 3158, 622, 1577, 182, 962,
