@@ -10,6 +10,9 @@ services:
   dvadmin3-django:
     environment:
       KMS_DEMO_ENABLED: "true"
+      # 本机演示需要跑完四套基础密钥；实验版 KYBER/FALCON 签发只在
+      # demo 覆盖环境打开，基础 compose 仍保持门槛关闭。
+      KMS_SPLIT_KEYGEN_ENABLED: "true"
   nginx:
     environment:
       KMS_DEMO_ENABLED: "true"
