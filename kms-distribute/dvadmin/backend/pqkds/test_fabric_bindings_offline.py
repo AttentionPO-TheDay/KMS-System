@@ -54,9 +54,11 @@ def bootstrap():
     import django
     django.setup()
     from django.db import connection
-    from pqkds.models import BlockchainConfig, Node, NodeLongTermKey, ChainKeyBinding
+    from pqkds.models import (BlockchainConfig, Node, NodeLongTermKey,
+                              ChainKeyBinding, NodeKeyInspection)
     with connection.schema_editor() as editor:
-        for model in (BlockchainConfig, Node, NodeLongTermKey, ChainKeyBinding):
+        for model in (BlockchainConfig, Node, NodeLongTermKey,
+                      ChainKeyBinding, NodeKeyInspection):
             editor.create_model(model)
 
 
