@@ -276,6 +276,35 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         where auto_update = '1' and status != '3'
     </select>
 
+    <!-- KMS-019 退避：只推进 upd_time，不碰开关（见 KeymanageMapper 接口注释）。 -->
+    <update id="touchUpdTime">
+        update keymanage
+        set upd_time = #{updTime}
+        where key_id = #{keyId}
+    </update>
+
+    <!--
+      KMS-022：批量一致性检查的候选（keyset 分页，见接口注释）。
+      只 select 展示所需的最小列 —— 判定用的 ua / key_value 由 KeyHealthService
+      自己回表读，避免在这里多读一份大字段。
+    -->
+    <select id="selectScanTargets" resultMap="keymanageResult">
+        select key_id, user_id, user_name, encryt_type, encryt_name, key_name, version, status,
+               key_material_state, ms_key_id, algorithm_version
+        from keymanage
+        where key_id &gt; #{afterKeyId}
+        <if test="userId != null">and user_id = #{userId}</if>
+        order by key_id asc
+        limit #{limit}
+    </select>
+
+    <select id="countScanTargetsAfter" resultType="int">
+        select count(1)
+        from keymanage
+        where key_id &gt; #{afterKeyId}
+        <if test="userId != null">and user_id = #{userId}</if>
+    </select>
+
     <delete id="deletekeymanageByKeyId" parameterType="Long">
         delete from keymanage where key_id = #{keyId}
     </delete>

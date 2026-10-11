@@ -259,9 +259,9 @@ services:
       - KMS_DEMO_ENABLED=${KMS_DEMO_ENABLED:-false}
       # 默认保留旧链；Fabric 选择在全部调用方一致，禁止跨服务隐式回退。
       - KMS_CHAIN_BACKEND=${KMS_CHAIN_BACKEND:-legacy}
-      # 固定不上链启动：即使 .env/宿主同名变量为 true，也不得开启实际写链。
-      - KMS_CHAIN_WRITES_ENABLED=false
-      - KMS_CHAIN_CONSUMER_ENABLED=false
+      # 恢复原本地链；需要暂停时叠加 docker-compose.chain-paused.yml。
+      - KMS_CHAIN_WRITES_ENABLED=true
+      - KMS_CHAIN_CONSUMER_ENABLED=true
       - FABRIC_DID_CHAIN_ID=${FABRIC_DID_CHAIN_ID:-}
       - FABRIC_DID_ENABLED=${FABRIC_DID_ENABLED:-false}
       - FABRIC_DID_BRIDGE_URL=${FABRIC_DID_BRIDGE_URL:-http://fabric-did-bridge:9094/internal/fabric-did}
@@ -363,9 +363,9 @@ services:
       - KMS_DEMO_ENABLED=${KMS_DEMO_ENABLED:-false}
       # 默认保留旧链；Fabric 选择在全部调用方一致，禁止跨服务隐式回退。
       - KMS_CHAIN_BACKEND=${KMS_CHAIN_BACKEND:-legacy}
-      # 固定不上链启动：即使 .env/宿主同名变量为 true，也不得开启实际写链。
-      - KMS_CHAIN_WRITES_ENABLED=false
-      - KMS_CHAIN_CONSUMER_ENABLED=false
+      # 恢复原本地链；需要暂停时叠加 docker-compose.chain-paused.yml。
+      - KMS_CHAIN_WRITES_ENABLED=true
+      - KMS_CHAIN_CONSUMER_ENABLED=true
       - FABRIC_DID_CHAIN_ID=${FABRIC_DID_CHAIN_ID:-}
       - FABRIC_DID_ENABLED=${FABRIC_DID_ENABLED:-false}
       - FABRIC_DID_BRIDGE_URL=${FABRIC_DID_BRIDGE_URL:-http://fabric-did-bridge:9094/internal/fabric-did}
@@ -395,8 +395,8 @@ services:
       # 是为了在"链连不上"期间避免持续报错。2026-09-24 换链后 SDK 已能正常握手
       # （见 scripts/rebuild-fisco-chain.ps1），恢复为 true —— 否则更新/回收
       # 永远不会上链，而现象只是"链上查不到"，很容易被当成链的问题继续排查。
-      - KMS_LIFECYCLE_CHAIN_SYNC_ENABLED=false
-      - KMS_LIFECYCLE_CHAIN_CONSUMER_ENABLED=false
+      - KMS_LIFECYCLE_CHAIN_SYNC_ENABLED=true
+      - KMS_LIFECYCLE_CHAIN_CONSUMER_ENABLED=true
       - KMS_LIFECYCLE_CHAIN_EVENT_BATCH_SIZE=${KMS_LIFECYCLE_CHAIN_EVENT_BATCH_SIZE:-500}
       - KMS_LIFECYCLE_CHAIN_CONSUMER_CONCURRENCY=${KMS_LIFECYCLE_CHAIN_CONSUMER_CONCURRENCY:-4}
       - KMS_LIFECYCLE_CHAIN_WORKER_THREADS=${KMS_LIFECYCLE_CHAIN_WORKER_THREADS:-8}
@@ -476,9 +476,9 @@ services:
       - KMS_DEMO_ENABLED=${KMS_DEMO_ENABLED:-false}
       # 默认保留旧链；Fabric 选择在全部调用方一致，禁止跨服务隐式回退。
       - KMS_CHAIN_BACKEND=${KMS_CHAIN_BACKEND:-legacy}
-      # 固定不上链启动：即使 .env/宿主同名变量为 true，也不得开启实际写链。
-      - KMS_CHAIN_WRITES_ENABLED=false
-      - KMS_CHAIN_CONSUMER_ENABLED=false
+      # 恢复原本地链；需要暂停时叠加 docker-compose.chain-paused.yml。
+      - KMS_CHAIN_WRITES_ENABLED=true
+      - KMS_CHAIN_CONSUMER_ENABLED=true
       - FABRIC_DID_CHAIN_ID=${FABRIC_DID_CHAIN_ID:-}
       - FABRIC_DID_ENABLED=${FABRIC_DID_ENABLED:-false}
       - FABRIC_DID_BRIDGE_URL=${FABRIC_DID_BRIDGE_URL:-http://fabric-did-bridge:9094/internal/fabric-did}
@@ -526,6 +526,28 @@ services:
       # 失败——迁移不执行则全部业务表缺失，PQKDS 所有接口返回 500。
       mysql:
         condition: service_healthy
+    restart: always
+    networks:
+      - kms_net
+
+  dvadmin3-key-reclaimer:
+    image: kms-dvadmin3-django:local
+    working_dir: /backend
+    command: ["bash", "-c", "until /opt/venv/bin/python manage.py migrate --check --noinput >/dev/null 2>&1; do sleep 2; done; exec /opt/venv/bin/python manage.py run_auto_key_reclaimer"]
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=Asia/Shanghai
+      - DATABASE_HOST=mysql
+      - DATABASE_PORT=3306
+      - DATABASE_NAME=falcon_kds
+      - DATABASE_USER=root
+      - DATABASE_PASSWORD=${MYSQL_ROOT_PASSWORD:?必须设置 MYSQL_ROOT_PASSWORD，参见 kms-ops/.env.example}
+      - KMS_CHAIN_BACKEND=${KMS_CHAIN_BACKEND:-legacy}
+      - KMS_CHAIN_WRITES_ENABLED=true
+      - KMS_CHAIN_CONSUMER_ENABLED=true
+      - KMS_AUTO_REVOKE_SCAN_INTERVAL_SECONDS=${KMS_AUTO_REVOKE_SCAN_INTERVAL_SECONDS:-1}
+    depends_on:
+      - dvadmin3-django
     restart: always
     networks:
       - kms_net
@@ -582,9 +604,9 @@ services:
       - KMS_DEMO_ENABLED=${KMS_DEMO_ENABLED:-false}
       # 默认保留旧链；Fabric 选择在全部调用方一致，禁止跨服务隐式回退。
       - KMS_CHAIN_BACKEND=${KMS_CHAIN_BACKEND:-legacy}
-      # 固定不上链启动：即使 .env/宿主同名变量为 true，也不得开启实际写链。
-      - KMS_CHAIN_WRITES_ENABLED=false
-      - KMS_CHAIN_CONSUMER_ENABLED=false
+      # 恢复原本地链；需要暂停时叠加 docker-compose.chain-paused.yml。
+      - KMS_CHAIN_WRITES_ENABLED=true
+      - KMS_CHAIN_CONSUMER_ENABLED=true
       - FABRIC_DID_CHAIN_ID=${FABRIC_DID_CHAIN_ID:-}
       - FABRIC_DID_ENABLED=${FABRIC_DID_ENABLED:-false}
       - FABRIC_DID_BRIDGE_URL=${FABRIC_DID_BRIDGE_URL:-http://fabric-did-bridge:9094/internal/fabric-did}

@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  KMS-019：自动更新任务两表。typeAliasesPackage 不含 updatedel.domain
+  （见 application.yml），因此 resultMap 的 type 一律写**全限定类名** ——
+  与 KeyOperationRecordMapper.xml 同一条纪律。
+-->
+<mapper namespace="com.ruoyi.updatedel.mapper.AutoUpdateRecordMapper">
+
+    <resultMap id="autoUpdateRunResult" type="com.ruoyi.updatedel.domain.AutoUpdateRun">
+        <id property="runId" column="run_id"/>
+        <result property="triggerSource" column="trigger_source"/>
+        <result property="startedAt" column="started_at"/>
+        <result property="finishedAt" column="finished_at"/>
+        <result property="candidateCount" column="candidate_count"/>
+        <result property="successCount" column="success_count"/>
+        <result property="failCount" column="fail_count"/>
+        <result property="skippedCount" column="skipped_count"/>
+        <result property="createTime" column="create_time"/>
+    </resultMap>
+
+    <resultMap id="autoUpdateItemResult" type="com.ruoyi.updatedel.domain.AutoUpdateItem">
+        <id property="itemId" column="item_id"/>
+        <result property="runId" column="run_id"/>
+        <result property="keyId" column="key_id"/>
+        <result property="userId" column="user_id"/>
+        <result property="userName" column="user_name"/>
+        <result property="keyName" column="key_name"/>
+        <result property="encrytName" column="encryt_name"/>
+        <result property="result" column="result"/>
+        <result property="reason" column="reason"/>
+        <result property="fromVersion" column="from_version"/>
+        <result property="toVersion" column="to_version"/>
+        <result property="updatedAt" column="updated_at"/>
+        <result property="createTime" column="create_time"/>
+        <result property="chainResultStatus" column="chain_result_status"/>
+        <result property="chainHash" column="chain_hash"/>
+        <result property="blockHeight" column="block_height"/>
+    </resultMap>
+
+    <sql id="selectRunVo">
+        select run_id, trigger_source, started_at, finished_at,
+               candidate_count, success_count, fail_count, skipped_count, create_time
+        from kms_auto_update_run
+    </sql>
+
+    <!--
+      明细的展示字段来自 key_operation_record 里**该密钥最近一条 AUTO 流水**
+      （cor = chain operation record）。这不是"本轮的送达状态" —— 那张表没有
+      轮次字段，KMS-019 刻意不加（计划 §3 阶段 2 才考虑回写）。
+      取 max(record_id) 而不是 max(action_time)：同秒写入时 action_time 并列，
+      record_id 自增才给出确定的一行。
+    -->
+    <sql id="selectItemVo">
+        select i.item_id, i.run_id, i.key_id, i.user_id, i.user_name, i.key_name,
+               i.encryt_name, i.result, i.reason, i.from_version, i.to_version,
+               i.updated_at, i.create_time,
+               cor.result_status as chain_result_status,
+               cor.chain_hash     as chain_hash,
+               cor.block_height   as block_height
+        from kms_auto_update_item i
+        left join key_operation_record cor on cor.record_id = (
+            select max(r.record_id) from key_operation_record r
+            where r.key_id = i.key_id and r.action_source = 'AUTO'
+        )
+    </sql>
+
+    <insert id="insertRun" parameterType="com.ruoyi.updatedel.domain.AutoUpdateRun">
+        insert into kms_auto_update_run (
+            run_id, trigger_source, started_at, finished_at,
+            candidate_count, success_count, fail_count, skipped_count, create_time
+        ) values (
+            #{runId}, #{triggerSource}, #{startedAt}, #{finishedAt},
+            0, 0, 0, 0, now()
+        )
+    </insert>
+
+    <update id="finishRun">
+        update kms_auto_update_run
+        set finished_at     = #{finishedAt},
+            candidate_count = #{candidateCount},
+            success_count   = #{successCount},
+            fail_count      = #{failCount},
+            skipped_count   = #{skippedCount}
+        where run_id = #{runId}
+    </update>
+
+    <insert id="insertItems">
+        insert into kms_auto_update_item (
+            run_id, key_id, user_id, user_name, key_name, encryt_name,
+            result, reason, from_version, to_version, updated_at, create_time
+        ) values
+        <foreach collection="items" item="item" separator=",">
+            (
+                #{item.runId}, #{item.keyId}, #{item.userId}, #{item.userName},
+                #{item.keyName}, #{item.encrytName}, #{item.result}, #{item.reason},
+                #{item.fromVersion}, #{item.toVersion}, #{item.updatedAt}, now()
+            )
+        </foreach>
+    </insert>
+
+    <select id="selectRunList" parameterType="com.ruoyi.updatedel.domain.AutoUpdateRun" resultMap="autoUpdateRunResult">
+        <include refid="selectRunVo"/>
+        <where>
+            <if test="runId != null and runId != ''">and run_id = #{runId}</if>
+            <if test="triggerSource != null and triggerSource != ''">and trigger_source = #{triggerSource}</if>
+            <!--
+              非管理员收敛：一轮扫描会动很多人的密钥，这里只列"影响过我的密钥"的轮次。
+              item 表写了 user_id（写入时冗余，不靠 join keymanage），因此存在性判断
+              直接落在 item 上；密钥后来被删除也不影响历史轮次的可回溯性。
+            -->
+            <if test="userId != null">
+                and exists (
+                    select 1 from kms_auto_update_item i
+                    where i.run_id = kms_auto_update_run.run_id and i.user_id = #{userId}
+                )
+            </if>
+        </where>
+        order by started_at desc, run_id desc
+    </select>
+
+    <select id="selectItemList" parameterType="com.ruoyi.updatedel.domain.AutoUpdateItem" resultMap="autoUpdateItemResult">
+        <include refid="selectItemVo"/>
+        <where>
+            <if test="runId != null and runId != ''">and i.run_id = #{runId}</if>
+            <if test="keyId != null">and i.key_id = #{keyId}</if>
+            <if test="userId != null">and i.user_id = #{userId}</if>
+            <if test="result != null and result != ''">and i.result = #{result}</if>
+        </where>
+        order by i.item_id asc
+    </select>
+
+    <select id="selectLatestItemsByKeyIds" resultMap="autoUpdateItemResult">
+        <include refid="selectItemVo"/>
+        where i.item_id in (
+            select max(item_id) from kms_auto_update_item
+            where key_id in
+            <foreach collection="keyIds" item="kid" open="(" separator="," close=")">#{kid}</foreach>
+            <if test="userId != null">and user_id = #{userId}</if>
+            group by key_id
+        )
+        <if test="userId != null">and i.user_id = #{userId}</if>
+        order by i.key_id asc
+    </select>
+</mapper>

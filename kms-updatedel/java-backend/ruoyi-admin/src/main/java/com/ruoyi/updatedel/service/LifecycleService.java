@@ -103,6 +103,11 @@ public class LifecycleService {
         }
         key.setChainStatus("0");
         key.setAutoUpdate(normalizeAutoUpdate(key.getAutoUpdate()));
+        // 创建也是自动更新开关的一条写路径：开启不支持托管轮换的算法必须
+        // 在入库前拒绝，不能等下一轮定时任务才暴露失败。
+        if ("1".equals(key.getAutoUpdate())) {
+            assertAutoUpdateAlgorithmSupported(key.getEncrytName(), key.getKeyId());
+        }
         key.setKeyValue(generateKeyValue(key));
         // 材料是刚生成的 → 打上当前 ms 版本与算法版本，并标记为可用于解密
         stampMaterialEpoch(key);
@@ -420,6 +425,13 @@ public class LifecycleService {
         if (KeyStatus.REVOKED.getCode().equals(current.getStatus())) {
             throw new IllegalStateException("该密钥已被回收，无法修改");
         }
+        // KMS-019：改元数据时若**顺手把自动更新打开**，同样要过算法闸门。
+        // 这里是 PUT /auto-update 之外的第二条写同一字段的路（updatekeymanage
+        // 的 patch 里带着 autoUpdate），不拦就等于守卫只挡了一半 ——
+        // 绕过它的操作看起来完全正常："我只是改了个名字"。
+        // 守卫自身会把 null/等价值视为不变，并允许关闭；这样历史上已经
+        // 打开的 KYBER/FALCON 仍可改名或关掉开关，避免被坏状态锁死。
+        assertAutoUpdateEnableAllowed(current, request.getAutoUpdate());
 
         Keymanage patch = new Keymanage();
         patch.setKeyId(current.getKeyId());
@@ -451,6 +463,11 @@ public class LifecycleService {
         if (KeyStatus.REVOKED.getCode().equals(current.getStatus())) {
             throw new IllegalStateException("该密钥已被回收，无法更新");
         }
+
+        // rotate=true 也会把请求中的 autoUpdate 合并回当前行，因此它同样是
+        // 自动更新开关的一条写路径；只在值发生变化时检查，关闭和历史遗留
+        // 的已开启不支持算法都必须能恢复。
+        assertAutoUpdateEnableAllowed(current, request.getAutoUpdate());
 
         String algorithm = normalizeAlgorithmName(current.getEncrytName());
         Keymanage next = mergeForRotation(current, request);
@@ -608,7 +625,78 @@ public class LifecycleService {
         if (KeyStatus.REVOKED.getCode().equals(current.getStatus())) {
             throw new IllegalStateException("该密钥已被回收，无法修改自动更新状态");
         }
+        // KMS-019（D3 治理）：打开的请求要在**源头**拦住，而不是等它每 60 秒
+        // 在自动更新任务里失败一次（那条死循环正是从这里被打开的）。
+        assertAutoUpdateEnableAllowed(current, autoUpdate);
         keymanageMapper.updateAutoUpdate(keyId, normalizeAutoUpdate(autoUpdate));
+    }
+
+    /**
+     * KMS-019：自动更新失败后的**退避** —— 把 {@code upd_time} 推进到现在。
+     *
+     * <p>背景（D3，2026-10-10 侦察逐行核实）：候选 SQL 的条件是
+     * {@code auto_update='1' AND status!='3' AND upd_time<=cutoff}，而
+     * {@code rotateKey} 对 KYBER/FALCON 必抛异常且自身 {@code @Transactional}
+     * 回滚 —— 失败路径原先不推进 {@code upd_time}，于是这类密钥
+     * **每 60 秒被重新挑中一次、永远成功不了**，唯一痕迹是每轮一行 warn。
+     *
+     * <p>推进 {@code upd_time} 之后，同一条失败退避到下一个
+     * {@code interval-minutes} 窗口，并且这一次它**看得见**：
+     * {@code kms_auto_update_item} 里有一条 FAILED + 原因原文。
+     *
+     * <p>选"推进 upd_time"而不是"从候选 SQL 里排除 KYBER/FALCON"，
+     * 是因为后者会把"有人把不支持的算法打开了开关"这件事**藏起来** ——
+     * 候选永远为空、页面一片正常，而开关还亮着。宁可每 30 分钟记一条
+     * 看得见的失败，也不要一个看不见的空转开关。
+     *
+     * <p>失败退避要写的是 {@code upd_time} 而不是任何"上次失败"新列：
+     * 候选判定本来就以 {@code upd_time} 为时钟，复用同一根时钟，
+     * 不会出现"退避写了、候选 SQL 看的是另一列"的两套时间线。
+     */
+    public void backoffAutoUpdateFailure(Long keyId) {
+        if (keyId == null) {
+            return;
+        }
+        keymanageMapper.touchUpdTime(keyId, now());
+    }
+
+    /**
+     * KMS-019（D3 治理）：**打开**自动更新前校验算法是否支持服务端托管轮换。
+     *
+     * <p>口径刻意是"只在要打开时拦"：
+     * <ul>
+     *   <li>关闭（{@code '0'}）永远放行 —— 拦住关闭只会把已有的坏状态锁死；</li>
+     *   <li>值没变（已经是 '1' 的历史遗留数据）也放行 —— 否则给这类密钥
+     *       改个名字都会被拒，而用户做的事与自动更新毫无关系；</li>
+     *   <li>只有"从关到开 + 算法不支持"才拒绝，并给出可照做的理由。</li>
+     * </ul>
+     *
+     * <p>为什么 KYBER/FALCON 必拒：{@link #rotateKey(Keymanage, String)} 对这两种
+     * 算法显式抛异常（私钥不在服务端，文档 §5.3 要求节点侧重新 KeyGen）。
+     * 允许打开等于承诺一件系统做不到的事，而承诺失败的表现是任务记录里
+     * 一串 FAILED —— 那不该由运维去发现，应该在点开关的那一刻就说清楚。
+     */
+    private void assertAutoUpdateEnableAllowed(Keymanage current, String requestedValue) {
+        if (!"1".equals(normalizeAutoUpdate(requestedValue))) {
+            return;
+        }
+        // 历史上已经打开的 KYBER/FALCON 必须仍能改名、重复提交或关闭；
+        // 只有真正从关闭切到打开才需要重新检查算法能力。
+        if (current == null || !changesAutoUpdate(current, requestedValue)) {
+            return;
+        }
+        assertAutoUpdateAlgorithmSupported(current.getEncrytName(), current.getKeyId());
+    }
+
+    private void assertAutoUpdateAlgorithmSupported(String encrytName, Long keyId) {
+        String algorithm = normalizeAlgorithmName(encrytName);
+        if (KYBER.equals(algorithm) || FALCON.equals(algorithm)) {
+            throw new IllegalStateException(String.format(
+                "%s 无法开启自动更新（文档 §5.3）：私钥不在服务端，服务端造不出新版本，"
+                    + "托管轮换必然失败。若要定期更换，请由节点侧重新 KeyGen 后上传新公钥登记，"
+                    + "或改用支持托管轮换的算法。keyId=%s",
+                algorithm, keyId));
+        }
     }
 
     public List<Keymanage> listAutoUpdateCandidates() {

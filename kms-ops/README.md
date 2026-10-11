@@ -2,23 +2,23 @@
 
 共享部署与运维编排目录。
 
-## 默认启动：业务正常运行，不实际写链
+## 默认启动：恢复本地链上链
 
-基础 `docker-compose.yml` 已固定链写/链消费者/生命周期链同步为 `false`，可选 Fabric profile 也固定禁止写入和策略批准；同名 `.env` 或宿主变量不能覆盖这些值。不是模拟上链：业务密钥、版本、回收/分发和本地审计继续，链哈希/确认不伪造，已有历史数据保留。
+2026-10-10 按用户要求恢复原本地链。基础 `docker-compose.yml` 的链写、链消费者及生命周期链同步均启用，使用原 `legacy` 后端及现有 FISCO 合约/账户。公网 DID 的 SDK 接入与本地链分开配置，可选 Fabric profile 仍禁止写入。
 
 ```bash
 # 仓库根：独立模式，正常执行原 Django 迁移
  docker compose -f kms-ops/docker-compose.yml up -d --build
-# 本机受控 Demo，可选；仍不上链
+# 本机受控 Demo，可选
  docker compose -f kms-ops/docker-compose.yml -f kms-ops/docker-compose.demo.yml up -d --build
-# 配置反证，不启动服务：即使宿主写开关 true，输出仍必须 false
- node tools/verify-no-chain-config.mjs
+# 暂停链写入与消费者（维护时使用）
+ docker compose -f kms-ops/docker-compose.yml -f kms-ops/docker-compose.chain-paused.yml up -d
 ```
 
 `start.sh` 同样不会因缺合约地址/账户而自动部署 KeyEvidence，不把模板账户同步进现有 `.env`。`deploy-keyevidence.sh` 是独立受控工具，不由默认启动调用。
 `rebuild-env.sh` 仍会清业务数据库/Redis/Kafka（**危险操作，不用于普通启动**），但不会再顺带清链历史/自动重部署合约。
 
-`docker-compose.chain-paused.yml` 只保留作维护专用覆盖（额外跳过 Django 启动迁移），不是不上链的必要启动文件。恢复写链/监听/历史任务处理必须另行审批开启覆盖配置，不能只改 `.env`。
+`docker-compose.chain-paused.yml` 为维护暂停覆盖（额外跳过 Django 启动迁移）；恢复时使用基础 Compose。`docker-compose.chain-local.yml` 可显式固定 `legacy` 并启用本地链，防止 `.env` 的后端选择覆盖本地模式。
 
 ## 当前职责
 

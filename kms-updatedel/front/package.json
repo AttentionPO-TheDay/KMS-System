@@ -11,12 +11,17 @@
     "build:stage": "vite build --mode staging",
     "preview": "vite preview",
     "verify:crypto": "node tools/verify-node-crypto.mjs",
+    "verify:distribution-security": "node tools/verify-distribution-security.mjs",
+    "verify:probe-limit": "node tools/verify-node-probe-limit.mjs",
+    "probe:distribution-timing": "node tools/probe-distribution-timing.mjs",
     "verify:session": "node tools/verify-session-establish.mjs",
     "verify:node-init-ui": "node tools/verify-node-init-ui.mjs",
     "verify:device-binding": "node tools/verify-device-binding.mjs",
     "verify:keyupdate-rotate": "node tools/verify-keyupdate-rotate.mjs",
     "verify:key-ref": "node tools/verify-key-ref.mjs",
-    "verify:batches-read": "node tools/verify-batches-read.mjs"
+    "verify:batches-read": "node tools/verify-batches-read.mjs",
+    "verify:auto-update-task": "node tools/verify-auto-update-task.mjs",
+    "verify:key-health-scan": "node tools/verify-key-health-scan.mjs"
   },
   "repository": {
     "type": "git",

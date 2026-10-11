@@ -105,6 +105,50 @@ public interface KeymanageMapper {
     int countAutoUpdateEnabled();
 
     /**
+     * KMS-019：把 {@code upd_time} 推进到给定时刻，**不动开关**。
+     *
+     * <p>用途是自动更新失败后的**退避**：候选 SQL 的条件里含
+     * {@code upd_time <= now - interval-minutes}，失败路径原先不推进
+     * {@code upd_time}，于是同一条必失败的候选（KYBER/FALCON……）
+     * 每 60 秒被重新挑中一次，失败只有一行日志、永不停止。
+     * 推进之后，两轮失败之间隔着一个完整的 interval 窗口。
+     *
+     * <p>为什么不复用 {@link #updateAutoUpdate}：那条 SQL 会同时写
+     * {@code auto_update} 列 —— 用一个"改开关"的语句做退避，日后任何一处
+     * 传参写错都会**静默把开关改掉**，而页面上的现象是"我没动它它自己关了"。
+     *
+     * @param keyId   密钥 ID
+     * @param updTime 时间串（与 {@code LifecycleService} 的 {@code now()} 同格式，
+     *                列本身是 varchar，字符串比较依赖 {@code yyyy-MM-dd HH:mm:ss} 定长排序）
+     */
+    int touchUpdTime(@Param("keyId") Long keyId, @Param("updTime") String updTime);
+
+    /**
+     * KMS-022：批量一致性检查的候选密钥，**keyset 分页**按 key_id 递增读取。
+     *
+     * <p>只取展示所需的最小列（不含 ua / key_value）：逐钥判定由
+     * {@code KeyHealthService.check} 自己回表读全行 —— 这里再读一遍材料，
+     * 只是把大字段在内存里多存了一份，而且那一份与判定读到的可能不是同一时刻。
+     *
+     * <p>用 keyset（{@code key_id > afterKeyId}）而不是 OFFSET：扫描期间密钥
+     * 被删除会让 OFFSET 分页**整页跳过**（跳过的那页没人会发现），
+     * keyset 只依赖"上一条读到哪"，漏读一行也只影响那一行本身。
+     *
+     * @param userId     非空 = 只取该用户的密钥（普通用户被强制收敛到此）
+     * @param afterKeyId 上一批读到的最大 key_id；首批传 0
+     * @param limit      批大小
+     */
+    List<Keymanage> selectScanTargets(@Param("userId") Long userId,
+                                      @Param("afterKeyId") Long afterKeyId,
+                                      @Param("limit") int limit);
+
+    /**
+     * KMS-022：触顶时统计"还剩多少把没扫"，让 run 行的备注是**一个真实的数**，
+     * 而不是一句"可能还有"。
+     */
+    int countScanTargetsAfter(@Param("userId") Long userId, @Param("afterKeyId") Long afterKeyId);
+
+    /**
      * 删除密钥管理
      *
      * @param keyId 密钥管理主键

@@ -60,6 +60,8 @@ server {
         proxy_read_timeout 180s;
     }
     location /demo-api/pqkds/ {
+        limit_req zone=kms_node_crypto burst=20 nodelay;
+        limit_req_status 429;
         proxy_pass http://pqkds_demo_backend/api/pqkds/;
         proxy_set_header Host $http_host;
         proxy_set_header Authorization "";

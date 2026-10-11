@@ -1,0 +1,35 @@
+# 恢复原本地 FISCO/Web3 链写入与任务消费。
+# docker compose -f docker-compose.yml -f docker-compose.chain-local.yml up -d
+services:
+  generate-java:
+    environment:
+      KMS_CHAIN_BACKEND: legacy
+      KMS_CHAIN_WRITES_ENABLED: "true"
+      KMS_CHAIN_CONSUMER_ENABLED: "true"
+  updatedel-java:
+    environment:
+      KMS_CHAIN_BACKEND: legacy
+      KMS_CHAIN_WRITES_ENABLED: "true"
+      KMS_CHAIN_CONSUMER_ENABLED: "true"
+      KMS_LIFECYCLE_CHAIN_SYNC_ENABLED: "true"
+      KMS_LIFECYCLE_CHAIN_CONSUMER_ENABLED: "true"
+  dvadmin3-django:
+    environment:
+      KMS_CHAIN_BACKEND: legacy
+      KMS_CHAIN_WRITES_ENABLED: "true"
+      KMS_CHAIN_CONSUMER_ENABLED: "true"
+  dvadmin3-key-reclaimer:
+    environment:
+      KMS_CHAIN_BACKEND: legacy
+      KMS_CHAIN_WRITES_ENABLED: "true"
+      KMS_CHAIN_CONSUMER_ENABLED: "true"
+  acceptance-backend:
+    environment:
+      KMS_CHAIN_BACKEND: legacy
+      KMS_CHAIN_WRITES_ENABLED: "true"
+      KMS_CHAIN_CONSUMER_ENABLED: "true"
+  nginx:
+    environment:
+      KMS_CHAIN_BACKEND: legacy
+      KMS_CHAIN_WRITES_ENABLED: "true"
+      KMS_CHAIN_CONSUMER_ENABLED: "true"

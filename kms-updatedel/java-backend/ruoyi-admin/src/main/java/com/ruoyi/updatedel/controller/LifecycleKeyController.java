@@ -322,7 +322,17 @@ public class LifecycleKeyController extends BaseController {
         // 临时审批流已整体删除 —— 它并不真正授予权限（PermissionRequestService
         // 明确注释「刻意不调用 updateRoleLevel」），保留只会形成第二套权限语义。
         // 准入由上面的 canAccess（属主或管理员）负责，那是真实且可核验的边界。
-        lifecycleService.updateAutoUpdate(request.getKeyId(), request.getAutoUpdate());
+        //
+        // KMS-019：打开开关的请求会在 service 里过算法闸门（KYBER/FALCON 必拒，
+        // 见 LifecycleService#assertAutoUpdateEnableAllowed）。IllegalStateException
+        // 在这里必须转成业务错误 —— 让它逃逸会被全局异常处理兜成 500，
+        // 而页面拿到的是一句与"这个算法不支持托管轮换"毫不相干的服务器错误。
+        try {
+            lifecycleService.updateAutoUpdate(request.getKeyId(), request.getAutoUpdate());
+        } catch (IllegalStateException e) {
+            log.warn("修改自动更新状态失败: keyId={}, error={}", request.getKeyId(), e.getMessage());
+            return AjaxResult.error(e.getMessage());
+        }
         return AjaxResult.success("自动更新状态修改成功", lifecycleService.findById(request.getKeyId()).orElse(null));
     }
 
