@@ -726,6 +726,7 @@ async function handleDistributeFromPool() {
   submitting.value = true
   errorMessage.value = ''
   result.value = null
+  let payloadKey = null
   try {
     const batchId = newBatchId()
     const consumed = await consumePoolItem({
@@ -810,7 +811,7 @@ async function handleDistribute() {
   try {
     // ---- 以下三步全在**本机**完成（KMS-009）----
     // 1) 本地生成 SM4 载荷密钥；
-    const payloadKey = generatePayloadKey()
+    payloadKey = generatePayloadKey()
     // 2) 本地用接收方那一版公钥封装；
     // 3) 本地用 Falcon 私钥签名。
     // `batchId` / `expiresAt` 也在这里定 —— 签名要覆盖它们（见
@@ -894,6 +895,7 @@ async function handleDistribute() {
       await loadPeerKeys()
     }
   } finally {
+    payloadKey?.fill(0)
     submitting.value = false
   }
 }

@@ -229,15 +229,17 @@ async function decryptEnvelope(row) {
     }
 
     const hex = decryptToHex(envelope, keyFile.private_share)
-    decryptedHex.value = hex
     // 只显示"解出了 32 位十六进制"没有意义 —— 任何 32 位十六进制都满足。
     // 必须与库中记录的指纹比对，才能证明解出的**正是那把**密钥。
     decryptedMatches.value = await matchesRecordedHash(hex, detail?.keyHash)
     if (!decryptedMatches.value) {
-      decryptError.value = '解出的密钥指纹与库中记录不一致，这份信封可能已被篡改。'
+      decryptError.value = '解封失败：信封完整性校验失败或本机密钥不匹配'
+    } else {
+      decryptedHex.value = hex
     }
-  } catch (error) {
-    decryptError.value = `${error.name === 'Sm2IntegrityError' ? '完整性校验失败' : '解封失败'}：${error.message}`
+  } catch {
+    // 统一失败出口，不把 C1/曲线/私钥/完整性差异暴露给探测方。
+    decryptError.value = '解封失败：信封完整性校验失败或本机密钥不匹配'
   } finally {
     decrypting.value = false
   }
@@ -248,9 +250,13 @@ async function matchesRecordedHash(keyHex, recorded) {
     return false
   }
   const bytes = new Uint8Array(keyHex.match(/.{2}/g).map((b) => parseInt(b, 16)))
-  const digest = await crypto.subtle.digest('SHA-256', bytes)
-  const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
-  return hex === String(recorded).toLowerCase()
+  try {
+    const digest = await crypto.subtle.digest('SHA-256', bytes)
+    const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
+    return hex === String(recorded).toLowerCase()
+  } finally {
+    bytes.fill(0)
+  }
 }
 
 function remainingText(row) {

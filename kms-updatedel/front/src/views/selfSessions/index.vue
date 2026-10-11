@@ -363,6 +363,7 @@ async function handleProcess(row) {
   busySession.value = sessionId
   progress.value = null
   const tracker = makeSteps()
+  let recoveredPayloadKey = null
   try {
     // ---- 1. 取这条会话的两版密钥（服务端从会话行读，不是"当前生产版"）----
     const versions = await getSessionVersions(sessionId)
@@ -414,13 +415,13 @@ async function handleProcess(row) {
         `本机密钥库里没有 ${keyRef} 的私钥（换过设备或清过站点数据）—— 需回原设备处理`)
       throw new Error('本机缺少对应私钥')
     }
-    const payloadKey = await unwrapNodeEnvelope({
+    recoveredPayloadKey = await unwrapNodeEnvelope({
       provider: cryptoProvider, keyRef, envelope: entry.envelope
     })
     tracker.add('本机解封', 'ok', `用 ${shortId(recipientKeyId)} v${recipientKeyVersion} 解出 16 字节 SM4`)
 
     // ---- 5. 自查：解出的 K 与发送方声明的是同一把 ----
-    const hashCheck = await checkRecoveredKeyHash(payloadKey, entry.envelope)
+    const hashCheck = await checkRecoveredKeyHash(recoveredPayloadKey, entry.envelope)
     if (!hashCheck.ok) {
       tracker.add('密钥自查', 'fail', hashCheck.detail)
       throw new Error(hashCheck.detail)
@@ -430,7 +431,7 @@ async function handleProcess(row) {
     // ---- 5.5 存进**本地会话密钥库**（KMS-012 / 计划 §7 阶段 4）----
     // 存了之后：刷新页面仍能提交确认、关闭后能删；
     // 不存的话这次确认提交完，本机就再也算不出 proof（而页面上看不出为什么）。
-    await sealSessionSecret(sessionId, payloadKey)
+    await sealSessionSecret(sessionId, recoveredPayloadKey)
     localKeySessions.value = new Set([...localKeySessions.value, sessionId])
     tracker.add('保存会话密钥', 'ok', 'K 已存进本机会话密钥库（不上传服务端）')
 
@@ -469,6 +470,7 @@ async function handleProcess(row) {
     }
     progress.value = { sessionId, ok: false, steps, message: describeError(error) }
   } finally {
+    if (recoveredPayloadKey instanceof Uint8Array) recoveredPayloadKey.fill(0)
     busySession.value = ''
   }
 }

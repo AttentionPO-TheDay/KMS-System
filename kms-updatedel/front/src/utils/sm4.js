@@ -102,6 +102,7 @@ function expandKey(key) {
     k[i + 4] = (k[i] ^ tPrime((k[i + 1] ^ k[i + 2] ^ k[i + 3] ^ CK[i]) >>> 0)) >>> 0
     rk[i] = k[i + 4]
   }
+  k.fill(0)
   return rk
 }
 
@@ -135,6 +136,7 @@ function encryptBlock(rk, input, inOff, output, outOff) {
   writeWord(output, outOff / 4 + 1, x[34])
   writeWord(output, outOff / 4 + 2, x[33])
   writeWord(output, outOff / 4 + 3, x[32])
+  x.fill(0)
 }
 
 function decryptBlock(rk, input, inOff, output, outOff) {
@@ -151,6 +153,7 @@ function decryptBlock(rk, input, inOff, output, outOff) {
   writeWord(output, outOff / 4 + 1, x[34])
   writeWord(output, outOff / 4 + 2, x[33])
   writeWord(output, outOff / 4 + 3, x[32])
+  x.fill(0)
 }
 
 // ---------------------------------------------------------------------------
@@ -162,21 +165,19 @@ function gfMul(x, y) {
   let v = Uint32Array.from(y)
   for (let i = 0; i < 128; i++) {
     // 取 x 的第 i 位（**大端位序**：第 0 位是最高位）
-    if ((x[(i / 32) | 0] >>> (31 - (i % 32))) & 1) {
-      for (let j = 0; j < 4; j++) {
-        z[j] ^= v[j]
-      }
-    }
+    // 用掩码代替依赖输入位的分支，避免 GHASH 的控制流随数据变化。
+    const xBit = (x[(i / 32) | 0] >>> (31 - (i % 32))) & 1
+    const xMask = -xBit
+    for (let j = 0; j < 4; j++) z[j] ^= v[j] & xMask
     const lsb = v[3] & 1
     // v >>= 1（大端）
     v[3] = ((v[3] >>> 1) | (v[2] << 31)) >>> 0
     v[2] = ((v[2] >>> 1) | (v[1] << 31)) >>> 0
     v[1] = ((v[1] >>> 1) | (v[0] << 31)) >>> 0
     v[0] = v[0] >>> 1
-    if (lsb) {
-      v[0] ^= 0xe1000000
-    }
+    v[0] ^= 0xe1000000 & -lsb
   }
+  v.fill(0)
   return z
 }
 
@@ -193,6 +194,7 @@ function ghash(h, aad, ciphertext) {
       }
       const next = gfMul(y, h)
       y.set(next)
+      next.fill(0)
     }
   }
   absorb(aad)
@@ -204,7 +206,9 @@ function ghash(h, aad, ciphertext) {
   for (let i = 0; i < 4; i++) {
     y[i] ^= lenBlock[i]
   }
-  return gfMul(y, h)
+  const result = gfMul(y, h)
+  y.fill(0)
+  return result
 }
 
 function inc32(counter) {
@@ -230,8 +234,10 @@ function ctrCrypt(rk, counter, input) {
     for (let i = 0; i < take; i++) {
       out[off + i] = input[off + i] ^ block[i]
     }
+    block.fill(0)
     inc32(ctr)
   }
+  keystream.fill(0)
   return out
 }
 
@@ -257,6 +263,8 @@ function computeTag(rk, h, j0, aad, ciphertext) {
     tag[4 * i + 2] = (v >>> 8) & 0xff
     tag[4 * i + 3] = v & 0xff
   }
+  mask.fill(0)
+  s.fill(0)
   return tag
 }
 
@@ -269,6 +277,7 @@ function initGcm(key) {
   for (let i = 0; i < 4; i++) {
     h[i] = ((hBytes[4 * i] << 24) | (hBytes[4 * i + 1] << 16) | (hBytes[4 * i + 2] << 8) | hBytes[4 * i + 3]) >>> 0
   }
+  hBytes.fill(0)
   return { rk, h }
 }
 
@@ -293,12 +302,17 @@ function j0FromIv(iv) {
  */
 export function sm4GcmEncrypt(key, plaintext, iv, aad) {
   const { rk, h } = initGcm(key)
-  const j0 = j0FromIv(iv)
-  const counter = Uint32Array.from(j0)
-  inc32(counter)
-  const ciphertext = ctrCrypt(rk, counter, plaintext)
-  const tag = computeTag(rk, h, j0, aad || new Uint8Array(0), ciphertext)
-  return { ciphertext, tag }
+  try {
+    const j0 = j0FromIv(iv)
+    const counter = Uint32Array.from(j0)
+    inc32(counter)
+    const ciphertext = ctrCrypt(rk, counter, plaintext)
+    const tag = computeTag(rk, h, j0, aad || new Uint8Array(0), ciphertext)
+    return { ciphertext, tag }
+  } finally {
+    rk.fill(0)
+    h.fill(0)
+  }
 }
 
 /**
@@ -310,18 +324,29 @@ export function sm4GcmEncrypt(key, plaintext, iv, aad) {
  */
 export function sm4GcmDecrypt(key, ciphertext, iv, tag, aad) {
   const { rk, h } = initGcm(key)
-  const j0 = j0FromIv(iv)
-  const expected = computeTag(rk, h, j0, aad || new Uint8Array(0), ciphertext)
-  let diff = 0
-  for (let i = 0; i < TAG_BYTES; i++) {
-    diff |= expected[i] ^ tag[i]
+  let expected
+  try {
+    const j0 = j0FromIv(iv)
+    expected = computeTag(rk, h, j0, aad || new Uint8Array(0), ciphertext)
+    // 明确拒绝缺失、截短和超长标签；所有标签比较都遍历完整 16 字节。
+    // JS/JIT 无法保证常数时间，该循环只是避免逐字节提前退出。
+    const validTag = tag instanceof Uint8Array && tag.length === TAG_BYTES
+    const suppliedTag = validTag ? tag : new Uint8Array(TAG_BYTES)
+    let diff = validTag ? 0 : 1
+    for (let i = 0; i < TAG_BYTES; i++) {
+      diff |= expected[i] ^ suppliedTag[i]
+    }
+    if (diff !== 0) {
+      throw new Error('SM4-GCM 认证失败：密文或附加数据被改动，或密钥不对')
+    }
+    const counter = Uint32Array.from(j0)
+    inc32(counter)
+    return ctrCrypt(rk, counter, ciphertext)
+  } finally {
+    expected?.fill(0)
+    rk.fill(0)
+    h.fill(0)
   }
-  if (diff !== 0) {
-    throw new Error('SM4-GCM 认证失败：密文或附加数据被改动，或密钥不对')
-  }
-  const counter = Uint32Array.from(j0)
-  inc32(counter)
-  return ctrCrypt(rk, counter, ciphertext)
 }
 
 /** 仅供测试：单分组加密（用于国标向量验证） */

@@ -86,19 +86,26 @@ export async function verifyNodeEnvelope({
 /**
  * 用本机那把私钥解出信封里的 SM4 载荷密钥（16 字节）。
  *
- * ⚠️ 抛错而不是返回 null：解不开的原因（本机没有这把私钥 / 密文坏了 /
- *    版本选错）需要原样带给页面，而"返回 null"会把它们混成一句
- *    "解封失败"，用户不知道该做什么。
+ * 密码学失败统一对外报错，不暴露中间原因或恢复出的材料。
+ * 本地密钥是否存在由页面在进入密码运算前单独检查。
  */
 export async function unwrapNodeEnvelope({ provider = cryptoProvider, keyRef, envelope }) {
-  const key = await provider.unwrapEnvelope(
-    envelope?.wrapping_algorithm || 'kyber_kem', keyRef, envelope
-  )
-  const bytes = toBytes(key)
-  if (!bytes || bytes.length !== 16) {
-    throw new Error(`解出的载荷密钥不是 16 字节 SM4（收到 ${bytes ? `${bytes.length} 字节` : '非字节'}）`)
+  let bytes
+  try {
+    const key = await provider.unwrapEnvelope(
+      envelope?.wrapping_algorithm || 'kyber_kem', keyRef, envelope
+    )
+    bytes = toBytes(key)
+    if (!bytes || bytes.length !== 16) {
+      throw new Error('invalid recovered payload key')
+    }
+    return bytes
+  } catch {
+    bytes?.fill(0)
+    const failure = new Error('节点信封解封失败：信封完整性校验失败或本机密钥不匹配')
+    failure.code = 'NODE_ENVELOPE_UNWRAP_FAILED'
+    throw failure
   }
-  return bytes
 }
 
 /**
@@ -116,7 +123,7 @@ export async function checkRecoveredKeyHash(payloadKey, envelope) {
   const actual = await keyHashOf(payloadKey)
   return actual === declared
     ? { ok: true, detail: '解出的密钥与发送方声明的一致（sha256 相同）', hash: actual }
-    : { ok: false, detail: `解出的密钥与发送方声明的不一致：本机 ${actual.slice(0, 16)}… ≠ 信封 ${declared.slice(0, 16)}…` }
+    : { ok: false, detail: '节点信封解封失败：信封完整性校验失败或本机密钥不匹配' }
 }
 
 /**
@@ -153,5 +160,9 @@ export async function nodeProof({ payloadKey, sessionId }) {
 export async function sessionProofFromStore(sessionId) {
   const { unsealSessionSecret } = await import('./node-key-store.js')
   const payloadKey = await unsealSessionSecret(sessionId)
-  return nodeProof({ payloadKey, sessionId })
+  try {
+    return await nodeProof({ payloadKey, sessionId })
+  } finally {
+    payloadKey.fill(0)
+  }
 }

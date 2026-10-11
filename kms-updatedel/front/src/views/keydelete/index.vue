@@ -6,7 +6,7 @@
           <h2>密钥回收</h2>
           <div class="key-revoke__header-side">
             <el-tag v-if="node.nodeId" type="info" size="small">{{ node.nodeId }}</el-tag>
-            <el-button size="small" :loading="loading" @click="load">刷新</el-button>
+          <el-button size="small" :loading="loading" @click="refresh">刷新</el-button>
           </div>
         </div>
       </template>
@@ -27,15 +27,6 @@
           <strong>必须同时指定 keyId 与版本</strong> —— 不存在"回收这把密钥的最新版"这种隐式操作。
           列表里的状态与可用性都来自服务端下发，页面不另做判断。
         </p>
-
-        <el-alert
-          class="key-revoke__notice"
-          type="warning"
-          :closable="false"
-          show-icon
-          title="回收是终态"
-          description="回收后该版本不能更新，也不能用于新分发、新签名、新预分配、新会话。回收还会处置受影响的对象（未消费的池项、依赖它的会话），每次回收的实际影响面在下方结果里如实列出。"
-        />
 
         <!-- 后端一次最多回 200 行且没有分页参数。到顶时必须说出来：
              不说的话页面看起来"就这些"，而少掉的那些是更早的版本，可能还有在产行。 -->
@@ -155,6 +146,34 @@
             <span v-else class="key-revoke__result-detail is-bad">{{ describeError(r.error) }}</span>
           </div>
         </div>
+
+        <h3 class="key-revoke__records-title">回收记录</h3>
+        <p class="key-revoke__toolbar-note">自动回收和人工回收均在这里留痕，按服务端记录分页查询。</p>
+        <el-table v-loading="recordLoading" :data="recordRows" size="small" border>
+          <el-table-column label="算法" prop="algorithm" width="90" />
+          <el-table-column label="keyId" prop="keyId" min-width="190" show-overflow-tooltip />
+          <el-table-column label="版本" width="70">
+            <template #default="{ row }">v{{ row.keyVersion }}</template>
+          </el-table-column>
+          <el-table-column label="来源" width="100">
+            <template #default="{ row }">{{ row.action === 'AUTO_REVOKED' ? '自动审查' : '人工回收' }}</template>
+          </el-table-column>
+          <el-table-column label="判据／原因" min-width="230" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.revokedReason || row.rule || '—' }}</template>
+          </el-table-column>
+          <el-table-column label="回收时间" width="160">
+            <template #default="{ row }">{{ formatTime(row.revokedAt) }}</template>
+          </el-table-column>
+        </el-table>
+        <el-pagination
+          v-if="recordTotal > 0"
+          v-model:current-page="recordPage"
+          :page-size="30"
+          :total="recordTotal"
+          layout="total, prev, pager, next"
+          class="key-revoke__records-pagination"
+          @current-change="loadRecords"
+        />
       </template>
     </el-card>
   </div>
@@ -195,6 +214,7 @@ import { CircleCheck, CircleClose } from '@element-plus/icons-vue'
 import {
   getSelfNode,
   listSelfNodeKeys,
+  listNodeKeyReviews,
   revokeSelfNodePublicKey,
   NODE_SELF_ERR
 } from '@/api/pqkds/node-self'
@@ -217,6 +237,28 @@ const mapped = ref(false)
 const node = ref({})
 const rows = ref([])
 const selected = ref([])
+const recordRows = ref([])
+const recordTotal = ref(0)
+const recordPage = ref(1)
+const recordLoading = ref(false)
+
+async function loadRecords() {
+  recordLoading.value = true
+  try {
+    const data = await listNodeKeyReviews({ mode: 'revoked', page: recordPage.value, pageSize: 30 })
+    recordRows.value = data?.rows || []
+    recordTotal.value = data?.total || 0
+  } catch (error) {
+    ElMessage.error(`读取回收记录失败：${error.message}`)
+  } finally {
+    recordLoading.value = false
+  }
+}
+
+function refresh() {
+  load()
+  loadRecords()
+}
 
 const revoking = ref(false)
 /** 最近一次回收的结果，含影响面。不放进 `load()` 会清空的那些状态里（见模板注释）。 */
@@ -437,6 +479,7 @@ async function doRevoke(targets, reason) {
     }
 
     await load()
+    await loadRecords()
   } finally {
     revoking.value = false
   }
@@ -471,7 +514,7 @@ function formatTime(value) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-onMounted(load)
+onMounted(refresh)
 </script>
 
 <style scoped>
@@ -497,6 +540,8 @@ onMounted(load)
   display: flex; align-items: baseline; gap: 8px; padding: 4px 0;
   font-size: 13px; line-height: 1.7; flex-wrap: wrap;
 }
+.key-revoke__records-title { margin: 24px 0 6px; font-size: 16px; }
+.key-revoke__records-pagination { margin-top: 14px; justify-content: flex-end; }
 .key-revoke__result-key { flex: 0 0 auto; }
 .key-revoke__result-detail { flex: 1 1 320px; word-break: break-all; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }

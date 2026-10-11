@@ -306,7 +306,11 @@ export class BrowserCryptoProvider extends CryptoProvider {
     //    签名在消息**之后**、中间还夹着 40 字节 nonce —— 自己拼必然拼错，
     //    而现象只是服务端 crypto_sign_open 返回 -1（"验签失败"），
     //    完全看不出是格式问题。这个坑实测踩过。
-    return falcon.falcon512.attached.seal(bytes, sk)
+    try {
+      return falcon.falcon512.attached.seal(bytes, sk)
+    } finally {
+      sk.fill(0)
+    }
   }
 
   /** 用公钥验签。`signature` 为附加格式。 */
@@ -340,15 +344,20 @@ export class BrowserCryptoProvider extends CryptoProvider {
     const skBytes = await this._secretBytes(keyRef)
     // 密文可能是字节（`encapsulate` 的返回值）或 hex 文本（信封里的形式）——
     // 前者要能直接回传进来，`decapsulate(encapsulate(...))` 才是成立的往返。
-    const ct = toBytes(ciphertext) || fromHex(ciphertext)
-    // 变体按**私钥长度**推断：服务端 `wrappers.py:325` 是同一口径
-    // （sk 长度 → 512/768/1024），两边不必预先约定。
-    const variant = { 1632: 512, 2400: 768, 3168: 1024 }[skBytes.length]
-    if (!variant) {
-      throw new Error(`无法从私钥长度推断 Kyber 变体：${skBytes.length} 字节`)
+    try {
+      const ct = toBytes(ciphertext) || fromHex(ciphertext)
+      // 变体按**私钥长度**推断：服务端 `wrappers.py:325` 是同一口径
+      // （sk 长度 → 512/768/1024），两边不必预先约定。
+      const variant = { 1632: 512, 2400: 768, 3168: 1024 }[skBytes.length]
+      if (!variant) {
+        throw new Error(`无法从私钥长度推断 Kyber 变体：${skBytes.length} 字节`)
+      }
+      const names = kyberNames(variant)
+      // Own the returned buffer independently of the temporary private key.
+      return Uint8Array.from(kyber[names.dec](ct, skBytes))
+    } finally {
+      skBytes.fill(0)
     }
-    const names = kyberNames(variant)
-    return kyber[names.dec](ct, skBytes)
   }
 
   /**
@@ -436,20 +445,25 @@ export class BrowserCryptoProvider extends CryptoProvider {
       // `PayloadCipher.kek_from_shared_secret('sm4', ss)` 同一口径。
       // 取错长度不会报错，只会解出乱码。
       const kek = encapsulated.sharedSecret.slice(0, 16)
-      const iv = crypto.getRandomValues(new Uint8Array(12))
-      // ⚠️ **不传 aad**：服务端封装时也没传（`wrappers.py` 的 kyber 分支），
-      //    这里传了就会"能封、开不开"，而报错是 GCM 认证失败。
-      const { ciphertext, tag } = sm4GcmEncrypt(kek, key, iv)
-      return {
-        wrapping: 'kyber_kem',
-        envelope: {
-          kem_ciphertext: bytesToB64(encapsulated.ciphertext),
-          encrypted_key: bytesToB64(ciphertext),
-          nonce: bytesToB64(iv),
-          tag: bytesToB64(tag),
-          payload_algorithm: 'sm4',
-          wrapping_algorithm: 'kyber_kem'
+      try {
+        const iv = crypto.getRandomValues(new Uint8Array(12))
+        // ⚠️ **不传 aad**：服务端封装时也没传（`wrappers.py` 的 kyber 分支），
+        //    这里传了就会"能封、开不开"，而报错是 GCM 认证失败。
+        const { ciphertext, tag } = sm4GcmEncrypt(kek, key, iv)
+        return {
+          wrapping: 'kyber_kem',
+          envelope: {
+            kem_ciphertext: bytesToB64(encapsulated.ciphertext),
+            encrypted_key: bytesToB64(ciphertext),
+            nonce: bytesToB64(iv),
+            tag: bytesToB64(tag),
+            payload_algorithm: 'sm4',
+            wrapping_algorithm: 'kyber_kem'
+          }
         }
+      } finally {
+        kek.fill(0)
+        encapsulated.sharedSecret.fill(0)
       }
     }
 
@@ -465,7 +479,13 @@ export class BrowserCryptoProvider extends CryptoProvider {
       //    会被它拒成 `Expected "string" | "Buffer" | "ArrayBuffer" but received
       //    "[object Uint8Array]"`。`Uint8Array.from` 复制一份再取 `.buffer`，
       //    顺带避开"传进去的是别人 buffer 的一段视图"这种更难查的情形。
-      const raw = SM2.encrypt(Uint8Array.from(key).buffer, publicKeyHex)
+      const payloadCopy = Uint8Array.from(key)
+      let raw
+      try {
+        raw = SM2.encrypt(payloadCopy.buffer, publicKeyHex)
+      } finally {
+        payloadCopy.fill(0)
+      }
       const wrapping = name === 'SM2' ? 'gm_sm2' : 'gm_sscl'
       const envelope = {
         algorithm: 'sm2',
@@ -586,7 +606,12 @@ export class BrowserCryptoProvider extends CryptoProvider {
 
   /** 读回私密材料的 **hex 文本**（SM2/SSCL 的解密路径要的是 hex 标量，不是字节） */
   async _secretHex(keyRef) {
-    return new TextDecoder().decode(await unsealSecret(keyRef))
+    const plain = await unsealSecret(keyRef)
+    try {
+      return new TextDecoder().decode(plain)
+    } finally {
+      plain.fill(0)
+    }
   }
 
   async hasKey(keyRef) {
@@ -616,35 +641,43 @@ export class BrowserCryptoProvider extends CryptoProvider {
   async unwrapEnvelope(algorithm, keyRef, envelope) {
     const wrapping = String(envelope?.wrapping_algorithm || algorithm || '').trim().toLowerCase()
 
-    if (wrapping === 'kyber_kem') {
-      const { sm4GcmDecrypt } = await import('../sm4.js')
-      const shared = await this.decapsulate('KYBER', keyRef, fromHex(b64ToHex(envelope.kem_ciphertext)))
-      // KEK 取共享秘密**前 16 字节** —— 与服务端
-      // `PayloadCipher.kek_from_shared_secret('sm4', ss)` 同一口径
-      // （`sm4_crypto.py:312`）。取错长度不会报错，只会解出乱码。
-      const kek = shared.slice(0, 16)
-      return sm4GcmDecrypt(
-        kek,
-        fromHex(b64ToHex(envelope.encrypted_key)),
-        fromHex(b64ToHex(envelope.nonce)),
-        fromHex(b64ToHex(envelope.tag))
-      )
-    }
+    try {
+      if (wrapping === 'kyber_kem') {
+        const { sm4GcmDecrypt } = await import('../sm4.js')
+        const shared = await this.decapsulate('KYBER', keyRef, fromHex(b64ToHex(envelope.kem_ciphertext)))
+        const kek = shared.slice(0, 16)
+        try {
+          return sm4GcmDecrypt(
+            kek,
+            fromHex(b64ToHex(envelope.encrypted_key)),
+            fromHex(b64ToHex(envelope.nonce)),
+            fromHex(b64ToHex(envelope.tag))
+          )
+        } finally {
+          kek.fill(0)
+          shared.fill(0)
+        }
+      }
 
-    if (wrapping === 'gm_sm2' || wrapping === 'gm_sscl') {
-      const { decryptEnvelope } = await import('../sm2-envelope.js')
-      const privateKeyHex = toHex(await this._secretBytes(keyRef))
-      // 节点腿的国密信封与用户腿是**同一套 SM2Crypto**（`wrappers.py:120`
-      // 复用它而非另写），所以直接复用本仓库已验证的浏览器实现。
-      // 信封里 `algorithm` 恒为 'sm2'（节点腿用哪种档位由 wrapping_algorithm 表达），
-      // 因此 SSCL 也走同一条解密路径。
-      return decryptEnvelope(envelope, privateKeyHex)
-    }
+      if (wrapping === 'gm_sm2' || wrapping === 'gm_sscl') {
+        const { decryptEnvelope } = await import('../sm2-envelope.js')
+        const privateKey = await this._secretBytes(keyRef)
+        try {
+          // 信封里 algorithm 恒为 sm2；SSCL 仅由 wrapping_algorithm 表达档位。
+          return decryptEnvelope(envelope, toHex(privateKey))
+        } finally {
+          privateKey.fill(0)
+        }
+      }
 
-    throw new Error(
-      `不支持的节点腿封装算法：${wrapping || '(空)'}。` +
-        '当前支持 kyber_kem / gm_sm2 / gm_sscl。'
-    )
+      throw new Error('unsupported wrapping algorithm')
+    } catch {
+      // 对外不区分“私钥不存在、密文格式错误、标签错误、版本错误”，
+      // 减少错误信息形成的解封探测线索；不承诺运算时间一致。
+      const failure = new Error('节点信封解封失败：信封完整性校验失败或本机密钥不匹配')
+      failure.code = 'NODE_ENVELOPE_UNWRAP_FAILED'
+      throw failure
+    }
   }
 
   async destroy(keyRef) {
@@ -671,7 +704,11 @@ export class BrowserCryptoProvider extends CryptoProvider {
   async _secretBytes(keyRef) {
     const plain = await unsealSecret(keyRef)
     // 存进去时统一是 hex 文本，取出来仍按 hex 解析
-    return fromHex(new TextDecoder().decode(plain))
+    try {
+      return fromHex(new TextDecoder().decode(plain))
+    } finally {
+      plain.fill(0)
+    }
   }
 }
 
