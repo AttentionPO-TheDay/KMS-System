@@ -613,6 +613,7 @@ services:
       - INTERNAL_TOKEN=${INTERNAL_TOKEN:?必须设置 INTERNAL_TOKEN}
     ports:
       - "80:80"
+      - "443:443"
     volumes:
       - ./nginx/logs:/var/log/nginx
     depends_on:
