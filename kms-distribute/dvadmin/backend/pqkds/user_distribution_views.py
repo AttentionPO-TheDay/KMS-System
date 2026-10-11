@@ -6,6 +6,7 @@
     GET  /user-symmetric-keys/            我的对称密钥（含剩余有效期）
     GET  /user-symmetric-keys/<id>/       单条详情
     GET  /distribution-batches/           我的分发批次
+    GET  /distribution-batches/<batch>/  批次安全明细（仅元数据）
 
 三条贯穿全文件的硬要求
 ----------------------
@@ -47,7 +48,10 @@ from .distribution_service import (
     record_distribution_chain_event,
 )
 from .envelope_signature import ciphertext_digest, sign_envelope, verify_envelope
-from .models import DistributionBatch, Node, PreDistributedKey, SessionKey, UserKeyEnvelope, UserNodeAuthorization
+from .models import (
+    DistributionBatch, DistributionBatchItem, Node, PreDistributedKey, SessionKey,
+    UserKeyEnvelope, UserNodeAuthorization,
+)
 from .node_key_registry import require_key_version, require_usable_key
 from .sm4_crypto import PAYLOAD_ALGORITHM_SM4, PayloadCipher
 from .wrappers import (
@@ -377,6 +381,136 @@ def distribution_batches(request, identity):
     return _ok({'items': items, 'total': len(items)})
 
 
+def _distribution_session_summary(session: SessionKey) -> Dict[str, Any]:
+    """只公开真实会话行的状态与证据时间 / 交易哈希，不下发密钥交换材料。"""
+    raw_evidence = _parse_b64_envelope(session.lifecycle_evidence) or {}
+    evidence = {}
+    for step in ('verified', 'recovered', 'established', 'closed'):
+        entry = raw_evidence.get(step)
+        if isinstance(entry, dict):
+            evidence[step] = {'at': entry.get('at'), 'tx': entry.get('tx') or ''}
+    return {
+        'sessionId': session.session_id,
+        'status': session.status,
+        'senderNodeId': session.node1_id,
+        'recipientNodeId': session.node2_id,
+        'protectionAlgorithm': session.session_type,
+        'recipientKeyId': session.recipient_key_id,
+        'recipientKeyVersion': session.recipient_key_version,
+        'falconKeyId': session.falcon_key_id,
+        'falconKeyVersion': session.falcon_key_version,
+        'expiresAt': session.expires_at.isoformat() if session.expires_at else None,
+        'sessionScope': 'batch-node',
+        'lifecycleEvidence': evidence,
+    }
+
+
+@csrf_exempt
+@require_http_methods(['GET'])
+@require_kms_user
+def distribution_batch_detail(request, batch_id, identity):
+    """属主可见的逐信封审计明细；不暴露密文、签名原文或 SM4 明文。"""
+    batch = DistributionBatch.objects.filter(batch_id=batch_id, user_id=identity['userId']).first()
+    if batch is None:
+        return _error('分发批次不存在', 404)
+
+    rows = list(DistributionBatchItem.objects.filter(batch=batch)
+                .select_related('user_envelope', 'node_envelope'))
+    # 前缀只用于缩小候选范围；必须再核对真实 batch_id 和发起主体，
+    # 避免 dist-x 与 dist-x-extra 的批次前缀碰撞泄露其它批次的会话。
+    sessions = []
+    trusted_sessions = {}
+    for session in SessionKey.objects.filter(
+        session_id__startswith=batch.batch_id + '-', node1__sys_user_id=identity['userId'],
+    ).order_by('session_id'):
+        exchange = _parse_b64_envelope(session.key_exchange_data) or {}
+        if exchange.get('batch_id') == batch.batch_id:
+            summary = _distribution_session_summary(session)
+            trusted_sessions[session.pk] = summary
+            sessions.append(summary)
+
+    items = []
+    for item in rows:
+        item_session = trusted_sessions.get(item.session_id)
+        if item_session and (item.recipient_type != 'node' or item.recipient_node_id != item_session['recipientNodeId']):
+            item_session = None
+        signature_state = item.signature_state
+        signature_message = item.signature_message
+        signature_scope = 'ingest' if item.recipient_type == 'node' and signature_state == 'valid' else 'envelope'
+        envelope = item.user_envelope if item.recipient_type == 'user' else item.node_envelope
+        if item.recipient_type == 'user' and envelope is not None:
+            signature_state, signature_message = _verify_envelope_signature(
+                _parse_b64_envelope(envelope.encrypted_key_data),
+            )
+            signature_scope = 'read'
+        elif envelope is None:
+            signature_state = 'unverifiable'
+            signature_message = '封装失败，未生成信封' if item.delivery_status == 'failed' else '关联信封已不可用，无法验签'
+            signature_scope = 'envelope'
+        items.append({
+            'id': item.pk,
+            'itemIndex': item.item_index,
+            'payloadIndex': item.payload_index,
+            'recipientType': item.recipient_type,
+            'recipientUserId': item.recipient_user_id,
+            'recipientNodeId': item.recipient_node_id,
+            'recipientNodeCode': item.recipient_node_code,
+            'recipientNodeName': item.recipient_node_name,
+            'recipientKeyId': item.recipient_key_id,
+            'recipientKeyVersion': item.recipient_key_version,
+            'wrappingAlgorithm': item.wrapping_algorithm,
+            'payloadAlgorithm': item.payload_algorithm,
+            'deliveryStatus': item.delivery_status,
+            'failureReason': item.failure_reason,
+            'envelopeType': item.recipient_type,
+            'envelopeId': envelope.pk if envelope else None,
+            'envelopeStatus': envelope.status if envelope else None,
+            'signatureState': signature_state,
+            'signatureMessage': signature_message,
+            'signatureScope': signature_scope,
+            'keyHash': item.key_hash,
+            'ciphertextDigest': item.ciphertext_digest,
+            'createdAt': item.created_at.isoformat() if item.created_at else None,
+            'expiresAt': item.expires_at.isoformat() if item.expires_at else None,
+            'sessionScope': 'batch-node',
+            'session': item_session,
+        })
+
+    try:
+        node_ids = json.loads(batch.node_ids or '[]')
+    except (ValueError, TypeError):
+        node_ids = []
+    if not isinstance(node_ids, list):
+        node_ids = []
+    return _ok({
+        'batch': {
+            'batchId': batch.batch_id,
+            'sourceKeyId': batch.source_key_id,
+            'wrappingAlgorithm': batch.wrapping_algorithm,
+            'nodeIds': node_ids,
+            'nodeCount': len(node_ids),
+            'nodeSuccessCount': batch.node_success_count,
+            'userEnvelopeOk': bool(batch.user_envelope_ok),
+            'status': batch.status,
+            'createdAt': batch.create_datetime.isoformat() if batch.create_datetime else None,
+            'sourceDomainId': batch.source_domain_id or '',
+            'targetDomainIds': _safe_json_list(batch.target_domain_ids),
+            'distributionType': batch.distribution_type or '',
+            'sessionCount': len(sessions),
+            'payloadCount': len({item.payload_index for item in rows}) if rows else None,
+            'nodeEnvelopeSuccessCount': sum(item.recipient_type == 'node' and item.delivery_status == 'success' for item in rows) if rows else None,
+            'failedAttemptCount': sum(item.delivery_status == 'failed' for item in rows) if rows else None,
+        },
+        'items': items,
+        'total': len(items),
+        'legacy': not rows,
+        'legacyReason': '该批次未保存逐信封明细，无法还原逐项失败或密钥版本；不按当前节点或公钥回填。' if not rows else '',
+        'sessionScope': 'batch-node',
+        'sessionScopeNote': '会话及验签、解封、确认轨迹按批次-节点记录，不代表多份载荷逐项完成；无法唯一关联的明细不挂会话。',
+        'sessions': sessions,
+    })
+
+
 # ---------------------------------------------------------------------------
 # POST /key-pool/distribute-to-user/   —— 核心
 # ---------------------------------------------------------------------------
@@ -601,6 +735,11 @@ def _distribute_to_user_inner(request, identity):
 
     envelopes: List[UserKeyEnvelope] = []
     node_records: List[PreDistributedKey] = []
+    batch_items: List[DistributionBatchItem] = []
+    # FK targets are saved below in bulk/individual batches. Keep transient references
+    # outside the Django model instance; assigning an unsaved related object to a
+    # ForeignKey raises before the later save can populate its primary key.
+    batch_item_envelope_refs = {}
     node_results: List[Dict[str, Any]] = []
     failed: List[str] = []
     #: 本次分发里最后一份信封的密文摘要 —— 链上存证用它代表"分发了什么"。
@@ -609,9 +748,9 @@ def _distribute_to_user_inner(request, identity):
 
     try:
         with transaction.atomic():
-            for _ in range(count):
-                # 每个节点、以及用户本人，各拿一把**独立**的载荷密钥。
-                # 共用一把会让任意一个节点被攻破就波及全部收件人。
+            for payload_index in range(count):
+                # 每轮生成一份载荷，用户与各节点的信封封装同一把 K；各轮独立。
+                # 既有会话仍是 batch-node 粒度，不能据此声称每轮 K 都已确认。
                 payload_key = PayloadCipher.generate_key()
                 # 与本仓库既有写法保持一致（key_pool_service.py 也是这么算的）。
                 # 存哈希而不存密钥本身：这张表里**不应该**出现任何明文对称密钥。
@@ -706,6 +845,21 @@ def _distribute_to_user_inner(request, identity):
                     )
                 )
 
+                user_item = DistributionBatchItem(
+                    item_index=len(batch_items), payload_index=payload_index,
+                    recipient_type='user', recipient_user_id=user_id,
+                    recipient_key_id=str(source_key_id),
+                    recipient_key_version=key_info.get('version') if key_info.get('version') not in (None, '') else None,
+                    wrapping_algorithm=wrapping_algorithm,
+                    payload_algorithm=PAYLOAD_ALGORITHM_SM4, delivery_status='success',
+                    signature_state='unverifiable' if user_envelope.get('signature') else 'missing',
+                    signature_message='用户信封在详情读取时验签' if user_envelope.get('signature') else '信封未包含签名',
+                    key_hash=key_hash,
+                    ciphertext_digest=envelope_for_sign['ciphertext_digest'], expires_at=expires_at,
+                )
+                batch_items.append(user_item)
+                batch_item_envelope_refs[id(user_item)] = ('user', envelopes[-1])
+
                 # --- 节点腿：抗量子（D10 节点侧零改动），封的是**同一把 payload_key** ---
                 # 这是 D10 方案 A 成立的根本：两条腿算法不同，但解出来的 K 必须相同，
                 # 否则用户与节点根本对不上（计划 §3.1）。
@@ -743,6 +897,16 @@ def _distribute_to_user_inner(request, identity):
                         logger.warning('批次 %s 节点 %s 长期密钥不可用：%s %s',
                                        batch_id, node.node_id, exc.code, exc.message)
                         failed.append(f'{node.node_id}: {exc.code} {exc.message}')
+                        batch_items.append(DistributionBatchItem(
+                            item_index=len(batch_items), payload_index=payload_index,
+                            recipient_type='node', recipient_node=node,
+                            recipient_node_code=node.node_id, recipient_node_name=node.name,
+                            wrapping_algorithm=node_wrapping, payload_algorithm=PAYLOAD_ALGORITHM_SM4,
+                            delivery_status='failed', signature_state='unverifiable',
+                            signature_message='封装失败，未生成信封',
+                            failure_reason=f'{exc.code} {exc.message}',
+                            key_hash=key_hash, expires_at=expires_at,
+                        ))
                         continue
                     try:
                         node_envelope, _ = wrap_for_node(payload_key, node, node_wrapping)
@@ -750,6 +914,17 @@ def _distribute_to_user_inner(request, identity):
                         # 单个节点封装失败不应让整批失败：如实记下来，
                         # 批次状态由**真实成功数**决定，而不是"选了几个节点"。
                         failed.append(f'{node.node_id}: {exc}')
+                        batch_items.append(DistributionBatchItem(
+                            item_index=len(batch_items), payload_index=payload_index,
+                            recipient_type='node', recipient_node=node,
+                            recipient_node_code=node.node_id, recipient_node_name=node.name,
+                            recipient_key_id=long_term_key.key_id,
+                            recipient_key_version=long_term_key.key_version,
+                            wrapping_algorithm=node_wrapping, payload_algorithm=PAYLOAD_ALGORITHM_SM4,
+                            delivery_status='failed', signature_state='unverifiable',
+                            signature_message='封装失败，未生成信封', failure_reason=str(exc),
+                            key_hash=key_hash, expires_at=expires_at,
+                        ))
                         continue
 
                     node_algorithm = node_envelope.get('wrapping_algorithm') or NODE_DEFAULT_WRAPPING
@@ -785,10 +960,31 @@ def _distribute_to_user_inner(request, identity):
                             long_term_key_version=long_term_key.key_version,
                         )
                     )
+                    node_item = DistributionBatchItem(
+                        item_index=len(batch_items), payload_index=payload_index,
+                        recipient_type='node', recipient_node=node,
+                        recipient_node_code=node.node_id, recipient_node_name=node.name,
+                        recipient_key_id=long_term_key.key_id,
+                        recipient_key_version=long_term_key.key_version,
+                        wrapping_algorithm=node_algorithm, payload_algorithm=PAYLOAD_ALGORITHM_SM4,
+                        delivery_status='success', signature_state='missing',
+                        signature_message='旧用户腿节点信封未包含签名',
+                        key_hash=key_hash,
+                        ciphertext_digest=ciphertext_digest(node_records[-1].encrypted_key_data),
+                        expires_at=expires_at,
+                    )
+                    batch_items.append(node_item)
+                    batch_item_envelope_refs[id(node_item)] = ('node', node_records[-1])
 
-            UserKeyEnvelope.objects.bulk_create(envelopes)
+            # MySQL 的 bulk_create 不保证回填主键。用户信封没有逐载荷唯一序号，
+            # 逐行保存取得真实 PK；节点信封可按 (pool_id, key_index) 唯一键回读。
+            for user_record in envelopes:
+                user_record.save()
+            node_envelope_ids = {}
             if node_records:
                 PreDistributedKey.objects.bulk_create(node_records)
+                node_envelope_ids = dict(PreDistributedKey.objects.filter(pool_id=batch_id)
+                                         .values_list('key_index', 'pk'))
 
             # 只有**真正封成功的**节点才算进成功数。
             # 谎报的代价很具体：批次列表显示"全部成功"，而节点上什么都没有，
@@ -863,6 +1059,17 @@ def _distribute_to_user_inner(request, identity):
                 node_map, succeeded_node_ids, batch_id, expires_at,
                 falcon_key=falcon_key_for_session,
             )
+            for item in batch_items:
+                item.batch = batch
+                ref = batch_item_envelope_refs.get(id(item))
+                if ref:
+                    kind, target = ref
+                    if kind == 'user':
+                        item.user_envelope_id = target.pk
+                    else:
+                        item.node_envelope_id = node_envelope_ids[target.key_index]
+                # 多份载荷共用 batch-node 会话：不把它冒充逐载荷确认，FK 一律留空。
+            DistributionBatchItem.objects.bulk_create(batch_items)
 
     except WrapperError as exc:
         logger.error('封装失败: batch=%s err=%s', batch_id, exc)

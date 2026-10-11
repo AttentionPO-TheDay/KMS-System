@@ -59,7 +59,10 @@ from django.utils import timezone
 from . import api_contract as C
 from . import kms_service_client as kms
 from .envelope_signature import ciphertext_digest, verify_node_envelope
-from .models import DistributionBatch, Node, PreDistributedKey, SessionKey, UserNodeAuthorization
+from .models import (
+    DistributionBatch, DistributionBatchItem, Node, PreDistributedKey, SessionKey,
+    UserNodeAuthorization,
+)
 from .node_key_registry import require_key_version
 from .sm4_crypto import PAYLOAD_ALGORITHM_SM4
 from .wrappers import NODE_WRAPPING_BY_CANONICAL, NODE_WRAPPING_CHOICES
@@ -590,7 +593,7 @@ def create_node_distribution(sender: Node, receiver: Node, *,
 
     try:
         with transaction.atomic():
-            PreDistributedKey.objects.create(
+            node_envelope = PreDistributedKey.objects.create(
                 pool_id=batch_id,
                 key_index=0,
                 # `node1` = 收件节点（`node_session_views` 取信封就是按
@@ -640,6 +643,29 @@ def create_node_distribution(sender: Node, receiver: Node, *,
                 # 与页面显示都读它们，不再靠 batch_id 反查。
                 recipient_key=key, falcon_key=signing_key,
             )
+            # get_or_create 可能遇到同名的历史孤立会话；名字相同不构成归属证明。
+            session = SessionKey.objects.filter(
+                session_id=f'{batch_id}-n{receiver.id}', node1=sender, node2=receiver,
+            ).first()
+            if session is not None:
+                try:
+                    session_context = json.loads(session.key_exchange_data or '{}')
+                except (ValueError, TypeError):
+                    session_context = None
+                if not isinstance(session_context, dict) or session_context.get('batch_id') != batch_id:
+                    session = None
+            DistributionBatchItem.objects.create(
+                batch=batch, item_index=0, payload_index=0,
+                recipient_type='node', recipient_node=receiver,
+                recipient_node_code=receiver.node_id, recipient_node_name=receiver.name,
+                recipient_key_id=key.key_id, recipient_key_version=key.key_version,
+                wrapping_algorithm=wrapping, payload_algorithm=PAYLOAD_ALGORITHM_SM4,
+                delivery_status='success', signature_state='valid',
+                signature_message='登记时已使用发送方指定 Falcon 公钥版本验签，不代表接收方已验签或解封',
+                node_envelope=node_envelope,
+                session=session,
+                key_hash=key_hash, ciphertext_digest=digest, expires_at=expires_at,
+            )
     except IntegrityError as exc:
         # `batch_id` 撞唯一约束。KMS-009 起批次号由**调用方**生成，所以撞号是
         # 真会发生的事（页面生成的随机后缀撞上、或同一个批次被提交两次）。
@@ -672,7 +698,7 @@ def create_node_distribution(sender: Node, receiver: Node, *,
     #   2. 提交自己的持有证明（确认）—— 会话 ID 是 proof 的消息，
     #      让调用方从批次号去拼（`{batch}-n{pk}`）等于把命名约定泄露给每个调用方，
     #      拼错的表现是"确认提交了、对方却永远等不到"。
-    session = SessionKey.objects.filter(session_id=f'{batch_id}-n{receiver.id}').first()
+    # 回执也复用上面的归属核验结果，不能再仅按名字读到他属主会话。
 
     return {
         'batch': batch,

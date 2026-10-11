@@ -28,6 +28,7 @@ from .admin_node_authorization_views import (
 from .user_distribution_views import (
     distribute_to_user,
     distribution_batches,
+    distribution_batch_detail,
     user_nodes,
     user_symmetric_key_detail,
     user_symmetric_keys,
@@ -68,6 +69,9 @@ from .node_auth_views import node_activate, node_challenge, node_login, node_sti
 from .internal_pool_views import revoke_pool_by_key
 # 阶段 7 §8.7：安全监控总览
 from .security_monitor_views import security_summary
+from .node_key_review_views import (node_key_reviews, node_key_review_impact,
+                                    node_key_review_action)
+from .admin_key_views import admin_node_long_term_keys, chain_runtime_status
 app_name = 'pqkds'
 router = DefaultRouter()
 router.register(r'system-parameters', SystemParametersViewSet, basename='systemparameters')
@@ -82,6 +86,13 @@ router.register(r'logs', KeyDistributionLogViewSet, basename='logs')
 router.register(r'stats', SystemStatsViewSet, basename='stats')
 router.register(r'key-pool', KeyPoolViewSet, basename='keypool')
 urlpatterns = [
+    path('chain-runtime-status/', chain_runtime_status, name='chain-runtime-status'),
+    path('admin/node-long-term-keys/', admin_node_long_term_keys, name='admin-node-long-term-keys'),
+    path('node-key-reviews/', node_key_reviews, name='node-key-reviews'),
+    path('node-key-reviews/<int:row_id>/impact/', node_key_review_impact, name='node-key-review-impact'),
+    *[path('node-key-reviews/<int:row_id>/' + operation + '/', node_key_review_action,
+           {'operation': operation}, name='node-key-review-' + operation)
+      for operation in ('confirm', 'revoke', 'dismiss', 'retry')],
     # ⚠️ 用户侧分发（P3 / §5.1）必须排在 router **之前**。
     # DRF 的 router 会为 `key-pool` 生成详情路由 `key-pool/<pk>/`，
     # 它能把 `key-pool/distribute-to-user/` 一并吃掉（把 pk 当成 "distribute-to-user"），
@@ -194,6 +205,7 @@ urlpatterns = [
     path('user-symmetric-keys/', user_symmetric_keys, name='user-symmetric-keys'),
     path('user-symmetric-keys/<int:pk>/', user_symmetric_key_detail, name='user-symmetric-key-detail'),
     path('distribution-batches/', distribution_batches, name='distribution-batches'),
+    path('distribution-batches/<str:batch_id>/', distribution_batch_detail, name='distribution-batch-detail'),
     path('key-pool/distribute-to-user/', distribute_to_user, name='distribute-to-user'),
 
     # --- 管理端「节点鉴权」（P3 步骤 10）---

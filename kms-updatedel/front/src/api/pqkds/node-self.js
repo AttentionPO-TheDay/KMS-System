@@ -58,6 +58,13 @@ export const NODE_SELF_ERR = Object.freeze({
 })
 
 /** 当前登录账号对应的节点及其初始化状态。管理员账号会得到 mapped=false。 */
+export function getNodeKeyReviewImpact(rowId) {
+  return http.get(`/node-key-reviews/${rowId}/impact/`).then(unwrap)
+}
+export function actOnNodeKeyReview(rowId, operation, note = '') {
+  return http.post(`/node-key-reviews/${rowId}/${operation}/`, { note }).then(unwrap)
+}
+
 export function getSelfNode() {
   return http.get('/node-self/').then(unwrap)
 }
@@ -168,6 +175,11 @@ export function renewSelfNodeKeygenAuthorization({ generationIssuanceId, publicK
  */
 export function listSelfNodeKeys() {
   return http.get('/node-self/keys/').then(unwrap)
+}
+
+/** Paginated revocation and pending-review records; backend scopes node accounts. */
+export function listNodeKeyReviews(params) {
+  return http.get('/node-key-reviews/', { params }).then(unwrap)
 }
 
 /**

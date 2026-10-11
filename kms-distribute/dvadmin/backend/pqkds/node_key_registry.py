@@ -561,10 +561,10 @@ def revoke_public_key(key: NodeLongTermKey, reason: str = '') -> NodeLongTermKey
     大量既有读路径会继续把已回收的公钥当成可用。**失败是静默的** ——
     解密照样成功，只是本该被拒绝的分发成功了。
     """
+    Node.objects.select_for_update().get(pk=key.node_id)
     lock_registry_node(key.node)
-    if is_fabric_did():
-        # 调用方可能拿着旧对象；锁节点后回读状态，防止旧 ACTIVE 清掉刚轮换的新公钥。
-        key = NodeLongTermKey.objects.select_for_update().get(pk=key.pk)
+    # 自动审查也按 Node 行串行；这里回读状态，避免旧对象在并发下清掉新公钥。
+    key = NodeLongTermKey.objects.select_for_update().get(pk=key.pk)
     if key.status == C.KEY_STATUS_REVOKED:
         return key  # 幂等
 

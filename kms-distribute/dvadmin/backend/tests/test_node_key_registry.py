@@ -128,7 +128,7 @@ import django  # noqa: E402
 
 django.setup()
 
-from django.db import IntegrityError, transaction  # noqa: E402
+from django.db import IntegrityError, connection, transaction  # noqa: E402
 from django.utils import timezone  # noqa: E402
 
 from pqkds import api_contract as C  # noqa: E402
@@ -137,6 +137,7 @@ from pqkds.key_pool_service import KeyPoolService  # noqa: E402
 from pqkds.key_revocation_service import revoke_long_term_key  # noqa: E402
 from pqkds.models import (  # noqa: E402
     Node,
+    NodeKeyInspection,
     NodeLongTermKey,
     PreDistributedKey,
     SessionKey,
@@ -2114,6 +2115,238 @@ def test_pool_consume_semantics(node):
     return all(results)
 
 
+def test_node_key_review_invariants(node):
+    """KMS-018：待复核处置、影响面预览与自动巡检优先级。"""
+    from django.test import RequestFactory
+
+    from pqkds.auto_revoke_service import _inspect_warnings, inspect_key
+    from pqkds.node_key_review_service import handle_inspection, key_impact
+    from pqkds.node_key_review_views import (node_key_review_action,
+                                              node_key_review_impact,
+                                              node_key_reviews)
+
+    results = []
+    other = _make_node('18-peer')
+    actor = f'kms-018-{uuid.uuid4().hex[:8]}'
+    factory = RequestFactory()
+
+    def make_warning_key(algorithm):
+        material = {
+            'KYBER': _b64_key(1184),
+            'SM2': _hex_pub('18'),
+            'SSCL': _hex_pub('19'),
+            'FALCON': _b64_key(897),
+        }[algorithm]
+        key = R.register_public_key(node, algorithm=algorithm, public_key=material)
+        column = C.algorithm_column(algorithm)
+        drift = f'{material}-drift'
+        Node.objects.filter(pk=node.pk).update(**{column: drift})
+        node.refresh_from_db()
+        rule, severity, action = inspect_key(key, node)
+        inspection = NodeKeyInspection.objects.create(
+            key=key, rule=rule, severity=severity, action=action,
+            detected_at=timezone.now(),
+        )
+        return key, inspection
+
+    def post_action(row_id, operation, note):
+        request = factory.post(
+            f'/node-key-reviews/{row_id}/{operation}/',
+            data=json.dumps({'note': note}),
+            content_type='application/json',
+        )
+        request.kms_identity = {
+            'entryMode': 'DEMO', 'roleLevel': 0, 'userId': actor,
+        }
+        return node_key_review_action(request, row_id, operation)
+
+    try:
+        # A. Impact preview is read-only and uses the same precise references as revoke.
+        key, inspection = make_warning_key('KYBER')
+        item = _make_pool_item(
+            node, '18-impact', long_term_key_id=key.key_id,
+            long_term_key_version=key.key_version,
+        )
+        session = _make_session(other, node, '18-impact', recipient_key=key)
+        before = (item.status, session.status, key.status)
+        impact = key_impact(key, node)
+        results.append(_report(
+            'KMS-018：影响面预览精确返回池项与会话数量',
+            impact['poolItems'] == 1 and impact['precisePoolItems'] == 1
+            and impact['sessions'] == 1 and len(impact['sessionItems']) == 1,
+            f"poolItems={impact['poolItems']} sessions={impact['sessions']}",
+        ))
+        results.append(_report(
+            'KMS-018：影响面预览不改动密钥、池项或会话',
+            (item.status, session.status, key.status) == before,
+            f'状态={item.status}/{session.status}/{key.status}',
+        ))
+
+        request = factory.get(f'/node-key-reviews/{key.pk}/impact/')
+        request.kms_identity = {
+            'entryMode': 'DEMO', 'roleLevel': 0, 'userId': actor,
+        }
+        impact_response = node_key_review_impact(request, key.pk)
+        impact_body = json.loads(impact_response.content)
+        results.append(_report(
+            'KMS-018：管理员详情端点带回 inspection 与 impact，而不是只回成功码',
+            impact_response.status_code == 200
+            and impact_body['data']['inspection']['rule'] == inspection.rule
+            and impact_body['data']['impact']['poolItems'] == 1,
+            f"status={impact_response.status_code} data={bool(impact_body.get('data'))}",
+        ))
+
+        # B. Confirm is auditable, does not revoke, and survives automatic upsert.
+        confirmed = handle_inspection(
+            key, node, inspection, 'confirm', actor, '已核对为真实记录',
+        )
+        inspection.refresh_from_db()
+        key.refresh_from_db()
+        results.append(_report(
+            'KMS-018：确认写入处置人、时间、说明，且不回收密钥',
+            confirmed['inspection']['disposition'] == 'confirmed'
+            and inspection.handled_by == actor
+            and inspection.handled_at is not None
+            and inspection.disposition_note == '已核对为真实记录'
+            and inspection.action == C.INSPECTION_PENDING_REVIEW
+            and key.status == C.KEY_STATUS_ACTIVE,
+            f'disposition={inspection.disposition} action={inspection.action}',
+        ))
+
+        # C. Dismiss and revoke require a reason at the HTTP boundary.
+        dismiss_key, dismiss_inspection = make_warning_key('SM2')
+        revoke_key, revoke_inspection = make_warning_key('SSCL')
+        blank_dismiss = post_action(dismiss_key.pk, 'dismiss', '')
+        blank_revoke = post_action(revoke_key.pk, 'revoke', '   ')
+        results.append(_report(
+            'KMS-018：忽略误报缺少原因时被拒，且不写处置字段',
+            blank_dismiss.status_code == 400
+            and dismiss_inspection.disposition is None,
+            f'status={blank_dismiss.status_code}',
+        ))
+        results.append(_report(
+            'KMS-018：人工回收缺少原因时被拒，且密钥仍可用',
+            blank_revoke.status_code == 400
+            and revoke_inspection.disposition is None
+            and revoke_key.status == C.KEY_STATUS_ACTIVE,
+            f'status={blank_revoke.status_code} key={revoke_key.status}',
+        ))
+
+        dismissed = handle_inspection(
+            dismiss_key, node, dismiss_inspection, 'dismiss', actor, '已核对为误报：材料已在外部修复',
+        )
+        revoke_result = handle_inspection(
+            revoke_key, node, revoke_inspection, 'revoke', actor, '人工确认材料不可恢复',
+        )
+        dismiss_inspection.refresh_from_db()
+        revoke_inspection.refresh_from_db()
+        dismiss_key.refresh_from_db()
+        revoke_key.refresh_from_db()
+        results.append(_report(
+            'KMS-018：忽略误报进入已处置终态并保留必填说明',
+            dismissed['inspection']['disposition'] == 'dismissed'
+            and dismiss_inspection.action == C.INSPECTION_RESOLVED
+            and bool(dismiss_inspection.handled_at)
+            and dismiss_inspection.disposition_note.startswith('已核对为误报'),
+            f'disposition={dismiss_inspection.disposition} action={dismiss_inspection.action}',
+        ))
+        results.append(_report(
+            'KMS-018：人工回收使用统一回收编排并回报影响面',
+            revoke_result['inspection']['disposition'] == 'manual_revoked'
+            and revoke_inspection.action == C.INSPECTION_MANUAL_REVOKED
+            and revoke_key.status == C.KEY_STATUS_REVOKED
+            and Node.objects.get(pk=node.pk).sscl_public_key in ('', None)
+            and revoke_result['impact']['sessionsOk'] is True,
+            f"disposition={revoke_inspection.disposition} status={revoke_key.status} "
+            f"impact={revoke_result.get('impact')}",
+        ))
+
+        with connection.cursor() as cursor:
+            _inspect_warnings(cursor, timezone.now())
+        inspection.refresh_from_db()
+        dismiss_inspection.refresh_from_db()
+        revoke_inspection.refresh_from_db()
+        results.append(_report(
+            'KMS-018：自动巡检不会覆盖 confirmed/dismissed/manual_revoked 人工终态',
+            inspection.disposition == 'confirmed'
+            and inspection.action == C.INSPECTION_PENDING_REVIEW
+            and dismiss_inspection.disposition == 'dismissed'
+            and dismiss_inspection.action == C.INSPECTION_RESOLVED
+            and revoke_inspection.disposition == 'manual_revoked'
+            and revoke_inspection.action == C.INSPECTION_MANUAL_REVOKED,
+            f'confirm={inspection.action}/{inspection.disposition} '
+            f'dismiss={dismiss_inspection.action}/{dismiss_inspection.disposition}',
+        ))
+
+        # D. Retry reruns only this row's detection; it never revokes a still-active key.
+        retry_key, retry_inspection = make_warning_key('FALCON')
+        retry_inspection.rule = 'PUBLIC_KEY_HASH_MISMATCH'
+        retry_inspection.severity = 'ERROR'
+        retry_inspection.save(update_fields=['rule', 'severity'])
+        retry_result = handle_inspection(
+            retry_key, node, retry_inspection, 'retry', actor, '',
+        )
+        retry_inspection.refresh_from_db()
+        retry_key.refresh_from_db()
+        results.append(_report(
+            'KMS-018：重试重跑单行判定并写入 rechecked，不触发回收或链绑定',
+            retry_result['recheck']['rule'] == 'MATERIALIZED_PUBLIC_KEY_MISMATCH'
+            and retry_inspection.disposition == 'rechecked'
+            and retry_inspection.action == C.INSPECTION_PENDING_REVIEW
+            and retry_inspection.severity == 'WARNING'
+            and retry_inspection.handled_by == actor
+            and retry_key.status == C.KEY_STATUS_ACTIVE
+            and retry_key.revoked_at is None,
+            f'rule={retry_inspection.rule} action={retry_inspection.action} '
+            f'disposition={retry_inspection.disposition}',
+        ))
+
+        column = C.algorithm_column('FALCON')
+        Node.objects.filter(pk=node.pk).update(**{column: retry_key.public_key})
+        node.refresh_from_db()
+        handle_inspection(retry_key, node, retry_inspection, 'retry', actor, '')
+        retry_inspection.refresh_from_db()
+        results.append(_report(
+            'KMS-018：异常恢复后重试明确收敛到 RESOLVED',
+            retry_inspection.action == C.INSPECTION_RESOLVED
+            and retry_inspection.disposition == 'rechecked'
+            and retry_key.status == C.KEY_STATUS_ACTIVE,
+            f'action={retry_inspection.action} disposition={retry_inspection.disposition}',
+        ))
+
+        # E. Manual terminals remain immutable even when a user presses retry.
+        for terminal_key, terminal_inspection, expected_action, expected_disposition in (
+            (key, inspection, C.INSPECTION_PENDING_REVIEW, 'confirmed'),
+            (dismiss_key, dismiss_inspection, C.INSPECTION_RESOLVED, 'dismissed'),
+            (revoke_key, revoke_inspection, C.INSPECTION_MANUAL_REVOKED, 'manual_revoked'),
+        ):
+            handle_inspection(terminal_key, node, terminal_inspection, 'retry', actor, '')
+            terminal_inspection.refresh_from_db()
+            results.append(_report(
+                f'KMS-018：{expected_disposition} 人工终态不可被 retry 覆盖',
+                terminal_inspection.action == expected_action
+                and terminal_inspection.disposition == expected_disposition,
+                f'action={terminal_inspection.action} disposition={terminal_inspection.disposition}',
+            ))
+
+        handled_request = factory.get('/node-key-reviews/?mode=handled&page=1&pageSize=100')
+        handled_request.kms_identity = {
+            'entryMode': 'DEMO', 'roleLevel': 0, 'userId': actor,
+        }
+        handled_response = node_key_reviews(handled_request)
+        handled_body = json.loads(handled_response.content)
+        handled_ids = {row['rowId'] for row in handled_body['data']['rows']}
+        results.append(_report(
+            'KMS-018：mode=handled 可回看确认、忽略和人工回收记录',
+            handled_response.status_code == 200
+            and {key.pk, dismiss_key.pk, revoke_key.pk}.issubset(handled_ids),
+            f'handled={len(handled_ids)} expected={key.pk},{dismiss_key.pk},{revoke_key.pk}',
+        ))
+    finally:
+        other.delete()
+    return all(results)
+
+
 def _main():
     print("== KMS-004 长期密钥登记不变量自测 ==\n")
 
@@ -2138,6 +2371,7 @@ def _main():
         ("按显式版本取密钥：四种拒绝各自可区分（KMS-008）", test_require_key_version),
         ("服务端验签：验不过必拒、验过才登记（KMS-010）", test_verify_node_distribution_signature),
         ("池项消费：断口复现、状态机、终态、过期与引用失效（KMS-013）", test_pool_consume_semantics),
+        ("异常待复核：处置审计、精确影响面与自动巡检优先级（KMS-018）", test_node_key_review_invariants),
     ]
 
     failed = []

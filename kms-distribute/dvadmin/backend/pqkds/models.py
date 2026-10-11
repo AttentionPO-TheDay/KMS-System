@@ -8,6 +8,8 @@ from typing import Dict, Any
 # 冻结契约（KMS-002）。models 只从这里取**取值**，不取任何业务逻辑 ——
 # api_contract 不 import 任何业务模块，所以这里不会形成循环引用。
 from .api_contract import (
+    INSPECTION_ACTION_CHOICES,
+    INSPECTION_DISPOSITION_CHOICES,
     KEY_STATUS_ACTIVE,
     KEY_STATUS_CHOICES,
     KEY_STATUS_EXPIRED,
@@ -495,6 +497,10 @@ class SessionKey(CoreModel):
         verbose_name = "会话密钥"
         verbose_name_plural = "会话密钥"
         db_table = f"{table_prefix}pqkds_session_keys"
+        indexes = [
+            models.Index(fields=['node2', 'recipient_key_id', 'recipient_key_version', 'status'], name='pqkds_sess_recipient'),
+            models.Index(fields=['node1', 'falcon_key_id', 'falcon_key_version', 'status'], name='pqkds_sess_falcon'),
+        ]
     def __str__(self):
         return f"会话-{self.node1.name}↔{self.node2.name}"
 class SessionKeyConfirmation(CoreModel):
@@ -940,6 +946,7 @@ class NodeLongTermKey(CoreModel):
     def __str__(self):
         return f"{self.node.node_id}/{self.algorithm}/{self.key_id}/v{self.key_version}({self.status})"
 
+
     @property
     def is_expired(self) -> bool:
         """是否已过期。状态被显式标成 EXPIRED、或过期时间已到。"""
@@ -971,6 +978,42 @@ class NodeLongTermKey(CoreModel):
         self.status = KEY_STATUS_REVOKED
         self.revoked_at = timezone.now()
         self.revoked_reason = (reason or '')[:255]
+
+
+class NodeKeyInspection(models.Model):
+    """One durable finding per key version. A warning can later be resolved."""
+
+    key = models.OneToOneField(NodeLongTermKey, on_delete=models.CASCADE, related_name='inspection')
+    rule = models.CharField(max_length=40)
+    severity = models.CharField(max_length=10)
+    action = models.CharField(max_length=20, choices=INSPECTION_ACTION_CHOICES)
+    handled_by = models.CharField(max_length=64, blank=True, default='')
+    handled_at = models.DateTimeField(null=True, blank=True)
+    disposition = models.CharField(max_length=20, choices=INSPECTION_DISPOSITION_CHOICES,
+                                    null=True, blank=True)
+    disposition_note = models.TextField(null=True, blank=True)
+    detected_at = models.DateTimeField(default=timezone.now)
+    action_at = models.DateTimeField(null=True, blank=True)
+    batch_id = models.CharField(max_length=36, blank=True, default='')
+
+    class Meta:
+        db_table = f"{table_prefix}pqkds_node_key_inspections"
+        indexes = [models.Index(fields=['action', '-detected_at'], name='pqkds_inspection_action')]
+
+
+class NodeKeyAutoRevocationBatch(models.Model):
+    """Committed batch metrics; throughput includes detection and dependent writes."""
+
+    batch_id = models.CharField(max_length=36, primary_key=True)
+    started_at = models.DateTimeField()
+    completed_at = models.DateTimeField()
+    key_count = models.PositiveIntegerField()
+    pool_count = models.PositiveIntegerField()
+    session_count = models.PositiveIntegerField()
+    elapsed_ms = models.PositiveIntegerField()
+
+    class Meta:
+        db_table = f"{table_prefix}pqkds_node_key_revoke_batches"
 
 class PreDistributedKey(CoreModel):
     """基于格的安全密钥预分配 - 密钥池模型"""
@@ -1096,6 +1139,7 @@ class PreDistributedKey(CoreModel):
             models.Index(fields=['node1', 'node2', 'status', 'algorithm']),
             models.Index(fields=['pool_id']),
             models.Index(fields=['status', 'expires_at']),
+            models.Index(fields=['long_term_key_id', 'long_term_key_version', 'status'], name='pqkds_pool_key_status'),
         ]
 
     def __str__(self):
@@ -1108,6 +1152,7 @@ class SessionKeyInvalidation(CoreModel):
         ('node2_key_updated', '节点2密钥已更新'),
         ('both_keys_updated', '两个节点密钥都已更新'),
         ('manual_revocation', '手动撤销'),
+        ('automatic_revocation', '异常密钥自动回收'),
     ]
     session = models.ForeignKey(SessionKey, on_delete=models.CASCADE, related_name='invalidations', verbose_name="会话", help_text="被失效的会话")
     invalidated_node = models.ForeignKey(Node, on_delete=models.CASCADE, related_name='invalidated_sessions', verbose_name="触发失效的节点", help_text="密钥更新导致会话失效的节点")
@@ -1399,3 +1444,65 @@ class DistributionBatch(CoreModel):
 
     def __str__(self):
         return f"批次{self.batch_id[:8]}({self.status})"
+
+
+class DistributionBatchItem(models.Model):
+    """逐信封 / 逐失败尝试的元数据，不复制密文或存储 SM4 明文。
+
+    信封、节点与会话引用可空：对象删除后仍保留当时的收件信息和版本。
+    旧批次不回填；未知版本保留 NULL，不能拿当前公钥版本猜历史。
+    用户腿会话是 batch-node 粒度，多份载荷不能逐项声称已确认，故 session 留空。
+    """
+
+    batch = models.ForeignKey(DistributionBatch, on_delete=models.CASCADE, related_name='items')
+    item_index = models.PositiveIntegerField()
+    payload_index = models.PositiveIntegerField()
+    recipient_type = models.CharField(max_length=10, choices=[('user', '用户'), ('node', '节点')])
+    recipient_user_id = models.BigIntegerField(null=True, blank=True)
+    recipient_node = models.ForeignKey(
+        Node, on_delete=models.SET_NULL, null=True, blank=True, related_name='distribution_items',
+    )
+    recipient_node_code = models.CharField(max_length=64, blank=True, default='')
+    recipient_node_name = models.CharField(max_length=100, blank=True, default='')
+    recipient_key_id = models.CharField(max_length=64, null=True, blank=True)
+    recipient_key_version = models.PositiveIntegerField(null=True, blank=True)
+    wrapping_algorithm = models.CharField(max_length=20)
+    payload_algorithm = models.CharField(max_length=20, default='sm4')
+    delivery_status = models.CharField(
+        max_length=20, choices=[('success', '信封已登记'), ('failed', '封装失败')],
+    )
+    signature_state = models.CharField(
+        max_length=20, default='unverifiable', choices=[
+            ('valid', '签名有效'), ('invalid', '签名无效'),
+            ('missing', '无签名'), ('unverifiable', '无法验证'),
+        ],
+    )
+    signature_message = models.CharField(max_length=255, blank=True, default='')
+    user_envelope = models.ForeignKey(
+        UserKeyEnvelope, on_delete=models.SET_NULL, null=True, blank=True, related_name='distribution_items',
+    )
+    node_envelope = models.ForeignKey(
+        PreDistributedKey, on_delete=models.SET_NULL, null=True, blank=True, related_name='distribution_items',
+    )
+    session = models.ForeignKey(
+        SessionKey, on_delete=models.SET_NULL, null=True, blank=True, related_name='distribution_items',
+    )
+    key_hash = models.CharField(max_length=64, blank=True, default='')
+    ciphertext_digest = models.CharField(max_length=64, blank=True, default='')
+    failure_reason = models.TextField(blank=True, default='')
+    expires_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = f"{table_prefix}pqkds_distribution_batch_items"
+        ordering = ['item_index', 'id']
+        constraints = [
+            models.UniqueConstraint(fields=['batch', 'item_index'], name='pqkds_dist_item_uniq'),
+        ]
+        indexes = [
+            models.Index(fields=['batch', 'delivery_status'], name='pqkds_dist_item_status'),
+            models.Index(fields=['recipient_node', 'recipient_key_id', 'recipient_key_version'],
+                         name='pqkds_dist_item_key'),
+            models.Index(fields=['recipient_user_id', 'created_at'], name='pqkds_dist_item_user'),
+            models.Index(fields=['expires_at'], name='pqkds_dist_item_expiry'),
+        ]

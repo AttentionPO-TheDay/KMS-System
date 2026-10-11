@@ -186,3 +186,10 @@ export async function listDistributionBatches(query = {}) {
   const suffix = search.toString() ? `?${search.toString()}` : ''
   return unwrap(await requestJson(apiBases.pqkdsApi, `/distribution-batches/${suffix}`))
 }
+
+/** 属主可见的分发批次安全明细（元数据，不含密文或 SM4 明文） */
+export async function getDistributionBatch(batchId) {
+  return unwrapPqkds(await pqkdsHttp.get(
+    `/distribution-batches/${encodeURIComponent(batchId)}/`
+  ))
+}

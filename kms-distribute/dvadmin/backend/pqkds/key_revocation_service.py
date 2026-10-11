@@ -146,7 +146,7 @@ def revoke_long_term_key(
     was_active = key.status == C.KEY_STATUS_ACTIVE
 
     # 1) 撤密钥本身（含清空 Node.<算法>_public_key）。
-    revoke_public_key(key, (reason or '').strip() or _DEFAULT_REASON)
+    key = revoke_public_key(key, (reason or '').strip() or _DEFAULT_REASON)
 
     # 2) 失效池项：那些用这把公钥封过、还没被消费的预分配条目，
     #    现在永远解不开了 —— 留在 READY 集合里只会浪费一次会话，
