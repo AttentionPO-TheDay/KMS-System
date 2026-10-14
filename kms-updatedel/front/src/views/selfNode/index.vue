@@ -64,7 +64,7 @@
                  浏览器拿不到稳定 MAC（网卡随机化下更没有意义）；
                  指纹只作展示与"换设备"判定的可验证量，登录靠的是设备私钥签名。 -->
             <span class="mono">{{ node.keyDeviceId || '（未绑定）' }}</span>
-            <div class="hint">设备公钥的 SHA-256 指纹（32 位十六进制），不是 MAC 地址；换设备或清站点数据后会变。</div>
+
           </el-descriptions-item>
         </el-descriptions>
 

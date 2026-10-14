@@ -2,7 +2,7 @@
   <div class="process-container">
     <div class="page-title">
       <h1>密钥更新与回收运算全景</h1>
-      <p class="subtitle">跟踪无证书环境下的密钥生命周期变迁(自动触发旧碎片销毁与新材料同步)</p>
+
     </div>
 
     <!-- 控制面板 -->
@@ -165,7 +165,7 @@
                   等待触发计算...
                 </div>
               </div>
-              
+
               <div class="flex-box mt-15">
                 <div class="item finalize-block final-priv">
                   <div class="title">🔐 新的最终绝对私钥 (Rotation Success)</div>
@@ -365,7 +365,7 @@ async function runStep3() {
 
     let parsedVal = responseData.keyValue;
     try { parsedVal = JSON.parse(responseData.keyValue) } catch(e){}
-    
+
     step3Data.responseObj = {
       action: "Rotation Material Regenerated",
       newKGCVersion: "V" + Math.floor(Math.random() * 100),
@@ -407,18 +407,18 @@ const N_SM2 = new BigInteger('FFFFFFFEFFFFFFFFFFFFFFFFFFFFFFFF7203DF6B21C6052B53
 async function performGenDA(item, userPrivCode, userPubCode) {
   const { xIndex, yIndex, PPub } = await genUAContext(item.encrytType, item.encrytName)
   step4Data.mathSteps = []
-  
+
   if (item.encrytName === "SM2") {
     try {
       const keyValueObj = JSON.parse(item.keyValue)
       step4Data.mathSteps.push(`提取 更新后的KGC服务端分片 T_A: ${keyValueObj.partialKey}`)
       step4Data.mathSteps.push(`提取 本地更新的随机熵分片 u_A: ${userPrivCode}`)
-      
+
       const num1 = new BigInteger(keyValueObj.partialKey, 16)
       const num2 = new BigInteger(userPrivCode, 16)
       step4Data.mathSteps.push(`执行模加: dA = (T_A + u_A) mod N_SM2`)
       const dA = (num1.add(num2)).mod(N_SM2)
-      
+
       step4Data.PrivateKey = leftPad(dA.toString(16), 64)
       step4Data.PublicKey = keyValueObj.finalPublicKey
     } catch (e) {
@@ -428,18 +428,18 @@ async function performGenDA(item, userPrivCode, userPubCode) {
     try {
       const share = JSON.parse(item.keyValue).SSCLKey
       step4Data.mathSteps.push(`提取 更新后的多项式门限响应分片: ${share}`)
-      
+
       const xHex = share.slice(2, 66)
       const yHex = share.slice(66, 130)
       step4Data.mathSteps.push(`拉格朗日门限重建核心秘密 (基于新的Y坐标)`)
       const secret = getSSCLSecret(xIndex, yIndex, xHex, yHex, N_SM2)
-      
+
       const dA = secret.multiply(new BigInteger(xHex, 16)).mod(N_SM2)
       step4Data.mathSteps.push(`代入转换: dA = S_KGC * M_x mod N_SM2`)
-      
+
       const sk = new BigInteger(userPrivCode, 16).add(dA).mod(N_SM2)
       step4Data.mathSteps.push(`计算最新轮次绝对私钥: S_A(new) = (num1 + dA) mod N_SM2`)
-      
+
       step4Data.PrivateKey = leftPad(sk.toString(16), 64)
       step4Data.PublicKey = sm2PointMultiply(PPub, sk.toString(16).padStart(64, '0').slice(-64))
     } catch (e) {

@@ -160,9 +160,6 @@
 
         <h3 class="gen-create__section-title">
           {{ purpose === 'signing' ? '本节点签名密钥对照' : '本节点分发保护密钥对照' }}
-          <span class="gen-create__section-note">
-            只列 {{ node.nodeId }} 的密钥 —— 同一浏览器上其它节点的材料不会出现在这里
-          </span>
         </h3>
         <el-table :data="rows" size="small" border class="gen-create__table">
           <el-table-column label="生成方案" min-width="240">

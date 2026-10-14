@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component;
 public class DemoIdentity {
     public static final String ATTRIBUTE = "kms.demo.identity";
     private static final Set<Long> ADMIN_MENUS = new HashSet<>(Arrays.asList(
-            9470L, 9103L, 9005L, 9006L, 9201L,
+            9470L, 9103L, 9005L, 9006L, 9201L, 9461L, 9453L,
             9480L, 9481L, 9482L, 9483L, 9484L));
     @Autowired private ISysUserService users;
     @Autowired private UserDetailsServiceImpl userDetails;

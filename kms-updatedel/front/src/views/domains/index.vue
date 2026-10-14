@@ -4,31 +4,24 @@
       <template #header>
         <div class="panel-head">
           <span>域管理</span>
-          <el-button size="small" :loading="loading" @click="load">刷 新</el-button>
+          <el-button size="small" :loading="loading" :disabled="saving !== null" @click="load">刷新</el-button>
         </div>
       </template>
 
-      <!--
-        §9.10 跨域管理。
 
-        ⚠️ 域在这里是**标记**，不是一套独立的部署。
-        第一阶段不部署多套 KMS（见 three-subsystem-refactor-plan-v2.md §14
-        「不拆成三套独立物理部署，仍坚持逻辑三个子系统、物理一套系统」）。
-        域的取值就是 Node.domain_id 这个字段，本页做的是**归集与展示**，
-        明确不引入域表、域的增删改或任何域级策略 —— 那些都会让人误以为
-        域是独立安装，与上述决策相悖。
-
-        数据全部来自既有的 `GET /pqkds-api/nodes/`（NodeSerializer 含 domain_id），
-        因此本页不需要任何后端改动。
-      -->
-
+      <el-form class="create-domain" @submit.prevent="addDomain" label-position="top">
+        <el-form-item label="域标识（唯一）"><el-input v-model="newDomain.domain_id" maxlength="64" placeholder="例如 domain-3" :disabled="creating" /></el-form-item>
+        <el-form-item label="域名称"><el-input v-model="newDomain.name" maxlength="100" placeholder="例如研发域" :disabled="creating" /></el-form-item>
+        <el-form-item label="说明（选填）"><el-input v-model="newDomain.description" maxlength="500" :disabled="creating" /></el-form-item>
+        <el-button type="primary" native-type="submit" :loading="creating" :disabled="loading || saving !== null || !newDomain.domain_id.trim() || !newDomain.name.trim()">新增域</el-button>
+      </el-form>
+      <el-alert v-if="error" type="error" :title="error" :closable="false" show-icon />
       <el-alert
-        v-if="!loading && !domains.length"
+        v-else-if="!loading && !domains.length"
         type="info"
         :closable="false"
         show-icon
-        title="还没有任何节点"
-        description="域信息来自节点的 domain_id 字段，请先在「节点管理 → 节点列表」里创建节点并指定所属域。"
+        title="尚未创建域"
       />
 
       <template v-else>
@@ -39,11 +32,13 @@
               <span class="mono">{{ row.domainId }}</span>
             </template>
           </el-table-column>
+          <el-table-column label="域名称" prop="name" min-width="140" />
+          <el-table-column label="说明" prop="description" min-width="180" show-overflow-tooltip />
           <el-table-column label="节点数" width="100" align="center" prop="count" />
           <el-table-column label="状态分布" min-width="280">
             <template #default="{ row }">
               <el-tag v-for="s in row.statuses" :key="s.status" size="small" class="status-tag"
-                      :type="s.status === 'ACTIVE' ? 'success' : s.status === 'DISABLED' ? 'danger' : 'warning'">
+                      :type="statusTagType(s.status)">
                 {{ s.status }} × {{ s.count }}
               </el-tag>
             </template>
@@ -57,7 +52,7 @@
           </el-table-column>
         </el-table>
 
-        <div class="section-title">节点明细</div>
+        <div class="section-title">节点明细与域归属 <span class="domain-note">共 {{ nodes.length }} 个节点</span></div>
         <el-table v-loading="loading" :data="nodeRows" border>
           <el-table-column label="节点 ID" prop="node_id" min-width="150" show-overflow-tooltip />
           <el-table-column label="名称" prop="name" min-width="140" show-overflow-tooltip />
@@ -77,34 +72,52 @@
               <el-tag size="small" :type="statusTagType(row.status)">{{ row.status || '未初始化' }}</el-tag>
             </template>
           </el-table-column>
+          <el-table-column label="调整所属域" min-width="300">
+            <template #default="{ row }">
+              <div class="domain-editor">
+                <el-select v-model="drafts[row.id]" filterable
+                           :disabled="saving !== null || creating" :aria-label="`${row.node_id} 的新所属域`" placeholder="选择已创建的域">
+                  <el-option v-for="domain in registeredDomains" :key="domain.domain_id" :label="domain.domain_id" :value="domain.domain_id" />
+                </el-select>
+                <el-button :loading="saving === row.id"
+                           :disabled="saving !== null || !drafts[row.id]?.trim() || drafts[row.id]?.trim() === row.domain_id"
+                           @click="save(row)">保存</el-button>
+              </div>
+            </template>
+          </el-table-column>
         </el-table>
+
       </template>
     </el-card>
   </div>
 </template>
 
 <script setup>
-/**
- * §11.1 节点管理 → 域管理。
- *
- * 读 `GET /pqkds-api/nodes/`（NodeSerializer 暴露 domain_id，见 serializers.py
- * 里"漏在 fields 外面的字段会被 DRF 静默丢弃"那段注释）。前端按 domain_id
- * 归集即可，**不需要新接口** —— 这也是本页能比原计划少改一处后端的原因。
- */
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { listNodes } from '@/api/nodes/nodes'
+import { listAllNodes, updateNode } from '@/api/nodes/nodes'
+import { listDomains, createDomain } from '@/api/nodes/domains'
 
 const loading = ref(false)
 const nodes = ref([])
+const drafts = ref({})
+const saving = ref(null)
+const error = ref('')
+const registeredDomains = ref([])
+const creating = ref(false)
+const newDomain = ref({ domain_id: '', name: '', description: '' })
 
-/** 未指定域时的落点。与 Node.domain_id 的默认值保持一致（models.py:161） */
-const FALLBACK_DOMAIN = 'domain-1'
+/** 历史空域明确显示为未指定，不凭空推断到 domain-1。 */
+const FALLBACK_DOMAIN = '未指定域'
 
 const nodeRows = computed(() => nodes.value)
 
 const domains = computed(() => {
   const byDomain = new Map()
+  registeredDomains.value.forEach(domain => byDomain.set(domain.domain_id, {
+    domainId: domain.domain_id, name: domain.name, description: domain.description,
+    count: 0, statuses: new Map(), levels: new Map()
+  }))
   nodes.value.forEach((n) => {
     const id = String(n.domain_id || '').trim() || FALLBACK_DOMAIN
     if (!byDomain.has(id)) {
@@ -123,6 +136,8 @@ const domains = computed(() => {
   return [...byDomain.values()]
     .map((entry) => ({
       domainId: entry.domainId,
+      name: entry.name || '未登记',
+      description: entry.description || '',
       count: entry.count,
       statuses: [...entry.statuses].map(([status, count]) => ({ status, count })),
       levels: [...entry.levels].map(([level, count]) => ({ level, count }))
@@ -140,20 +155,58 @@ function statusTagType(status) {
 
 async function load() {
   loading.value = true
+  error.value = ''
   try {
-    nodes.value = await listNodes()
-  } catch (error) {
-    ElMessage.error(error?.message || '加载节点列表失败')
+    const [nodeData, domainData] = await Promise.all([listAllNodes(), listDomains()])
+    if (!Array.isArray(domainData)) throw new Error('域列表响应格式不正确')
+    nodes.value = nodeData
+    registeredDomains.value = domainData
+    drafts.value = Object.fromEntries(nodes.value.map(row => [row.id, row.domain_id || '']))
+  } catch (err) {
+    error.value = err?.message || '域数据获取失败，请刷新后重试'
     nodes.value = []
+    registeredDomains.value = []
   } finally {
     loading.value = false
   }
+}
+
+async function addDomain() {
+  if (creating.value || loading.value || saving.value !== null) return
+  creating.value = true
+  try {
+    await createDomain(Object.fromEntries(Object.entries(newDomain.value).map(([key, value]) => [key, value.trim()])))
+    newDomain.value = { domain_id: '', name: '', description: '' }
+    ElMessage.success('域已创建，可为节点调整归属')
+    await load()
+  } catch (err) { ElMessage.error(err?.message || '新增域失败，请重试') }
+  finally { creating.value = false }
+}
+
+async function save(row) {
+  if (saving.value !== null) return
+  const domain = String(drafts.value[row.id] || '').trim()
+  if (!domain || domain.length > 64) { ElMessage.warning('域标识须为 1 至 64 个字符'); return }
+  if (domain === row.domain_id) return
+  saving.value = row.id
+  try {
+    await updateNode(row.id, { domain_id: domain })
+    ElMessage.success('所属域已更新，历史分发记录不变')
+    await load()
+  } catch (err) { ElMessage.error(err?.message || '保存失败，节点归属未更新') }
+  finally { saving.value = null }
 }
 
 onMounted(load)
 </script>
 
 <style scoped>
+.domain-note { color: var(--kms-text-secondary); font-size: 13px; line-height: 1.7; }
+.domain-editor { display: flex; gap: 8px; }
+.domain-editor .el-select { flex: 1; min-width: 0; }
+.create-domain { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin: 20px 0; }
+.create-domain .el-form-item { flex: 1 1 180px; margin-bottom: 0; }
+@media (max-width: 600px) { .create-domain .el-form-item { flex-basis: 100%; } }
 .panel-head {
   display: flex;
   align-items: center;

@@ -34,11 +34,7 @@
 
       <template v-else>
         <div class="section-title">全网节点名录</div>
-        <p class="note">
-          这里是平台上的全部节点（不含自己）。<b>勾选多个对端可以一次提交申请</b>，
-          管理员批准后两个方向同时放行 —— 你<b>和</b>对方都能看到对方的密钥版本并建立会话。
-          也可以在「发起分发」页选好接收节点后直接提交（那是同一个接口）。
-        </p>
+
 
         <el-form :inline="true" class="filter-bar">
           <el-form-item label="搜索">
@@ -130,10 +126,7 @@
         </el-table>
 
         <div class="section-title">我的申请</div>
-        <p class="note">
-          「我发起」的是我在等的；「对方发起」的是别人想与我建立会话 ——
-          后者决定权在管理员，这里只让你看得见（否则对方显示"待审批"、你这边一片空白）。
-        </p>
+
         <el-table :data="requests" size="small" v-loading="loading" empty-text="还没有授权申请">
           <el-table-column label="方向" width="100">
             <template #default="{ row }">

@@ -35,6 +35,17 @@ class SystemParameters(CoreModel):
         ordering = ['-create_datetime']
     def __str__(self):
         return f"系统参数-{self.name}"
+class Domain(models.Model):
+    domain_id = models.CharField(max_length=64, unique=True)
+    name = models.CharField(max_length=100)
+    description = models.CharField(max_length=500, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = f"{table_prefix}pqkds_domains"
+        ordering = ['domain_id']
+
+
 class Node(CoreModel):
     node_id = models.CharField(max_length=64, unique=True, verbose_name="节点ID", help_text="唯一节点标识符")
     name = models.CharField(max_length=100, verbose_name="节点名称", help_text="节点显示名称")

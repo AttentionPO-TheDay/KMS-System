@@ -25,6 +25,28 @@ export function listNodes(params) {
   return http.get('/nodes/', { params: { page: 1, limit: 500, ...(params || {}) } }).then(unwrapList)
 }
 
+/** 域管理需要完整节点元数据，逐页拉取而非把第一页当作全量。 */
+export async function listAllNodes() {
+  const nodes = []
+  const seen = new Set()
+  for (let page = 1; ; page++) {
+    const response = await http.get('/nodes/', { params: { page, limit: 500 } })
+    const data = unwrap(response)
+    const rows = Array.isArray(data) ? data : data?.results || data?.data
+    if (!Array.isArray(rows)) throw new Error('节点列表响应格式不正确')
+    const meta = Array.isArray(data) ? response : data
+    const total = meta?.total ?? meta?.count
+    const more = meta?.is_next ?? Boolean(meta?.next || (total != null && nodes.length + rows.length < Number(total)))
+    for (const row of rows) {
+      if (row.id == null || seen.has(row.id)) throw new Error('节点列表分页已变化，请刷新后重试')
+      seen.add(row.id)
+      nodes.push(row)
+    }
+    if (!more) return nodes
+    if (!rows.length) throw new Error('节点列表分页不完整，请刷新后重试')
+  }
+}
+
 /**
  * 注册（新增）节点。
  *

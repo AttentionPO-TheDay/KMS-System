@@ -20,7 +20,9 @@
             </div>
           </template>
 
-          <template v-if="keyId">
+          <el-alert v-if="checkError" :title="checkError" type="error" :closable="false" show-icon />
+          <el-empty v-else-if="!result && !loading" description="输入密钥ID后点击检查" :image-size="64" />
+          <template v-if="result">
             <div v-if="result" class="kh-summary">
               <el-tag :type="healthTagType" size="large">{{ healthText }}</el-tag>
               <span class="kh-meta">
@@ -45,7 +47,7 @@
             <!-- 观测值：给出判定的原始依据，便于人工复核。
                  健康检查若只给结论不给依据，运维无法判断该不该信。 -->
             <el-collapse v-if="result?.observations?.length" class="kh-obs">
-              <el-collapse-item :title="`观测值（${result.observations.length} 条）—— 判定依据，供人工核对`">
+              <el-collapse-item :title="`检查明细（${result.observations.length} 条）`">
                 <ul>
                   <li v-for="(o, i) in result.observations" :key="i">{{ o }}</li>
                 </ul>
@@ -72,9 +74,6 @@
           <template v-if="source === 'user'">
             <div class="kh-toolbar">
               <el-button type="primary" icon="Search" :loading="scanning" @click="runScan">触发扫描</el-button>
-              <span class="kh-note">
-                多用户全量扫描需管理员；普通账号只会扫描自己的密钥。单次扫描有条数上限（触顶时批次行会写明剩余未扫描数）。
-              </span>
             </div>
 
             <el-table v-loading="runsLoading" :data="runs" size="small" border>
@@ -254,8 +253,11 @@ import {
   listKeyHealthScanItems
 } from '@/api/lifecycle/lifecycle'
 import { listNodeKeyReviews } from '@/api/pqkds/node-self'
+import { getOwnNodeKeyHealth } from '@/api/pqkds/key-diagnostics'
+import useUserStore from '@/store/modules/user'
 
 const route = useRoute()
+const userStore = useUserStore()
 
 // ---------------------------------------------------------------------------
 // 单钥检查（原样保留；?keyId= 直达是 legacy.vue「一致性检查」跳转的落点）
@@ -263,6 +265,9 @@ const route = useRoute()
 const keyId = ref('')
 const loading = ref(false)
 const result = ref(null)
+const checkError = ref('')
+let checkRequest = 0
+watch(keyId, () => { checkRequest++; result.value = null; checkError.value = ''; loading.value = false }, { flush: 'sync' })
 
 const healthText = computed(() => ({
   OK: '一致，未发现异常',
@@ -276,20 +281,23 @@ const healthTagType = computed(() => ({
 
 async function load() {
   const id = String(keyId.value || '').trim()
-  if (!id) return
+  if (!id || loading.value) return
+  const requestId = ++checkRequest
   loading.value = true
   result.value = null
+  checkError.value = ''
   try {
-    const res = await getKeyHealth(id)
+    const res = userStore.principalType !== 'NODE' && /^\d+$/.test(id) ? await getKeyHealth(id) : await getOwnNodeKeyHealth(id)
+    if (requestId !== checkRequest) return
     if (res?.code && res.code !== 200) {
-      ElMessage.error(res.msg || '检查失败')
+      checkError.value = res.msg || '检查失败'
       return
     }
     result.value = res?.data || res
   } catch (error) {
-    ElMessage.error(`检查失败：${error.message}`)
+    if (requestId === checkRequest) checkError.value = `检查失败：${error.message || '请稍后重试'}`
   } finally {
-    loading.value = false
+    if (requestId === checkRequest) loading.value = false
   }
 }
 
@@ -423,7 +431,6 @@ onMounted(() => {
   const q = route.query.keyId
   if (q) {
     keyId.value = String(q)
-    load()
   }
   // 批量扫描的数据按需加载：打开页签时才发第一批请求，
   // 避免单钥用户（多数场景）为一个不看的页签付两份查询。
@@ -444,6 +451,7 @@ watch([activeTab, source], ([tab, src]) => {
 .kh-header { display: flex; align-items: center; justify-content: space-between; }
 .kh-header h2 { margin: 0; font-size: 18px; }
 .kh-query { display: flex; gap: 8px; }
+@media (max-width: 700px) { .kh-header { align-items: flex-start; flex-direction: column; gap: 12px; } .kh-query { width: 100%; } .kh-query .el-input { flex: 1; } }
 .kh-summary { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
 .kh-summary h2 { margin: 0; font-size: 18px; }
 .kh-meta { color: var(--kms-text-secondary, #606266); font-size: 13px; }

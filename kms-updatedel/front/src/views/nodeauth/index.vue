@@ -211,9 +211,7 @@
               :value="u.userId"
             />
           </el-select>
-          <div class="form-hint">
-            列表来自主 KMS 的账号表（`kms.sys_user`），由服务端代理转发，内部令牌不下发浏览器。
-          </div>
+
         </el-form-item>
         <el-form-item label="节点">
           <el-select v-model="grantForm.nodeId" filterable placeholder="选择节点" class="full-width">

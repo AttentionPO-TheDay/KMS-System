@@ -49,14 +49,6 @@
       <right-toolbar v-model:showSearch="showSearch" @queryTable="getList" />
     </el-row>
 
-    <el-alert
-      class="kau-execution-hint"
-      type="info"
-      :closable="false"
-      show-icon
-      title="自动更新分为两步"
-      :description="executionHint"
-    />
 
     <el-table v-loading="loading" :data="keymanageList" @selection-change="handleSelectionChange">
       <el-table-column type="selection" width="55" align="center" />
@@ -177,9 +169,6 @@ const isAdmin = computed(() => isAdminPrincipal({
   principalType: userStore.principalType,
   roleLevel: userStore.roleLevel
 }))
-const executionHint = computed(() => isAdmin.value
-  ? '先在本页为支持托管轮换的密钥开启自动更新，再由定时任务按间隔执行轮换。点击“立即执行一轮”可扫描当前到期密钥；执行结果、失败原因和逐密钥明细可在“查看执行记录”中核对。'
-  : '先在本页为支持托管轮换的密钥开启自动更新，系统会按间隔自动执行轮换；最近一次执行结果可在“上次执行”列中核对。')
 
 const keymanageList = ref([])
 const latestByKey = ref({})

@@ -347,11 +347,19 @@ def _verify_envelope_signature(payload: Optional[Dict[str, Any]]) -> tuple:
 @require_http_methods(['GET'])
 @require_kms_user
 def distribution_batches(request, identity):
-    """我的分发批次记录。"""
-    queryset = DistributionBatch.objects.filter(user_id=identity['userId']).order_by('-create_datetime')
-    limit = min(int(request.GET.get('limit') or 50), 500)
+    """节点读取本人批次；管理员只读全局域快照与安全元数据。"""
+    queryset = DistributionBatch.objects.all().order_by('-create_datetime', '-id')
+    if not _distribution_admin(identity):
+        queryset = queryset.filter(user_id=identity['userId'])
+    try:
+        limit = min(max(1, int(request.GET.get('limit') or 50)), 500)
+        page = max(1, int(request.GET.get('page') or 1))
+    except (ValueError, TypeError):
+        return _error('分页参数无效')
+    total = queryset.count()
+    offset = (page - 1) * limit
     items = []
-    for batch in queryset[:limit]:
+    for batch in queryset[offset:offset + limit]:
         try:
             node_ids = json.loads(batch.node_ids or '[]')
         except (ValueError, TypeError):
@@ -378,7 +386,14 @@ def distribution_batches(request, identity):
                     session_id__startswith=b.batch_id + '-').count(), 'batch.sessions'),
             }
         )
-    return _ok({'items': items, 'total': len(items)})
+    return _ok({'items': items, 'total': total, 'page': page, 'limit': limit})
+
+
+def _distribution_admin(identity):
+    try:
+        return identity.get('principalType') in (None, 'ADMIN') and int(identity.get('roleLevel')) <= 0
+    except (ValueError, TypeError):
+        return False
 
 
 def _distribution_session_summary(session: SessionKey) -> Dict[str, Any]:
@@ -410,7 +425,10 @@ def _distribution_session_summary(session: SessionKey) -> Dict[str, Any]:
 @require_kms_user
 def distribution_batch_detail(request, batch_id, identity):
     """属主可见的逐信封审计明细；不暴露密文、签名原文或 SM4 明文。"""
-    batch = DistributionBatch.objects.filter(batch_id=batch_id, user_id=identity['userId']).first()
+    queryset = DistributionBatch.objects.filter(batch_id=batch_id)
+    if not _distribution_admin(identity):
+        queryset = queryset.filter(user_id=identity['userId'])
+    batch = queryset.first()
     if batch is None:
         return _error('分发批次不存在', 404)
 
@@ -421,7 +439,7 @@ def distribution_batch_detail(request, batch_id, identity):
     sessions = []
     trusted_sessions = {}
     for session in SessionKey.objects.filter(
-        session_id__startswith=batch.batch_id + '-', node1__sys_user_id=identity['userId'],
+        session_id__startswith=batch.batch_id + '-', node1__sys_user_id=batch.user_id,
     ).order_by('session_id'):
         exchange = _parse_b64_envelope(session.key_exchange_data) or {}
         if exchange.get('batch_id') == batch.batch_id:

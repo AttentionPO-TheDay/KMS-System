@@ -35,7 +35,10 @@
         </div>
       </template>
 
-      <template v-if="keyId">
+      <el-alert v-if="analysisError" :title="analysisError" type="error" :closable="false" show-icon />
+      <el-empty v-else-if="!loaded && !loading" description="输入密钥ID后点击分析" :image-size="64" />
+      <template v-if="loaded">
+        <el-alert v-if="truncated" title="关联记录较多，每类展示最近 200 条" type="info" :closable="false" />
         <el-descriptions v-if="base" :column="3" border size="small" class="la-base">
           <!-- ⚠️ baseInfo 是后端直接序列化的 Keymanage，字段为 **snake_case**
                （key_id / key_name / encryt_name / user_name）。只读 camelCase
@@ -45,14 +48,14 @@
           <el-descriptions-item label="算法">{{ pick(base, 'encrytName', 'encryt_name') || '-' }}</el-descriptions-item>
           <el-descriptions-item label="版本">v{{ pick(base, 'version') }}</el-descriptions-item>
           <el-descriptions-item label="状态">
-            <el-tag :type="String(pick(base, 'status')) === '3' ? 'danger' : 'success'" size="small">
-              {{ String(pick(base, 'status')) === '3' ? '已回收' : '有效' }}
+            <el-tag :type="['3','REVOKED','EXPIRED'].includes(String(pick(base, 'status'))) ? 'danger' : 'info'" size="small">
+              {{ statusText(pick(base, 'status')) }}
             </el-tag>
           </el-descriptions-item>
           <el-descriptions-item label="所属用户">{{ pick(base, 'userName', 'user_name') || '-' }}</el-descriptions-item>
         </el-descriptions>
 
-        <h3 class="la-title">受影响节点（本密钥分发到达过哪些节点）</h3>
+        <h3 class="la-title">关联节点</h3>
         <el-table :data="nodes" size="small" border empty-text="没有节点收到过用该密钥保护的分发">
           <el-table-column label="节点ID" prop="node_id" min-width="150" />
           <el-table-column label="名称" prop="name" min-width="120" />
@@ -60,21 +63,21 @@
           <el-table-column label="所属域" prop="domain_id" width="130" />
         </el-table>
 
-        <h3 class="la-title">依赖它的预分配池项（仍可取用的）</h3>
+        <h3 class="la-title">可用预分配池项</h3>
         <el-table :data="poolItems" size="small" border
-                  empty-text="没有仍需取用的池项（已消费的是历史事实，不计入）">
+                  empty-text="暂无可用池项">
           <el-table-column label="池批次" prop="pool_id" min-width="200" />
           <el-table-column label="条数" prop="item_count" width="90" />
           <el-table-column label="状态" prop="status" width="110" />
         </el-table>
 
-        <h3 class="la-title">分发足迹（这把密钥保护过的分发）</h3>
+        <h3 class="la-title">分发记录</h3>
         <el-table :data="footprints" size="small" border empty-text="没有分发记录">
           <el-table-column v-for="col in footprintCols" :key="col"
                            :label="col" :prop="col" min-width="140" show-overflow-tooltip />
         </el-table>
 
-        <h3 class="la-title">操作轨迹</h3>
+        <h3 class="la-title">{{ space === 'node' ? '关联会话' : '操作记录' }}</h3>
         <el-table :data="trails" size="small" border empty-text="没有操作记录">
           <el-table-column v-for="col in trailCols" :key="col"
                            :label="col" :prop="col" min-width="140" show-overflow-tooltip />
@@ -87,7 +90,6 @@
           :closable="false"
           show-icon
           title="未发现关联痕迹"
-          description="这把密钥没有被分发过，也没有留下操作记录 —— 影响范围为空。"
         />
       </template>
     </el-card>
@@ -95,17 +97,25 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import { getKeymanageAnalysis, getNodeKeyAnalysis } from '@/api/lifecycle/lifecycle'
+import { getOwnNodeKeyAnalysis } from '@/api/pqkds/key-diagnostics'
+import useUserStore from '@/store/modules/user'
 
 const route = useRoute()
 const keyId = ref('')
 /** KMS-014：'user' = 用户密钥（kms.keymanage）；'node' = 节点长期密钥。 */
-const space = ref('user')
+const userStore = useUserStore()
+const space = ref(userStore.principalType === 'NODE' ? 'node' : 'user')
 const version = ref('')
 const loading = ref(false)
+const loaded = ref(false)
+const analysisError = ref('')
+const truncated = ref(false)
+let analysisRequest = 0
+watch([keyId, space, version], () => { analysisRequest++; loaded.value = false; analysisError.value = ''; loading.value = false }, { flush: 'sync' })
+const statusText = value => ({ '0': '有效', '1': '未生效', '2': '已到期', '3': '已回收', ACTIVE: '有效', RETIRED: '历史版本', REVOKED: '已回收', EXPIRED: '已到期', PENDING: '待激活' }[String(value)] || value || '-')
 const base = ref(null)
 const footprints = ref([])
 const trails = ref([])
@@ -136,7 +146,12 @@ const norm = (r) => {
 
 async function load() {
   const id = String(keyId.value || '').trim()
-  if (!id) return
+  if (!id || loading.value) return
+  if (version.value && (!/^\d+$/.test(version.value) || Number(version.value) < 1 || Number(version.value) > 2147483647)) { analysisError.value = '版本须为正整数'; return }
+  if (space.value === 'user' && !/^\d+$/.test(id)) { analysisError.value = '请选择节点长期密钥'; return }
+  const requestId = ++analysisRequest
+  loaded.value = false
+  analysisError.value = ''
   loading.value = true
   base.value = null
   footprints.value = []
@@ -149,10 +164,11 @@ async function load() {
     // 两条入口的响应形状一致（同一 DTO）；分流只决定走哪个标识空间，
     // 见 KMS-014 在 `LifecycleService.getNodeKeyLeakAnalysis` 的说明。
     const res = space.value === 'node'
-      ? await getNodeKeyAnalysis(id, version.value ? Number(version.value) : undefined)
+      ? await (userStore.principalType === 'ADMIN' ? getNodeKeyAnalysis : getOwnNodeKeyAnalysis)(id, version.value ? Number(version.value) : undefined)
       : await getKeymanageAnalysis(id)
+    if (requestId !== analysisRequest) return
     if (res?.code && res.code !== 200) {
-      ElMessage.error(res.msg || '分析失败')
+      analysisError.value = res.msg || '分析失败'
       return
     }
     const d = res?.data || res || {}
@@ -163,10 +179,12 @@ async function load() {
     poolItems.value = (d.affectedPoolItems || []).map(norm)
     footprintCols.value = footprints.value.length ? Object.keys(footprints.value[0]) : []
     trailCols.value = trails.value.length ? Object.keys(trails.value[0]) : []
+    truncated.value = Boolean(d.truncated)
+    loaded.value = true
   } catch (error) {
-    ElMessage.error(`分析失败：${error.message}`)
+    if (requestId === analysisRequest) analysisError.value = `分析失败：${error.message || '请稍后重试'}`
   } finally {
-    loading.value = false
+    if (requestId === analysisRequest) loading.value = false
   }
 }
 
@@ -174,7 +192,7 @@ onMounted(() => {
   const q = route.query.keyId
   if (q) {
     keyId.value = String(q)
-    load()
+    if (!/^\d+$/.test(String(q))) space.value = 'node'
   }
 })
 </script>
@@ -183,6 +201,7 @@ onMounted(() => {
 .la-header { display: flex; align-items: center; justify-content: space-between; }
 .la-header h2 { margin: 0; font-size: 18px; }
 .la-query { display: flex; gap: 8px; }
+@media (max-width: 1100px) { .la-header { align-items: flex-start; flex-direction: column; gap: 12px; } .la-query { flex-wrap: wrap; width: 100%; } .la-query .el-input { flex: 1 1 180px; } }
 .la-base { margin-bottom: 20px; }
 .la-title { margin: 20px 0 10px; font-size: 14px; font-weight: 600; }
 .la-empty { margin-top: 16px; }

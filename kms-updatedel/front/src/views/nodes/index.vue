@@ -161,7 +161,7 @@
           <el-input v-model="createForm.organization" />
         </el-form-item>
         <el-form-item label="所属域" prop="domain_id">
-          <el-select v-model="createForm.domain_id" filterable allow-create default-first-option style="width: 100%" placeholder="选择或输入域 ID">
+          <el-select v-model="createForm.domain_id" filterable style="width: 100%" placeholder="选择已创建的域">
             <el-option v-for="domain in domainOptions" :key="domain" :label="domain" :value="domain" />
           </el-select>
         </el-form-item>
@@ -203,7 +203,7 @@
           <el-input v-model="editForm.organization" />
         </el-form-item>
         <el-form-item label="所属域">
-          <el-select v-model="editForm.domain_id" filterable allow-create default-first-option style="width: 100%" placeholder="选择或输入域 ID">
+          <el-select v-model="editForm.domain_id" filterable style="width: 100%" placeholder="选择已创建的域">
             <el-option v-for="domain in domainOptions" :key="domain" :label="domain" :value="domain" />
           </el-select>
         </el-form-item>
@@ -272,10 +272,6 @@
             <code class="key-line">{{ keysNode.sscl_public_key || '（未生成）' }}</code>
           </el-descriptions-item>
         </el-descriptions>
-        <div class="fingerprint-hint">
-          Kyber / Falcon 仅展示公钥指纹（前 64 字符）—— Falcon 公钥完整值约 17MB，
-          全量加载会让弹窗卡顿。国密公钥较短，显示完整值。
-        </div>
         <div v-if="keysError" class="dialog-error">{{ keysError }}</div>
       </div>
       <template #footer>
@@ -331,11 +327,6 @@
           </div>
         </el-descriptions-item>
       </el-descriptions>
-      <div class="hint-text">
-        凭证默认隐藏显示（点「显示」查看原文；「复制」不受影响）。<br />
-        节点操作者打开登录页 → 选择「节点」→ 输入节点名称与这张凭证即可完成激活。
-        激活后设备凭据留在那台浏览器本机，之后该节点可在此浏览器直接点击登录。
-      </div>
       <template #footer>
         <el-button type="primary" @click="activationOpen = false">我已保存</el-button>
       </template>
@@ -373,6 +364,7 @@ import { IS_DEMO } from '@/utils/entry-mode'
 import { enterDemo } from '@/utils/demo-context'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { batchDeleteNodes, deleteNode, generateNodeFalconKey, generateNodeGmKey, getNodeKeys, listNodes, registerNode, reissueActivationCode, updateNode } from '@/api/nodes/nodes'
+import { listDomains } from '@/api/nodes/domains'
 
 const NODE_TYPES = [
   { value: 'full', label: '全节点' },
@@ -395,7 +387,7 @@ const rows = ref([])
 const selected = ref([])
 const loading = ref(false)
 const filter = reactive({ keyword: '', nodeType: '', status: '' })
-const domainOptions = computed(() => Array.from(new Set(['domain-1', ...rows.value.map((row) => row.domain_id).filter(Boolean)])))
+const domainOptions = ref([])
 
 const createOpen = ref(false)
 const creating = ref(false)
@@ -496,7 +488,9 @@ async function load() {
   try {
     // 过滤放在前端做：分发模块的列表接口不支持这些查询参数，
     // 假装服务端过滤会让人以为"查不到 = 没有数据"。
-    const all = await listNodes()
+    const [all, domains] = await Promise.all([listNodes(), listDomains()])
+    if (!Array.isArray(domains)) throw new Error('域列表响应格式不正确')
+    domainOptions.value = domains.map(domain => domain.domain_id)
     const kw = filter.keyword.trim().toLowerCase()
     rows.value = (all || []).filter((n) => {
       if (filter.nodeType && n.node_type !== filter.nodeType) return false

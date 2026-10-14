@@ -3,9 +3,7 @@
     <header class="page-head">
       <div>
         <h2>已分发对称密钥</h2>
-        <p class="page-desc">
-          这里显示当前节点收到的节点间分发信封。服务端只保存密文，SM4 明文只在本机解封后进入本机会话密钥库。
-        </p>
+
       </div>
       <el-button :loading="loading" @click="load">刷新</el-button>
     </header>
@@ -13,7 +11,6 @@
     <el-alert
       v-if="!loading && !mapped"
       title="当前账号没有关联节点"
-      description="管理员账号不能查看节点收件箱，请从节点入口进入。"
       type="info"
       :closable="false"
       show-icon
@@ -23,7 +20,6 @@
     <el-alert
       v-if="mapped && !loading && !items.length"
       title="暂未收到节点分发信封"
-      description="如果刚刚完成分发，请点击刷新。分发记录以节点收件箱为准，不再读取旧的“分发给本人”接口。"
       type="info"
       :closable="false"
       show-icon
@@ -96,7 +92,6 @@
         :closable="false"
         show-icon
         title="对称密钥已保存在本机"
-        description="页面只展示本机副本状态，不把 SM4 明文回传或写入服务端。"
       />
       <div v-if="localSecretHex" class="secret-box mt16">
         <span>本机解封出的 SM4 密钥</span>

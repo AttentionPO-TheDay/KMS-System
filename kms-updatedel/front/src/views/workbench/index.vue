@@ -24,7 +24,6 @@
     <section class="subsystem-portal" aria-labelledby="subsystem-portal-title">
       <div class="portal-heading">
         <h3 id="subsystem-portal-title">业务子系统</h3>
-        <p>每个子系统负责密钥生命周期的一个阶段，进入后侧边栏只显示该子系统的功能。</p>
       </div>
       <div class="subsystem-grid">
         <button

@@ -125,6 +125,17 @@ class DemoBoundaryTests(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
         handler.assert_not_called()
 
+    def test_admin_domain_registry_and_cross_batch_metadata_scope(self):
+        for method, path in [('GET', 'domains/'), ('POST', 'domains/'),
+                             ('GET', 'distribution-batches/'), ('GET', 'distribution-batches/batch-1/')]:
+            request = self.request(method)
+            request.path = '/api/pqkds/' + path
+            self.assertIsNone(D._check_scope(request, self.identity), path)
+        for path in ('distribution-batches/', 'distribution-batches/batch-1/'):
+            request = self.request('POST')
+            request.path = '/api/pqkds/' + path
+            self.assertEqual(D._check_scope(request, self.identity).status_code, 403)
+
     def test_unrelated_endpoint_not_opened(self):
         request = self.request()
         request.path = '/api/system/user/'
@@ -160,6 +171,19 @@ class DemoBoundaryTests(unittest.TestCase):
                 'pqkds.node_self_views._public_status', return_value='ACTIVE'):
             query.return_value.first.return_value = node
             self.assertIsNone(D._check_scope(request, identity))
+
+    def test_node_self_diagnostics_scope(self):
+        identity = {'entryMode': 'DEMO', 'principalType': 'NODE', 'userId': 42, 'nodeId': 'Node-A'}
+        request = self.request()
+        node = Mock(node_id='Node-A')
+        with patch('pqkds.models.Node.objects.filter') as query, patch(
+                'pqkds.node_self_views._public_status', return_value='ACTIVE'):
+            query.return_value.first.return_value = node
+            for suffix in ['key-health/', 'key-analysis/']:
+                request.path = '/api/pqkds/node-self/' + suffix
+                self.assertIsNone(D._check_scope(request, identity))
+                admin = {'entryMode': 'DEMO', 'principalType': 'ADMIN', 'userId': 1, 'roleLevel': 0}
+                self.assertEqual(D._check_scope(request, admin).status_code, 403)
 
     def test_admin_summary_is_exact_get_only(self):
         for method, path, allowed in [

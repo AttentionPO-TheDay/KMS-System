@@ -2,7 +2,7 @@
   <div class="algorithm-demo-container">
     <div class="page-title">
       <h1>算法图解与演示</h1>
-      <p class="subtitle">无证书非对称算法密钥生成流转 - 理论速览与实战演练一一对应</p>
+
     </div>
 
     <!-- 顶部统一控制台 -->
@@ -13,14 +13,14 @@
           <el-radio-button label="SSCL">无证书 SSCL 算法</el-radio-button>
           <el-radio-button label="INTRO">功能实现简述</el-radio-button>
         </el-radio-group>
-        
+
         <div class="test-controls" v-if="form.encrytName !== 'INTRO'">
           <span class="label">测试密钥标签:</span>
           <el-input v-model="form.keyName" placeholder="如：TestKey-1" style="width: 200px" />
         </div>
       </div>
     </div>
-    
+
     <!-- 全局进度条 (置顶) -->
     <el-steps v-if="form.encrytName !== 'INTRO'" :active="activeStep" finish-status="success" align-center class="custom-steps" style="margin-bottom: 30px;">
       <el-step title="第一步" description="本地部分公私钥生成" />
@@ -31,7 +31,7 @@
 
     <!-- 一一对应布局 -->
     <div class="step-by-step-layout" v-if="form.encrytName !== 'INTRO'">
-    
+
       <!-- Step 1 Row -->
       <transition name="fade-slide">
       <div class="step-row" v-show="activeStep >= 0">
@@ -51,7 +51,7 @@
              <div class="dispatch-box">发送公钥切片及标识至 KGC 中心：把 U<sub>A</sub> 与用户标识 ID<sub>A</sub> 捆绑提交</div>
           </el-card>
         </div>
-        
+
         <div class="practice-col">
           <el-card class="glass-card practice-card" :class="{'active-card': activeStep === 0}">
             <div class="card-header">
@@ -71,7 +71,7 @@
 
               <div class="label mt-10">本地生成的切片公钥 (uA):</div>
               <div class="value">{{ step1Data.uA || '等待执行...' }}</div>
-              
+
               <div class="label mt-10" v-if="step1Data.payload">构造将发往服务端 KGC 的载荷:</div>
               <div class="code-block" v-if="step1Data.payload">
                 <pre>{{ JSON.stringify(step1Data.payload, null, 2) }}</pre>
@@ -106,7 +106,7 @@
              <div class="dispatch-box">基于安全通道派发部分公私钥{ WA, TA }至用户</div>
           </el-card>
         </div>
-        
+
         <div class="practice-col">
           <el-card class="glass-card practice-card" :class="{'active-card': activeStep === 1}">
             <div class="card-header">
@@ -118,7 +118,7 @@
               <div v-if="activeStep === 1" style="margin-bottom: 20px;">
                 <el-button type="warning" size="small" @click="runStep2" :loading="isProcessing">第二步：向系统提交并获取服务端分片</el-button>
               </div>
-              
+
               <div v-if="step2Data.responseObj">
                 <p style="color:var(--kms-text-secondary); font-size:13px; margin-bottom:10px;">网络抓包 - KGC 回传给该用户的碎片报文：</p>
                 <div class="code-block response-block">
@@ -162,7 +162,7 @@
              <div class="dispatch-box result">最终获取完整的无证书公私钥对</div>
           </el-card>
         </div>
-        
+
         <div class="practice-col">
           <el-card class="glass-card practice-card" :class="{'active-card': activeStep === 2}">
             <div class="card-header">
@@ -180,7 +180,7 @@
                   <div class="label" style="color: var(--kms-success-strong); font-weight: bold; margin-bottom: 8px;">🔍 揭秘内部计算过程:</div>
                   <div class="math-line" v-for="(step, i) in step3Data.mathSteps" :key="i">> {{ step }}</div>
                 </div>
-                
+
                 <div class="flex-box mt-15">
                   <div class="item finalize-block final-priv">
                     <div class="title">🔐 最终私钥</div>
@@ -200,9 +200,9 @@
         </div>
       </div>
       </transition>
-      
+
       <div v-if="fetchError" class="mt-20 desc" style="color: var(--kms-danger-strong); text-align: center;">{{ fetchError }}</div>
-      
+
     </div>
 
 
@@ -256,7 +256,7 @@
               <div class="domain-label">域 A (发送)</div>
               <div class="user-dot source">💻</div>
             </div>
-            
+
             <div class="transmission-path">
               <div class="obfuscator">混淆代理</div>
               <div class="packet"></div>
@@ -328,7 +328,7 @@ function initSimulation() {
   activeStep.value = 0
   isProcessing.value = false
   fetchError.value = ''
-  
+
   step1Data.privateShare = ''
   step1Data.uA = ''
   step1Data.payload = null
@@ -369,7 +369,7 @@ async function runStep2() {
   try {
     const response = await addKeymanage(step1Data.payload)
     const snapshot = response.data || step1Data.payload
-    
+
     let visualValue = snapshot.keyValue;
     try {
       visualValue = JSON.parse(snapshot.keyValue)
@@ -427,7 +427,7 @@ async function performGenDA(item, userPrivCode, userPubCode) {
       step3Data.mathSteps.push(`模加运算: dA = (T_A + u_A) mod N_SM2`)
       const dA = (num1.add(num2)).mod(N_SM2)
       step3Data.mathSteps.push(`得出 dA(hex) 结果`)
-      
+
       if (dA.compareTo(new BigInteger('1')) > 0 && dA.compareTo(N_SM2.subtract(new BigInteger('1'))) < 0) {
         step3Data.PrivateKey = leftPad(dA.toString(16), 64)
         step3Data.PublicKey = finalPublicKey
@@ -449,7 +449,7 @@ async function performGenDA(item, userPrivCode, userPubCode) {
       const yHex = share.slice(66, 130)
       const m = new BigInteger(xHex, 16)
       step3Data.mathSteps.push(`解析分片维度: X_coord: ${xHex}, Y_coord: ${yHex}`)
-      
+
       const secret = getSSCLSecret(xIndex, yIndex, xHex, yHex, N_SM2)
       step3Data.mathSteps.push(`门限重建: 通过拉格朗日插值获得中心侧门限隐秘值 S_KGC`)
 
@@ -496,7 +496,7 @@ function getSSCLSecret(xIndex, yIndex, xHex, yHex, n) {
   xPoints.push(new BigInteger(xHex, 16))
   const yPoints = yIndex.map(y => new BigInteger(y, 16))
   yPoints.push(new BigInteger(yHex, 16))
-  
+
   const t = xIndex.length
   let secret = new BigInteger("0")
   for (let i = 0; i <= t; i++) {

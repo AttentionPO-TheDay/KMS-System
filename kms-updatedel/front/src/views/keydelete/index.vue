@@ -49,9 +49,7 @@
             :loading="revoking"
             @click="openRevoke()"
           >回收所选密钥</el-button>
-          <span class="key-revoke__toolbar-note">
-            只有仍可用于新工作（allowsNewWork）的行能勾选；已被取代、已回收的行只作展示
-          </span>
+
         </el-row>
 
         <el-form inline class="key-revoke__filter" @submit.prevent>
@@ -148,7 +146,7 @@
         </div>
 
         <h3 class="key-revoke__records-title">回收记录</h3>
-        <p class="key-revoke__toolbar-note">自动回收和人工回收均在这里留痕，按服务端记录分页查询。</p>
+
         <el-table v-loading="recordLoading" :data="recordRows" size="small" border>
           <el-table-column label="算法" prop="algorithm" width="90" />
           <el-table-column label="keyId" prop="keyId" min-width="190" show-overflow-tooltip />

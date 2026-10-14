@@ -23,7 +23,7 @@ public class DemoIdentityTest {
         ReflectionTestUtils.setField(identity, "menus", menus);
         List<SysMenu> rows = new ArrayList<>();
         for (long id : new long[]{9470, 9103, 9005, 9006, 9201,
-                9480, 9481, 9482, 9483, 9484,
+                9480, 9481, 9482, 9483, 9484, 9461, 9453,
                 9431, 9260, 9440, 9412, 9460, 9280}) {
             SysMenu menu = new SysMenu();
             menu.setMenuId(id);
@@ -34,7 +34,7 @@ public class DemoIdentityTest {
         when(mapper.selectMenuList(any(SysMenu.class))).thenReturn(rows);
         List<SysMenu> projected = identity.adminMenus();
         assertEquals(new HashSet<>(Arrays.asList(9470L, 9103L, 9005L, 9006L, 9201L,
-                        9480L, 9481L, 9482L, 9483L, 9484L)),
+                        9480L, 9481L, 9482L, 9483L, 9484L, 9461L, 9453L)),
                 projected.stream().map(SysMenu::getMenuId).collect(Collectors.toSet()));
         when(menus.buildMenuTree(any())).thenReturn(projected);
         LoginUser admin = new LoginUser();
@@ -44,7 +44,7 @@ public class DemoIdentityTest {
         verify(menus, never()).selectMenuTreeByUserId(-1L);
         rows.get(0).setStatus("1");
         rows.get(1).setMenuType("F");
-        assertEquals(8, identity.adminMenus().size());
+        assertEquals(10, identity.adminMenus().size());
     }
 
     @Test

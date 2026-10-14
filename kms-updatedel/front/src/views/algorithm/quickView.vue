@@ -2,7 +2,7 @@
   <div class="algorithm-container">
     <div class="page-title">
       <h1>更新与回收算法速览</h1>
-      <p class="subtitle">无证书双轨演进模型 (SM2 / SSCL) 的密钥轮换与生命周期终止机制</p>
+
     </div>
 
     <!-- Algorithm Switch -->

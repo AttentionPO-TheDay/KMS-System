@@ -23,9 +23,10 @@
       />
 
       <template v-else>
+        <TechnicalView kind="update" />
         <section v-if="showAutoSettings" class="key-update__auto" aria-label="自动更新设置">
           <h3>自动更新设置</h3>
-          <p class="key-update__lead">按每把密钥设置更新间隔。请保持原浏览器登录并打开系统，系统会自动生成、封存、自检并登记新版本。关闭浏览器期间暂停执行，下次进入时检查到期任务。</p>
+
           <el-alert v-if="autoError" :title="autoError" type="error" :closable="false" show-icon />
           <el-table :data="cards" size="small" border>
             <el-table-column label="密钥" min-width="200">
@@ -56,11 +57,7 @@
             </el-table-column>
           </el-table>
         </section>
-        <p class="key-update__lead">
-          更新 = 给<strong>同一把</strong>密钥换一个新版本：<span class="mono">keyId</span> 不变、版本号 +1。
-          新私钥<strong>先在本机生成并封存</strong>、当场自检，通过之后才把公钥上报；
-          本机这一步失败时平台上的生产版本<strong>一点都不会动</strong>。
-        </p>
+
 
         <el-alert
           v-if="deviceWarning"
@@ -352,6 +349,7 @@
  * 前端单方面加门禁会造出「生成页能更新、更新页不能」的自相矛盾。
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import TechnicalView from '@/components/TechnicalView/index.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { CircleCheck } from '@element-plus/icons-vue'
 import {

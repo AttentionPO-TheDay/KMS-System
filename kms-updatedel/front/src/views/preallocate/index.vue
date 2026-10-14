@@ -28,6 +28,7 @@
         description="预分配是给某条通信线路备料，要先有通信权限。到「密钥分发 → 节点授权」挑对端发起申请，管理员批准后即可预分配。"
       />
 
+      <TechnicalView kind="preallocation" />
       <el-form label-width="120px" class="alloc-form" @submit.prevent>
         <el-form-item label="接收节点">
           <el-select
@@ -46,15 +47,13 @@
               :value="node.nodeCode"
             />
           </el-select>
-          <div class="hint">
-            用它的 Kyber 公钥封装 —— 只有它本机的私钥能解开（服务端也解不开）。
-          </div>
+
         </el-form-item>
 
         <el-form-item label="保护算法">
           <!-- 预分配固定使用 Kyber 保护包；SM2/SSCL 是「发起分发」页的现场封装算法。 -->
           <el-tag size="small" type="success" effect="plain">Kyber（格密码）</el-tag>
-          <div class="hint">提前生成保护包，后续建立会话时直接取用。</div>
+
         </el-form-item>
 
         <el-form-item label="数量">
@@ -66,7 +65,7 @@
 
         <el-form-item label="有效期（小时）">
           <el-input-number v-model="form.ttlHours" :min="1" :max="720" />
-          <span class="hint">到期未取用的池项会被清理（不自动续期）</span>
+
         </el-form-item>
 
         <el-form-item label="签名密钥">
@@ -74,10 +73,7 @@
             {{ falconKey?.keyId }} v{{ falconKey?.keyVersion }}
           </el-tag>
           <el-tag v-else size="small" type="danger" effect="plain">本机不可用</el-tag>
-          <div class="hint">
-            每条保护包都用<b>本机这把 Falcon 私钥</b>签名。换过设备或清过浏览器数据时，
-            服务端说可用而本机没有私钥 —— 那种状态下提交会被拒（`SIGNATURE_REQUIRED`）。
-          </div>
+
         </el-form-item>
 
         <el-form-item>
@@ -133,10 +129,7 @@
           </div>
         </el-alert>
 
-        <div class="hint" style="margin-top: 10px;">
-          池里的资源在「密钥分发 → 密钥池」查看；要<b>用</b>它们去「发起分发」页
-          选同一个对端，页面会提示"可用预分配 N 条"。
-        </div>
+
       </template>
     </el-card>
   </div>
@@ -156,6 +149,7 @@
  * → 分批 `POST /node-self/pool/preallocate/` → 服务端逐条验签后入池。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
+import TechnicalView from '@/components/TechnicalView/index.vue'
 import { ElMessage } from 'element-plus'
 import {
   getSelfNode,

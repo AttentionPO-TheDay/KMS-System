@@ -69,9 +69,7 @@
                 </template>
               </el-table-column>
             </el-table>
-            <div class="hint">
-              只有 <strong>Kyber 就绪</strong>的节点才能作为发送方接收密钥池 —— 密钥池是用它的 Kyber 公钥封装的。
-            </div>
+
           </el-card>
         </el-col>
       </el-row>

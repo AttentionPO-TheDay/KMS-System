@@ -3,7 +3,7 @@
     <el-card shadow="never">
       <template #header>
         <div class="panel-head">
-          <span>跨域分发</span>
+          <span>跨域分发记录</span>
           <el-button size="small" :loading="loading" @click="load">刷 新</el-button>
         </div>
       </template>
@@ -46,7 +46,7 @@
         </el-col>
       </el-row>
 
-      <p class="security-note">批次状态沿用节点级汇总，逐载荷失败见安全明细；用户信封生成不等于验签通过。未知域 {{ stats.unknown }} 批，不计入同域。</p>
+      <p v-if="stats.unknown" class="security-note">未知域：{{ stats.unknown }} 批</p>
       <el-table v-loading="loading" :data="rows" border empty-text="没有符合条件的分发记录">
         <el-table-column label="批次号" prop="batchId" min-width="170" show-overflow-tooltip />
         <el-table-column label="发起方" prop="senderName" min-width="140" show-overflow-tooltip />
@@ -108,7 +108,7 @@
           <el-alert v-if="detail.legacy" :title="detail.legacyReason || '历史批次没有逐信封明细，不按当前公钥回填。'" type="warning" show-icon :closable="false" class="mb16" />
           <el-alert :title="detail.sessionScopeNote" type="info" show-icon :closable="false" class="mb16" />
           <h3 class="detail-heading">逐信封 / 失败尝试</h3>
-          <p class="security-note">签名有效若标注“登记时”，只代表服务端入库校验；接收方验签、解封及确认请查看真实会话证据。版本未记录保持未知。</p>
+
           <el-table :data="detail.items || []" border empty-text="没有持久化的逐信封明细">
             <el-table-column type="expand">
               <template #default="{ row }">
@@ -347,12 +347,19 @@ async function openDetail(row) {
 async function load() {
   loading.value = true
   try {
-    const res = await listDistributionBatches()
-    // KMS-017：本接口经 service 层 unwrap 后是 `{ items, total }` —— 既不是裸数组，
-    // 也不是 DRF 分页的 `results`。此前两个判据都不认它，表格恒空且**不报错**
-    // （失败形态是"成功"：页面空着、控制台干净）。读法与 distribute/index.vue:702、
-    // workbench/index.vue:848 两处既有正例对齐。
-    all.value = Array.isArray(res) ? res : (res?.items || res?.results || [])
+    const items = [], seen = new Set()
+    for (let page = 1; ; page++) {
+      const res = await listDistributionBatches({ page, limit: 500 })
+      if (!Array.isArray(res?.items)) throw new Error('分发批次响应格式不正确')
+      for (const item of res.items) {
+        if (!item.batchId || seen.has(item.batchId)) throw new Error('分发批次分页已变化，请刷新')
+        seen.add(item.batchId)
+        items.push(item)
+      }
+      if (items.length >= res.total) break
+      if (!res.items.length) throw new Error('分发批次分页不完整')
+    }
+    all.value = items
   } catch (error) {
     ElMessage.error(error?.message || '加载分发批次失败')
     all.value = []

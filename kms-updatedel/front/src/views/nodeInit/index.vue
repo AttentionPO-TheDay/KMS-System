@@ -26,25 +26,11 @@
         :closable="false"
         show-icon
         title="当前账号未关联任何节点"
-        description="本页面只对「区块链节点」账号有意义。平台管理员不执行节点密钥初始化 —— 请在「节点管理」里创建节点，再由节点自行登录初始化。"
       />
 
       <template v-else>
-        <p class="node-init__lead">
-          <template v-if="isActive && blocked">
+        <p v-if="isActive && blocked" class="node-init__lead">
             节点已激活，但当前入口缺少与服务端登记匹配的本机密钥材料。普通模式与 Demo 模式使用不同的浏览器密钥库，不能自动复制私钥或覆盖已登记公钥。
-          </template>
-          <template v-else-if="isActive">
-            节点 <strong>{{ node.nodeId }}</strong><span v-if="node.name">（{{ node.name }}）</span> 已激活。
-            已回收或暂无可用版本的算法只会暂停对应业务，不影响进入工作台管理其它密钥。
-          </template>
-          <template v-else>
-          节点
-          <strong>{{ node.nodeId }}</strong>
-          <span v-if="node.name">（{{ node.name }}）</span>
-          由管理员创建后获得登录资格。首次登录需要完成全部启用算法的密钥初始化，
-          之后才能进行密钥生成、更新与分发。
-          </template>
         </p>
 
         <el-descriptions :column="2" border class="node-init__meta">
@@ -86,7 +72,6 @@
           :closable="false"
           show-icon
           title="初始化已完成"
-          description="初始化密钥均已就绪。你可以前往「密钥生成」创建业务密钥，或在「密钥分发」中与其它节点建立会话。"
         />
         <el-alert
           v-else-if="workspaceReady && lifecycleUnavailableCount"

@@ -142,15 +142,17 @@ def _check_scope(request, identity):
             return _error('管理员不能携带节点身份')
         # Four admin entrances only: summary, node management and authorization
         # (acceptance uses its own ADMIN lease gate). Hidden key APIs stay closed.
-        reads = {'security-monitor/summary/', 'security-monitor/records/', 'nodes/', 'admin/users/',
+        reads = {'security-monitor/summary/', 'security-monitor/records/', 'nodes/', 'domains/', 'distribution-batches/', 'admin/users/',
                  'admin/node-authorizations/', 'admin/node-authorization-requests/'}
-        writes = {'nodes/register/', 'nodes/batch_delete/',
+        writes = {'nodes/register/', 'nodes/batch_delete/', 'domains/',
                   'admin/node-authorizations/',
                   'admin/node-authorization-requests/decide-batch/'}
         allowed = (request.method == 'GET' and relative in reads) or (
             request.method == 'POST' and relative in writes)
         if re.fullmatch(r'nodes/[0-9]+/', relative):
             allowed = request.method in {'GET', 'PATCH', 'PUT', 'DELETE'}
+        if re.fullmatch(r'distribution-batches/[^/]+/', relative):
+            allowed = request.method == 'GET'
         if re.fullmatch(r'admin/node-authorizations/[0-9]+/revoke/|'
                         r'admin/node-authorization-requests/[0-9]+/decide/', relative):
             allowed = request.method == 'POST'

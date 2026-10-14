@@ -22,6 +22,12 @@ class NodeSerializer(CustomModelSerializer):
             'partial_key_data': {'write_only': True}
         }
 class NodeCreateSerializer(CustomModelSerializer):
+    def validate_domain_id(self, value):
+        from .models import Domain
+        if not Domain.objects.filter(domain_id=value).exists():
+            raise serializers.ValidationError('所属域不存在，请先在域管理中新增域')
+        return value
+
     class Meta:
         model = Node
         fields = [
@@ -122,6 +128,12 @@ class NodeListSerializer(CustomModelSerializer):
 
 
 class NodeUpdateSerializer(CustomModelSerializer):
+    def validate_domain_id(self, value):
+        from .models import Domain
+        if not Domain.objects.filter(domain_id=value).exists():
+            raise serializers.ValidationError('所属域不存在，请先在域管理中新增域')
+        return value
+
     class Meta:
         model = Node
         fields = [

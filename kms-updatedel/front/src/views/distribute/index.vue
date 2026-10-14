@@ -3,13 +3,11 @@
     <header class="page-head">
       <div>
         <h2>密钥分发</h2>
-        <p class="page-desc">
-          选择接收节点、保护算法与<b>接收方密钥版本</b>。服务端按你指定的那一版公钥封装会话密钥，
-          只有接收节点本地的对应私钥能解开 —— 有效期 1 到 168 小时，到期自动失效。
-        </p>
+
       </div>
     </header>
 
+    <TechnicalView kind="distribution" />
     <el-row :gutter="16">
       <!-- ------------------------------------------------------------------
            发起分发（KMS-008 新请求契约）
@@ -46,6 +44,14 @@
           />
 
           <el-form label-width="130px" @submit.prevent>
+            <el-form-item label="域范围">
+              <el-radio-group v-model="domainScope" @change="clearReceiver">
+                <el-radio-button value="all" label="all">全部节点</el-radio-button>
+                <el-radio-button value="cross" label="cross">仅跨域</el-radio-button>
+              </el-radio-group>
+              <div class="form-hint">本节点所属域：{{ selfDomain || '未指定' }}。跨域分发仍需通信授权和有效密钥。</div>
+              <div v-if="domainScope === 'cross' && !visibleNodes.length && !nodesLoading" class="form-hint warn-text">暂无已指定域的异域节点，请联系管理员新增域并调整节点归属。</div>
+            </el-form-item>
             <el-form-item label="接收节点">
               <!--
                 数据源是**全网节点名录**（`/node-self/directory/`），不是只含已授权
@@ -61,13 +67,13 @@
                 @change="handleReceiverChange"
               >
                 <el-option
-                  v-for="node in nodes"
+                  v-for="node in visibleNodes"
                   :key="node.nodeCode"
                   :label="nodeOptionLabel(node)"
                   :value="node.nodeCode"
                   :disabled="!node.canRequest"
                 >
-                  <span>{{ node.nodeName || node.name }}（{{ node.nodeCode }}）</span>
+                  <span>{{ node.nodeName || node.name }}（{{ node.nodeCode }}） · {{ node.domainId || '未指定域' }}</span>
                   <el-tag
                     v-if="node.relationship && !node.relationship.granted"
                     size="small"
@@ -123,15 +129,12 @@
                 />
               </el-select>
               <el-button size="small" class="mt8" :loading="keysLoading" :disabled="!form.receiverNodeCode" @click="loadPeerKeys">刷新接收方密钥</el-button>
-              <div class="form-hint">
-                只列<b>可用于新工作</b>的版本（标记为「可用」）。已被取代或已回收的版本不出现在这里 ——
-                能不能用由服务端判（`allowsNewWork`），页面不另写一套。
-              </div>
+
             </el-form-item>
 
             <el-form-item label="有效期（小时）">
               <el-input-number v-model="form.expiresInHours" :min="1" :max="168" />
-              <div class="form-hint">1..168 小时，默认 24。到期后信封不再可用（不自动续期）。</div>
+
             </el-form-item>
 
             <el-form-item label="发送方签名密钥版本">
@@ -139,11 +142,7 @@
                 {{ falconKey?.keyId }} v{{ falconKey?.keyVersion }}
               </el-tag>
               <el-tag v-else size="small" type="danger" effect="plain">本机不可用</el-tag>
-              <div class="form-hint">
-                信封用<b>本机这把 Falcon 私钥</b>签名。两个条件都要满足：服务端说这一版可用
-                （登记表），且<b>本机密钥库里有它的私钥</b> —— 换过设备或清过浏览器数据时，
-                前者成立而后者不成立，提交会被服务端拒（`SIGNATURE_REQUIRED`）。
-              </div>
+
             </el-form-item>
 
             <el-form-item>
@@ -372,6 +371,7 @@
  *   * 能不能用某一版由 `allowsNewWork` 回答（取自 `api_contract`，前端不另判）。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
+import TechnicalView from '@/components/TechnicalView/index.vue'
 import { ElMessage } from 'element-plus'
 import FalconEncryptionSupplement from '@/components/FalconEncryptionSupplement/index.vue'
 import { PROTECTION_LABELS, protectionLabel, falconRecipientState } from '@/utils/protection-algorithms.js'
@@ -413,6 +413,16 @@ const nodesLoading = ref(false)
 const mapped = ref(false)
 const nodeLoading = ref(true)
 const selfNodeId = ref('')
+const selfDomain = ref('')
+const domainScope = ref('all')
+const visibleNodes = computed(() => nodes.value.filter(node => domainScope.value !== 'cross'
+  || (selfDomain.value && node.domainId && node.domainId !== selfDomain.value)))
+function clearReceiver() {
+  form.receiverNodeCode = ''
+  form.recipientKeyRef = ''
+  peerKeys.value = []
+  result.value = null
+}
 /** 本机可用于签名的 Falcon 密钥（取自己方长期密钥里可用于新工作的那把）。 */
 const falconKey = ref(null)
 const falconReady = ref(false)
@@ -479,7 +489,7 @@ function relationshipLabel(relationship) {
 }
 
 function nodeOptionLabel(node) {
-  const label = `${node.nodeName || node.name}（${node.nodeCode}）`
+  const label = `${node.nodeName || node.name}（${node.nodeCode}） · ${node.domainId || '未指定域'}`
   return node.relationship?.granted ? label : `${label} · ${relationshipLabel(node.relationship)}`
 }
 
@@ -560,6 +570,7 @@ async function loadSelf() {
     const data = await getSelfNode()
     mapped.value = Boolean(data?.mapped)
     selfNodeId.value = data?.node?.nodeId || ''
+    selfDomain.value = data?.node?.domainId || ''
     falconClEnabled.value = data?.node?.falconClCapability?.enabled === true
     await loadFalconKey()
   } catch (error) {
@@ -578,6 +589,7 @@ async function loadNodes() {
     nodes.value = (data?.nodes || []).map((node) => ({
       nodeCode: node.nodeCode,
       nodeName: node.name,
+      domainId: node.domainId || '',
       canRequest: node.canRequest !== false,
       relationship: node.relationship || null
     }))

@@ -188,10 +188,7 @@
         <div class="gen-history__pk-box">
           <div class="gen-history__pk-label">公钥（十六进制）</div>
           <div class="gen-history__pk-value">{{ detail.server?.publicKey || detail.local?.publicKey || '（无）' }}</div>
-          <p class="gen-history__pk-note">
-            公钥是公开量，可以自由展示。私钥<strong>不在本页</strong>，也不在服务端 ——
-            本页与后端接口都不提供私钥读取或导出。
-          </p>
+
         </div>
       </template>
       <template #footer>

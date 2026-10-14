@@ -11,6 +11,8 @@ from .views import (
     batch_verify_falcon_public_keys, kms_generate_key, kms_generate_record, kms_lifecycle_record
 )
 from . import chat_urls
+from .domain_views import domains
+from .node_key_diagnostics import node_key_health, node_key_analysis
 from .demo_context import demo_init_lease, demo_init_release
 # ⚠️ 别名不是洁癖，是**必须的**：节点侧 `node_self_views` 里也有一个
 #    `node_authorization_requests`（节点看自己的申请），而本文件后面又 import 了它 ——
@@ -96,6 +98,9 @@ router.register(r'logs', KeyDistributionLogViewSet, basename='logs')
 router.register(r'stats', SystemStatsViewSet, basename='stats')
 router.register(r'key-pool', KeyPoolViewSet, basename='keypool')
 urlpatterns = [
+    path('node-self/key-health/', node_key_health, name='node-key-health'),
+    path('node-self/key-analysis/', node_key_analysis, name='node-key-analysis'),
+    path('domains/', domains, name='domains'),
     path('chain-runtime-status/', chain_runtime_status, name='chain-runtime-status'),
     path('admin/node-long-term-keys/', admin_node_long_term_keys, name='admin-node-long-term-keys'),
     path('node-key-reviews/', node_key_reviews, name='node-key-reviews'),
