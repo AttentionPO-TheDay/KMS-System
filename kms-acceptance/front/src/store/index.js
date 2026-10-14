@@ -6,6 +6,8 @@ export const scenarios = ref([])
 export const runs = ref([])
 export const securityRuns = ref([])
 export const proofRuns = ref([])
+export const acceptanceCriteria = ref([])
+export const acceptanceEvidence = ref([])
 
 export const error = ref('')
 
@@ -36,13 +38,25 @@ export async function loadProofRuns() {
   proofRuns.value = payload.data || []
 }
 
+export async function loadAcceptanceCriteria() {
+  const payload = await API.getAcceptanceCriteria()
+  acceptanceCriteria.value = payload.data || []
+}
+
+export async function loadAcceptanceEvidence() {
+  const payload = await API.getAcceptanceEvidence()
+  acceptanceEvidence.value = payload.data || []
+}
+
 export async function loadAll() {
   const results = await Promise.allSettled([
     loadHealth(),
     loadScenarios(),
     loadRuns(),
     loadSecurityRuns(),
-    loadProofRuns()
+    loadProofRuns(),
+    loadAcceptanceCriteria(),
+    loadAcceptanceEvidence()
   ])
 
   const failed = results.find((item) => item.status === 'rejected')

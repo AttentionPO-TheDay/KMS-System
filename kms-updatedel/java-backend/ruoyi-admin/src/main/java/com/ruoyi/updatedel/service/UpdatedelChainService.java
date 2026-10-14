@@ -66,6 +66,12 @@ public class UpdatedelChainService {
 
     private FiscoBcosWrapper fiscoWrapper;
 
+    public Map<String, Object> nodeFiscoEvidence(String operation, NodeFiscoMaterial snapshot, Map<String, Object> request) throws Exception {
+        if (!java.util.Arrays.asList("prepare", "submit", "receipt").contains(operation)) throw new IllegalArgumentException("INVALID_OPERATION");
+        if (fiscoPrivateKey == null || fiscoPrivateKey.trim().isEmpty() || !ensureFiscoWrapper()) throw new IllegalStateException("FISCO_WRITES_NOT_CONFIGURED");
+        return fiscoWrapper.nodeEvidence(operation, snapshot, request);
+    }
+
     public boolean isChainWriteEnabled() {
         return chainWritesEnabled && chainSyncEnabled;
     }
@@ -651,6 +657,7 @@ public class UpdatedelChainService {
         private final String privateKeyHex;
         private KeyEvidence keyEvidence;
         private Client client;
+        private CryptoKeyPair nodeEvidenceAccount;
 
         private FiscoBcosWrapper(String contractAddress, String fiscoHost, String privateKeyHex) throws Exception {
             this.contractAddress = contractAddress;
@@ -681,10 +688,59 @@ public class UpdatedelChainService {
             BcosSDK sdk = BcosSDK.build(tempConfigFile.getAbsolutePath());
             this.client = sdk.getClient(1);
             CryptoKeyPair cryptoKeyPair = createConfiguredKeyPair();
+            this.nodeEvidenceAccount = cryptoKeyPair;
             if (contractAddress == null || "0x0000000000000000000000000000000000000000".equals(contractAddress)) {
                 throw new RuntimeException("Contract address not configured");
             }
             this.keyEvidence = KeyEvidence.load(contractAddress, client, cryptoKeyPair);
+        }
+
+        private Map<String, Object> nodeEvidence(String operation, NodeFiscoMaterial s, Map<String, Object> request) throws Exception {
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("chainId", "fisco:group-1:" + contractAddress.toLowerCase(java.util.Locale.ROOT));
+            result.put("chainKeyId", s.chainKeyId.toString());
+            result.put("publicKeyHash", s.publicHash);
+            if ("prepare".equals(operation)) {
+                if (!keyEvidence.owner().equalsIgnoreCase(nodeEvidenceAccount.getAddress())) throw new IllegalStateException("FISCO_OWNER_MISMATCH");
+                org.fisco.bcos.sdk.abi.datatypes.Function function = new org.fisco.bcos.sdk.abi.datatypes.Function("uploadKey",
+                    java.util.Arrays.<org.fisco.bcos.sdk.abi.datatypes.Type>asList(
+                        new org.fisco.bcos.sdk.abi.datatypes.generated.Uint256(s.chainKeyId),
+                        new org.fisco.bcos.sdk.abi.datatypes.Utf8String(s.nodeId),
+                        new org.fisco.bcos.sdk.abi.datatypes.Utf8String(s.material),
+                        new org.fisco.bcos.sdk.abi.datatypes.Utf8String(s.algorithm),
+                        new org.fisco.bcos.sdk.abi.datatypes.Utf8String(s.keyRef),
+                        new org.fisco.bcos.sdk.abi.datatypes.Bool(false),
+                        new org.fisco.bcos.sdk.abi.datatypes.generated.Uint32(s.version)),
+                    java.util.Collections.<org.fisco.bcos.sdk.abi.TypeReference<?>>emptyList());
+                String data = new org.fisco.bcos.sdk.abi.FunctionEncoder(client.getCryptoSuite()).encode(function);
+                org.fisco.bcos.sdk.transaction.model.po.RawTransaction raw = NodeFiscoMaterial.unsignedTransaction(client, contractAddress, data);
+                org.fisco.bcos.sdk.transaction.codec.encode.TransactionEncoderService encoder = new org.fisco.bcos.sdk.transaction.codec.encode.TransactionEncoderService(client.getCryptoSuite());
+                String signed = encoder.encodeAndSign(raw, nodeEvidenceAccount);
+                result.put("txId", NodeFiscoMaterial.signedTransactionHash(client.getCryptoSuite(), signed));
+                result.put("signedTransaction", signed);
+                result.put("status", "PREPARED");
+                return result;
+            }
+            String txId = String.valueOf(request.get("txId"));
+            if (!txId.matches("0x[0-9a-fA-F]{64}")) throw new IllegalArgumentException("INVALID_TRANSACTION_ID");
+            TransactionReceipt receipt = client.getTransactionReceipt(txId).getTransactionReceipt().orElse(null);
+            if (receipt == null && "submit".equals(operation)) {
+                String signed = String.valueOf(request.get("signedTransaction"));
+                if (signed.length() > 65536 || !signed.matches("(?:0x)?[0-9a-fA-F]+")) throw new IllegalArgumentException("INVALID_SIGNED_TRANSACTION");
+                // Repeat exactly the persisted signed transaction, never prepare a new nonce on retry.
+                receipt = client.sendRawTransactionAndGetReceipt(signed);
+            }
+            result.put("txId", txId);
+            if (receipt == null) { result.put("status", "PENDING_VERIFICATION"); return result; }
+            if (!txId.equalsIgnoreCase(receipt.getTransactionHash()) || !contractAddress.equalsIgnoreCase(receipt.getTo()) || !nodeEvidenceAccount.getAddress().equalsIgnoreCase(receipt.getFrom())) throw new IllegalStateException("RECEIPT_IDENTITY_MISMATCH");
+            if (!receipt.isStatusOK()) { result.put("status", "FAILED"); result.put("lastError", "FISCO_RECEIPT_FAILED"); return result; }
+            org.fisco.bcos.sdk.abi.datatypes.generated.tuples.generated.Tuple7<BigInteger, String, String, String, String, Boolean, BigInteger> input = keyEvidence.getUploadKeyInput(receipt);
+            boolean matches = s.chainKeyId.equals(input.getValue1()) && s.nodeId.equals(input.getValue2()) && s.material.equals(input.getValue3()) && s.algorithm.equals(input.getValue4()) && s.keyRef.equals(input.getValue5()) && !input.getValue6() && s.version.equals(input.getValue7());
+            boolean event = keyEvidence.getUploadSuccessEvents(receipt).stream().anyMatch(e -> s.chainKeyId.equals(e.keyId) && s.version.equals(e.version) && BigInteger.ZERO.equals(e.status));
+            if (!matches || !event) throw new IllegalStateException("RECEIPT_MATERIAL_MISMATCH");
+            result.put("status", "CONFIRMED");
+            result.put("blockHeight", receipt.getBlockNumber());
+            return result;
         }
 
         private TransactionReceipt rotateKey(Long keyId, String newPubKey, Integer newVersion) {

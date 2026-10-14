@@ -1,4 +1,11 @@
+[CmdletBinding()]
+param([switch]$WithoutDid, [string]$NodeHome)
+
 $ErrorActionPreference = "Stop"
+
+. (Join-Path $PSScriptRoot 'npm-toolchain.ps1')
+# 在清理产物/构建 Java 之前检查，失败时保留已有产物。
+$frontendToolchain = Get-FrontendToolchain -NodeHome $NodeHome
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $runtimeRoot = Join-Path $PSScriptRoot "runtime"
@@ -92,20 +99,23 @@ function Invoke-FrontendBuild {
     )
 
     Write-Host "Building frontend project: $ProjectDir"
+    $originalPath = $env:PATH
+    $env:PATH = $frontendToolchain.Home + [System.IO.Path]::PathSeparator + $originalPath
     Push-Location $ProjectDir
     try {
-        npm install
+        & $frontendToolchain.NodeExe $frontendToolchain.NpmCli install
         if ($LASTEXITCODE -ne 0) {
             throw "npm install failed: $ProjectDir"
         }
 
-        npm run $BuildScript
+        & $frontendToolchain.NodeExe $frontendToolchain.NpmCli run $BuildScript
         if ($LASTEXITCODE -ne 0) {
             throw "Frontend build failed: $ProjectDir"
         }
     }
     finally {
         Pop-Location
+        $env:PATH = $originalPath
     }
 }
 
@@ -193,6 +203,7 @@ New-CleanDirectory (Join-Path $frontRoot "acceptance")
 
 Invoke-MavenBuild $generateJavaDir
 Invoke-MavenBuild $updatedelJavaDir
+if (-not $WithoutDid) { Invoke-MavenBuild (Join-Path $repoRoot 'kms-fabric-did') }
 # 旧分发 Java 服务的 Maven 构建已移除（Q11 整体下线）
 
 Invoke-GoLinuxBuild -ProjectDir $generateGoDir -OutputName "kms-generate-service"
@@ -221,6 +232,14 @@ Copy-Artifact -Source (Join-Path $acceptanceSecurityDir "security_test.sh") -Des
 # 前端产物投放：2 个（generate / distribute / user 均已下线或随阶段 1 合并退役）
 Copy-Item -Path (Join-Path $updatedelFrontDir "dist\*") -Destination (Join-Path $frontRoot "updatedel") -Recurse -Force
 Copy-Item -Path (Join-Path $acceptanceFrontDir "dist\*") -Destination (Join-Path $frontRoot "acceptance") -Recurse -Force
+
+if (-not $WithoutDid) {
+    $didTarget = Join-Path $repoRoot 'kms-fabric-did/target'
+    Copy-Artifact -Source (Join-Path $didTarget 'kms-fabric-did-1.0.0.jar') -Destination (Join-Path $runtimeRoot 'fabric-did/app.jar')
+    $didLib = Join-Path $didTarget 'lib'
+    if (-not (Test-Path (Join-Path $didLib '*.jar'))) { throw 'DID 缺少原始签名 SDK/provider 依赖，禁止只打包主 JAR' }
+    Copy-Item $didLib (Join-Path $runtimeRoot 'fabric-did/lib') -Recurse -Force
+}
 
 Write-Host "Local build artifacts are ready under kms-ops/runtime and kms-ops/front."
 Write-Host "Run 'docker compose up -d' in kms-ops/."

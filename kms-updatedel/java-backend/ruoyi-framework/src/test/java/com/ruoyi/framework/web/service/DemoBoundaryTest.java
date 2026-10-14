@@ -85,10 +85,27 @@ public class DemoBoundaryTest {
         assertFalse(identity.allowed(request, node));
         request.setServletPath("/monitor/operlog/list");
         request.setMethod("GET");
-        assertTrue(identity.allowed(request, admin));
+        assertFalse(identity.allowed(request, admin));
         assertFalse(identity.allowed(request, node));
         request.setServletPath("/internal/lifecycle/session/issue");
         assertFalse(identity.allowed(request, admin));
+    }
+
+    @Test
+    public void secureCookieUsesOnlyVerifiedGatewaySchemeAndPreservesHttp() {
+        request.addHeader("X-Forwarded-Proto", "http");
+        assertFalse(boundary.isSecure(request));
+        request.removeHeader("X-Forwarded-Proto");
+        request.addHeader("X-Forwarded-Proto", "https");
+        assertTrue(boundary.isSecure(request));
+        request.removeHeader("X-Kms-Demo-Gateway");
+        request.addHeader("X-Kms-Demo-Gateway", "forged");
+        denied(() -> boundary.isSecure(request));
+        request.removeHeader("X-Kms-Demo-Gateway");
+        request.addHeader("X-Kms-Demo-Gateway", "test-only-secret");
+        request.removeHeader("X-Forwarded-Proto");
+        request.addHeader("X-Forwarded-Proto", "https,http");
+        denied(() -> boundary.isSecure(request));
     }
 
     private void denied(Runnable action) {

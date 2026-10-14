@@ -176,6 +176,17 @@ def _as_envelope(raw: Any) -> Dict[str, Any]:
     wrapping = str(raw.get('wrapping_algorithm') or '').strip().lower()
     if wrapping == 'kyber_kem':
         required = ('kem_ciphertext', 'encrypted_key', 'nonce', 'tag')
+    elif wrapping == 'falcon_cl_v1':
+        from .falcon_cl_v1 import decode_ciphertext
+        if (raw.get('purpose') != 'ENCRYPT' or type(raw.get('material_version')) is not int
+                or raw['material_version'] != 1 or raw.get('payload_algorithm') != 'sm4'
+                or not isinstance(raw.get('recipient_node_id'), str)):
+            raise C.ContractError('Falcon CL envelope contract invalid', code=C.ERR_INVALID_PARAMETER)
+        try:
+            decode_ciphertext(raw.get('ciphertext'))
+        except (ValueError, TypeError):
+            raise C.ContractError('Falcon CL ciphertext invalid', code=C.ERR_INVALID_PARAMETER)
+        required = ('ciphertext', 'recipient_node_id')
     elif wrapping in ('gm_sm2', 'gm_sscl'):
         required = ('ciphertext',)
     else:
@@ -208,7 +219,9 @@ def _canonical_inner_json(envelope: Dict[str, Any], canonical: str) -> str:
     含进去会让摘要依赖它自己（自指），历史上已经踩过一次
     （见 `envelope_signature.SIGNED_FIELDS` 的注释）。
     """
-    if canonical == 'KYBER':
+    if canonical == 'FALCON_CL_V1':
+        inner = {name: envelope.get(name) for name in ('ciphertext', 'purpose', 'material_version', 'recipient_node_id', 'payload_algorithm', 'wrapping_algorithm')}
+    elif canonical == 'KYBER':
         inner = {
             'kem_ciphertext': envelope.get('kem_ciphertext'),
             'encrypted_key': envelope.get('encrypted_key'),
@@ -512,6 +525,12 @@ def create_node_distribution(sender: Node, receiver: Node, *,
             code=C.ERR_ALGORITHM_NOT_ALLOWED,
         )
     wrapping = NODE_WRAPPING_BY_CANONICAL[canonical]
+    if canonical == 'FALCON_CL_V1':
+        from .keygen_issuance import falcon_cl_enabled
+        if not falcon_cl_enabled():
+            raise C.ContractError('Falcon CL capability disabled', code=C.ERR_KEYGEN_POLICY_DISABLED)
+        # Encryption uses the recipient public key. The sender only needs its
+        # separate signing key, validated below; no sender encryption secret is used.
 
     # 指定哪版就查哪版 —— 查询先于登记发生，这是"版本真进了请求"的判据。
     # 它同时回答"这个节点这个算法有没有可用版本"，是 KMS-008 起就有的判据。
@@ -538,6 +557,10 @@ def create_node_distribution(sender: Node, receiver: Node, *,
     #   * `signature` 是节点用本地 Falcon 私钥对规范字节串的签名；
     #   * `key_hash` 是那把 SM4 的 SHA256（服务端没有 K，无法自算 —— 见 docstring）。
     envelope = _as_envelope(envelope)
+    if envelope.get('wrapping_algorithm') != wrapping:
+        raise C.ContractError('保护算法与信封算法不一致', code=C.ERR_INVALID_PARAMETER)
+    if canonical == 'FALCON_CL_V1' and envelope.get('recipient_node_id') != receiver.node_id:
+        raise C.ContractError('Falcon CL recipient mismatch', code=C.ERR_INVALID_PARAMETER)
     signature = str(signature or '').strip()
     if not signature:
         # 没有签名就**不收**。这是"移除服务端代签名"的落点：服务端既不签，

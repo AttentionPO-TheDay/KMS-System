@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -20,7 +22,6 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/cors"
 )
 
 const keyIDPlaceholder = "{{KEY_ID}}"
@@ -29,6 +30,7 @@ type Scenario struct {
 	ID              string            `json:"id"`
 	Name            string            `json:"name"`
 	TargetTPS       float64           `json:"targetTps"`
+	TargetOperator  string            `json:"targetOperator"`
 	Method          string            `json:"method"`
 	BaseURL         string            `json:"baseUrl"`
 	Path            string            `json:"path"`
@@ -39,9 +41,68 @@ type Scenario struct {
 	BodyTemplate    string            `json:"bodyTemplate"`
 	MetricKind      string            `json:"metricKind,omitempty"`
 	MetricTarget    float64           `json:"metricTarget,omitempty"`
+	MetricOperator  string            `json:"metricOperator,omitempty"`
 	Description     string            `json:"description"`
 	Notes           []string          `json:"notes,omitempty"`
 	PreparedKeyIDs  []int64           `json:"-"`
+}
+
+type AcceptanceCriterion struct {
+	ID             string   `json:"id"`
+	Category       string   `json:"category"`
+	Title          string   `json:"title"`
+	Requirement    string   `json:"requirement"`
+	Kind           string   `json:"kind"`
+	Target         float64  `json:"target,omitempty"`
+	Operator       string   `json:"operator,omitempty"`
+	Unit           string   `json:"unit,omitempty"`
+	ScenarioID     string   `json:"scenarioId,omitempty"`
+	CaseIDs        []string `json:"caseIds,omitempty"`
+	ExecutionScope string   `json:"executionScope"`
+	EvidenceSource string   `json:"evidenceSource"`
+	Notes          []string `json:"notes,omitempty"`
+}
+
+type AcceptanceEvidenceRequest struct {
+	CriterionID string  `json:"criterionId"`
+	Value       float64 `json:"value"`
+	Evidence    string  `json:"evidence"`
+	MeasuredAt  string  `json:"measuredAt"`
+}
+
+type AcceptanceEvidence struct {
+	ID               string  `json:"id"`
+	CriterionID      string  `json:"criterionId"`
+	Value            float64 `json:"value"`
+	Unit             string  `json:"unit"`
+	Operator         string  `json:"operator"`
+	Target           float64 `json:"target"`
+	Passed           bool    `json:"passed"`
+	Evidence         string  `json:"evidence"`
+	MeasuredAt       string  `json:"measuredAt"`
+	RecordedAt       string  `json:"recordedAt"`
+	Verified         bool    `json:"verified"`
+	Source           string  `json:"source,omitempty"`
+	NodeCode         string  `json:"nodeCode,omitempty"`
+	NodeName         string  `json:"nodeName,omitempty"`
+	TargetNodeCode   string  `json:"targetNodeCode,omitempty"`
+	PoolID           string  `json:"poolId,omitempty"`
+	Requested        int     `json:"requested,omitempty"`
+	Generated        int     `json:"generated,omitempty"`
+	Failed           int     `json:"failed,omitempty"`
+	LocalMs          float64 `json:"localMs,omitempty"`
+	LocalThroughput  float64 `json:"localThroughput,omitempty"`
+	ServerMs         float64 `json:"serverMs,omitempty"`
+	ServerThroughput float64 `json:"serverThroughput,omitempty"`
+}
+
+type acceptanceEvidenceEnvelope struct {
+	Code int                  `json:"code"`
+	Data []AcceptanceEvidence `json:"data"`
+}
+
+type persistedAcceptanceEvidence struct {
+	Items []*AcceptanceEvidence `json:"items"`
 }
 
 type RunRequest struct {
@@ -90,6 +151,7 @@ type SecurityRunResult struct {
 	ID         string                 `json:"id"`
 	CaseID     string                 `json:"caseId"`
 	Status     string                 `json:"status"`
+	Stage      string                 `json:"stage,omitempty"`
 	Verdict    string                 `json:"verdict"`
 	Passed     bool                   `json:"passed"`
 	StartedAt  string                 `json:"startedAt"`
@@ -201,6 +263,7 @@ type MetricCheck struct {
 	Kind       string  `json:"kind,omitempty"`
 	Value      float64 `json:"value,omitempty"`
 	Target     float64 `json:"target,omitempty"`
+	Operator   string  `json:"operator,omitempty"`
 	Passed     bool    `json:"passed"`
 	Source     string  `json:"source,omitempty"`
 	Message    string  `json:"message,omitempty"`
@@ -214,6 +277,7 @@ type RunResult struct {
 	ScenarioID  string      `json:"scenarioId"`
 	Scenario    string      `json:"scenario"`
 	Status      string      `json:"status"`
+	Stage       string      `json:"stage,omitempty"`
 	StartedAt   string      `json:"startedAt"`
 	FinishedAt  string      `json:"finishedAt,omitempty"`
 	TargetTPS   float64     `json:"targetTps"`
@@ -246,6 +310,9 @@ type internalVerifyRecord struct {
 	Status      string `json:"status"`
 	ChainStatus string `json:"chainStatus"`
 	UpdatedAt   string `json:"updatedAt"`
+	Version     *int   `json:"version"`
+	UserName    string `json:"userName"`
+	KeyDomain   string `json:"keyDomain"`
 }
 
 type internalVerifyResponse struct {
@@ -253,43 +320,47 @@ type internalVerifyResponse struct {
 }
 
 type acceptanceConfig struct {
-	GenerateInternalToken  string
-	GenerateKeyPoolURL     string
-	LifecycleVerifyURL     string
-	LifecycleProofURL      string
-	GenerateJavaBaseURL    string
-	LifecycleJavaBaseURL   string
-	AcceptanceUser         string
-	AttackUserName         string
-	AttackUserPassword     string
-	AttackAdminUserName    string
-	AttackAdminPassword    string
-	AttackForeignUser      string
-	VerifyWaitSeconds      int
-	KeyPoolLookbackMinutes int
-	LifecycleRequiredKeys  int
-	KeyPoolRetrySeconds    int
-	UpdateVerifyEnabled    bool
-	UpdateVerifyTarget     float64
+	GenerateInternalToken    string
+	GenerateKeyPoolURL       string
+	LifecycleVerifyURL       string
+	LifecycleProofURL        string
+	PreallocationEvidenceURL string
+	GenerateJavaBaseURL      string
+	LifecycleJavaBaseURL     string
+	AcceptanceUser           string
+	AttackUserName           string
+	AttackUserPassword       string
+	AttackAdminUserName      string
+	AttackAdminPassword      string
+	AttackForeignUser        string
+	VerifyWaitSeconds        int
+	KeyPoolLookbackMinutes   int
+	LifecycleRequiredKeys    int
+	KeyPoolRetrySeconds      int
+	UpdateVerifyEnabled      bool
+	UpdateVerifyTarget       float64
 }
 
 type server struct {
-	mu             sync.RWMutex
-	runs           map[string]*RunResult
-	runOrder       []string
-	securityRuns   map[string]*SecurityRunResult
-	securityOrder  []string
-	proofRuns      map[string]*ProofRunResult
-	proofOrder     []string
-	scenarios      map[string]Scenario
-	dataDir        string
-	runsFile       string
-	defaultWrkPath string
-	bashPath       string
-	securityScript string
-	counter        uint64
-	cfg            acceptanceConfig
-	client         *http.Client
+	mu                      sync.RWMutex
+	runs                    map[string]*RunResult
+	runOrder                []string
+	securityRuns            map[string]*SecurityRunResult
+	securityOrder           []string
+	proofRuns               map[string]*ProofRunResult
+	proofOrder              []string
+	acceptanceEvidence      map[string]*AcceptanceEvidence
+	acceptanceEvidenceOrder []string
+	scenarios               map[string]Scenario
+	dataDir                 string
+	runsFile                string
+	acceptanceEvidenceFile  string
+	defaultWrkPath          string
+	bashPath                string
+	securityScript          string
+	counter                 uint64
+	cfg                     acceptanceConfig
+	client                  *http.Client
 }
 
 func main() {
@@ -308,24 +379,30 @@ func main() {
 		log.Fatal("ACCEPTANCE_INTERNAL_TOKEN or INTERNAL_TOKEN must be set; refusing to start with a public fallback token")
 	}
 	srv := &server{
-		runs:           make(map[string]*RunResult),
-		securityRuns:   make(map[string]*SecurityRunResult),
-		proofRuns:      make(map[string]*ProofRunResult),
-		scenarios:      defaultScenarios(cfg),
-		dataDir:        dataDir,
-		runsFile:       filepath.Join(dataDir, "runs.json"),
-		defaultWrkPath: detectWrkPath(wd),
-		bashPath:       detectBashPath(),
-		securityScript: detectSecurityScriptPath(wd),
-		cfg:            cfg,
-		client:         &http.Client{Timeout: 30 * time.Second},
+		runs:                   make(map[string]*RunResult),
+		securityRuns:           make(map[string]*SecurityRunResult),
+		proofRuns:              make(map[string]*ProofRunResult),
+		acceptanceEvidence:     make(map[string]*AcceptanceEvidence),
+		scenarios:              defaultScenarios(cfg),
+		dataDir:                dataDir,
+		runsFile:               filepath.Join(dataDir, "runs.json"),
+		acceptanceEvidenceFile: filepath.Join(dataDir, "acceptance-evidence.json"),
+		defaultWrkPath:         detectWrkPath(wd),
+		bashPath:               detectBashPath(),
+		securityScript:         detectSecurityScriptPath(wd),
+		cfg:                    cfg,
+		client:                 &http.Client{Timeout: 30 * time.Second},
 	}
 	if err := srv.loadRuns(); err != nil {
 		log.Printf("load runs failed: %v", err)
 	}
+	if err := srv.loadAcceptanceEvidence(); err != nil {
+		log.Printf("load acceptance evidence failed: %v", err)
+	}
 
 	app := fiber.New()
-	app.Use(cors.New())
+	guard := newDemoGuard(srv)
+	app.Use(guard.authorize)
 
 	app.Get("/api/health", srv.handleHealth)
 	app.Get("/api/scenarios", srv.handleScenarios)
@@ -336,6 +413,9 @@ func main() {
 	app.Post("/api/security/runs", srv.handleCreateSecurityRun)
 	app.Get("/api/proof/runs", srv.handleProofRuns)
 	app.Post("/api/proof/runs", srv.handleCreateProofRun)
+	app.Get("/api/acceptance/criteria", srv.handleAcceptanceCriteria)
+	app.Get("/api/acceptance/evidence", srv.handleAcceptanceEvidence)
+	app.Post("/api/acceptance/evidence", srv.handleCreateAcceptanceEvidence)
 
 	port := envOrDefault("PORT", "9090")
 	log.Printf("kms-acceptance backend listening on :%s", port)
@@ -345,24 +425,25 @@ func main() {
 func loadAcceptanceConfig() acceptanceConfig {
 	acceptanceUser := envOrDefault("ACCEPTANCE_USER", "acceptance_user")
 	return acceptanceConfig{
-		GenerateInternalToken:  envOrDefault("ACCEPTANCE_INTERNAL_TOKEN", strings.TrimSpace(os.Getenv("INTERNAL_TOKEN"))),
-		GenerateKeyPoolURL:     envOrDefault("ACCEPTANCE_GENERATE_KEY_POOL_URL", "http://127.0.0.1:9081/internal/generate/keys/recent"),
-		LifecycleVerifyURL:     envOrDefault("ACCEPTANCE_LIFECYCLE_VERIFY_URL", "http://127.0.0.1:9082/internal/lifecycle/key-status"),
-		LifecycleProofURL:      envOrDefault("ACCEPTANCE_LIFECYCLE_PROOF_URL", "http://127.0.0.1:9082/internal/lifecycle/batch-proof"),
-		GenerateJavaBaseURL:    envOrDefault("ACCEPTANCE_GENERATE_JAVA_BASE_URL", "http://127.0.0.1:9081"),
-		LifecycleJavaBaseURL:   envOrDefault("ACCEPTANCE_LIFECYCLE_JAVA_BASE_URL", "http://127.0.0.1:9082"),
-		AcceptanceUser:         acceptanceUser,
-		AttackUserName:         envOrDefault("ACCEPTANCE_ATTACK_USER_NAME", acceptanceUser),
-		AttackUserPassword:     envOrDefault("ACCEPTANCE_ATTACK_USER_PASSWORD", ""),
-		AttackAdminUserName:    envOrDefault("ACCEPTANCE_ATTACK_ADMIN_NAME", "admin"),
-		AttackAdminPassword:    envOrDefault("ACCEPTANCE_ATTACK_ADMIN_PASSWORD", ""),
-		AttackForeignUser:      envOrDefault("ACCEPTANCE_ATTACK_FOREIGN_USER", "admin"),
-		VerifyWaitSeconds:      envOrDefaultInt("ACCEPTANCE_REVOKE_VERIFY_WAIT_SECONDS", 30),
-		KeyPoolLookbackMinutes: envOrDefaultInt("ACCEPTANCE_KEY_POOL_LOOKBACK_MINUTES", 120),
-		LifecycleRequiredKeys:  envOrDefaultInt("ACCEPTANCE_LIFECYCLE_REQUIRED_KEYS", 0),
-		KeyPoolRetrySeconds:    envOrDefaultInt("ACCEPTANCE_KEY_POOL_RETRY_SECONDS", 30),
-		UpdateVerifyEnabled:    envOrDefaultBool("ACCEPTANCE_UPDATE_VERIFY_ENABLED", true),
-		UpdateVerifyTarget:     envOrDefaultFloat("ACCEPTANCE_UPDATE_VERIFY_TARGET", 98),
+		GenerateInternalToken:    envOrDefault("ACCEPTANCE_INTERNAL_TOKEN", strings.TrimSpace(os.Getenv("INTERNAL_TOKEN"))),
+		GenerateKeyPoolURL:       envOrDefault("ACCEPTANCE_GENERATE_KEY_POOL_URL", "http://127.0.0.1:9081/internal/generate/keys/recent"),
+		LifecycleVerifyURL:       envOrDefault("ACCEPTANCE_LIFECYCLE_VERIFY_URL", "http://127.0.0.1:9082/internal/lifecycle/key-status"),
+		LifecycleProofURL:        envOrDefault("ACCEPTANCE_LIFECYCLE_PROOF_URL", "http://127.0.0.1:9082/internal/lifecycle/batch-proof"),
+		PreallocationEvidenceURL: envOrDefault("ACCEPTANCE_PREALLOCATION_EVIDENCE_URL", "http://127.0.0.1:8000/api/pqkds/internal/acceptance/preallocation-evidence/"),
+		GenerateJavaBaseURL:      envOrDefault("ACCEPTANCE_GENERATE_JAVA_BASE_URL", "http://127.0.0.1:9081"),
+		LifecycleJavaBaseURL:     envOrDefault("ACCEPTANCE_LIFECYCLE_JAVA_BASE_URL", "http://127.0.0.1:9082"),
+		AcceptanceUser:           acceptanceUser,
+		AttackUserName:           envOrDefault("ACCEPTANCE_ATTACK_USER_NAME", acceptanceUser),
+		AttackUserPassword:       envOrDefault("ACCEPTANCE_ATTACK_USER_PASSWORD", ""),
+		AttackAdminUserName:      envOrDefault("ACCEPTANCE_ATTACK_ADMIN_NAME", "admin"),
+		AttackAdminPassword:      envOrDefault("ACCEPTANCE_ATTACK_ADMIN_PASSWORD", ""),
+		AttackForeignUser:        envOrDefault("ACCEPTANCE_ATTACK_FOREIGN_USER", "admin"),
+		VerifyWaitSeconds:        envOrDefaultInt("ACCEPTANCE_REVOKE_VERIFY_WAIT_SECONDS", 30),
+		KeyPoolLookbackMinutes:   envOrDefaultInt("ACCEPTANCE_KEY_POOL_LOOKBACK_MINUTES", 120),
+		LifecycleRequiredKeys:    envOrDefaultInt("ACCEPTANCE_LIFECYCLE_REQUIRED_KEYS", 0),
+		KeyPoolRetrySeconds:      envOrDefaultInt("ACCEPTANCE_KEY_POOL_RETRY_SECONDS", 30),
+		UpdateVerifyEnabled:      envOrDefaultBool("ACCEPTANCE_UPDATE_VERIFY_ENABLED", true),
+		UpdateVerifyTarget:       envOrDefaultFloat("ACCEPTANCE_UPDATE_VERIFY_TARGET", 98),
 	}
 }
 
@@ -383,6 +464,7 @@ func defaultScenarios(cfg acceptanceConfig) map[string]Scenario {
 			ID:              "generate-tps",
 			Name:            "密钥生成 TPS",
 			TargetTPS:       100000,
+			TargetOperator:  ">",
 			Method:          http.MethodPost,
 			BaseURL:         generateBaseURL,
 			Path:            "/generate/request/ENROLL_KEY",
@@ -398,6 +480,7 @@ func defaultScenarios(cfg acceptanceConfig) map[string]Scenario {
 			ID:              "update-tps",
 			Name:            "密钥更新 TPS",
 			TargetTPS:       5000,
+			TargetOperator:  ">=",
 			Method:          http.MethodPost,
 			BaseURL:         lifecycleBaseURL,
 			Path:            "/lifecycle/request/UPDATE_KEY",
@@ -408,6 +491,7 @@ func defaultScenarios(cfg acceptanceConfig) map[string]Scenario {
 			BodyTemplate:    fmt.Sprintf(`{"keyId":%s,"user":"%s","keyName":"acceptance-rotate","keyUse":"性能验收","keyDomain":"acceptance","autoUpdate":"false"}`, keyIDPlaceholder, cfg.AcceptanceUser),
 			MetricKind:      "update_final_rate",
 			MetricTarget:    cfg.UpdateVerifyTarget,
+			MetricOperator:  ">=",
 			Description:     "直接压测 kms-updatedel Go 接口，自动从最新生成结果加载 key 池，目标 TPS 不低于 5000。",
 			Notes:           []string{"执行前请先跑一次生成场景，准备足够的 keyId。", "默认按 5 秒窗口控制单轮 key 需求，避免过度消耗生成结果。"},
 		},
@@ -415,6 +499,7 @@ func defaultScenarios(cfg acceptanceConfig) map[string]Scenario {
 			ID:              "revoke-tps",
 			Name:            "密钥回收 TPS",
 			TargetTPS:       5000,
+			TargetOperator:  ">=",
 			Method:          http.MethodPost,
 			BaseURL:         lifecycleBaseURL,
 			Path:            "/lifecycle/request/REVOKE_KEY",
@@ -430,6 +515,7 @@ func defaultScenarios(cfg acceptanceConfig) map[string]Scenario {
 			ID:              "revoke-rate",
 			Name:            "密钥回收率",
 			TargetTPS:       5000,
+			TargetOperator:  ">=",
 			Method:          http.MethodPost,
 			BaseURL:         lifecycleBaseURL,
 			Path:            "/lifecycle/request/REVOKE_KEY",
@@ -440,6 +526,7 @@ func defaultScenarios(cfg acceptanceConfig) map[string]Scenario {
 			BodyTemplate:    fmt.Sprintf(`{"keyId":%s,"user":"%s"}`, keyIDPlaceholder, cfg.AcceptanceUser),
 			MetricKind:      "revoke_final_rate",
 			MetricTarget:    98,
+			MetricOperator:  ">",
 			Description:     "先执行回收压测，再去生命周期 Java 内部查询最终状态，按 status=3 计算最终回收率。",
 			Notes:           []string{"默认等待 30 秒后核验，可通过环境变量调整。", "默认按 5 秒窗口控制单轮 key 需求，避免最终核验被生成尾部长期拖慢。"},
 		},
@@ -517,9 +604,9 @@ func (s *server) handleHealth(c *fiber.Ctx) error {
 		Service:            "kms-acceptance-backend",
 		WrkAvailable:       wrkAvailable,
 		WrkPath:            wrkPath,
-		SecurityScriptPath: s.securityScript,
-		SecurityExecutable: s.bashPath,
-		SecurityAvailable:  s.bashPath != "" && s.securityScript != "",
+		SecurityScriptPath: "system_security.go",
+		SecurityExecutable: "native-http-probes",
+		SecurityAvailable:  len(systemSecurityCases) > 0,
 		DataDir:            s.dataDir,
 		Now:                time.Now().Format(time.RFC3339),
 		AcceptanceUser:     s.cfg.AcceptanceUser,
@@ -536,6 +623,118 @@ func (s *server) handleScenarios(c *fiber.Ctx) error {
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].ID < list[j].ID })
 	return c.JSON(fiber.Map{"data": list})
+}
+
+func acceptanceCriteria() []AcceptanceCriterion {
+	return []AcceptanceCriterion{
+		{ID: "certless-generation", Category: "performance", Title: "无证书密钥生成速率", Requirement: "成功生成 TPS > 100000 条/秒", Kind: "scenario", Target: 100000, Operator: ">", Unit: "TPS", ScenarioID: "generate-tps", ExecutionScope: "admin", EvidenceSource: "kms-generate / ENROLL_KEY（SSCL 最快路径）", Notes: []string{"仅统计 2xx 成功请求，不以请求发出数代替成功数。"}},
+		{ID: "preallocation", Category: "performance", Title: "预分配密钥速率", Requirement: "节点侧本机封装吞吐 > 50 条/秒", Kind: "evidence", Target: 50, Operator: ">", Unit: "条/秒", ExecutionScope: "node", EvidenceSource: "独立节点侧预分配验收流程（需单独发起）", Notes: []string{"日常预分配不作为验收样本，也不自动回传量化结果。管理端未发起任务时状态为未执行。"}},
+		{ID: "key-update", Category: "performance", Title: "密钥更新速率", Requirement: "成功更新 TPS ≥ 5000 条/秒", Kind: "scenario", Target: 5000, Operator: ">=", Unit: "TPS", ScenarioID: "update-tps", ExecutionScope: "admin", EvidenceSource: "kms-updatedel / UPDATE_KEY"},
+		{ID: "abnormal-revoke", Category: "performance", Title: "异常密钥回收速率", Requirement: "成功回收 TPS ≥ 5000 条/秒", Kind: "scenario", Target: 5000, Operator: ">=", Unit: "TPS", ScenarioID: "revoke-tps", ExecutionScope: "admin", EvidenceSource: "kms-updatedel / REVOKE_KEY", Notes: []string{"只使用验收专用密钥池，不触碰生产密钥。"}},
+		{ID: "revoke-rate", Category: "performance", Title: "密钥最终回收率", Requirement: "最终状态回收率 > 98%", Kind: "scenario", Target: 98, Operator: ">", Unit: "%", ScenarioID: "revoke-rate", ExecutionScope: "admin", EvidenceSource: "生命周期最终状态查询（status=3）"},
+		{ID: "generation-attacks", Category: "security", Title: "密钥生成协议校验", Requirement: "3 类签发入口非法请求明确拒绝", Kind: "security-suite", Target: 3, Operator: ">=", Unit: "类", CaseIDs: []string{"generation-identity-injection", "generation-unknown-algorithm", "generation-malformed-json"}, ExecutionScope: "admin", EvidenceSource: "system_security.go / 实际 Demo 网关"},
+		{ID: "quantum-attacks", Category: "security", Title: "抗量子生成协议安全", Requirement: "3 类参数与私密字段边界校验（非量子攻击）", Kind: "security-suite", Target: 3, Operator: ">=", Unit: "类", CaseIDs: []string{"pq-parameter-downgrade", "pq-sign-encrypt-confusion", "pq-secret-upload"}, ExecutionScope: "admin", EvidenceSource: "system_security.go / 实际生成签发接口", Notes: []string{"仅验证协议参数策略，不证明抗 Shor/Grover 或 HNDL 能力。节点侧密文篡改、私钥隔离和材料版本校验需独立密码学验收，不计入本组。"}},
+		{ID: "network-attacks", Category: "security", Title: "无密码会话与网络边界", Requirement: "5 类会话与权限边界请求明确拒绝", Kind: "security-suite", Target: 5, Operator: ">=", Unit: "类", CaseIDs: []string{"network-session-forgery", "network-csrf", "network-stale-revision", "network-role-isolation", "network-origin"}, ExecutionScope: "admin", EvidenceSource: "system_security.go / 实际会话与权限接口"},
+	}
+}
+
+func (s *server) handleAcceptanceCriteria(c *fiber.Ctx) error {
+	return c.JSON(fiber.Map{"data": acceptanceCriteria()})
+}
+
+func (s *server) handleAcceptanceEvidence(c *fiber.Ctx) error {
+	remote, err := s.fetchPreallocationEvidence(c.Context())
+	if err != nil {
+		// 节点证据服务可能暂时未部署。保留本地历史记录并显式标记来源不可用，
+		// 不把管理端看板整体伪装成空数据或直接打成 503。
+		log.Printf("preallocation evidence source unavailable: %v", err)
+		remote = nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	list := make([]*AcceptanceEvidence, 0, len(remote)+len(s.acceptanceEvidenceOrder))
+	for index := range remote {
+		item := remote[index]
+		list = append(list, &item)
+	}
+	for i := len(s.acceptanceEvidenceOrder) - 1; i >= 0; i-- {
+		list = append(list, s.acceptanceEvidence[s.acceptanceEvidenceOrder[i]])
+	}
+	return c.JSON(fiber.Map{"data": list})
+}
+
+func (s *server) fetchPreallocationEvidence(parent context.Context) ([]AcceptanceEvidence, error) {
+	url := strings.TrimSpace(s.cfg.PreallocationEvidenceURL)
+	if url == "" {
+		return nil, errors.New("ACCEPTANCE_PREALLOCATION_EVIDENCE_URL 未配置")
+	}
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Internal-Token", s.cfg.GenerateInternalToken)
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	var envelope acceptanceEvidenceEnvelope
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&envelope); err != nil {
+		return nil, err
+	}
+	if envelope.Code != 200 {
+		return nil, fmt.Errorf("证据接口返回 code=%d", envelope.Code)
+	}
+	return envelope.Data, nil
+}
+
+func (s *server) handleCreateAcceptanceEvidence(c *fiber.Ctx) error {
+	var req AcceptanceEvidenceRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "invalid request body"})
+	}
+	criterion, ok := acceptanceCriterionByID(req.CriterionID)
+	if !ok || (criterion.Kind != "evidence" && criterion.Kind != "security-suite") {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "criterion does not accept manual evidence"})
+	}
+	if req.Value < 0 || strings.TrimSpace(req.Evidence) == "" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "value and evidence are required"})
+	}
+	measuredAt := strings.TrimSpace(req.MeasuredAt)
+	if measuredAt == "" {
+		measuredAt = time.Now().Format(time.RFC3339)
+	}
+	item := &AcceptanceEvidence{ID: s.nextID(), CriterionID: criterion.ID, Value: req.Value, Unit: criterion.Unit, Operator: criterion.Operator, Target: criterion.Target, Passed: compareThreshold(req.Value, criterion.Operator, criterion.Target), Evidence: strings.TrimSpace(req.Evidence), MeasuredAt: measuredAt, RecordedAt: time.Now().Format(time.RFC3339)}
+	s.mu.Lock()
+	s.acceptanceEvidence[item.ID] = item
+	s.acceptanceEvidenceOrder = append(s.acceptanceEvidenceOrder, item.ID)
+	err := s.persistAcceptanceEvidenceLocked()
+	s.mu.Unlock()
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "persist acceptance evidence failed"})
+	}
+	return c.JSON(item)
+}
+
+func acceptanceCriterionByID(id string) (AcceptanceCriterion, bool) {
+	for _, item := range acceptanceCriteria() {
+		if item.ID == id {
+			return item, true
+		}
+	}
+	return AcceptanceCriterion{}, false
+}
+
+func compareThreshold(value float64, operator string, target float64) bool {
+	if operator == ">" {
+		return value > target
+	}
+	return value >= target
 }
 
 func (s *server) handleRuns(c *fiber.Ctx) error {
@@ -582,11 +781,8 @@ func (s *server) handleCreateSecurityRun(c *fiber.Ctx) error {
 	if caseID == "" {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "caseId is required"})
 	}
-	if s.bashPath == "" {
-		return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{"message": "bash not found"})
-	}
-	if s.securityScript == "" {
-		return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{"message": "security_test.sh not found"})
+	if !systemSecurityCases[caseID] {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "旧版或未知安全用例不适用当前系统"})
 	}
 
 	run := &SecurityRunResult{
@@ -928,7 +1124,7 @@ func (s *server) executeRun(parentCtx context.Context, wrkPath string, scenario 
 		}
 		summary.SuccessfulRequestsPerSec = float64(successful) / float64(scenario.DurationSeconds)
 	}
-	passedTPS := summary.SuccessfulRequestsPerSec >= scenario.TargetTPS
+	passedTPS := compareThreshold(summary.SuccessfulRequestsPerSec, scenario.TargetOperator, scenario.TargetTPS)
 	metricCheck := s.collectMetricCheck(scenario)
 	status := "passed"
 	if !passedTPS || (metricCheck.Enforced && (!metricCheck.Collected || !metricCheck.Passed)) {
@@ -1022,22 +1218,23 @@ func (s *server) collectMetricCheck(scenario Scenario) MetricCheck {
 		return MetricCheck{}
 	}
 	if scenario.MetricKind == "update_final_rate" && !s.cfg.UpdateVerifyEnabled {
-		return MetricCheck{Kind: scenario.MetricKind, Target: scenario.MetricTarget, Source: s.cfg.LifecycleVerifyURL, Message: "update final-state verification disabled by ACCEPTANCE_UPDATE_VERIFY_ENABLED=false"}
+		return MetricCheck{Kind: scenario.MetricKind, Target: scenario.MetricTarget, Operator: scenario.MetricOperator, Source: s.cfg.LifecycleVerifyURL, Message: "update final-state verification disabled by ACCEPTANCE_UPDATE_VERIFY_ENABLED=false"}
 	}
 	if len(scenario.PreparedKeyIDs) == 0 {
-		return MetricCheck{Kind: scenario.MetricKind, Target: scenario.MetricTarget, Enforced: true, Message: "no key ids prepared", Source: s.cfg.LifecycleVerifyURL}
+		return MetricCheck{Kind: scenario.MetricKind, Target: scenario.MetricTarget, Operator: scenario.MetricOperator, Enforced: true, Message: "no key ids prepared", Source: s.cfg.LifecycleVerifyURL}
 	}
 
 	verified, err := s.waitLifecycleKeys(scenario.PreparedKeyIDs, scenario.MetricKind)
 	if err != nil {
-		return MetricCheck{Kind: scenario.MetricKind, Target: scenario.MetricTarget, Enforced: true, Source: s.cfg.LifecycleVerifyURL, Message: err.Error()}
+		return MetricCheck{Kind: scenario.MetricKind, Target: scenario.MetricTarget, Operator: scenario.MetricOperator, Enforced: true, Source: s.cfg.LifecycleVerifyURL, Message: err.Error()}
 	}
 	value := float64(verified) / float64(len(scenario.PreparedKeyIDs)) * 100
 	return MetricCheck{
 		Kind:       scenario.MetricKind,
 		Value:      value,
 		Target:     scenario.MetricTarget,
-		Passed:     value >= scenario.MetricTarget,
+		Operator:   scenario.MetricOperator,
+		Passed:     compareThreshold(value, scenario.MetricOperator, scenario.MetricTarget),
 		Source:     s.cfg.LifecycleVerifyURL,
 		Collected:  true,
 		Enforced:   true,
@@ -1097,6 +1294,10 @@ func (s *server) verifyLifecycleKeysOnce(keyIDs []int64, kind string) (int, erro
 }
 
 func (s *server) fetchLifecycleStatuses(keyIDs []int64) ([]internalVerifyRecord, error) {
+	return s.fetchLifecycleStatusesContext(context.Background(), keyIDs)
+}
+
+func (s *server) fetchLifecycleStatusesContext(ctx context.Context, keyIDs []int64) ([]internalVerifyRecord, error) {
 	endpoint, err := url.Parse(s.cfg.LifecycleVerifyURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid lifecycle verify url: %w", err)
@@ -1107,7 +1308,7 @@ func (s *server) fetchLifecycleStatuses(keyIDs []int64) ([]internalVerifyRecord,
 	}
 	endpoint.RawQuery = query.Encode()
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, endpoint.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1332,6 +1533,18 @@ func shortHash(value string) string {
 }
 
 func (s *server) executeSecurityRun(caseID string) SecurityRunResult {
+	return s.executeSecurityRunContext(context.Background(), caseID)
+}
+
+func (s *server) executeSecurityRunContext(parentCtx context.Context, caseID string) SecurityRunResult {
+	if systemSecurityCases[caseID] {
+		return s.executeSystemSecurity(parentCtx, caseID)
+	}
+	return SecurityRunResult{CaseID: caseID, Status: "error", Verdict: "not_applicable", Summary: "旧版或未知安全用例不适用于当前无密码系统，未计入验收"}
+}
+
+// Archived runner retained only for historical result interpretation, never routed from current UI/API.
+func (s *server) executeArchivedSecurityRunContext(parentCtx context.Context, caseID string) SecurityRunResult {
 	args := []string{
 		s.securityScript,
 		"--CaseId", caseID,
@@ -1351,7 +1564,7 @@ func (s *server) executeSecurityRun(caseID string) SecurityRunResult {
 		"--AttackForeignUser", s.cfg.AttackForeignUser,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(parentCtx, 90*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, s.bashPath, args...)
 
@@ -1490,6 +1703,40 @@ func (s *server) loadRuns() error {
 		s.runOrder = append(s.runOrder, run.ID)
 	}
 	return nil
+}
+
+func (s *server) loadAcceptanceEvidence() error {
+	if !fileExists(s.acceptanceEvidenceFile) {
+		return nil
+	}
+	body, err := os.ReadFile(s.acceptanceEvidenceFile)
+	if err != nil {
+		return err
+	}
+	var data persistedAcceptanceEvidence
+	if err := json.Unmarshal(body, &data); err != nil {
+		return err
+	}
+	for _, item := range data.Items {
+		if item == nil || item.ID == "" {
+			continue
+		}
+		s.acceptanceEvidence[item.ID] = item
+		s.acceptanceEvidenceOrder = append(s.acceptanceEvidenceOrder, item.ID)
+	}
+	return nil
+}
+
+func (s *server) persistAcceptanceEvidenceLocked() error {
+	items := make([]*AcceptanceEvidence, 0, len(s.acceptanceEvidenceOrder))
+	for _, id := range s.acceptanceEvidenceOrder {
+		items = append(items, s.acceptanceEvidence[id])
+	}
+	payload, err := json.MarshalIndent(persistedAcceptanceEvidence{Items: items}, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(s.acceptanceEvidenceFile, payload, 0o644)
 }
 
 func (s *server) persistRunsLocked() error {

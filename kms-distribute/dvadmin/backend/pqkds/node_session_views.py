@@ -2,6 +2,7 @@
 """节点侧的**取信封**、**验签/解封回执**与**会话确认**（文档 §6.5）。
 
     GET  /node-self/envelopes/                    我可解封的节点腿信封
+    GET  /node-self/distribution-batches/         当前节点参与的分发批次元数据
     POST /node-self/sessions/<sid>/versions/      这条会话该用哪两版密钥（KMS-011）
     POST /node-self/envelopes/<id>/verify/        回执：我在这台设备上验签通过（KMS-011）
     POST /node-self/envelopes/<id>/recover/       回执：我在这台设备上解封成功（KMS-011）
@@ -306,6 +307,92 @@ def node_sessions(request, identity):
         }
         for s in page
     ]
+    return _ok({'items': items, 'total': len(items)})
+
+
+@csrf_exempt
+@require_http_methods(['GET'])
+@require_kms_user
+def node_distribution_batches(request, identity):
+    """当前节点参与的节点到节点分发批次（只读元数据）。
+
+    节点分发使用 ``SessionKey``/``PreDistributedKey`` 新模型，不一定会在
+    旧的用户批次查询里留下当前用户可见的记录。这里按节点外键隔离会话，
+    再从会话上下文取出真实 ``batch_id``，因此发送方和接收方都能看到同一批次。
+    不返回信封、密文或会话密钥材料。
+    """
+    node = _find_node(identity)
+    if node is None:
+        return _error('当前账号未关联任何节点', 403)
+
+    queryset = (
+        SessionKey.objects
+        .filter(Q(node1=node) | Q(node2=node))
+        .select_related('node1', 'node2')
+        .order_by('-create_datetime', '-id')
+    )
+    # 这是“批次历史”而非“待处理会话”列表，默认保留已过期/已撤销记录；
+    # 需要只看活动批次时由调用方显式传 activeOnly=1。
+    if request.GET.get('activeOnly') in ('1', 'true', 'True'):
+        queryset = queryset.exclude(status__in=('expired', 'revoked'))
+    try:
+        limit = min(max(int(request.GET.get('limit') or 100), 1), 500)
+    except (TypeError, ValueError):
+        limit = 100
+
+    grouped = {}
+    for session in queryset[:limit]:
+        try:
+            context = json.loads(session.key_exchange_data or '{}')
+        except (ValueError, TypeError):
+            context = {}
+        batch_id = context.get('batch_id') if isinstance(context, dict) else None
+        if not batch_id:
+            # 兼容少量迁移前会话：当前节点分发会话的批次号位于 -n<node_pk> 之前。
+            match = re.match(r'^(.*?)(?:-k\d+)?-n\d+$', session.session_id or '')
+            batch_id = match.group(1) if match else session.session_id
+        if not batch_id:
+            continue
+
+        row = grouped.get(batch_id)
+        if row is None:
+            row = {
+                'batchId': batch_id,
+                'senderNode': session.node1.name if session.node1_id else '',
+                'senderNodeId': session.node1.node_id if session.node1_id else '',
+                'receiverNodes': [],
+                'receiverNodeIds': [],
+                'wrappingAlgorithms': [],
+                'statuses': [],
+                'createdAt': session.create_datetime.isoformat() if session.create_datetime else None,
+                'expiresAt': session.expires_at.isoformat() if session.expires_at else None,
+                'sessionId': session.session_id,
+                'sessionCount': 0,
+                'isSender': session.node1_id == node.id,
+            }
+            grouped[batch_id] = row
+
+        receiver = session.node2
+        if receiver is not None and receiver.node_id not in row['receiverNodeIds']:
+            row['receiverNodeIds'].append(receiver.node_id)
+            row['receiverNodes'].append(receiver.name or receiver.node_id)
+        algorithm = session.session_type or ''
+        if algorithm and algorithm not in row['wrappingAlgorithms']:
+            row['wrappingAlgorithms'].append(algorithm)
+        if session.status not in row['statuses']:
+            row['statuses'].append(session.status)
+        row['sessionCount'] += 1
+
+    items = []
+    for row in grouped.values():
+        statuses = row.pop('statuses')
+        algorithms = row.pop('wrappingAlgorithms')
+        row['wrappingAlgorithm'] = ', '.join(algorithms)
+        row['status'] = statuses[0] if len(statuses) == 1 else 'partial'
+        row['nodeCount'] = len(row['receiverNodeIds'])
+        row['nodeSuccessCount'] = row['nodeCount']
+        row['receiverNode'] = ', '.join(row['receiverNodes'])
+        items.append(row)
     return _ok({'items': items, 'total': len(items)})
 
 

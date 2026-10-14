@@ -160,10 +160,35 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         select count(1) from key_operation_record where action_type = #{actionType}
     </select>
 
+    <!--
+      首页是生产运行总览，不能把验收脚本使用的 acceptance_user、load_test_user_*
+      等测试账号算进来。记录本身不删除，验收台和明细页仍可完整追溯。
+      生产账号命名不受此约束；后续若增加测试账号，只需补到这组明确的测试命名规则。
+    -->
+    <sql id="dashboardProductionPredicate">
+        COALESCE(user_name, '') NOT IN ('acceptance_user')
+        AND COALESCE(user_name, '') NOT LIKE 'load_test_user_%'
+        AND COALESCE(user_name, '') NOT LIKE 'test_user_%'
+    </sql>
+
+    <select id="countDashboardRecordsByActionType" resultType="int">
+        select count(1)
+        from key_operation_record
+        where action_type = #{actionType}
+          and <include refid="dashboardProductionPredicate"/>
+    </select>
+
     <select id="countPendingReceives" resultType="int">
         select count(1)
         from key_operation_record
         where result_status in ('1', '2') and receive_status = '0'
+    </select>
+
+    <select id="countDashboardPendingReceives" resultType="int">
+        select count(1)
+        from key_operation_record
+        where result_status in ('1', '2') and receive_status = '0'
+          and <include refid="dashboardProductionPredicate"/>
     </select>
 
     <select id="countFailedResults" resultType="int">
@@ -172,10 +197,18 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         where result_status = '2'
     </select>
 
+    <select id="countDashboardFailedResults" resultType="int">
+        select count(1)
+        from key_operation_record
+        where result_status = '2'
+          and <include refid="dashboardProductionPredicate"/>
+    </select>
+
     <select id="selectRecentDashboardRecordsSince" parameterType="java.util.Date" resultType="com.ruoyi.updatedel.domain.KeyOperationRecord">
         select action_type, action_source, action_time
         from key_operation_record
         where action_time &gt;= #{startTime}
+          and <include refid="dashboardProductionPredicate"/>
         order by action_time asc, record_id asc
     </select>
 

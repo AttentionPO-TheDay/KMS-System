@@ -1,0 +1,20 @@
+# 新安装专用：不能把本机旧链的合约地址用于空链；不改变迁移/启动命令。
+# 此文件由 ship.ps1 合并进远端 compose，本地运行无需叠加。
+services:
+  generate-java:
+    environment:
+      KMS_CHAIN_WRITES_ENABLED: "false"
+      KMS_CHAIN_CONSUMER_ENABLED: "false"
+  updatedel-java:
+    environment:
+      KMS_CHAIN_WRITES_ENABLED: "false"
+      KMS_CHAIN_CONSUMER_ENABLED: "false"
+      KMS_LIFECYCLE_CHAIN_SYNC_ENABLED: "false"
+      KMS_LIFECYCLE_CHAIN_CONSUMER_ENABLED: "false"
+  dvadmin3-django:
+    environment:
+      KMS_CHAIN_WRITES_ENABLED: "false"
+      FABRIC_DID_WRITE_ENABLED: "false"
+  nginx:
+    environment:
+      KMS_CHAIN_WRITES_ENABLED: "false"

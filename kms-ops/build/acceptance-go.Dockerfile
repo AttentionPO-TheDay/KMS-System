@@ -30,6 +30,7 @@ RUN chmod +x /app/kms-acceptance-backend \
 EXPOSE 9090
 
 RUN useradd -r -u 10001 -s /usr/sbin/nologin kms \
+    && mkdir -p /app/data/lifecycle-audit \
     && chown -R kms:kms /app
 USER kms
 

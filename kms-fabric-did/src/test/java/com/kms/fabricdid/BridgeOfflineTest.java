@@ -136,6 +136,15 @@ public class BridgeOfflineTest {
         }
         assertEquals(0, initialized.get()); assertEquals(0, fake.calls); assertEquals(0, fake.submits);
     }
+    @Test public void handoffPrepareWorksWhileWritesPausedAndNeverSubmits() {
+        Map<String, String> env = environment(); env.put("KMS_CHAIN_WRITES_ENABLED", "false");
+        BindingService paused = new BindingService(new BridgeConfig(env), () -> fake);
+        Map<String, Object> handoff = paused.prepareHandoff(binding("SM2"));
+        assertEquals("PREPARED", handoff.get("status"));
+        assertEquals(false, handoff.get("submitted"));
+        assertNotNull(handoff.get("txId")); assertNotNull(handoff.get("nonce"));
+        assertEquals(0, fake.submits);
+    }
     @Test public void globalPausePrecedesMissingConfigurationAndDisabledBridge() {
         for (String enabled : new String[] {"true", "false"}) {
             Map<String, String> env = new HashMap<>();

@@ -32,12 +32,33 @@ BINDING_FIELDS = (
 PRIVATE_FIELDS = frozenset({
     'privatekey', 'secretkey', 'private', 'secret', 'sk', 'share', 'kgcshare',
     'localsecret', 'seed', 'ikm', 'd', 'z', 'recoveryseed',
+    'did', 'sid', 'partialmaterial', 'privatekeymaterial', 'fullsecret',
 })
 
 
-def policy_enabled():
+def policy_enabled(context=None):
+    """Return the split-keygen policy for the current trusted entry mode.
+
+    Demo and Standalone share this Django process, so a single global demo
+    override would silently change the normal node flow.  Demo may opt in only
+    when the request has already been authenticated by DemoContextMiddleware;
+    all other callers keep the Standalone gate.
+    """
+    if isinstance(context, dict) and (
+            context.get('entryMode') == 'DEMO' or context.get('bindingKind') == 'DEMO'):
+        return os.environ.get('KMS_DEMO_SPLIT_KEYGEN_ENABLED', 'false').lower() == 'true'
+    if getattr(context, 'kms_identity', None):
+        return policy_enabled(context.kms_identity)
     # Enable only after seeded-oracle/interoperability and independent review gates.
     return os.environ.get('KMS_SPLIT_KEYGEN_ENABLED', 'false').lower() == 'true'
+
+
+def falcon_cl_enabled():
+    return os.environ.get('KMS_FALCON_CL_V1_ENABLED', 'false').lower() == 'true'
+
+
+def generation_purpose(algorithm):
+    return {'KYBER': 'KEM_KEYGEN', 'FALCON': 'SIGN_KEYGEN', 'FALCON_CL_V1': 'ENCRYPT'}[algorithm]
 
 
 def _fail(message, code=C.ERR_INVALID_PARAMETER):
@@ -168,7 +189,7 @@ def _assert_binding(issuance, node, binding):
             or context['keyVersion'] != str(issuance.key_version)
             or context['schemeId'] != C.SPLIT_GENERATION_SCHEMES.get(issuance.algorithm)
             or context['schemeVersion'] != '1'
-            or context['purpose'] != ('KEM_KEYGEN' if issuance.algorithm == 'KYBER' else 'SIGN_KEYGEN')):
+            or context['purpose'] != generation_purpose(issuance.algorithm)):
         _fail('生成来源与当前可信上下文不一致；不得自动换钥', C.ERR_KEYGEN_CONTEXT_MISMATCH)
     if issuance.status == 'ABANDONED':
         _fail('原生成发放已显式放弃', C.ERR_KEYGEN_AUTHORIZATION_SUPERSEDED)
@@ -184,6 +205,15 @@ def _get_issuance(issuance_id):
 def canonical_public_key(algorithm, public_key, variant, *, stored=False):
     if not isinstance(public_key, str):
         _fail('公钥必须为编码字符串')
+    if algorithm == 'FALCON_CL_V1':
+        from .falcon_cl_v1 import parse_material
+        if variant != '512':
+            _fail('Falcon CL 参数集无效', C.ERR_KEYGEN_CONTEXT_MISMATCH)
+        try:
+            parse_material(public_key, 'PUBLIC')
+        except (ValueError, TypeError):
+            _fail('Falcon CL 公钥契约无效', C.ERR_KEYGEN_CONTEXT_MISMATCH)
+        return public_key, hashlib.sha256(public_key.encode('ascii')).hexdigest()
     try:
         raw = (base64.b64decode(public_key, validate=True)
                if stored and algorithm == 'KYBER' else bytes.fromhex(public_key))
@@ -196,6 +226,18 @@ def canonical_public_key(algorithm, public_key, variant, *, stored=False):
     if stored and public_key != material:
         _fail('新方案公钥存储编码必须规范且无空白', C.ERR_KEYGEN_CONTEXT_MISMATCH)
     return material, hashlib.sha256(material.encode('utf-8')).hexdigest()
+
+
+def _validate_partial_public(issuance, node, public_key):
+    if issuance.algorithm != 'FALCON_CL_V1':
+        return
+    from .falcon_cl_v1 import partial_public_fingerprint
+    try:
+        digest = partial_public_fingerprint(public_key, 'PUBLIC', node.node_id)
+    except (ValueError, TypeError):
+        _fail('Falcon CL 公钥契约无效', C.ERR_KEYGEN_CONTEXT_MISMATCH)
+    if not issuance.partial_public_hash or not secrets.compare_digest(issuance.partial_public_hash, digest):
+        _fail('Falcon CL 公共矩阵与授权部分签发不一致', C.ERR_KEYGEN_CONTEXT_MISMATCH)
 
 
 def _expiry_iso(value):
@@ -214,10 +256,12 @@ def _new_authorization(issuance, digest=''):
 def issue_contribution(node, binding, *, algorithm, key_id, key_version, variant,
                        abandon_generation_issuance_id=None):
     from .node_key_registry import _as_version, _validate_key_id
-    if not policy_enabled():
+    if not policy_enabled(binding):
         _fail('实验生成策略尚未通过启用门槛', C.ERR_KEYGEN_POLICY_DISABLED)
     if algorithm not in C.SPLIT_GENERATION_SCHEMES:
         _fail('签发仅支持规范 KYBER/FALCON 家族', C.ERR_KEYGEN_SCHEME_INVALID)
+    if algorithm == 'FALCON_CL_V1' and not falcon_cl_enabled():
+        _fail('Falcon 无证书格加密尚未通过独立审查启用门槛', C.ERR_KEYGEN_POLICY_DISABLED)
     variant = str(variant)
     if variant not in ({'512', '768', '1024'} if algorithm == 'KYBER' else {'512'}):
         _fail('生成参数集无效')
@@ -251,7 +295,7 @@ def issue_contribution(node, binding, *, algorithm, key_id, key_version, variant
         'schemeId': C.SPLIT_GENERATION_SCHEMES[algorithm], 'schemeVersion': '1',
         'coreFamily': algorithm, 'variant': variant, **binding,
         'keyId': kid, 'keyVersion': str(version),
-        'purpose': 'KEM_KEYGEN' if algorithm == 'KYBER' else 'SIGN_KEYGEN',
+        'purpose': generation_purpose(algorithm),
         'generationIssuanceId': issuance_id,
     }
     issuance = KeyGenerationIssuance.objects.create(
@@ -259,10 +303,18 @@ def issue_contribution(node, binding, *, algorithm, key_id, key_version, variant
         key_id=kid, key_version=version, context=context,
     )
     ticket = _new_authorization(issuance)
+    confidential = {}
+    if algorithm == 'FALCON_CL_V1':
+        from .falcon_cl_v1 import issue_partial, partial_public_fingerprint
+        confidential['partialMaterial'] = issue_partial(node.node_id, context)
+        issuance.partial_public_hash = partial_public_fingerprint(confidential['partialMaterial'], 'PARTIAL', node.node_id)
+        issuance.save(update_fields=['partial_public_hash'])
+    else:
+        confidential['share'] = base64.b64encode(secrets.token_bytes(32)).decode('ascii')
     return {
         'generationScheme': context['schemeId'], 'generationIssuanceId': issuance_id,
         'authorizationTicketId': ticket.pk, 'context': context,
-        'share': base64.b64encode(secrets.token_bytes(32)).decode('ascii'),
+        **confidential,
         'expiresAt': _expiry_iso(ticket.expires_at),
         'transportScope': 'LOCAL_DEMO_EXPERIMENT_ONLY' if binding['bindingKind'] == 'DEMO'
                           else 'AUTHENTICATED_CONFIDENTIAL_ISSUANCE',
@@ -295,6 +347,7 @@ def renew_authorization(node, binding, *, generation_issuance_id, public_key):
     _lock_node(node)
     issuance = _get_issuance(generation_issuance_id)
     _assert_binding(issuance, node, binding)
+    _validate_partial_public(issuance, node, public_key)
     _, digest = canonical_public_key(issuance.algorithm, public_key, issuance.context['variant'])
     if issuance.public_key_hash and issuance.public_key_hash != digest:
         _fail('原来源已绑定不同公钥', C.ERR_KEYGEN_PUBLIC_KEY_CONFLICT)
@@ -329,6 +382,7 @@ def consume_authorization(node, binding, generation, *, algorithm, key_id, key_v
             or context['schemeId'] != generation['schemeId']
             or (security_level and str(security_level) != context['variant'])):
         _fail('登记字段与冻结生成上下文不同', C.ERR_KEYGEN_CONTEXT_MISMATCH)
+    _validate_partial_public(issuance, node, public_key)
     _, digest = canonical_public_key(algorithm, public_key, context['variant'], stored=True)
     ticket = KeyGenerationAuthorization.objects.select_for_update().filter(
         pk=generation['authorizationTicketId'], issuance=issuance,

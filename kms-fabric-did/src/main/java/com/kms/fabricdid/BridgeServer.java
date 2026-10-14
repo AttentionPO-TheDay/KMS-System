@@ -50,6 +50,7 @@ public final class BridgeServer {
             else if ("POST".equals(method)) {
                 JsonNode body = body(exchange);
                 if ("bindings/prepare".equals(action)) result = service.prepare(body);
+                else if ("bindings/handoff".equals(action)) result = service.prepareHandoff(body);
                 else if ("bindings/submit".equals(action)) result = service.submit(body);
                 else if ("bindings/verify".equals(action)) result = service.verify(body);
                 else throw new BridgeException(404, "NOT_FOUND");

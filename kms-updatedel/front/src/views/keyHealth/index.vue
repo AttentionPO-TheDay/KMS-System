@@ -20,16 +20,7 @@
             </div>
           </template>
 
-          <el-alert
-            v-if="!keyId"
-            type="info"
-            :closable="false"
-            show-icon
-            title="输入密钥 ID 做健康检查"
-            description="检查同一把密钥在数据库、版本标记、操作轨迹与链上状态之间是否一致，并按规则检测异常。"
-          />
-
-          <template v-else>
+          <template v-if="keyId">
             <div v-if="result" class="kh-summary">
               <el-tag :type="healthTagType" size="large">{{ healthText }}</el-tag>
               <span class="kh-meta">
@@ -79,14 +70,6 @@
 
           <!-- ---------- 用户密钥：Java 扫描批次（可回看） ---------- -->
           <template v-if="source === 'user'">
-            <el-alert
-              type="info"
-              :closable="false"
-              show-icon
-              class="kh-alert"
-              title="扫描是只读操作"
-              description="它只按既有规则给出判定并留档，不改任何密钥状态；处置仍走各密钥自己的更新/回收入口。判定规则与「单钥检查」完全同源。"
-            />
             <div class="kh-toolbar">
               <el-button type="primary" icon="Search" :loading="scanning" @click="runScan">触发扫描</el-button>
               <span class="kh-note">
@@ -144,15 +127,6 @@
 
           <!-- ---------- 节点长期密钥：只读展示 Python 侧巡检现状（E4） ---------- -->
           <template v-else>
-            <el-alert
-              type="info"
-              :closable="false"
-              show-icon
-              class="kh-alert"
-              title="节点长期密钥：只读展示既有巡检结果"
-              description="它的健康由分发模块的巡检与自动回收服务负责（NodeKeyInspection），本页不重复实现巡检、也不触发回收；处置入口在「异常密钥 · 节点记录」与「密钥回收」页。"
-            />
-
             <div v-if="nodeLatestBatch" class="kh-grid">
               <div class="kh-card"><span>最近自动回收批次</span><strong class="kh-mono">{{ nodeLatestBatch.batchId }}</strong></div>
               <div class="kh-card"><span>回收密钥数</span><strong>{{ nodeLatestBatch.keys }}</strong></div>

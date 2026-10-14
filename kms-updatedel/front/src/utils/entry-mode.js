@@ -1,11 +1,8 @@
-// The namespace is fixed for the lifetime of this document, including pending IDB work.
-const documentPath = globalThis.location?.pathname || ''
-const basePath = (import.meta.env?.BASE_URL || '/updatedel/').replace(/\/$/, '')
-const applicationPath = basePath && (documentPath === basePath || documentPath.startsWith(`${basePath}/`))
-  ? documentPath.slice(basePath.length) : documentPath
-export const IS_DEMO = /^\/demo(?:\/|$)/.test(applicationPath)
-export const ENTRY_MODE = IS_DEMO ? 'DEMO' : 'STANDALONE'
-export const KEYSTORE_DB_NAME = IS_DEMO ? 'kms-demo-node-keystore' : 'kms-node-keystore'
+// Public entry is Demo-only. Keep its existing origin-local keystore namespace;
+// old standalone material is never imported or silently regenerated.
+export const IS_DEMO = true
+export const ENTRY_MODE = 'DEMO'
+export const KEYSTORE_DB_NAME = 'kms-demo-node-keystore'
 
 let principal = null
 export function setEntryPrincipal(value) {

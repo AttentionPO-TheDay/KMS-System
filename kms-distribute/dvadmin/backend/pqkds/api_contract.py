@@ -39,7 +39,7 @@ from typing import Dict, Optional, Tuple
 # 拿一把签名密钥去"解封"，密码学上根本走不通，而错在哪要等端到端测试才暴露。
 
 #: 可以把 SM4 载荷封给收件人的算法（保护算法）。**新业务只允许这三个。**
-PROTECTION_ALGORITHMS: Tuple[str, ...] = ('SM2', 'SSCL', 'KYBER')
+PROTECTION_ALGORITHMS: Tuple[str, ...] = ('SM2', 'SSCL', 'KYBER', 'FALCON_CL_V1')
 
 #: 只做签名/验签的算法。**不得**出现在保护算法字段里。
 SIGNATURE_ALGORITHMS: Tuple[str, ...] = ('FALCON',)
@@ -48,6 +48,7 @@ SIGNATURE_ALGORITHMS: Tuple[str, ...] = ('FALCON',)
 SPLIT_GENERATION_SCHEMES = {
     'KYBER': 'KMS_SPLIT_KEM_V1',
     'FALCON': 'KMS_SPLIT_SIGN_V1',
+    'FALCON_CL_V1': 'KMS_SPLIT_FALCON_CL_V1',
 }
 SPLIT_CONTEXT_FIELDS = (
     'schemeId', 'schemeVersion', 'coreFamily', 'variant', 'userId', 'nodeId',
@@ -79,7 +80,8 @@ WRAPPING_SM2 = 'gm_sm2'
 WRAPPING_SSCL = 'gm_sscl'
 LEGACY_WRAPPING_FALCON = 'falcon_lattice'
 
-NODE_WRAPPING_CHOICES: Tuple[str, ...] = (WRAPPING_KYBER, WRAPPING_SM2, WRAPPING_SSCL)
+WRAPPING_FALCON_CL_V1 = 'falcon_cl_v1'
+NODE_WRAPPING_CHOICES: Tuple[str, ...] = (WRAPPING_KYBER, WRAPPING_SM2, WRAPPING_SSCL, WRAPPING_FALCON_CL_V1)
 NODE_DEFAULT_WRAPPING = WRAPPING_KYBER
 
 #: 信封 `wrapping_algorithm`（库里那套拼写）→ 规范算法名（本模块那套）。
@@ -87,6 +89,7 @@ _WRAPPING_TO_CANONICAL: Dict[str, str] = {
     WRAPPING_KYBER: 'KYBER',
     WRAPPING_SM2: 'SM2',
     WRAPPING_SSCL: 'SSCL',
+    WRAPPING_FALCON_CL_V1: 'FALCON_CL_V1',
     LEGACY_WRAPPING_FALCON: 'FALCON',
 }
 
@@ -110,6 +113,7 @@ NODE_PUBLIC_KEY_COLUMN: Dict[str, str] = {
     'SM2': 'gm_public_key',
     'SSCL': 'sscl_public_key',
     'FALCON': 'falcon_sign_public_key',
+    # FALCON_CL_V1 lives only in NodeLongTermKey, never in a signing mirror.
 }
 
 #: 规范算法名 → 私钥列名。**这些列不得再被写入新私钥**（计划 §5.2）。
@@ -133,6 +137,8 @@ def canonical_algorithm(value: str) -> str:
     raw = str(value or '').strip()
     if not raw:
         return ''
+    if raw.upper() == 'FALCON_CL_V1':
+        return 'FALCON_CL_V1'
     lowered = raw.lower().replace('-', '_')
     if lowered in _WRAPPING_TO_CANONICAL:
         return _WRAPPING_TO_CANONICAL[lowered]
@@ -543,7 +549,7 @@ ERROR_HINTS: Dict[str, str] = {
     ERR_ENVELOPE_TAMPERED: '信封内容与签名时的摘要不一致，已拒绝。这可能是一次篡改，请联系管理员核查。',
     ERR_NOT_ENVELOPE_RECIPIENT: '该信封不是发给当前节点的，无法读取。',
     ERR_PROOF_MISMATCH: '双方提交的持有证明不一致，说明两边解出的会话密钥不是同一把。会话保持未建立状态。',
-    ERR_ALGORITHM_NOT_ALLOWED: 'Falcon 只用于签名，不能作为 SM4 的保护算法。可选：SM2、SSCL、Kyber。',
+    ERR_ALGORITHM_NOT_ALLOWED: '标准 Falcon 只用于签名；对称密钥封装可选：国密 SM2、国密 SSCL、后量子 KEM（Kyber）或独立无证书 Falcon 格加密。',
     ERR_POOL_ITEM_CONSUMED: '该池项已被消费，不能重复使用。请从密钥池中另取一项。',
 }
 

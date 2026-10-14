@@ -1,0 +1,3 @@
+# 下载的 SDK 配置含 MSP/TLS 私钥，仅保留在本机。
+*
+!.gitignore

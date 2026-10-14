@@ -10,11 +10,16 @@ let controller = new AbortController()
 export function getDemoContext() { return context }
 
 function acceptContext(body) {
+  // Persisted anonymous maps may omit null fields (FastJSON default).
+  // Missing role is anonymous only when no node identity accompanies it.
+  const data = body?.data
+  const principalType = data?.principalType === undefined && !data?.nodeId && !data?.node
+    ? null : data?.principalType
   if (body?.code !== 200 || !body?.data || body.data.entryMode !== 'DEMO' || body.data.enabled !== true ||
-      !['NODE', 'ADMIN', null].includes(body.data.principalType)) {
-    throw new Error(body?.msg || '受控演示未启用，或演示会话不可用')
+      !['NODE', 'ADMIN', null].includes(principalType)) {
+    throw new Error(body?.code !== 200 ? (body?.msg || '演示会话请求失败') : '演示会话格式无效或未启用，请重新检查入口状态')
   }
-  context = Object.freeze({ ...body.data })
+  context = Object.freeze({ ...body.data, principalType })
   setEntryPrincipal(context.principalType)
   return context
 }

@@ -1,7 +1,7 @@
 import { createWebHistory, createRouter } from 'vue-router'
 /* Layout */
 import Layout from '@/layout'
-import { IS_DEMO, namespaceRoutes } from '@/utils/entry-mode'
+import { namespaceRoutes } from '@/utils/entry-mode'
 
 /*
  * 静态路由：只保留「框架级」页面（登录、重定向、首页、错误页、个人中心）。
@@ -29,11 +29,6 @@ const standaloneRoutes = [
       }
     ]
   },
-  {
-    path: '/login',
-    component: () => import('@/views/login.vue'),
-    hidden: true
-  },
   // ⚠️ 「节点鉴权」的路由**不在这里**，它由 sys_menu 下发（migration 25）。
   //
   // 这里曾经额外静态注册过一份 `/nodeauth`，注释写的是"DB 菜单行同时插入，
@@ -56,12 +51,13 @@ const standaloneRoutes = [
     path: '',
     component: Layout,
     redirect: '/index',
+    hidden: true,
     children: [
       {
         path: '/index',
         component: () => import('@/views/index.vue'),
         name: 'Dashboard',
-        meta: { title: '总览仪表盘', icon: 'dashboard', affix: true }
+        meta: { title: '密钥总览', icon: 'dashboard', affix: true }
       }
     ]
   },
@@ -170,17 +166,12 @@ export const dynamicRoutes = [
   }
 ]
 
-export const constantRoutes = IS_DEMO ? [
+export const constantRoutes = [
   { path: '/demo', component: () => import('@/views/entry/demo.vue'), hidden: true },
   { path: '/demo/node/initialize', component: () => import('@/views/nodeInit/index.vue'), name: 'DemoNodeInit', hidden: true, meta: { title: '节点密钥环境检查' } },
   ...namespaceRoutes(standaloneRoutes.filter(route => ['', '/user', '/redirect'].includes(route.path)), 'ADMIN'),
   ...namespaceRoutes(standaloneRoutes.filter(route => ['/user', '/redirect'].includes(route.path)), 'NODE'),
   ...standaloneRoutes.filter(route => route.path === '/401' || route.path.includes('pathMatch'))
-] : [
-  ...standaloneRoutes,
-  { path: '/standalone', component: () => import('@/views/entry/standalone.vue'), hidden: true },
-  { path: '/standalone/admin/login', component: () => import('@/views/login.vue'), hidden: true, meta: { loginIntent: 'ADMIN' } },
-  { path: '/standalone/node/login', component: () => import('@/views/login.vue'), hidden: true, meta: { loginIntent: 'NODE' } }
 ]
 
 const router = createRouter({

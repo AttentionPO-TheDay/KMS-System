@@ -1,5 +1,7 @@
 package com.ruoyi.generate.contracts;
 
+import com.ruoyi.common.utils.ChainPublicMaterial;
+
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -83,10 +85,10 @@ public class KeyEvidence extends Contract {
         final Function function = new Function(
                 FUNC_UPLOADKEY,
                 Arrays.<Type>asList(new Uint256(_keyId),
-                new Utf8String(_username),
-                new Utf8String(_pubKey),
-                new Utf8String(_algo),
-                new Utf8String(_usage),
+                new Utf8String(ChainPublicMaterial.requireSmall(_username)),
+                new Utf8String(ChainPublicMaterial.forChain(_pubKey)),
+                new Utf8String(ChainPublicMaterial.requireSmall(_algo)),
+                new Utf8String(ChainPublicMaterial.requireSmall(_usage)),
                 new Bool(_isAutoUpdate),
                 new Uint32(_version)),
                 Collections.<TypeReference<?>>emptyList());
@@ -97,7 +99,7 @@ public class KeyEvidence extends Contract {
         final Function function = new Function(
                 FUNC_ROTATEKEY,
                 Arrays.<Type>asList(new Uint256(_keyId),
-                new Utf8String(_newPubKey),
+                new Utf8String(ChainPublicMaterial.forChain(_newPubKey)),
                 new Uint32(_newVersion)),
                 Collections.<TypeReference<?>>emptyList());
         return executeTransaction(function);

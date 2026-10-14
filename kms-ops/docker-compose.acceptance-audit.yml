@@ -1,0 +1,8 @@
+# Optional persistent audit storage. No change to chain, gateway, credentials or databases.
+services:
+  acceptance-backend:
+    volumes:
+      - kms_acceptance_lifecycle:/app/data/lifecycle-audit
+volumes:
+  kms_acceptance_lifecycle:
+    name: kms_acceptance_lifecycle

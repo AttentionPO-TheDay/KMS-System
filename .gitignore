@@ -200,3 +200,9 @@ kms-distribute/111.7z
 # django 容器 /var/log 的挂载点：运行日志，以及 KMS-015 的私钥清理备份
 # （备份含明文私钥材料，只作本机回滚记录，绝不进 git）。
 /kms-ops/dvadmin-logs/
+
+# 本地验收产物与临时环境，保留文件但不进入版本库。
+.audit-venv/
+/kms-acceptance/front/.*.png
+/kms-updatedel/front/.*.png
+# 发布镜像归档已由 *.tar/*.tar.gz 排除；保留发布说明和校验清单。

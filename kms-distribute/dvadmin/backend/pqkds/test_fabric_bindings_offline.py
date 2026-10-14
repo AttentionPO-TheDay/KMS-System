@@ -55,10 +55,10 @@ def bootstrap():
     django.setup()
     from django.db import connection
     from pqkds.models import (BlockchainConfig, Node, NodeLongTermKey,
-                              ChainKeyBinding, NodeKeyInspection)
+                              ChainKeyBinding, DidSdkHandoff, NodeKeyInspection)
     with connection.schema_editor() as editor:
         for model in (BlockchainConfig, Node, NodeLongTermKey,
-                      ChainKeyBinding, NodeKeyInspection):
+                      ChainKeyBinding, DidSdkHandoff, NodeKeyInspection):
             editor.create_model(model)
 
 
@@ -799,6 +799,8 @@ class BindingTests(unittest.TestCase):
         self.assertEqual(operation.name, 'ChainKeyBinding')
         runtime = {field.name: field.deconstruct()[1:] for field in ChainKeyBinding._meta.local_fields}
         stored = {name: field.deconstruct()[1:] for name, field in operation.fields}
+        extension = importlib.import_module('pqkds.migrations.0035_chain_binding_block_height').Migration.operations[0]
+        stored[extension.name] = extension.field.deconstruct()[1:]
         self.assertEqual(runtime, stored)
         self.assertEqual(operation.options['db_table'], ChainKeyBinding._meta.db_table)
         self.assertEqual(operation.options['constraints'], ChainKeyBinding._meta.constraints)

@@ -117,13 +117,14 @@
           </template>
         </el-table-column>
         <el-table-column label="组织" min-width="120" prop="organization" show-overflow-tooltip />
+        <el-table-column label="所属域" min-width="120" prop="domain_id" show-overflow-tooltip />
         <el-table-column label="最后活跃" width="170">
           <template #default="scope">{{ formatTime(scope.row.last_active) }}</template>
         </el-table-column>
         <el-table-column label="操作" width="260" fixed="right">
           <template #default="scope">
             <el-button link type="primary" size="small" @click="openEdit(scope.row)">编辑</el-button>
-            <el-button link type="primary" size="small" @click="openKeys(scope.row)">密钥</el-button>
+            <el-button v-if="!IS_DEMO" link type="primary" size="small" @click="openKeys(scope.row)">密钥</el-button>
             <!-- 重签凭证：节点没有口令，凭证是它上线的唯一入口，
                  所以这个动作放在列表里常驻，而不是藏在某个二级页面 -->
             <el-button v-if="!IS_DEMO" link type="warning" size="small" @click="handleReissue(scope.row)">重签凭证</el-button>
@@ -158,6 +159,11 @@
         </el-form-item>
         <el-form-item label="所属组织">
           <el-input v-model="createForm.organization" />
+        </el-form-item>
+        <el-form-item label="所属域" prop="domain_id">
+          <el-select v-model="createForm.domain_id" filterable allow-create default-first-option style="width: 100%" placeholder="选择或输入域 ID">
+            <el-option v-for="domain in domainOptions" :key="domain" :label="domain" :value="domain" />
+          </el-select>
         </el-form-item>
         <el-form-item label="联系人">
           <el-input v-model="createForm.contact_person" />
@@ -195,6 +201,11 @@
 </el-form-item>
         <el-form-item label="所属组织">
           <el-input v-model="editForm.organization" />
+        </el-form-item>
+        <el-form-item label="所属域">
+          <el-select v-model="editForm.domain_id" filterable allow-create default-first-option style="width: 100%" placeholder="选择或输入域 ID">
+            <el-option v-for="domain in domainOptions" :key="domain" :label="domain" :value="domain" />
+          </el-select>
         </el-form-item>
         <el-form-item label="部门">
           <el-input v-model="editForm.department" />
@@ -384,6 +395,7 @@ const rows = ref([])
 const selected = ref([])
 const loading = ref(false)
 const filter = reactive({ keyword: '', nodeType: '', status: '' })
+const domainOptions = computed(() => Array.from(new Set(['domain-1', ...rows.value.map((row) => row.domain_id).filter(Boolean)])))
 
 const createOpen = ref(false)
 const creating = ref(false)
@@ -415,6 +427,7 @@ const createForm = reactive({
   port: 9003,
   node_type: 'full',
   organization: '',
+  domain_id: 'domain-1',
   contact_person: '',
   description: ''
 })
@@ -517,6 +530,7 @@ function openCreate() {
     port: 9003,
     node_type: 'full',
     organization: '',
+    domain_id: 'domain-1',
     contact_person: '',
     description: ''
   })
@@ -614,6 +628,7 @@ function openEdit(row) {
     id: row.id,
     node_id: row.node_id,
     organization: row.organization || '',
+    domain_id: row.domain_id || 'domain-1',
     department: row.department || '',
     contact_person: row.contact_person || '',
     phone: row.phone || '',
@@ -643,6 +658,7 @@ async function submitEdit() {
 }
 
 async function openKeys(row) {
+  if (IS_DEMO) return
   keysNode.value = { ...row }
   keysOpen.value = true
   keysLoading.value = true

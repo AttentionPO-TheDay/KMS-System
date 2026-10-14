@@ -219,6 +219,7 @@ class FalconKeyPairDetailSerializer(CustomModelSerializer):
         ]
 class KeyDistributionLogSerializer(CustomModelSerializer):
     node_name = serializers.CharField(source='node.name', read_only=True)
+    node_id = serializers.CharField(source='node.node_id', read_only=True)
     class Meta:
         model = KeyDistributionLog
         fields = '__all__'

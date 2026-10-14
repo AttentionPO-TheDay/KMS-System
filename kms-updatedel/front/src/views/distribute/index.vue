@@ -88,7 +88,7 @@
 
             <!--
               保护算法（计划 §3 的固定职责）：
-                SM2 / SSCL / Kyber 保护 SM4；Falcon 只签名，**不是**保护算法。
+                SM2 / SSCL / Kyber 保护 SM4；标准 Falcon 只签名；独立 FALCON_CL_V1 才是实验性的无证书格加密保护算法。
               旧页面那套「抗量子 / 国密」二分已经去掉 —— 它把"用谁的密钥"
                 和"用哪种算法"搅在一起；新契约里算法就是算法，一次选定。
             -->
@@ -98,11 +98,13 @@
                 :disabled="!form.receiverNodeCode"
                 @change="handleAlgorithmChange"
               >
-                <el-radio-button label="KYBER">Kyber</el-radio-button>
+                <el-radio-button label="KYBER">{{ PROTECTION_LABELS.KYBER }}</el-radio-button>
                 <el-radio-button label="SM2">SM2</el-radio-button>
                 <el-radio-button label="SSCL">SSCL</el-radio-button>
+                <el-radio-button label="FALCON_CL_V1">{{ PROTECTION_LABELS.FALCON_CL_V1 }}</el-radio-button>
               </el-radio-group>
-              <div class="form-hint">Falcon 是签名算法，不提供机密性，不在保护算法之列。</div>
+              <div v-if="form.protectionAlgorithm === 'FALCON_CL_V1'" class="form-hint">{{ falconClStatus }}</div>
+              <FalconEncryptionSupplement v-if="selfNodeId" @registered="refreshEncryptionMaterials" />
             </el-form-item>
 
             <el-form-item label="接收方密钥版本">
@@ -120,6 +122,7 @@
                   :value="`${key.keyId}@${key.keyVersion}`"
                 />
               </el-select>
+              <el-button size="small" class="mt8" :loading="keysLoading" :disabled="!form.receiverNodeCode" @click="loadPeerKeys">刷新接收方密钥</el-button>
               <div class="form-hint">
                 只列<b>可用于新工作</b>的版本（标记为「可用」）。已被取代或已回收的版本不出现在这里 ——
                 能不能用由服务端判（`allowsNewWork`），页面不另写一套。
@@ -131,7 +134,7 @@
               <div class="form-hint">1..168 小时，默认 24。到期后信封不再可用（不自动续期）。</div>
             </el-form-item>
 
-            <el-form-item label="发送方 Falcon 版本">
+            <el-form-item label="发送方签名密钥版本">
               <el-tag v-if="falconReady" size="small" type="success" effect="plain">
                 {{ falconKey?.keyId }} v{{ falconKey?.keyVersion }}
               </el-tag>
@@ -320,10 +323,13 @@
 
           <el-table :data="batches" size="small" v-loading="batchesLoading" empty-text="还没有分发记录">
             <el-table-column label="批次号" prop="batchId" min-width="170" show-overflow-tooltip />
-            <el-table-column label="算法" prop="wrappingAlgorithm" width="86" />
+            <el-table-column label="保护算法" min-width="180">
+              <template #default="{ row }">{{ protectionLabel(row.wrappingAlgorithm) }}</template>
+            </el-table-column>
             <el-table-column label="节点" width="64">
               <template #default="scope">{{ scope.row.nodeSuccessCount }}/{{ scope.row.nodeCount }}</template>
             </el-table-column>
+            <el-table-column label="接收节点" prop="receiverNode" min-width="120" show-overflow-tooltip />
             <el-table-column label="状态" width="88">
               <template #default="scope">
                 <el-tag size="small" :type="statusType(scope.row.status)">{{ statusText(scope.row.status) }}</el-tag>
@@ -348,7 +354,7 @@
  *      的旧模型。新模型是**节点到节点**：发送节点取接收节点的公钥封 SM4，
  *      没有"用户自己的那一份"；
  *   2. 「封装体系（抗量子/国密）」二分 —— 它把"用谁的密钥"与"用哪种算法"
- *      搅在一起。新契约里保护算法就是 SM2 / SSCL / Kyber 三选一。
+ *      搅在一起。新契约里保护算法是 SM2 / SSCL / Kyber / FALCON_CL_V1，标准 Falcon 仍只负责签名。
  *
  * 新增的是**接收方密钥版本**：选定节点与算法后向服务端查它的长期密钥列表，
  * 选一版标着「可用」的。服务端按**这一版**核对 —— 旧实现读的是物化列
@@ -367,18 +373,20 @@
  */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import FalconEncryptionSupplement from '@/components/FalconEncryptionSupplement/index.vue'
+import { PROTECTION_LABELS, protectionLabel, falconRecipientState } from '@/utils/protection-algorithms.js'
 import {
   consumePoolItem,
   getPoolSummary,
   getSelfNode,
   listNodeDirectory,
+  listSelfDistributionBatches,
   listSelfNodeKeys,
   requestNodeAuthorizations,
   signPoolEnvelope
 } from '@/api/pqkds/node-self'
 import {
   createNodeDistribution,
-  listDistributionBatches,
   listPeerKeys
 } from '@/services/user-distribution-api'
 import { cryptoProvider } from '@/utils/crypto/browser-provider.js'
@@ -392,9 +400,13 @@ import {
 } from '@/utils/crypto/envelope-signing.js'
 
 /** 保护算法（规范名）。与 `api_contract.PROTECTION_ALGORITHMS` 一致，Falcon 不在其中。 */
-const PROTECTION_ALGORITHMS = ['KYBER', 'SM2', 'SSCL']
+const PROTECTION_ALGORITHMS = ['KYBER', 'SM2', 'SSCL', 'FALCON_CL_V1']
 
-const PROTECTION_LABELS = { KYBER: '抗量子 Kyber', SM2: '国密 SM2', SSCL: '国密 SSCL' }
+const falconClEnabled = ref(false)
+const falconReceiver = computed(() => falconRecipientState({ enabled: falconClEnabled.value,
+  receiverNodeCode: form.receiverNodeCode, keys: peerKeys.value, loading: keysLoading.value }))
+const falconClReady = computed(() => falconReceiver.value.available)
+const falconClStatus = computed(() => falconReceiver.value.message)
 
 const nodes = ref([])
 const nodesLoading = ref(false)
@@ -478,11 +490,11 @@ function nodeOptionLabel(node) {
  *    两份必然漂移，而漂移的表现是"界面显示可用、提交被告知不可用"（或更糟：
  *    界面隐藏了一个其实可用的版本）。这个字段与后端 `api_contract` 的状态集合绑定。
  */
-const usablePeerKeys = computed(() => peerKeys.value.filter((key) => key.allowsNewWork === true))
+const usablePeerKeys = computed(() => peerKeys.value.filter((key) => key.algorithm === form.protectionAlgorithm && key.allowsNewWork === true))
 
 const canSubmit = computed(() => Boolean(
   mapped.value && form.receiverNodeCode && form.recipientKeyRef
-  && falconReady.value && !submitting.value
+  && falconReady.value && !submitting.value && (form.protectionAlgorithm !== 'FALCON_CL_V1' || falconClReady.value)
 ))
 
 /**
@@ -548,6 +560,7 @@ async function loadSelf() {
     const data = await getSelfNode()
     mapped.value = Boolean(data?.mapped)
     selfNodeId.value = data?.node?.nodeId || ''
+    falconClEnabled.value = data?.node?.falconClCapability?.enabled === true
     await loadFalconKey()
   } catch (error) {
     errorMessage.value = `加载节点身份失败：${describeError(error)}`
@@ -665,7 +678,7 @@ async function loadPeerKeys() {
   }
   keysLoading.value = true
   try {
-    const data = await listPeerKeys(form.receiverNodeCode, [form.protectionAlgorithm])
+    const data = await listPeerKeys(form.receiverNodeCode, PROTECTION_ALGORITHMS)
     peerKeys.value = data?.keys || []
     // 只有一版可用时直接选中：一次点击就能提交，少一步无意义的交互。
     // ⚠️ 多于一个候选时**不预选** —— 预选一个"看起来对"的版本，
@@ -695,10 +708,15 @@ function handleAlgorithmChange() {
   return loadPeerKeys()
 }
 
+async function refreshEncryptionMaterials() {
+  await loadSelf()
+  await loadPeerKeys()
+}
+
 async function loadBatches() {
   batchesLoading.value = true
   try {
-    const data = await listDistributionBatches({ limit: 50 })
+    const data = await listSelfDistributionBatches({ limit: 50 })
     batches.value = data?.items || []
   } catch (error) {
     errorMessage.value = `加载批次失败：${describeError(error)}`
@@ -921,7 +939,7 @@ function describeError(error) {
     case 'KEY_EXPIRED':
       return '这一版已过期，请改选其它版本或让对方续期。'
     case 'ALGORITHM_NOT_ALLOWED':
-      return '该算法不能用于保护会话密钥（Falcon 只做签名）。请选 SM2 / SSCL / Kyber。'
+ return '该算法不能用于保护会话密钥（标准 Falcon 只做签名）。请选 SM2 / SSCL / Kyber 或已启用的无证书 Falcon 格加密。'
     case 'SIGNATURE_REQUIRED':
       return '服务端没有收到签名。本机这把 Falcon 私钥可能不在密钥库里（换过设备或清过数据）—— 请在本机重新生成一把 Falcon 密钥后再分发。'
     case 'SIGNATURE_INVALID':
@@ -936,7 +954,17 @@ function describeError(error) {
 }
 
 function statusText(status) {
-  return { success: '全部成功', partial: '部分成功', pending: '进行中', failed: '失败' }[status] || status || '-'
+  return {
+    success: '全部成功',
+    partial: '部分成功',
+    pending: '进行中',
+    initiated: '已发起',
+    established: '已建立',
+    blockchain_recorded: '已上链',
+    expired: '已过期',
+    revoked: '已撤销',
+    failed: '失败'
+  }[status] || status || '-'
 }
 
 function statusType(status) {

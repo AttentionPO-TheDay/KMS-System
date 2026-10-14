@@ -35,16 +35,7 @@
         </div>
       </template>
 
-      <el-alert
-        v-if="!keyId"
-        type="info"
-        :closable="false"
-        show-icon
-        title="输入密钥 ID，查出这把密钥影响到了哪些地方"
-        description="用于回答：它被分发到了哪些节点、产生过哪些操作、以及应当如何处置。"
-      />
-
-      <template v-else>
+      <template v-if="keyId">
         <el-descriptions v-if="base" :column="3" border size="small" class="la-base">
           <!-- ⚠️ baseInfo 是后端直接序列化的 Keymanage，字段为 **snake_case**
                （key_id / key_name / encryt_name / user_name）。只读 camelCase

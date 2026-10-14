@@ -1,193 +1,30 @@
+const probe = (caseId, title, target, expected, steps) => ({ caseId, title, target, expected, steps, mode: '实际协议探针 · 独立临时会话' })
 export const securitySuites = [
-  {
-    id: 'crypto-algorithm',
-    name: '密码核心算法 3 类攻击',
-    accent: 'accent-red',
-    summary: '针对密码生成算法及底层结构的受击面测试，验证系统对弱参数、非法曲线和畸形数据格式的拒绝能力。',
+  { id: 'generation-protocol', name: '密钥生成协议校验', accent: 'accent-red',
+    summary: '针对现有双份额生成签发入口，只发送非法请求。先后验证合法节点读取，不登记或改变业务密钥。',
     cases: [
-      {
-        caseId: 'algo-tamper',
-        title: '算法参数篡改',
-        mode: '自动化',
-        target: 'ENROLL_KEY 公钥 UA 参数校验（长度、前缀、曲线验证）',
-        expected: '非法公钥点、非法长度或前缀（如05）应在协议层直接被拒绝。',
-        steps: [
-          '篡改公钥使其不在椭圆曲线上，发送 ENROLL_KEY 请求',
-          '将公钥长度从 130 改为 64 字符重发',
-          '将公钥前缀从 04 改为 05 重发'
-        ]
-      },
-      {
-        caseId: 'algo-weak-param',
-        title: '弱算法降级攻击',
-        mode: '自动化',
-        target: '算法类型与名称强制校验（encryt_type / encryt_name）',
-        expected: '后台密码模块应强制拒绝不安全参数，不再生成低强度密钥。',
-        steps: [
-          '将算法名称篡改为废弃的 RSA-512，发送生成请求',
-          '将算法名称篡改为不安全的 MD5，发送生成请求',
-          '将算法类型设为空字符串，发送生成请求'
-        ]
-      },
-      {
-        caseId: 'algo-malformed',
-        title: '畸形密码载荷攻击',
-        mode: '自动化',
-        target: '解析器健壮性：破坏格式边界',
-        expected: '算法解析器不应抛出内存溢出或拒绝服务，应安全拦截。',
-        steps: [
-          '在公钥参数中注入非十六进制字符（如 04abXXzz...）',
-          '发送超长公钥字符串（2000 字符）突破解析边界',
-          '发送完全非法的请求体（破坏 JSON 结构）'
-        ]
-      }
-    ]
-  },
-  {
-    id: 'lifecycle-attacks',
-    name: '更新与回收 5 类攻击',
-    accent: 'accent-orange',
-    summary: '针对更新与回收系统的 5 类攻击：SQL 注入、XSS、扫描工具识别、登录暴力破解、点击劫持防护验证。',
+      probe('generation-identity-injection', '伪造生成节点身份', '签发接口的可信身份与字段白名单', '客户端注入 nodeId 应返回 INVALID_PARAMETER，身份只能由服务端会话决定。', ['建立独立节点会话', '注入 foreign-node 身份', '核对拒绝码与合法读取']),
+      probe('generation-unknown-algorithm', '未授权算法替换', '生成签发算法白名单', '替换为 RSA-512 必须返回 KEYGEN_SCHEME_INVALID。', ['发送 RSA-512 签发请求', '核对方案拒绝码', '确认合法读取正常']),
+      probe('generation-malformed-json', '生成请求格式破坏', '签发接口 JSON 对象解析', '残缺 JSON 必须返回 INVALID_PARAMETER，500 或接口不存在不算通过。', ['发送残缺 JSON', '核对参数拒绝码', '确认服务可读取'])
+    ] },
+  { id: 'pq-protocol', name: '抗量子生成协议安全', accent: 'accent-purple',
+    summary: '测试当前抗量子生成方案的参数策略与私密字段边界。不是 Shor/Grover 实验，也不是抗量子安全证明。',
     cases: [
-      {
-        caseId: 'lifecycle-sql',
-        title: 'SQL 注入',
-        mode: '半自动',
-        target: '我的密钥、结果查询、操作记录查询条件',
-        expected: '仅返回正常参数校验或空结果，不应出现异常 SQL 行为。',
-        steps: [
-          '对 keyName、actionType、record query 注入 SQL payload',
-          '检查响应和列表结果是否异常'
-        ]
-      },
-      {
-        caseId: 'lifecycle-xss',
-        title: 'XSS',
-        mode: '半自动',
-        target: '更新时可编辑的 keyName、keyUse、keyDomain',
-        expected: '恶意脚本不应在我的密钥、详情、结果页执行。',
-        steps: [
-          '提交带 script/onload payload 的更新请求',
-          '刷新列表和详情页确认仅文本显示'
-        ]
-      },
-      {
-        caseId: 'platform-scanner',
-        title: '扫描工具识别',
-        mode: '自动化',
-        target: 'SmartSecurityFilter 恶意 User-Agent 检测与 IP 黑名单',
-        expected: '恶意 User-Agent 访问应返回 403，后续访问进入黑名单窗口。',
-        steps: [
-          '使用 sqlmap User-Agent 发送请求，验证返回 403',
-          '使用 nikto User-Agent 发送请求，验证返回 403',
-          '使用正常 User-Agent 验证未被牵连',
-          '安全模式：自动清除黑名单恢复系统'
-        ]
-      },
-      {
-        caseId: 'platform-bruteforce',
-        title: '登录暴力破解',
-        mode: '自动化',
-        target: '登录限流与锁定机制（LoginAttemptService）',
-        expected: '连续 5 次错误后，第 6 次仍处于锁定窗口，提示账号已锁定。',
-        steps: [
-          '使用错误密码连续登录 6 次',
-          '验证第 5 次后触发锁定',
-          '验证第 6 次返回锁定提示',
-          '安全模式：自动清除锁定状态恢复系统'
-        ]
-      },
-      {
-        caseId: 'platform-clickjack',
-        title: '点击劫持',
-        mode: '自动化',
-        target: '响应头 X-Frame-Options 与 CSP frame-ancestors',
-        expected: '所有端点均具备 iframe 嵌套防护响应头。',
-        steps: [
-          '检查 Nginx 网关的 X-Frame-Options 响应头',
-          '检查 Java 后端 API 的 X-Frame-Options 响应头',
-          '验证所有端点返回 SAMEORIGIN 或 DENY'
-        ]
-      }
-    ]
-  },
-  {
-    id: 'quantum-simulations',
-    name: '量子攻击模拟 3 类',
-    accent: 'accent-purple',
-    summary: '协议层量子威胁模拟：算法降级、重复搜索压力与长期截获后解密场景，验证拒绝策略和合法请求回归。',
+      probe('pq-parameter-downgrade', '封装参数集降级', '改进型双份额密钥封装签发参数', 'variant=128 不在支持的参数集中，必须返回 INVALID_PARAMETER。功能关闭不算通过。', ['使用 KYBER 内部标识提交 variant=128', '核对参数拒绝码', '确认节点读取正常']),
+      probe('pq-sign-encrypt-confusion', '签名与封装参数混用', '标准签名家族与封装家族参数区分', 'FALCON 签名家族必须拒绝封装家族的 variant=768。本项只验证签发参数，不证明密文安全。', ['对签名家族提交 variant=768', '核对 INVALID_PARAMETER', '确认节点读取正常']),
+      probe('pq-secret-upload', '向公钥协议注入私密材料', '签发入口私密字段禁入策略', '包含 secretKey 的请求必须返回 INVALID_PARAMETER；只用虚构字符串，不读取或上传真实私钥。', ['注入虚构 secretKey', '核对拒绝码', '证据只记录状态与拒绝码，不记录材料'])
+    ] },
+  { id: 'passwordless-boundary', name: '无密码会话与网络边界', accent: 'accent-orange',
+    summary: '针对实际 Demo 会话、CSRF、revision 与节点/管理员权限，不再测试密码登录或验证码。',
     cases: [
-      {
-        caseId: 'quantum-shor',
-        title: 'Shor 算法降级模拟',
-        mode: '自动化',
-        target: '拒绝 RSA-512 等经典弱算法降级',
-        expected: '弱算法请求被拒绝，攻击后合法 SSCL 请求仍可受理。',
-        steps: ['发送 RSA-512 降级请求', '检查拒绝结果', '发送合法 SSCL 控制请求']
-      },
-      {
-        caseId: 'quantum-grover',
-        title: 'Grover 重复搜索模拟',
-        mode: '自动化',
-        target: '重复样本请求压力与服务可用性',
-        expected: '32 次样本请求均得到明确响应，攻击后合法请求仍可受理。',
-        steps: ['连续提交 32 个搜索样本', '统计拒绝和错误', '发送合法 SSCL 控制请求']
-      },
-      {
-        caseId: 'quantum-hndl',
-        title: 'HNDL 截获后解密模拟',
-        mode: '自动化',
-        target: '生成响应中的私密材料泄露检查',
-        expected: '响应不包含私钥、SM4 密钥或其他秘密材料，攻击后合法请求仍可受理。',
-        steps: ['提交带秘密字段的模拟请求', '扫描响应敏感字段', '发送合法 SSCL 控制请求']
-      }
-    ]
-  }
+      probe('network-session-forgery', '伪造演示会话', '节点身份读取接口', '虚构 Cookie 必须被判为 DEMO_CONTEXT_STALE。', ['建立合法对照', '用伪造 Cookie 读取身份', '核对拒绝码并验证合法对照']),
+      probe('network-csrf', '伪造 CSRF 凭据', '节点切换管理端接口', '错误 CSRF 必须返回 DEMO_CSRF_INVALID，原节点身份不变。', ['建立独立节点会话', '错误 CSRF 请求管理端切换', '确认拒绝且原节点可读取']),
+      probe('network-stale-revision', '旧会话版本重放', '会话变更 revision 栅栏', '旧 revision 必须返回 DEMO_REVISION_STALE。', ['建立当前版本会话', '用上一版本请求切换管理端', '确认旧版本被拒绝']),
+      probe('network-role-isolation', '节点访问管理员接口', '管理员用户查询权限', '节点不能读取管理员用户数据，应返回 DEMO_FORBIDDEN。', ['建立节点会话', '访问 admin/users', '核对权限拒绝码']),
+      probe('network-origin', '跨来源会话变更', '实际演示入口 Origin 校验', '不受信任的 Origin 必须返回 DEMO_ORIGIN_REJECTED。', ['建立节点会话', '外部 Origin 请求切换管理端', '确认拒绝且原身份可读取'])
+    ] }
 ]
-
 export const securityAssets = [
-  { name: '安全测试总方案', path: 'doc/security-test-plan.md', desc: '覆盖攻击范围、执行方式、预期结果与后续加固建议。' },
-  { name: '自动化脚本入口', path: 'security/security_test.sh', desc: '包含算法攻击、SQL/XSS、扫描器探测、登录暴破、点击劫持等攻击脚本。' }
+  { name: '当前系统安全测试方案', path: 'doc/system-security-test-plan.md', desc: '11 个固定协议探针、前置条件、判定标准和未覆盖范围。' },
+  { name: '实际测试实现', path: 'kms-acceptance/backend/system_security.go', desc: '无密码会话与生成协议的非破坏性测试，旧密码脚本不再路由。' }
 ]
-
-// ──────────────────────────────────────────────────────────────────────
-// ARCHIVED: 以下攻击场景暂时封存，不在 UI 中展示。
-// PS1 脚本中对应的实现也已注释封存，如需恢复可取消注释。
-// ──────────────────────────────────────────────────────────────────────
-//
-// === 业务接口 2 类攻击 (api-security) ===
-//
-// {
-//   id: 'api-security',
-//   name: '业务接口 2 类攻击',
-//   accent: 'accent-blue',
-//   summary: '按通用 API 安全口径测试，包含对密钥操作请求的重放利用和越权数据访问。',
-//   cases: [
-//     {
-//       caseId: 'api-replay',
-//       title: '接口重放攻击',
-//       mode: 'Postman 导入',
-//       target: 'POST /keymanage/keymanage 生效鉴权',
-//       expected: '再次发送被拦截或记录重复，不应导致额外成功或异常错误。',
-//       steps: ['由于 cURL 复制了有效 Token，延迟后重放', '观察后端对旧请求和高频发送的重放防护']
-//     },
-//     {
-//       caseId: 'api-privilege',
-//       title: '业务越权访问',
-//       mode: '多用户 Token 互试',
-//       target: '所有公共密钥请求接口',
-//       expected: '水平/垂直越权失败，严格控制隔离域。',
-//       steps: ['用普通用户 Token 访问应被 403 拦截', '记录响应体中的权限不足反馈']
-//     }
-//   ]
-// }
-//
-// === 重放 / 篡改 / 越权攻击 (generate + lifecycle) ===
-// 这些攻击在 PS1 中已有完整实现，封存备用。
-//
-// { caseId: 'generate-replay',    title: '密钥生成重放攻击',     PS1: Run-GenerateReplay }
-// { caseId: 'generate-tamper',    title: '生成参数篡改（空UA/短UA/错误前缀）', PS1: Run-GenerateTamper }
-// { caseId: 'generate-privilege', title: '生成越权访问',         PS1: Run-GeneratePrivilege }
-// { caseId: 'lifecycle-replay',   title: '更新重放攻击',         PS1: Run-LifecycleReplay }
-// { caseId: 'lifecycle-tamper',   title: '更新篡改攻击',         PS1: Run-LifecycleTamper }
-// { caseId: 'lifecycle-privilege',title: '更新越权攻击',         PS1: Run-LifecyclePrivilege }

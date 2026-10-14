@@ -48,9 +48,9 @@ export function deleteNode(id) {
   return http.delete(`/nodes/${id}/`).then(unwrap)
 }
 
-/** 批量删除。服务端要求 `{ids: [...]}` */
+/** 批量删除。服务端要求 `{node_ids: [...]}` */
 export function batchDeleteNodes(ids) {
-  return http.post('/nodes/batch_delete/', { ids }).then(unwrap)
+  return http.post('/nodes/batch_delete/', { node_ids: ids }).then(unwrap)
 }
 
 /** 节点密钥概览（Kyber / Falcon 公钥是否就绪） */

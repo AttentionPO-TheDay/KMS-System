@@ -233,6 +233,17 @@ def register_public_key(
         consume_authorization, policy_enabled, validate_existing_provenance, validate_generation,
     )
     generation = validate_generation(generation, name)
+    if name == 'FALCON_CL_V1':
+        from .falcon_cl_v1 import parse_material
+        from .keygen_issuance import falcon_cl_enabled
+        if not falcon_cl_enabled():
+            raise C.ContractError('Falcon CL capability disabled', code=C.ERR_KEYGEN_POLICY_DISABLED)
+        if generation is None:
+            raise C.ContractError('Falcon CL requires versioned partial issuance', code=C.ERR_KEYGEN_GENERATION_REQUIRED)
+        try:
+            parse_material(material, 'PUBLIC', node.node_id)
+        except (ValueError, TypeError):
+            raise C.ContractError('Falcon CL public material invalid', code=C.ERR_INVALID_PARAMETER)
     digest = hash_public_key(material)
     version = _as_version(key_version)
     kid = _validate_key_id(key_id)
@@ -246,6 +257,8 @@ def register_public_key(
                 if existing.key_id != kid:
                     raise C.ContractError('keyId 必须逐字相同', code=C.ERR_KEY_VERSION_MISMATCH)
                 validate_existing_provenance(existing, node, generation_binding, generation)
+                from .node_fisco_evidence import enqueue
+                enqueue(existing)
                 return existing
             raise C.ContractError(
                 f'{name} 密钥 {kid} v{version} 已登记且公钥不同；'
@@ -320,11 +333,15 @@ def register_public_key(
             code=C.ERR_KEY_VERSION_MISMATCH,
         )
 
+    if not _via_rotate and version != 1:
+        raise C.ContractError('新密钥必须使用新的 keyId，版本从 1 开始；更新请使用 rotate=true',
+                              code=C.ERR_KEY_VERSION_MISMATCH)
+
     if not kid:
         kid = new_key_id(node, name)
 
     provenance = None
-    if name in C.SPLIT_GENERATION_SCHEMES and policy_enabled() and generation is None:
+    if name in C.SPLIT_GENERATION_SCHEMES and policy_enabled(generation_binding) and generation is None:
         raise C.ContractError(
             '新后量子公钥/版本需要有效生成来源与授权；历史未登记材料须显式恢复，禁止重新生成',
             code=C.ERR_KEYGEN_GENERATION_REQUIRED,
@@ -373,6 +390,8 @@ def register_public_key(
         previous.status = C.KEY_STATUS_RETIRED
         enqueue_binding(previous, 'ROTATED')
     enqueue_binding(row, 'ROTATED' if _via_rotate else 'REGISTERED')
+    from .node_fisco_evidence import enqueue
+    enqueue(row)
     return row
 
 

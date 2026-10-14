@@ -61,7 +61,7 @@ class _FalconKeyCache:
 
     @classmethod
     def get_public_key(cls, key_b64: str) -> dict:
-        h = hashlib.sha256(key_b64[:64].encode()).hexdigest()
+        h = hashlib.sha256(('LEGACY_FALCON_MATRIX|' + key_b64).encode()).hexdigest()
         with cls._lock:
             if h in cls._pk_cache:
                 return cls._pk_cache[h]
@@ -83,7 +83,7 @@ class _FalconKeyCache:
 
     @classmethod
     def get_private_key(cls, key_b64: str) -> dict:
-        h = hashlib.sha256(key_b64[:64].encode()).hexdigest()
+        h = hashlib.sha256(('LEGACY_FALCON_MATRIX|' + key_b64).encode()).hexdigest()
         with cls._lock:
             if h in cls._sk_cache:
                 return cls._sk_cache[h]

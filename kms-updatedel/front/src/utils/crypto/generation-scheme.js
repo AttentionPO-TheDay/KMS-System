@@ -1,8 +1,10 @@
 import { normalizeAlgorithm } from './provider.js'
+import { PROTECTION_LABELS } from '../protection-algorithms.js'
 
 export const GENERATION_SCHEMES = Object.freeze({
   KYBER: Object.freeze({ schemeId: 'KMS_SPLIT_KEM_V1', schemeVersion: 1, coreFamily: 'KYBER', purpose: 'KEM_KEYGEN', seedBytes: 64 }),
-  FALCON: Object.freeze({ schemeId: 'KMS_SPLIT_SIGN_V1', schemeVersion: 1, coreFamily: 'FALCON', purpose: 'SIGN_KEYGEN', seedBytes: 48 })
+  FALCON: Object.freeze({ schemeId: 'KMS_SPLIT_SIGN_V1', schemeVersion: 1, coreFamily: 'FALCON', purpose: 'SIGN_KEYGEN', seedBytes: 48 }),
+  FALCON_CL_V1: Object.freeze({ schemeId: 'KMS_SPLIT_FALCON_CL_V1', schemeVersion: 1, coreFamily: 'FALCON_CL_V1', purpose: 'ENCRYPT' })
 })
 
 // Frozen transcript order. Authorization can be renewed; its ID is deliberately NOT in the KDF.
@@ -81,16 +83,18 @@ export function publicGenerationContext(input) {
 
 export function formatGenerationName(algorithm, generation = null) {
   const name = normalizeAlgorithm(algorithm)
+  if (name === 'FALCON_CL_V1') return PROTECTION_LABELS.FALCON_CL_V1
   if (name !== 'KYBER' && name !== 'FALCON') return name
   const id = typeof generation === 'string' ? generation : generation?.schemeId
   if (!id) return name === 'KYBER' ? '历史兼容 KEM（来源未记录）' : '历史兼容签名（来源未记录）'
   const scheme = knownScheme(id)
   if (scheme.coreFamily !== name) throw new Error('生成方案与核心不匹配')
-  return name === 'KYBER' ? '改进型双份额 KEM（实验版 v1）' : '改进型双份额签名（实验版 v1）'
+  return name === 'KYBER' ? PROTECTION_LABELS.KYBER : '改进型双份额签名（实验版 v1）'
 }
 
 export function coreDetail(algorithm, variant = undefined) {
   const name = normalizeAlgorithm(algorithm)
+  if (name === 'FALCON_CL_V1') return '独立 ENCRYPT / FALCON_CL_V1 材料；自定义矩阵方案，非标准 Falcon KEM，无生产安全证明'
   if (name === 'KYBER') return `CRYSTALS-Kyber round-3 / ${variant || 768}；不是 ML-KEM；KGC 辅助身份绑定 KeyGen 扩展，无形式化无证书安全证明`
   if (name === 'FALCON') return 'Falcon-512 round-3（非 padded）；不是 FN-DSA；仅用于签名，无形式化无证书安全证明'
   return name

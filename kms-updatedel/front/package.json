@@ -11,6 +11,8 @@
     "build:stage": "vite build --mode staging",
     "preview": "vite preview",
     "verify:crypto": "node tools/verify-node-crypto.mjs",
+    "verify:encrypted-key-package": "node tools/verify-encrypted-key-package.mjs",
+    "verify:generation-purpose": "node tools/verify-generation-purpose.mjs",
     "verify:distribution-security": "node tools/verify-distribution-security.mjs",
     "verify:probe-limit": "node tools/verify-node-probe-limit.mjs",
     "probe:distribution-timing": "node tools/probe-distribution-timing.mjs",

@@ -38,7 +38,8 @@ def configured_namespace():
 
 
 def lock_registry_node(node):
-    if is_fabric_did():
+    from .node_fisco_evidence import enabled
+    if is_fabric_did() or enabled():
         # 锁已有 Node 行而不是“不存在的 outbox 行”；这是所有登记事件的串行点。
         Node.objects.select_for_update().get(pk=node.pk)
 
@@ -251,6 +252,8 @@ def verification_confirmed(row, data):
 def _claim(binding_id):
     with transaction.atomic():
         candidate = ChainKeyBinding.objects.get(pk=binding_id)
+        if candidate.provider != PROVIDER:
+            return None
         if candidate.status in ('CONFIRMED', 'FAILED', 'UNSUPPORTED'):
             return None
         if candidate.node_id is None or candidate.long_term_key_id is None:
@@ -409,7 +412,7 @@ def process_pending_bindings(limit=100):
     for _ in range(limit):
         now = timezone.now()
         # 只挑每节点队头；坏节点的后续任务不能把 limit 填满，饿死其它节点。
-        binding_id = (ChainKeyBinding.objects.exclude(status__in=['CONFIRMED', 'FAILED', 'UNSUPPORTED'])
+        binding_id = (ChainKeyBinding.objects.filter(provider=PROVIDER).exclude(status__in=['CONFIRMED', 'FAILED', 'UNSUPPORTED'])
                       .exclude(pk__in=attempted)
                       .filter(Q(lease_until__isnull=True) | Q(lease_until__lte=now))
                       .annotate(has_prior=Exists(prior)).filter(has_prior=False)

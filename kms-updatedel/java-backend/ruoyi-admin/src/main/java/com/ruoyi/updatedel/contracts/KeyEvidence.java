@@ -1,5 +1,7 @@
 package com.ruoyi.updatedel.contracts;
 
+import com.ruoyi.common.utils.ChainPublicMaterial;
+
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -56,19 +58,19 @@ public class KeyEvidence extends Contract {
 
     public static final String FUNC_ROTATEKEY = "rotateKey";
 
-    public static final Event UPLOADSUCCESS_EVENT = new Event("UploadSuccess", 
+    public static final Event UPLOADSUCCESS_EVENT = new Event("UploadSuccess",
             Arrays.<TypeReference<?>>asList(new TypeReference<Uint256>(true) {}, new TypeReference<Uint32>() {}, new TypeReference<Uint8>() {}, new TypeReference<Uint256>() {}));
     ;
 
-    public static final Event STATUSCHANGED_EVENT = new Event("StatusChanged", 
+    public static final Event STATUSCHANGED_EVENT = new Event("StatusChanged",
             Arrays.<TypeReference<?>>asList(new TypeReference<Uint256>(true) {}, new TypeReference<Uint32>() {}, new TypeReference<Uint8>() {}, new TypeReference<Uint256>() {}));
     ;
 
-    public static final Event KEYROTATED_EVENT = new Event("KeyRotated", 
+    public static final Event KEYROTATED_EVENT = new Event("KeyRotated",
             Arrays.<TypeReference<?>>asList(new TypeReference<Uint256>(true) {}, new TypeReference<Uint32>() {}, new TypeReference<Uint8>() {}, new TypeReference<Uint256>() {}));
     ;
 
-    public static final Event KEYLIFECYCLEEVENT_EVENT = new Event("KeyLifecycleEvent", 
+    public static final Event KEYLIFECYCLEEVENT_EVENT = new Event("KeyLifecycleEvent",
             Arrays.<TypeReference<?>>asList(new TypeReference<Utf8String>() {}, new TypeReference<Uint256>(true) {}, new TypeReference<Uint32>() {}, new TypeReference<Utf8String>() {}, new TypeReference<Utf8String>() {}, new TypeReference<Uint256>() {}));
     ;
 
@@ -82,48 +84,48 @@ public class KeyEvidence extends Contract {
 
     public TransactionReceipt changeKeyStatus(BigInteger _keyId, BigInteger _newStatus) {
         final Function function = new Function(
-                FUNC_CHANGEKEYSTATUS, 
-                Arrays.<Type>asList(new org.fisco.bcos.sdk.abi.datatypes.generated.Uint256(_keyId), 
-                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint8(_newStatus)), 
+                FUNC_CHANGEKEYSTATUS,
+                Arrays.<Type>asList(new org.fisco.bcos.sdk.abi.datatypes.generated.Uint256(_keyId),
+                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint8(_newStatus)),
                 Collections.<TypeReference<?>>emptyList());
         return executeTransaction(function);
     }
 
     public byte[] changeKeyStatus(BigInteger _keyId, BigInteger _newStatus, TransactionCallback callback) {
         final Function function = new Function(
-                FUNC_CHANGEKEYSTATUS, 
-                Arrays.<Type>asList(new org.fisco.bcos.sdk.abi.datatypes.generated.Uint256(_keyId), 
-                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint8(_newStatus)), 
+                FUNC_CHANGEKEYSTATUS,
+                Arrays.<Type>asList(new org.fisco.bcos.sdk.abi.datatypes.generated.Uint256(_keyId),
+                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint8(_newStatus)),
                 Collections.<TypeReference<?>>emptyList());
         return asyncExecuteTransaction(function, callback);
     }
 
     public String getSignedTransactionForChangeKeyStatus(BigInteger _keyId, BigInteger _newStatus) {
         final Function function = new Function(
-                FUNC_CHANGEKEYSTATUS, 
-                Arrays.<Type>asList(new org.fisco.bcos.sdk.abi.datatypes.generated.Uint256(_keyId), 
-                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint8(_newStatus)), 
+                FUNC_CHANGEKEYSTATUS,
+                Arrays.<Type>asList(new org.fisco.bcos.sdk.abi.datatypes.generated.Uint256(_keyId),
+                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint8(_newStatus)),
                 Collections.<TypeReference<?>>emptyList());
         return createSignedTransaction(function);
     }
 
     public Tuple2<BigInteger, BigInteger> getChangeKeyStatusInput(TransactionReceipt transactionReceipt) {
         String data = transactionReceipt.getInput().substring(10);
-        final Function function = new Function(FUNC_CHANGEKEYSTATUS, 
-                Arrays.<Type>asList(), 
+        final Function function = new Function(FUNC_CHANGEKEYSTATUS,
+                Arrays.<Type>asList(),
                 Arrays.<TypeReference<?>>asList(new TypeReference<Uint256>() {}, new TypeReference<Uint8>() {}));
         List<Type> results = FunctionReturnDecoder.decode(data, function.getOutputParameters());
         return new Tuple2<BigInteger, BigInteger>(
 
-                (BigInteger) results.get(0).getValue(), 
+                (BigInteger) results.get(0).getValue(),
                 (BigInteger) results.get(1).getValue()
                 );
     }
 
     public Tuple1<BigInteger> getChangeKeyStatusOutput(TransactionReceipt transactionReceipt) {
         String data = transactionReceipt.getOutput();
-        final Function function = new Function(FUNC_CHANGEKEYSTATUS, 
-                Arrays.<Type>asList(), 
+        final Function function = new Function(FUNC_CHANGEKEYSTATUS,
+                Arrays.<Type>asList(),
                 Arrays.<TypeReference<?>>asList(new TypeReference<Int256>() {}));
         List<Type> results = FunctionReturnDecoder.decode(data, function.getOutputParameters());
         return new Tuple1<BigInteger>(
@@ -134,68 +136,68 @@ public class KeyEvidence extends Contract {
 
     public TransactionReceipt uploadKey(BigInteger _keyId, String _username, String _pubKey, String _algo, String _usage, Boolean _isAutoUpdate, BigInteger _version) {
         final Function function = new Function(
-                FUNC_UPLOADKEY, 
-                Arrays.<Type>asList(new org.fisco.bcos.sdk.abi.datatypes.generated.Uint256(_keyId), 
-                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_username), 
-                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_pubKey), 
-                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_algo), 
-                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_usage), 
-                new org.fisco.bcos.sdk.abi.datatypes.Bool(_isAutoUpdate), 
-                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint32(_version)), 
+                FUNC_UPLOADKEY,
+                Arrays.<Type>asList(new org.fisco.bcos.sdk.abi.datatypes.generated.Uint256(_keyId),
+                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(ChainPublicMaterial.requireSmall(_username)),
+                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(ChainPublicMaterial.forChain(_pubKey)),
+                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(ChainPublicMaterial.requireSmall(_algo)),
+                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(ChainPublicMaterial.requireSmall(_usage)),
+                new org.fisco.bcos.sdk.abi.datatypes.Bool(_isAutoUpdate),
+                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint32(_version)),
                 Collections.<TypeReference<?>>emptyList());
         return executeTransaction(function);
     }
 
     public byte[] uploadKey(BigInteger _keyId, String _username, String _pubKey, String _algo, String _usage, Boolean _isAutoUpdate, BigInteger _version, TransactionCallback callback) {
         final Function function = new Function(
-                FUNC_UPLOADKEY, 
-                Arrays.<Type>asList(new org.fisco.bcos.sdk.abi.datatypes.generated.Uint256(_keyId), 
-                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_username), 
-                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_pubKey), 
-                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_algo), 
-                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_usage), 
-                new org.fisco.bcos.sdk.abi.datatypes.Bool(_isAutoUpdate), 
-                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint32(_version)), 
+                FUNC_UPLOADKEY,
+                Arrays.<Type>asList(new org.fisco.bcos.sdk.abi.datatypes.generated.Uint256(_keyId),
+                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(ChainPublicMaterial.requireSmall(_username)),
+                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(ChainPublicMaterial.forChain(_pubKey)),
+                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(ChainPublicMaterial.requireSmall(_algo)),
+                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(ChainPublicMaterial.requireSmall(_usage)),
+                new org.fisco.bcos.sdk.abi.datatypes.Bool(_isAutoUpdate),
+                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint32(_version)),
                 Collections.<TypeReference<?>>emptyList());
         return asyncExecuteTransaction(function, callback);
     }
 
     public String getSignedTransactionForUploadKey(BigInteger _keyId, String _username, String _pubKey, String _algo, String _usage, Boolean _isAutoUpdate, BigInteger _version) {
         final Function function = new Function(
-                FUNC_UPLOADKEY, 
-                Arrays.<Type>asList(new org.fisco.bcos.sdk.abi.datatypes.generated.Uint256(_keyId), 
-                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_username), 
-                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_pubKey), 
-                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_algo), 
-                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_usage), 
-                new org.fisco.bcos.sdk.abi.datatypes.Bool(_isAutoUpdate), 
-                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint32(_version)), 
+                FUNC_UPLOADKEY,
+                Arrays.<Type>asList(new org.fisco.bcos.sdk.abi.datatypes.generated.Uint256(_keyId),
+                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(ChainPublicMaterial.requireSmall(_username)),
+                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(ChainPublicMaterial.forChain(_pubKey)),
+                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(ChainPublicMaterial.requireSmall(_algo)),
+                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(ChainPublicMaterial.requireSmall(_usage)),
+                new org.fisco.bcos.sdk.abi.datatypes.Bool(_isAutoUpdate),
+                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint32(_version)),
                 Collections.<TypeReference<?>>emptyList());
         return createSignedTransaction(function);
     }
 
     public Tuple7<BigInteger, String, String, String, String, Boolean, BigInteger> getUploadKeyInput(TransactionReceipt transactionReceipt) {
         String data = transactionReceipt.getInput().substring(10);
-        final Function function = new Function(FUNC_UPLOADKEY, 
-                Arrays.<Type>asList(), 
+        final Function function = new Function(FUNC_UPLOADKEY,
+                Arrays.<Type>asList(),
                 Arrays.<TypeReference<?>>asList(new TypeReference<Uint256>() {}, new TypeReference<Utf8String>() {}, new TypeReference<Utf8String>() {}, new TypeReference<Utf8String>() {}, new TypeReference<Utf8String>() {}, new TypeReference<Bool>() {}, new TypeReference<Uint32>() {}));
         List<Type> results = FunctionReturnDecoder.decode(data, function.getOutputParameters());
         return new Tuple7<BigInteger, String, String, String, String, Boolean, BigInteger>(
 
-                (BigInteger) results.get(0).getValue(), 
-                (String) results.get(1).getValue(), 
-                (String) results.get(2).getValue(), 
-                (String) results.get(3).getValue(), 
-                (String) results.get(4).getValue(), 
-                (Boolean) results.get(5).getValue(), 
+                (BigInteger) results.get(0).getValue(),
+                (String) results.get(1).getValue(),
+                (String) results.get(2).getValue(),
+                (String) results.get(3).getValue(),
+                (String) results.get(4).getValue(),
+                (Boolean) results.get(5).getValue(),
                 (BigInteger) results.get(6).getValue()
                 );
     }
 
     public Tuple1<BigInteger> getUploadKeyOutput(TransactionReceipt transactionReceipt) {
         String data = transactionReceipt.getOutput();
-        final Function function = new Function(FUNC_UPLOADKEY, 
-                Arrays.<Type>asList(), 
+        final Function function = new Function(FUNC_UPLOADKEY,
+                Arrays.<Type>asList(),
                 Arrays.<TypeReference<?>>asList(new TypeReference<Int256>() {}));
         List<Type> results = FunctionReturnDecoder.decode(data, function.getOutputParameters());
         return new Tuple1<BigInteger>(
@@ -206,60 +208,60 @@ public class KeyEvidence extends Contract {
 
     public TransactionReceipt recordEvent(String _eventType, BigInteger _keyId, BigInteger _version, String _nodeId, String _publicMaterialHash) {
         final Function function = new Function(
-                FUNC_RECORDEVENT, 
-                Arrays.<Type>asList(new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_eventType), 
-                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint256(_keyId), 
-                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint32(_version), 
-                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_nodeId), 
-                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_publicMaterialHash)), 
+                FUNC_RECORDEVENT,
+                Arrays.<Type>asList(new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_eventType),
+                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint256(_keyId),
+                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint32(_version),
+                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_nodeId),
+                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_publicMaterialHash)),
                 Collections.<TypeReference<?>>emptyList());
         return executeTransaction(function);
     }
 
     public byte[] recordEvent(String _eventType, BigInteger _keyId, BigInteger _version, String _nodeId, String _publicMaterialHash, TransactionCallback callback) {
         final Function function = new Function(
-                FUNC_RECORDEVENT, 
-                Arrays.<Type>asList(new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_eventType), 
-                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint256(_keyId), 
-                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint32(_version), 
-                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_nodeId), 
-                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_publicMaterialHash)), 
+                FUNC_RECORDEVENT,
+                Arrays.<Type>asList(new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_eventType),
+                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint256(_keyId),
+                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint32(_version),
+                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_nodeId),
+                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_publicMaterialHash)),
                 Collections.<TypeReference<?>>emptyList());
         return asyncExecuteTransaction(function, callback);
     }
 
     public String getSignedTransactionForRecordEvent(String _eventType, BigInteger _keyId, BigInteger _version, String _nodeId, String _publicMaterialHash) {
         final Function function = new Function(
-                FUNC_RECORDEVENT, 
-                Arrays.<Type>asList(new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_eventType), 
-                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint256(_keyId), 
-                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint32(_version), 
-                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_nodeId), 
-                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_publicMaterialHash)), 
+                FUNC_RECORDEVENT,
+                Arrays.<Type>asList(new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_eventType),
+                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint256(_keyId),
+                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint32(_version),
+                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_nodeId),
+                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_publicMaterialHash)),
                 Collections.<TypeReference<?>>emptyList());
         return createSignedTransaction(function);
     }
 
     public Tuple5<String, BigInteger, BigInteger, String, String> getRecordEventInput(TransactionReceipt transactionReceipt) {
         String data = transactionReceipt.getInput().substring(10);
-        final Function function = new Function(FUNC_RECORDEVENT, 
-                Arrays.<Type>asList(), 
+        final Function function = new Function(FUNC_RECORDEVENT,
+                Arrays.<Type>asList(),
                 Arrays.<TypeReference<?>>asList(new TypeReference<Utf8String>() {}, new TypeReference<Uint256>() {}, new TypeReference<Uint32>() {}, new TypeReference<Utf8String>() {}, new TypeReference<Utf8String>() {}));
         List<Type> results = FunctionReturnDecoder.decode(data, function.getOutputParameters());
         return new Tuple5<String, BigInteger, BigInteger, String, String>(
 
-                (String) results.get(0).getValue(), 
-                (BigInteger) results.get(1).getValue(), 
-                (BigInteger) results.get(2).getValue(), 
-                (String) results.get(3).getValue(), 
+                (String) results.get(0).getValue(),
+                (BigInteger) results.get(1).getValue(),
+                (BigInteger) results.get(2).getValue(),
+                (String) results.get(3).getValue(),
                 (String) results.get(4).getValue()
                 );
     }
 
     public Tuple1<BigInteger> getRecordEventOutput(TransactionReceipt transactionReceipt) {
         String data = transactionReceipt.getOutput();
-        final Function function = new Function(FUNC_RECORDEVENT, 
-                Arrays.<Type>asList(), 
+        final Function function = new Function(FUNC_RECORDEVENT,
+                Arrays.<Type>asList(),
                 Arrays.<TypeReference<?>>asList(new TypeReference<Int256>() {}));
         List<Type> results = FunctionReturnDecoder.decode(data, function.getOutputParameters());
         return new Tuple1<BigInteger>(
@@ -269,60 +271,60 @@ public class KeyEvidence extends Contract {
     }
 
     public String owner() throws ContractException {
-        final Function function = new Function(FUNC_OWNER, 
-                Arrays.<Type>asList(), 
+        final Function function = new Function(FUNC_OWNER,
+                Arrays.<Type>asList(),
                 Arrays.<TypeReference<?>>asList(new TypeReference<Address>() {}));
         return executeCallWithSingleValueReturn(function, String.class);
     }
 
     public TransactionReceipt rotateKey(BigInteger _keyId, String _newPubKey, BigInteger _newVersion) {
         final Function function = new Function(
-                FUNC_ROTATEKEY, 
-                Arrays.<Type>asList(new org.fisco.bcos.sdk.abi.datatypes.generated.Uint256(_keyId), 
-                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_newPubKey), 
-                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint32(_newVersion)), 
+                FUNC_ROTATEKEY,
+                Arrays.<Type>asList(new org.fisco.bcos.sdk.abi.datatypes.generated.Uint256(_keyId),
+                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(ChainPublicMaterial.forChain(_newPubKey)),
+                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint32(_newVersion)),
                 Collections.<TypeReference<?>>emptyList());
         return executeTransaction(function);
     }
 
     public byte[] rotateKey(BigInteger _keyId, String _newPubKey, BigInteger _newVersion, TransactionCallback callback) {
         final Function function = new Function(
-                FUNC_ROTATEKEY, 
-                Arrays.<Type>asList(new org.fisco.bcos.sdk.abi.datatypes.generated.Uint256(_keyId), 
-                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_newPubKey), 
-                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint32(_newVersion)), 
+                FUNC_ROTATEKEY,
+                Arrays.<Type>asList(new org.fisco.bcos.sdk.abi.datatypes.generated.Uint256(_keyId),
+                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(ChainPublicMaterial.forChain(_newPubKey)),
+                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint32(_newVersion)),
                 Collections.<TypeReference<?>>emptyList());
         return asyncExecuteTransaction(function, callback);
     }
 
     public String getSignedTransactionForRotateKey(BigInteger _keyId, String _newPubKey, BigInteger _newVersion) {
         final Function function = new Function(
-                FUNC_ROTATEKEY, 
-                Arrays.<Type>asList(new org.fisco.bcos.sdk.abi.datatypes.generated.Uint256(_keyId), 
-                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(_newPubKey), 
-                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint32(_newVersion)), 
+                FUNC_ROTATEKEY,
+                Arrays.<Type>asList(new org.fisco.bcos.sdk.abi.datatypes.generated.Uint256(_keyId),
+                new org.fisco.bcos.sdk.abi.datatypes.Utf8String(ChainPublicMaterial.forChain(_newPubKey)),
+                new org.fisco.bcos.sdk.abi.datatypes.generated.Uint32(_newVersion)),
                 Collections.<TypeReference<?>>emptyList());
         return createSignedTransaction(function);
     }
 
     public Tuple3<BigInteger, String, BigInteger> getRotateKeyInput(TransactionReceipt transactionReceipt) {
         String data = transactionReceipt.getInput().substring(10);
-        final Function function = new Function(FUNC_ROTATEKEY, 
-                Arrays.<Type>asList(), 
+        final Function function = new Function(FUNC_ROTATEKEY,
+                Arrays.<Type>asList(),
                 Arrays.<TypeReference<?>>asList(new TypeReference<Uint256>() {}, new TypeReference<Utf8String>() {}, new TypeReference<Uint32>() {}));
         List<Type> results = FunctionReturnDecoder.decode(data, function.getOutputParameters());
         return new Tuple3<BigInteger, String, BigInteger>(
 
-                (BigInteger) results.get(0).getValue(), 
-                (String) results.get(1).getValue(), 
+                (BigInteger) results.get(0).getValue(),
+                (String) results.get(1).getValue(),
                 (BigInteger) results.get(2).getValue()
                 );
     }
 
     public Tuple1<BigInteger> getRotateKeyOutput(TransactionReceipt transactionReceipt) {
         String data = transactionReceipt.getOutput();
-        final Function function = new Function(FUNC_ROTATEKEY, 
-                Arrays.<Type>asList(), 
+        final Function function = new Function(FUNC_ROTATEKEY,
+                Arrays.<Type>asList(),
                 Arrays.<TypeReference<?>>asList(new TypeReference<Int256>() {}));
         List<Type> results = FunctionReturnDecoder.decode(data, function.getOutputParameters());
         return new Tuple1<BigInteger>(

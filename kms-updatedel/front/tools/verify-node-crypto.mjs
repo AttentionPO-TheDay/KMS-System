@@ -30,6 +30,7 @@
  */
 import 'fake-indexeddb/auto'
 import { execFileSync } from 'node:child_process'
+import { KEYSTORE_DB_NAME } from '../src/utils/entry-mode.js'
 
 // 规范化 keyRef 的构造只留这一个口子（节点段固定为 probe，与下面 generate 的
 // nodeId 一致）：格式再变（段名、大小写、版本位）只改这一行。
@@ -125,7 +126,7 @@ const SECRET_HEX = 'deadbeef0123456789abcdef0123456789abcdef0123456789abcdef0123
 await store.sealSecret(kref('KYBER', 'probe-1'), { algorithm: 'KYBER', secret: SECRET_HEX, publicKey: 'aa'.repeat(16) })
 
 const db = await new Promise((resolve, reject) => {
-  const request = indexedDB.open('kms-node-keystore')
+  const request = indexedDB.open(KEYSTORE_DB_NAME)
   request.onsuccess = () => resolve(request.result)
   request.onerror = () => reject(request.error)
 })

@@ -39,6 +39,7 @@
 
 import { ALGORITHMS, normalizeAlgorithm } from './provider.js'
 import { publicGeneration, publicGenerationContext } from './generation-scheme.js'
+import { readEncryptedKeyPackage, storeEncryptedKeyPackage, publicKeyRecord } from './encrypted-key-package.js'
 import {
   buildKeyRef,
   parseKeyRef,
@@ -510,7 +511,15 @@ export async function sealSecret(keyRef, { algorithm, secret, publicKey = '', ve
   }
   // Public source is authenticated INSIDE the same encrypted record as the actual
   // key, not just attached to pending meta. Recovery rejects altered outer copies.
-  const payload = source ? textEncoder.encode(JSON.stringify({ secretEncoding: 'hex-bytes-v1', secret: secretBytesHex(bytes), generation: source, generationContext: context, publicKey: String(publicKey || '') })) : bytes
+  const matrix = resolvedAlgorithm === 'FALCON_CL_V1'
+  if (matrix) {
+    const { parseMaterial } = await import('./falcon-cl-v1.js')
+    parseMaterial(String(publicKey || ''), 'PUBLIC', parsed.nodeId)
+    const privateMaterial = parseMaterial(new TextDecoder().decode(bytes), 'PRIVATE', parsed.nodeId)
+    privateMaterial.D_id.fill(0)
+    privateMaterial.S_id.fill(0)
+  }
+  const payload = source ? textEncoder.encode(JSON.stringify({ secretEncoding: matrix ? 'falcon-cl-material-v1' : 'hex-bytes-v1', secret: matrix ? new TextDecoder().decode(bytes) : secretBytesHex(bytes), generation: source, generationContext: context, publicKey: String(publicKey || '') })) : bytes
   const protector = await getOrCreateProtector()
   // 每次都用新的随机 IV：AES-GCM 下 IV 重用会直接毁掉机密性，且**不会报错**
   const iv = crypto.getRandomValues(new Uint8Array(12))
@@ -519,7 +528,7 @@ export async function sealSecret(keyRef, { algorithm, secret, publicKey = '', ve
   finally { if (source) payload.fill(0); if (typeof secret === 'string') bytes.fill(0) }
   const deviceId = await getDeviceId()
 
-  const record = {
+  const record = storeEncryptedKeyPackage({
     keyRef: canonicalRef,
     algorithm: resolvedAlgorithm,
     version: resolvedVersion,
@@ -535,12 +544,11 @@ export async function sealSecret(keyRef, { algorithm, secret, publicKey = '', ve
     kind: parsed.kind,
     migrated: false,
     ...(source ? { generation: source, generationContext: context, payloadFormat: 'split-key-v1' } : {})
-  }
+  })
   // add is the final cross-tab conflict guard, even where Web Locks are unavailable.
   await tx(STORE_KEYS, 'readwrite', (store) => req(createOnly ? store.add(record) : store.put(record)))
-  // 返回值刻意**不带 sealed/iv 之外的任何东西**也只是形式；
-  // 真正要守住的是：调用方拿不到 secret —— 它只在上面那个闭包里存在过。
-  return { ...record, sealed: undefined, iv: undefined }
+  // 公共返回值不含私钥明文、IV 或本机密文包；密文只留在 IndexedDB。
+  return publicKeyRecord(record)
 }
 
 /**
@@ -586,7 +594,8 @@ async function decryptKeyRecord(record) {
   const protector = await getOrCreateProtector()
   let plain
   try {
-    plain = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: record.iv }, protector, record.sealed))
+    const packet = readEncryptedKeyPackage(record)
+    plain = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: packet.iv }, protector, packet.ciphertext))
     if (record.payloadFormat !== 'split-key-v1') {
       if (record.generation || record.generationContext) throw new Error('未认证的生成来源')
       return plain // unchanged historical key encoding
@@ -598,7 +607,15 @@ async function decryptKeyRecord(record) {
     if (!generation || generation.schemeId !== context.schemeId || generation.generationIssuanceId !== context.generationIssuanceId ||
       context.nodeId !== ref?.nodeId || context.keyId !== ref?.keyId || context.keyVersion !== String(ref?.version) || context.coreFamily !== ref?.algorithm ||
       JSON.stringify(generation) !== JSON.stringify(publicGeneration(record.generation)) || JSON.stringify(context) !== JSON.stringify(publicGenerationContext(record.generationContext)) ||
-      payload.publicKey !== record.publicKey || payload.secretEncoding !== 'hex-bytes-v1' || typeof payload.secret !== 'string' || !/^(?:[0-9a-f]{2})+$/.test(payload.secret)) throw new Error('生成来源完整性校验失败')
+      payload.publicKey !== record.publicKey || typeof payload.secret !== 'string') throw new Error('生成来源完整性校验失败')
+    if (ref.algorithm === 'FALCON_CL_V1') {
+      if (payload.secretEncoding !== 'falcon-cl-material-v1') throw new Error('Falcon CL secret encoding invalid')
+      const { parseMaterial } = await import('./falcon-cl-v1.js')
+      const material = parseMaterial(payload.secret, 'PRIVATE', ref.nodeId)
+      material.D_id.fill(0); material.S_id.fill(0)
+      return textEncoder.encode(payload.secret)
+    }
+    if (payload.secretEncoding !== 'hex-bytes-v1' || !/^(?:[0-9a-f]{2})+$/.test(payload.secret)) throw new Error('生成来源完整性校验失败')
     return Uint8Array.from(payload.secret.match(/.{2}/g), value => parseInt(value, 16))
   } catch {
     throw new Error(`本地密钥库中的 ${record.keyRef} 解密失败：保护密钥不匹配或数据已被改动`)
@@ -615,18 +632,21 @@ export async function updateGenerationAuthorization(keyRef, authorizationTicketI
   const generation = publicGeneration({ ...record.generation, authorizationTicketId })
   const secret = await decryptKeyRecord(record)
   const iv = crypto.getRandomValues(new Uint8Array(12))
-  const payload = textEncoder.encode(JSON.stringify({ secretEncoding: 'hex-bytes-v1', secret: secretBytesHex(secret), generation, generationContext: record.generationContext, publicKey: record.publicKey }))
+  const matrix = record.algorithm === 'FALCON_CL_V1'
+  const payload = textEncoder.encode(JSON.stringify({ secretEncoding: matrix ? 'falcon-cl-material-v1' : 'hex-bytes-v1', secret: matrix ? new TextDecoder().decode(secret) : secretBytesHex(secret), generation, generationContext: record.generationContext, publicKey: record.publicKey }))
   let sealed
   try { sealed = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await getOrCreateProtector(), payload) }
   finally { secret.fill(0); payload.fill(0) }
-  const updated = { ...record, generation, iv, sealed }
+  const updated = storeEncryptedKeyPackage({ ...record, generation, iv, sealed })
   await tx(STORE_KEYS, 'readwrite', (store) => new Promise((resolve, reject) => {
     const read = store.get(ref)
     read.onerror = () => reject(read.error)
     read.onsuccess = () => {
       const current = read.result
       // Compare the IV of the authenticated snapshot, not merely a mutable ticket ID.
-      if (!current || current.iv.length !== record.iv.length || current.iv.some((byte, index) => byte !== record.iv[index])) {
+      const snapshotIv = readEncryptedKeyPackage(record).iv
+      const currentIv = current ? readEncryptedKeyPackage(current).iv : null
+      if (!currentIv || currentIv.length !== snapshotIv.length || currentIv.some((byte, index) => byte !== snapshotIv[index])) {
         reject(new Error('封存记录已变化，请重新恢复后续期')); return
       }
       const write = store.put(updated)

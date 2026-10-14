@@ -6,6 +6,7 @@
           <h2>密钥更新</h2>
           <div class="key-update__header-side">
             <el-tag v-if="node.nodeId" type="info" size="small">{{ node.nodeId }}</el-tag>
+            <el-button size="small" type="primary" plain :disabled="!mapped" @click="showAutoSettings = !showAutoSettings">{{ showAutoSettings ? '收起自动更新' : '自动更新设置' }}</el-button>
             <el-button size="small" :loading="loading" @click="load">刷新</el-button>
           </div>
         </div>
@@ -22,6 +23,39 @@
       />
 
       <template v-else>
+        <section v-if="showAutoSettings" class="key-update__auto" aria-label="自动更新设置">
+          <h3>自动更新设置</h3>
+          <p class="key-update__lead">按每把密钥设置更新间隔。请保持原浏览器登录并打开系统，系统会自动生成、封存、自检并登记新版本。关闭浏览器期间暂停执行，下次进入时检查到期任务。</p>
+          <el-alert v-if="autoError" :title="autoError" type="error" :closable="false" show-icon />
+          <el-table :data="cards" size="small" border>
+            <el-table-column label="密钥" min-width="200">
+              <template #default="{ row }">{{ row.label }}<div class="key-update__fact-note">{{ row.active ? `${row.active.keyId} · v${row.active.keyVersion}` : '无在用版本' }}</div></template>
+            </el-table-column>
+            <el-table-column label="自动更新" width="100">
+              <template #default="{ row }"><el-switch v-if="autoDrafts[row.algorithm]" v-model="autoDrafts[row.algorithm].enabled" :aria-label="`${row.label} 自动更新`" :disabled="!row.canRotate && !autoPolicies[row.algorithm]?.enabled" /></template>
+            </el-table-column>
+            <el-table-column label="更新间隔" min-width="230">
+              <template #default="{ row }">
+                <div v-if="autoDrafts[row.algorithm]" class="key-update__auto-interval">
+                  <el-input-number v-model="autoDrafts[row.algorithm].amount" :min="1" :max="Math.floor(525600 / autoDrafts[row.algorithm].unit)" :precision="0" controls-position="right" :aria-label="`${row.label} 更新间隔`" />
+                  <el-select v-model="autoDrafts[row.algorithm].unit" aria-label="间隔单位"><el-option label="分钟" :value="1" /><el-option label="小时" :value="60" /><el-option label="天" :value="1440" /></el-select>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="执行状态" min-width="225">
+              <template #default="{ row }">
+                <div>{{ autoPolicies[row.algorithm]?.running ? '正在更新' : autoPolicies[row.algorithm]?.enabled ? '已启用' : '已关闭' }}</div>
+                <div>下次：{{ formatTime(autoPolicies[row.algorithm]?.nextRunAt) }}</div>
+                <div v-if="autoPolicies[row.algorithm]?.lastResult">最近：{{ autoResultText(autoPolicies[row.algorithm]) }} · {{ formatTime(autoPolicies[row.algorithm].lastRunAt) }}</div>
+                <div v-if="autoPolicies[row.algorithm]?.lastMessage" class="key-update__fact-note">{{ autoPolicies[row.algorithm].lastMessage }}</div>
+                <div v-if="!row.canRotate" class="key-update__fact-note">{{ row.active ? '无法执行，请恢复与生产版本一致的本机材料' : '请先生成并登记密钥' }}</div>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="85">
+              <template #default="{ row }"><el-button size="small" type="primary" :loading="savingAuto === row.algorithm" :disabled="Boolean(autoError) || Boolean(savingAuto) || autoPolicies[row.algorithm]?.running || (!row.canRotate && !autoPolicies[row.algorithm])" @click="saveAutoPolicy(row)">保存</el-button></template>
+            </el-table-column>
+          </el-table>
+        </section>
         <p class="key-update__lead">
           更新 = 给<strong>同一把</strong>密钥换一个新版本：<span class="mono">keyId</span> 不变、版本号 +1。
           新私钥<strong>先在本机生成并封存</strong>、当场自检，通过之后才把公钥上报；
@@ -317,12 +351,14 @@
  * 权限是另一回事：与生成页同理，`node_self_views` 现在**没有**校验 `CAP_GENERATE`，
  * 前端单方面加门禁会造出「生成页能更新、更新页不能」的自相矛盾。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { CircleCheck } from '@element-plus/icons-vue'
 import {
   getSelfNode,
   listSelfNodeKeys,
+  getSelfAutoUpdate,
+  saveSelfAutoUpdate,
   NODE_SELF_ERR
 } from '@/api/pqkds/node-self'
 import {
@@ -337,10 +373,68 @@ import { deviceFingerprint, hasDeviceKey } from '@/utils/crypto/device-credentia
 import { IS_DEMO } from '@/utils/entry-mode'
 import { generateAndRegisterNodeKey } from '@/utils/node-initialization'
 import { formatGenerationName, coreDetail, GENERATION_SCHEMES } from '@/utils/crypto/generation-scheme.js'
+import { AUTO_UPDATE_EVENT } from '@/utils/node-auto-update'
 
 const loading = ref(true)
 const mapped = ref(false)
 const node = ref({})
+const props = defineProps({ autoSettings: { type: Boolean, default: false } })
+const showAutoSettings = ref(props.autoSettings)
+const autoPolicies = ref({})
+const autoDrafts = ref({})
+const autoError = ref('')
+const savingAuto = ref('')
+
+async function loadAutoPolicies(resetDrafts = false) {
+  try {
+    const data = await getSelfAutoUpdate()
+    if (data.nodeId !== node.value.nodeId) throw new Error('自动更新配置与当前节点不一致')
+    autoPolicies.value = Object.fromEntries(data.policies.map(policy => [policy.algorithm, policy]))
+    autoError.value = ''
+    for (const card of cards.value) {
+      if (autoDrafts.value[card.algorithm] && !resetDrafts) continue
+      const policy = autoPolicies.value[card.algorithm]
+      const minutes = policy?.intervalMinutes || 1440
+      const unit = minutes % 1440 === 0 ? 1440 : minutes % 60 === 0 ? 60 : 1
+      autoDrafts.value[card.algorithm] = { enabled: Boolean(policy?.enabled), amount: minutes / unit, unit }
+    }
+  } catch (error) {
+    autoError.value = `读取自动更新配置失败：${error.message}`
+  }
+}
+
+async function saveAutoPolicy(card) {
+  const draft = autoDrafts.value[card.algorithm]
+  const intervalMinutes = Number(draft.amount) * draft.unit
+  if (!Number.isInteger(intervalMinutes) || intervalMinutes < 1 || intervalMinutes > 525600) {
+    ElMessage.error('更新间隔须在 1 分钟至 365 天之间')
+    return
+  }
+  if (draft.enabled && !card.canRotate) {
+    ElMessage.error('请先恢复与生产版本一致的本机密钥材料')
+    return
+  }
+  savingAuto.value = card.algorithm
+  try {
+    const policy = await saveSelfAutoUpdate({ algorithm: card.algorithm,
+      keyId: draft.enabled ? card.active?.keyId : (autoPolicies.value[card.algorithm]?.keyId || card.active?.keyId),
+      enabled: draft.enabled, intervalMinutes })
+    autoPolicies.value = { ...autoPolicies.value, [card.algorithm]: policy }
+    ElMessage.success(policy.enabled ? `已启用，下一次更新：${formatTime(policy.nextRunAt)}` : '自动更新已关闭')
+  } catch (error) {
+    ElMessage.error(`保存失败：${error.message}`)
+  } finally {
+    savingAuto.value = ''
+  }
+}
+
+function autoResultText(policy) {
+  return ({ SUCCESS: '成功', FAILED: '失败，1 分钟后重试', STOPPED: '已停止' })[policy.lastResult] || policy.lastResult
+}
+
+async function onAutoUpdated() {
+  await load()
+}
 
 /** 平台登记的行（`GET /node-self/keys/` 原样） */
 const serverKeys = ref([])
@@ -426,6 +520,7 @@ async function load() {
       ElMessage.error(`读取本机密钥库失败：${local.reason?.message || local.reason}`)
     }
 
+    await loadAutoPolicies()
     if (IS_DEMO) return // Demo never creates or consumes standalone device credentials.
     try {
       hasDeviceCredential.value = await hasDeviceKey(node.value.nodeId)
@@ -725,11 +820,25 @@ function formatTime(value) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-onMounted(load)
+let autoStatusTimer
+onMounted(() => {
+  load()
+  window.addEventListener(AUTO_UPDATE_EVENT, onAutoUpdated)
+  autoStatusTimer = setInterval(() => { if (mapped.value && showAutoSettings.value) loadAutoPolicies() }, 15000)
+})
+onUnmounted(() => {
+  window.removeEventListener(AUTO_UPDATE_EVENT, onAutoUpdated)
+  clearInterval(autoStatusTimer)
+})
 </script>
 
 <style scoped>
 .key-update__card { max-width: 1180px; margin: 24px auto; }
+.key-update__auto { margin-bottom: 24px; }
+.key-update__auto h3 { font-size: 16px; margin: 0 0 12px; }
+.key-update__auto-interval { display: flex; align-items: center; gap: 8px; }
+.key-update__auto-interval .el-input-number { width: 125px; }
+.key-update__auto-interval .el-select { width: 80px; }
 .key-update__header { display: flex; align-items: center; justify-content: space-between; }
 .key-update__header h2 { margin: 0; font-size: 18px; }
 .key-update__header-side { display: flex; align-items: center; gap: 8px; }

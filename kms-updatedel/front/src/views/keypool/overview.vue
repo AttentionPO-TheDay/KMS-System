@@ -106,7 +106,7 @@ import { ElMessage } from 'element-plus'
 import { getKeyPoolStats, listKeyPool } from '@/api/pqkds/distribution'
 
 const ALGORITHM_LABELS = {
-  kyber_kem: 'Kyber KEM',
+kyber_kem: '改进型双份额密钥封装（实验版 v1）',
   falcon_lattice: 'Falcon 格密码',
   gm_sm2: 'SM2',
   gm_sscl: 'SSCL',

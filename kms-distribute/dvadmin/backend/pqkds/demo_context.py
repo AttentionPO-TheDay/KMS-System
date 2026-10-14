@@ -119,7 +119,8 @@ def _check_scope(request, identity):
         if relative.startswith(denied_auth):
             return _error('Demo 不使用激活或设备登录')
         if not relative.startswith(('node-self/', 'user-nodes/', 'distribution-batches/',
-                                    'user-symmetric-keys/', 'logs/', 'key-pool/')):
+                                    'user-symmetric-keys/', 'node-key-reviews/',
+                                    'logs/', 'key-pool/')):
             return _error('演示节点不能访问管理接口')
         if relative.startswith('key-pool/') and request.method not in SAFE_METHODS:
             return _error('节点预分配和取用请走节点自助保护包流程')
@@ -139,18 +140,22 @@ def _check_scope(request, identity):
     elif principal == 'ADMIN':
         if identity.get('nodeId'):
             return _error('管理员不能携带节点身份')
-        if not relative.startswith(('admin/', 'nodes/', 'logs/', 'stats/', 'key-pool/',
-                                    'session-keys/', 'blocks/', 'transactions/',
-                                    'security/', 'system-parameters/', 'blockchain-config/')):
+        # Four admin entrances only: summary, node management and authorization
+        # (acceptance uses its own ADMIN lease gate). Hidden key APIs stay closed.
+        reads = {'security-monitor/summary/', 'security-monitor/records/', 'nodes/', 'admin/users/',
+                 'admin/node-authorizations/', 'admin/node-authorization-requests/'}
+        writes = {'nodes/register/', 'nodes/batch_delete/',
+                  'admin/node-authorizations/',
+                  'admin/node-authorization-requests/decide-batch/'}
+        allowed = (request.method == 'GET' and relative in reads) or (
+            request.method == 'POST' and relative in writes)
+        if re.fullmatch(r'nodes/[0-9]+/', relative):
+            allowed = request.method in {'GET', 'PATCH', 'PUT', 'DELETE'}
+        if re.fullmatch(r'admin/node-authorizations/[0-9]+/revoke/|'
+                        r'admin/node-authorization-requests/[0-9]+/decide/', relative):
+            allowed = request.method == 'POST'
+        if not allowed:
             return _error('该端点不属于演示管理员能力')
-        forbidden = ('reissue_activation_code', 'generate_falcon', 'generate_gm',
-                     'update_keys', 'cleanup_blockchain_data', 'discover_node',
-                     'prepare_key_negotiation')
-        if any(part in relative for part in forbidden):
-            return _error('Demo 不签发激活凭证或代替节点生成密钥')
-        if relative.startswith(('blocks/', 'transactions/', 'system-parameters/',
-                                'blockchain-config/', 'session-keys/')) and request.method not in SAFE_METHODS:
-            return _error('该监管接口在 Demo 中只读')
     else:
         return _error('请从演示入口建立上下文', 401, 'DEMO_CONTEXT_REQUIRED')
     return None
@@ -220,7 +225,7 @@ def internal_node_context(request):
         return _error('节点未登记', 404, 'DEMO_NODE_NOT_REGISTERED')
     if not node.sys_user_id:
         return _error('节点未关联业务账号', 409, 'DEMO_NODE_UNMAPPED')
-    data = _node_payload(node)
+    data = _node_payload(node, {'entryMode': 'DEMO'})
     data['userId'] = node.sys_user_id
     return JsonResponse({'code': 200, 'data': data})
 

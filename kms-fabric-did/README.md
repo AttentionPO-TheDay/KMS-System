@@ -74,6 +74,7 @@ java -DfabricSDK.configuration=/run/fabric-did/gm-sdk.properties -jar /app/app.j
 | GET | `/internal/fabric-did/status` | 认证配置诊断、开关与能力 |
 | GET | `/internal/fabric-did/did?did=<urlencoded literal>` | 按原样读取 DID，不改写 DID 方法或 ID |
 | POST | `/internal/fabric-did/bindings/prepare` | 分配 nonce/txId、规范化绑定，**不提交** |
+| POST | `/internal/fabric-did/bindings/handoff` | 链写暂停时也可生成交接参数并返回 nonce/txId，**永不提交** |
 | POST | `/internal/fabric-did/bindings/submit` | 使用 durable outbox 已保存的计划提交 create-only 记录 |
 | POST | `/internal/fabric-did/bindings/verify` | 验证原 txId 有效并精确回读 DID metadata |
 

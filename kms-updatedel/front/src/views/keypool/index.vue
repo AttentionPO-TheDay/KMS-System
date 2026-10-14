@@ -41,12 +41,12 @@
           <el-input v-model="filter.keyword" clearable placeholder="批次号 / 节点ID / 密钥哈希" style="width: 260px" />
         </el-form-item>
         <el-form-item label="算法">
-          <el-select v-model="filter.algorithm" clearable placeholder="全部" style="width: 170px">
+          <el-select v-model="filter.algorithm" clearable placeholder="全部" style="width: 170px" @change="reloadFromFirstPage">
             <el-option v-for="a in algorithmOptions" :key="a.value" :label="a.label" :value="a.value" />
           </el-select>
         </el-form-item>
         <el-form-item label="状态">
-          <el-select v-model="filter.status" clearable placeholder="全部" style="width: 150px">
+          <el-select v-model="filter.status" clearable placeholder="全部" style="width: 150px" @change="reloadFromFirstPage">
             <el-option v-for="st in statusOptions" :key="st.value" :label="st.label" :value="st.value" />
           </el-select>
         </el-form-item>
@@ -121,8 +121,18 @@
       </el-table>
 
       <div class="table-foot">
-        共 {{ rows.length }} 条{{ rows.length !== allRows.length ? `（已按筛选显示，总 ${allRows.length} 条）` : '' }}
+        共 {{ total }} 条
       </div>
+      <el-pagination
+        v-model:current-page="page"
+        v-model:page-size="pageSize"
+        :total="total"
+        :page-sizes="[10, 20, 50, 100]"
+        layout="total, sizes, prev, pager, next, jumper"
+        class="pool-pagination"
+        @current-change="loadAll"
+        @size-change="handlePageSizeChange"
+      />
     </el-card>
 
     <!-- 生成并分发 -->
@@ -149,7 +159,7 @@
              只是不再能新建。 -->
         <el-form-item label="封装算法">
           <el-select v-model="distForm.algorithm" style="width: 100%">
-            <el-option label="Kyber KEM（抗量子封装）" value="kyber_kem" />
+              <el-option label="改进型双份额密钥封装（实验版 v1）" value="kyber_kem" />
           </el-select>
         </el-form-item>
         <el-form-item label="发送方节点">
@@ -200,7 +210,7 @@ import {
   deleteKeyPoolItem,
   distributeKeyPool,
   getKeyPoolStats,
-  listKeyPool
+  listKeyPoolPage
 } from '@/api/pqkds/distribution'
 import { listNodes } from '@/api/nodes/nodes'
 import { listNodeDirectory } from '@/api/pqkds/node-self'
@@ -213,6 +223,9 @@ import useUserStore from '@/store/modules/user'
 const allRows = ref([])
 const rows = ref([])
 const selected = ref([])
+const page = ref(1)
+const pageSize = ref(20)
+const total = ref(0)
 const nodes = ref([])
 const stats = ref({})
 const loading = ref(false)
@@ -239,7 +252,10 @@ const isAdmin = computed(() => isAdminPrincipal({
 }))
 
 const algorithmOptions = computed(() => {
-  const seen = new Map()
+  const seen = new Map([
+['kyber_kem', '改进型双份额密钥封装（实验版 v1）'],
+    ['falcon_lattice', 'Falcon 格密码（历史）'],
+  ])
   allRows.value.forEach((r) => {
     if (r.algorithm) seen.set(r.algorithm, r.algorithm_display || r.algorithm)
   })
@@ -249,7 +265,7 @@ const algorithmOptions = computed(() => {
 const statusOptions = computed(() => {
   // 选项取自**effective_status**（与表格显示同源）：只按库内 status 生成，
   // 会出现"筛选项里有『可被会话取用』、选完却一行都没有"（那些行其实已过期）。
-  const seen = new Map()
+  const seen = new Map(Object.entries(STATUS_LABELS))
   allRows.value.forEach((r) => {
     const st = r.effective_status || r.status
     if (st) seen.set(st, statusLabel(st))
@@ -320,20 +336,33 @@ function resetFilter() {
   filter.keyword = ''
   filter.algorithm = ''
   filter.status = ''
-  applyFilter()
+  page.value = 1
+  loadAll()
+}
+
+function reloadFromFirstPage() {
+  page.value = 1
+  loadAll()
 }
 
 async function loadAll() {
   loading.value = true
   try {
     const [list, poolStats, nodeList] = await Promise.all([
-      listKeyPool(),
+      listKeyPoolPage({
+        page: page.value,
+        limit: pageSize.value,
+        keyword: filter.keyword || undefined,
+        algorithm: filter.algorithm || undefined,
+        status: filter.status || undefined,
+      }),
       getKeyPoolStats().catch(() => ({})),
       (IS_DEMO && !isAdmin.value
         ? listNodeDirectory().then(data => (data.nodes || []).map(node => ({ node_id: node.nodeCode, name: node.name })))
         : listNodes()).catch(() => [])
     ])
-    allRows.value = list || []
+    allRows.value = list?.items || []
+    total.value = list?.total || 0
     stats.value = poolStats || {}
     nodes.value = nodeList || []
     applyFilter()
@@ -341,9 +370,16 @@ async function loadAll() {
     ElMessage.error(`加载密钥池失败：${error.message}`)
     allRows.value = []
     rows.value = []
+    total.value = 0
   } finally {
     loading.value = false
   }
+}
+
+function handlePageSizeChange(size) {
+  pageSize.value = size
+  page.value = 1
+  loadAll()
 }
 
 function goPreallocate() {
@@ -478,6 +514,7 @@ onMounted(loadAll)
 .stat .v { font-size: 20px; font-weight: 600; margin-top: 2px; }
 .filter-bar { margin-bottom: 4px; }
 .table-foot { margin-top: 10px; color: var(--el-text-color-secondary); font-size: 12px; }
+.pool-pagination { margin-top: 14px; justify-content: flex-end; }
 .hash { font-size: 12px; }
 .ref { font-size: 12px; }
 .cell-sub { color: var(--el-text-color-secondary); font-size: 12px; }

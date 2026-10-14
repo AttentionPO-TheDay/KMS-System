@@ -538,6 +538,13 @@ class NodeService:
                     'message': f'Kyber 公钥长度 {len(raw)} 不是 800/1184/1568，无法确定变体',
                 }
             stored = _b64.b64encode(raw).decode('utf-8')
+        elif name == 'FALCON_CL_V1':
+            from .falcon_cl_v1 import parse_material
+            try:
+                parse_material(value, 'PUBLIC', self.node.node_id)
+            except (ValueError, TypeError):
+                return {'success': False, 'code': C.ERR_INVALID_PARAMETER, 'message': 'Falcon CL 公钥契约无效'}
+            stored = value  # Case-sensitive base64, never signing-public-key hex.
         else:
             stored = value.lower()
 
@@ -714,6 +721,20 @@ class NodeService:
             ('Falcon', self.node.falcon_sign_public_key or self.node.falcon_public_key),
         ]
         missing = [name for name, value in required if not value]
+        from .keygen_issuance import falcon_cl_enabled
+        if falcon_cl_enabled():
+            from .node_key_registry import current_key
+            from .falcon_cl_v1 import parse_material
+            encryption = current_key(self.node, 'FALCON_CL_V1')
+            valid = bool(encryption and encryption.allows_new_work)
+            if valid:
+                try:
+                    parse_material(encryption.public_key, 'PUBLIC', self.node.node_id)
+                except (ValueError, TypeError):
+                    valid = False
+            required.append(('改进型无证书格加密', encryption.public_key if valid else None))
+            if not valid:
+                missing.append('改进型无证书格加密')
         if missing:
             logger.warning('节点 %s 初始化未完成，缺少公钥: %s', self.node_id, missing)
             return {
@@ -741,7 +762,7 @@ class NodeService:
             'success': True,
             'status': 'active',
             'completed': [name for name, _ in required],
-            'message': '四套基础公钥齐备，初始化完成',
+            'message': '完整初始化公钥集合齐备，初始化完成',
         }
 
     def generate_falcon_signing_keypair(self) -> Dict[str, Any]:

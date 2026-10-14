@@ -22,7 +22,8 @@ final class BindingService {
                 "status", config.status(), "missingFields", config.missingFields,
                 "capabilities", Json.map("immutableBinding", true, "transactionVerification", true,
                 "currentNodeProjection", false, "compareAndSet", false, "lifecycleEquivalent", false,
-                "networkChecked", false, "createPolicyApproved", config.policyApproved));
+                "networkChecked", false, "createPolicyApproved", config.policyApproved,
+                "handoffPrepare", true));
     }
     Map<String, Object> read(String did) {
         if (did == null || !did.startsWith("did:") || did.length() > 512) throw new BridgeException(400, "INVALID_DID");
@@ -32,6 +33,14 @@ final class BindingService {
     }
     Map<String, Object> prepare(JsonNode body) {
         config.requireChainWrites();
+        return prepareWithoutSubmission(body);
+    }
+    Map<String, Object> prepareHandoff(JsonNode body) {
+        // 参数交接只分配 SDK 交易身份并规范化请求，不调用 createDidDocument。
+        // 它在全局链写暂停时仍可用，但仍要求真实 SDK 配置与内部认证。
+        return prepareWithoutSubmission(body);
+    }
+    private Map<String, Object> prepareWithoutSubmission(JsonNode body) {
         config.requireRead();
         Binding binding = new Binding(body, config);
         Map<String, Object> transaction = sdk().newTransaction();
@@ -41,12 +50,12 @@ final class BindingService {
         // prepare 不提交；调用方必须先在 durable outbox 保存这两个字段，再允许 submit。
         return Json.map("provider", "FABRIC_DID", "chainId", config.chainId, "did", binding.did,
                 "txId", txId, "nonce", nonce, "metadata", binding.json, "metadataDigest", binding.digest,
-                "binding", binding.metadata, "prepared", true, "status", "PREPARED",
+                "binding", binding.metadata, "prepared", true, "submitted", false, "status", "PREPARED",
                 "latestProjection", Json.map("status", "UNSUPPORTED"));
     }
     synchronized Map<String, Object> submit(JsonNode body) {
         config.requireWrite();
-        Binding.fields(body, new HashSet<>(Arrays.asList("provider", "chainId", "did", "txId", "nonce", "metadata", "metadataDigest", "binding", "prepared", "status", "latestProjection")));
+        Binding.fields(body, new HashSet<>(Arrays.asList("provider", "chainId", "did", "txId", "nonce", "metadata", "metadataDigest", "binding", "prepared", "submitted", "status", "latestProjection")));
         Binding binding = new Binding(body.get("binding"), config);
         String txId = Json.text(body, "txId"), nonce = Json.text(body, "nonce");
         validateTransaction(txId, nonce);

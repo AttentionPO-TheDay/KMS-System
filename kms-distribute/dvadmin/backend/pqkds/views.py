@@ -1599,7 +1599,10 @@ class NodeViewSet(CustomModelViewSet):
             node_name = instance.name
             set_request_msg(request, f'删除节点({node_name}, ID:{node_id})')
             logger.info(f" 开始删除节点: {node_name} (ID: {node_id})")
-            from .models import SessionKey, Transaction, Message, FalconKeyPair, KeyDistributionLog
+            from .models import (
+                SessionKey, Transaction, Message, FalconKeyPair, KeyDistributionLog,
+                KeyGenerationAuthorization, KeyGenerationIssuance,
+            )
             session_count = SessionKey.objects.filter(
                 models.Q(node1=instance) | models.Q(node2=instance)
             ).count()
@@ -1611,13 +1614,23 @@ class NodeViewSet(CustomModelViewSet):
             ).count()
             falcon_key_count = FalconKeyPair.objects.filter(node=instance).count()
             key_log_count = KeyDistributionLog.objects.filter(node=instance).count()
-            total_related = session_count + transaction_count + message_count + falcon_key_count + key_log_count
+            keygen_issuances = KeyGenerationIssuance.objects.filter(node=instance)
+            keygen_issuance_count = keygen_issuances.count()
+            keygen_authorization_count = KeyGenerationAuthorization.objects.filter(
+                issuance__in=keygen_issuances
+            ).count()
+            total_related = (
+                session_count + transaction_count + message_count + falcon_key_count
+                + key_log_count + keygen_issuance_count + keygen_authorization_count
+            )
             logger.info(f" 关联数据统计:")
             logger.info(f"   - 会话密钥记录: {session_count}")
             logger.info(f"   - 交易记录: {transaction_count}")
             logger.info(f"   - 消息记录: {message_count}")
             logger.info(f"   - Falcon密钥对: {falcon_key_count}")
             logger.info(f"   - 密钥分发日志: {key_log_count}")
+            logger.info(f"   - 密钥签发授权: {keygen_authorization_count}")
+            logger.info(f"   - 密钥签发记录: {keygen_issuance_count}")
             logger.info(f"   - 总计: {total_related} 条关联记录")
             backup_deleted = self._delete_node_backup_files(node_id)
             with db_transaction.atomic():
@@ -1643,6 +1656,15 @@ class NodeViewSet(CustomModelViewSet):
                 if key_log_count > 0:
                     deleted_logs = KeyDistributionLog.objects.filter(node=instance).delete()
                     logger.info(f"    删除密钥分发日志: {deleted_logs[0]} 条")
+                # 两张表使用 PROTECT 保留审计记录；显式硬删除时按依赖顺序清理。
+                if keygen_authorization_count > 0:
+                    deleted_authorizations = KeyGenerationAuthorization.objects.filter(
+                        issuance__in=keygen_issuances
+                    ).delete()
+                    logger.info(f"    删除密钥签发授权: {deleted_authorizations[0]} 条")
+                if keygen_issuance_count > 0:
+                    deleted_issuances = keygen_issuances.delete()
+                    logger.info(f"    删除密钥签发记录: {deleted_issuances[0]} 条")
                 instance.delete()
                 logger.info(f"    删除节点记录: {node_name}")
             logger.info(f" 节点 {node_name} (ID: {node_id}) 及其所有关联数据删除成功")
@@ -1658,6 +1680,8 @@ class NodeViewSet(CustomModelViewSet):
                         'messages': message_count,
                         'falcon_keys': falcon_key_count,
                         'key_logs': key_log_count,
+                        'keygen_authorizations': keygen_authorization_count,
+                        'keygen_issuances': keygen_issuance_count,
                         'total': total_related
                     },
                     'backup_files_deleted': backup_deleted
@@ -1707,14 +1731,19 @@ class NodeViewSet(CustomModelViewSet):
                 'transactions': 0,
                 'messages': 0,
                 'falcon_keys': 0,
-                'key_logs': 0
+                'key_logs': 0,
+                'keygen_authorizations': 0,
+                'keygen_issuances': 0,
             }
             deleted_nodes = []
             backup_files_deleted = 0
             with db_transaction.atomic():
                 for node in nodes_to_delete:
                     logger.info(f" 统计节点 {node.node_id} 的关联数据")
-                    from .models import SessionKey, Transaction, Message, FalconKeyPair, KeyDistributionLog
+                    from .models import (
+                        SessionKey, Transaction, Message, FalconKeyPair, KeyDistributionLog,
+                        KeyGenerationAuthorization, KeyGenerationIssuance,
+                    )
                     session_count = SessionKey.objects.filter(
                         models.Q(node1=node) | models.Q(node2=node)
                     ).count()
@@ -1726,11 +1755,18 @@ class NodeViewSet(CustomModelViewSet):
                     ).count()
                     falcon_key_count = FalconKeyPair.objects.filter(node=node).count()
                     key_log_count = KeyDistributionLog.objects.filter(node=node).count()
+                    keygen_issuances = KeyGenerationIssuance.objects.filter(node=node)
+                    keygen_issuance_count = keygen_issuances.count()
+                    keygen_authorization_count = KeyGenerationAuthorization.objects.filter(
+                        issuance__in=keygen_issuances
+                    ).count()
                     total_stats['session_keys'] += session_count
                     total_stats['transactions'] += transaction_count
                     total_stats['messages'] += message_count
                     total_stats['falcon_keys'] += falcon_key_count
                     total_stats['key_logs'] += key_log_count
+                    total_stats['keygen_authorizations'] += keygen_authorization_count
+                    total_stats['keygen_issuances'] += keygen_issuance_count
                     if self._delete_node_backup_files(node.node_id):
                         backup_files_deleted += 1
                     deleted_nodes.append({
@@ -1742,9 +1778,20 @@ class NodeViewSet(CustomModelViewSet):
                             'messages': message_count,
                             'falcon_keys': falcon_key_count,
                             'key_logs': key_log_count,
-                            'total': session_count + transaction_count + message_count + falcon_key_count + key_log_count
+                            'keygen_authorizations': keygen_authorization_count,
+                            'keygen_issuances': keygen_issuance_count,
+                            'total': (
+                                session_count + transaction_count + message_count + falcon_key_count
+                                + key_log_count + keygen_authorization_count + keygen_issuance_count
+                            )
                         }
                     })
+                    if keygen_authorization_count > 0:
+                        KeyGenerationAuthorization.objects.filter(
+                            issuance__in=keygen_issuances
+                        ).delete()
+                    if keygen_issuance_count > 0:
+                        keygen_issuances.delete()
                     node.delete()
                     logger.info(f" 节点 {node.node_id} 删除成功")
             total_stats['total'] = sum(total_stats.values())
@@ -3704,6 +3751,7 @@ class KeyPoolViewSet(CustomModelViewSet):
                            models.Q(node2__sys_user_id=demo_identity['userId']))
         node1_id = self.request.query_params.get('node1_id', '').strip()
         node2_id = self.request.query_params.get('node2_id', '').strip()
+        keyword = self.request.query_params.get('keyword', '').strip()
         algorithm = self.request.query_params.get('algorithm', '').strip()
         status_filter = self.request.query_params.get('status', '').strip()
         pool_id = self.request.query_params.get('pool_id', '').strip()
@@ -3716,6 +3764,16 @@ class KeyPoolViewSet(CustomModelViewSet):
         elif node1_id:
             qs = qs.filter(
                 models.Q(node1__node_id=node1_id) | models.Q(node2__node_id=node1_id)
+            )
+        if keyword:
+            qs = qs.filter(
+                models.Q(pool_id__icontains=keyword)
+                | models.Q(node1__node_id__icontains=keyword)
+                | models.Q(node1__name__icontains=keyword)
+                | models.Q(node2__node_id__icontains=keyword)
+                | models.Q(node2__name__icontains=keyword)
+                | models.Q(key_hash__icontains=keyword)
+                | models.Q(long_term_key_id__icontains=keyword)
             )
         if algorithm:
             qs = qs.filter(algorithm=algorithm)

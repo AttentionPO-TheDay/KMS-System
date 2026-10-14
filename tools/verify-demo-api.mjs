@@ -173,7 +173,7 @@ if (process.argv.includes('--disabled')) {
     check('Demo Cookie 不赋予原 Standalone API 权限', !isOk(normalBody))
     for (const path of ['/demo', '/updatedel/demo', '/demo-api/lifecycle/demo/context']) {
       const r = await fetch(`http://127.0.0.1${path}`, { redirect: 'manual' })
-      check(`旧80网关不开放 ${path}`, r.status === 404)
+      check(`旧80网关统一跳转 ${path}`, r.status === 308 && r.headers.get('location') === `http://127.0.0.1:8088${path}`)
     }
     const bad = new DemoSession()
     res = await bad.switch('/entry', { nodeId: '../bad' })

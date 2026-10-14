@@ -1,11 +1,12 @@
 # =============================================================================
+#requires -Version 7.0
 # ship.ps1 —— 生成远端部署包（自包含镜像模式）
 # -----------------------------------------------------------------------------
 # 用途：把「直接可运行的镜像」+「必需的配置与数据目录」打成两个文件，
 #       传到远端后无需网络、无需构建即可启动。
 #
 # 产出（默认在 kms-ops/dist/ 下）：
-#   kms-images.tar        全部 7 个应用镜像（docker save，含基础层的自包含镜像）
+#   kms-images.tar        默认 8 个应用镜像（含 DID，docker save 自包含镜像）
 #   kms-deploy.tar.gz     部署包：compose（已剥离 build 段）、.env、配置与数据目录
 #   MANIFEST.txt          内容清单与校验信息
 #
@@ -13,8 +14,8 @@
 #
 # 设计说明：
 #   - 镜像模式为「自包含」：代码在构建期打入镜像，因此远端**不需要**
-#     runtime/、front/、fisco/console 等构建输入，部署包可显著瘦身。
-#   - 但 mysql/init（建库脚本）、nodes（链数据）、fisco/console（运维容器）、
+#     runtime/、front/ 等构建输入，部署包可显著瘦身。
+#   - 但 mysql/init（建库脚本）、nodes（仅链启动配置）、fisco/console（运维容器）、
 #     nginx/nginx.conf 仍必须在远端存在，这些是数据与配置，不属于代码。
 #   - 运行时状态目录（mysql/data、kafka/kafka_data、redis/data、nginx/logs）
 #     刻意**不打包**，让远端从干净状态初始化，避免带入本地数据。
@@ -28,7 +29,13 @@ param(
     # 连公共基础镜像一起导出（mysql / redis / kafka / ubuntu / temurin）。
     # 远端**不能联网拉镜像**时必须带上这个开关，否则 compose 起不来：
     # 这 5 个镜像不是本地构建的，不导出就没有。
-    [switch]$WithBaseImages
+    [switch]$WithBaseImages,
+    # 默认完整包含 DID，但不复制 SDK 凭据、不自动开启链写入。
+    [switch]$WithoutDid,
+    # 从当前源码重新生成运行产物并构建镜像；不会启动/重建本机容器。
+    [switch]$Rebuild,
+    # 仅本次前端构建使用该 Node/npm，不修改全局 NVM 版本。
+    [string]$NodeHome
 )
 
 $ErrorActionPreference = 'Stop'
@@ -39,7 +46,30 @@ function Write-Ok([string]$msg)   { Write-Host "  [OK] $msg" -ForegroundColor Gr
 function Write-Warn2([string]$msg){ Write-Host "  [!] $msg" -ForegroundColor Yellow }
 
 $root = $PSScriptRoot
+$OutDir = [System.IO.Path]::GetFullPath($OutDir)
+if ($OutDir.TrimEnd('\', '/') -eq $root.TrimEnd('\', '/')) { throw 'OutDir 不能是 kms-ops 源目录' }
+function Remove-PackageDirectory([string]$Path) {
+    $target = [System.IO.Path]::GetFullPath($Path)
+    $prefix = $OutDir.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $target.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw '拒绝删除输出目录外的路径'
+    }
+    if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force }
+}
 $composePath = Join-Path $root 'docker-compose.yml'
+
+$composeArgs = @('-f', $composePath)
+if (-not $WithoutDid) { $composeArgs += @('-f', (Join-Path $root 'docker-compose.fabric-did.yml')) }
+if ($Rebuild -and $SkipImages) { throw '-Rebuild 不能与 -SkipImages 同时使用' }
+if ($Rebuild) {
+    & (Join-Path $root 'build-local.ps1') -WithoutDid:$WithoutDid -NodeHome $NodeHome
+    if ($WithoutDid) { docker compose @composeArgs build }
+    else { docker compose @composeArgs --profile fabric-did build }
+    if ($LASTEXITCODE -ne 0) { throw '从当前源码构建镜像失败，停止打包' }
+} else {
+    Write-Warn2 '未使用 -Rebuild：只导出现有镜像；请确认它们已从最新代码构建。'
+}
+$composeArgs += @('-f', (Join-Path $root 'docker-compose.fresh-deploy.yml'))
 
 if (-not (Test-Path $composePath)) { throw "找不到 docker-compose.yml: $composePath" }
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
@@ -54,7 +84,8 @@ Write-Step '生成远端版 compose（剥离 build 段）'
 #       context: .
 #       dockerfile: build/xxx.Dockerfile
 # 需要连同其下缩进的子行一起删除。
-$lines = Get-Content $composePath
+$lines = @(docker compose @composeArgs config --no-interpolate --no-path-resolution)
+if ($LASTEXITCODE -ne 0) { throw '合并远端 compose 失败' }
 $out = New-Object System.Collections.Generic.List[string]
 $i = 0
 $removed = 0
@@ -90,7 +121,7 @@ if ($leftBuild) {
     $leftBuild | ForEach-Object { Write-Host "    L$($_.LineNumber): $($_.Line.Trim())" -ForegroundColor Red }
     throw '剥离后仍残留 build 段'
 }
-$escape = Select-String -Path $remoteCompose -Pattern '^\s+-\s+\.\./'
+$escape = Select-String -Path $remoteCompose -Pattern '^\s+(?:-\s+|source:\s+)\.\./|^\s+source:\s+(?:[A-Za-z]:|/[^/])'
 if ($escape) {
     $escape | ForEach-Object { Write-Host "    L$($_.LineNumber): $($_.Line.Trim())" -ForegroundColor Red }
     throw '存在逃出部署目录的挂载路径（../），远端将无法解析'
@@ -102,6 +133,14 @@ Write-Ok '剥离结果自检通过（无 build 残留、无越界路径）'
 $envSrc = Join-Path $root '.env'
 if (-not (Test-Path $envSrc)) { throw "找不到 .env: $envSrc" }
 Copy-Item $envSrc (Join-Path $OutDir '.env') -Force
+# 只修改输出副本；不迁移旧链合约/账户引用，不影响本机配置。
+$remoteEnv = Join-Path $OutDir '.env'
+$envLines = Get-Content $remoteEnv | ForEach-Object {
+    if ($_ -match '^(FISCO_CONTRACT_ADDRESS|FISCO_PRIVATE_KEY)=') { "$($Matches[1])=" }
+    elseif ($_ -match '^FABRIC_DID_ENABLED=') { 'FABRIC_DID_ENABLED=false' }
+    else { $_ }
+}
+Set-Content $remoteEnv -Value $envLines -Encoding utf8
 
 Push-Location $OutDir
 try {
@@ -126,6 +165,7 @@ $images = @(
     'kms-gateway-nginx:local',
     'kms-dvadmin3-django:local'
 )
+if (-not $WithoutDid) { $images += 'kms-fabric-did:local' }
 
 $tarPath = Join-Path $OutDir 'kms-images.tar'
 if (-not $SkipImages) {
@@ -176,15 +216,15 @@ $items = @(
     'mysql/init',
     'mysql/my.cnf',
     'nginx/nginx.conf',
+    'nginx/demo-server.conf.template',
+    'nginx/30-kms-demo.sh',
     'nginx/snippets',       # nginx.conf 里 include 的复用片段（安全头 / SPA 禁缓存）
-    'nodes',
-    'fisco/console',
     'portal',               # 手工编写的门户页（镜像里也有，保留一份便于改）
     'check.ps1'
 )
 
 $staging = Join-Path $OutDir '_stage'
-if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
+Remove-PackageDirectory $staging
 New-Item -ItemType Directory -Force -Path $staging | Out-Null
 
 # 先放入「远端版 compose」（已剥离 build 段），必须早于复制循环
@@ -192,8 +232,8 @@ Copy-Item $remoteCompose (Join-Path $staging 'docker-compose.yml') -Force
 Write-Ok '已加入远端版 compose（无 build 段）'
 
 foreach ($it in $items) {
-    $src = Join-Path $root $it
-    if (-not (Test-Path $src)) { Write-Warn2 "跳过（不存在）: $it"; continue }
+    $src = if ($it -eq '.env') { $remoteEnv } else { Join-Path $root $it }
+    if (-not (Test-Path $src)) { throw "缺少必需部署文件: $it" }
     $dst = Join-Path $staging $it
     $dstParent = Split-Path $dst -Parent
     if (-not (Test-Path $dstParent)) { New-Item -ItemType Directory -Force -Path $dstParent | Out-Null }
@@ -201,23 +241,46 @@ foreach ($it in $items) {
     Write-Ok "已加入: $it"
 }
 
-# nodes/ 下会堆着历次排障留下的旧链现场（*.bak.* / *.broken.*），
-# 它们与本次部署无关，却能把部署包撑大好几倍（实测 194MB/238MB）。
-# 只保留真正的 live 链目录。
-$nodesStage = Join-Path $staging 'nodes'
-if (Test-Path $nodesStage) {
-    $stale = Get-ChildItem $nodesStage -Force | Where-Object { $_.Name -match '\.bak\.|\.broken\.|^\.last-backup' }
-    foreach ($s in $stale) {
-        $mb = [math]::Round(((Get-ChildItem $s.FullName -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum / 1MB), 1)
-        Remove-Item $s.FullName -Recurse -Force
-        Write-Warn2 "已剔除旧链现场（不参与部署）: nodes/$($s.Name)  ($mb MB)"
-    }
-    $keep = (Get-ChildItem $nodesStage -Force | Where-Object { $_.PSIsContainer } | Select-Object -ExpandProperty Name) -join ', '
-    Write-Ok "部署包内保留的链目录: $keep"
+# Console 只带运行依赖及 SDK 配置；不带部署日志或本机账户私钥。
+$consoleTarget = Join-Path $staging 'fisco/console'
+New-Item -ItemType Directory -Force -Path $consoleTarget | Out-Null
+foreach ($entry in @('conf', 'lib', 'apps', 'contracts', 'console.sh', 'start.sh', 'get_account.sh', 'get_gm_account.sh', 'sol2java.sh')) {
+    $source = Join-Path $root "fisco/console/$entry"
+    if (-not (Test-Path $source)) { throw "缺少 Console 运行配置: $entry" }
+    Copy-Item $source $consoleTarget -Recurse -Force
 }
+
+# 白名单复制节点配置，绝不复制 node*/data、log、历史现场或数据库。
+$nodeSource = Join-Path $root 'nodes/127.0.0.1'
+$nodeTarget = Join-Path $staging 'nodes/127.0.0.1'
+New-Item -ItemType Directory -Force -Path $nodeTarget | Out-Null
+foreach ($entry in @('fisco-bcos', 'sdk', 'node0', 'node1', 'node2', 'node3')) {
+    $source = Join-Path $nodeSource $entry
+    if (-not (Test-Path $source)) { throw "缺少链初始化配置: $entry" }
+    if ($entry -match '^node[0-3]$') {
+        $destination = Join-Path $nodeTarget $entry
+        New-Item -ItemType Directory -Force -Path $destination | Out-Null
+        foreach ($part in @('config.ini', 'conf')) {
+            $inputPath = Join-Path $source $part
+            if (-not (Test-Path $inputPath)) { throw "缺少链初始化配置: $entry/$part" }
+            Copy-Item $inputPath $destination -Recurse -Force
+        }
+    } else { Copy-Item $source $nodeTarget -Recurse -Force }
+}
+
+if (-not $WithoutDid) {
+    $didDir = Join-Path $staging 'fabric-did-secrets'
+    New-Item -ItemType Directory -Force -Path (Join-Path $didDir 'work') | Out-Null
+    Copy-Item (Join-Path $root 'fabric-did-secrets/README.md') $didDir -Force
+    Copy-Item (Join-Path $root '../kms-fabric-did/config/*.example') $didDir -Force
+    Set-Content (Join-Path $staging 'WITH_DID') -Value 'DID included, disabled until configured; SysPid integration pending.' -Encoding utf8
+}
+Copy-Item (Join-Path $root 'SERVER_DEPLOY.md') $staging -Force
 
 # 放入远端部署脚本
 Copy-Item (Join-Path $root 'deploy.sh') $staging -Force
+Copy-Item (Join-Path $root 'enable-node-fisco.py') $staging -Force
+Copy-Item (Join-Path $root 'recover-node-fisco-hash.py') $staging -Force
 Copy-Item (Join-Path $root 'check.ps1') $staging -Force -ErrorAction SilentlyContinue
 
 # 空目录占位：这些目录由远端首次启动时自动创建，显式建出便于排查
@@ -240,7 +303,7 @@ try {
     tar -czf $deployTar .
     if ($LASTEXITCODE -ne 0) { throw 'tar 打包失败' }
 } finally { Pop-Location }
-Remove-Item $staging -Recurse -Force
+Remove-PackageDirectory $staging
 
 $dMb = [math]::Round((Get-Item $deployTar).Length / 1MB, 1)
 Write-Ok "部署包: kms-deploy.tar.gz ($dMb MB)"
@@ -252,7 +315,7 @@ Write-Ok "部署包: kms-deploy.tar.gz ($dMb MB)"
 # （docker-compose.yml 被复制循环用源版覆盖）。直接从产物校验才能发现。
 Write-Step '校验最终产物内的 compose'
 $verifyDir = Join-Path $OutDir '_verify'
-if (Test-Path $verifyDir) { Remove-Item $verifyDir -Recurse -Force }
+Remove-PackageDirectory $verifyDir
 New-Item -ItemType Directory -Force -Path $verifyDir | Out-Null
 Push-Location $verifyDir
 try {
@@ -268,12 +331,11 @@ if ($badBuild) {
     $badBuild | ForEach-Object { Write-Host "    L$($_.LineNumber): $($_.Line.Trim())" -ForegroundColor Red }
     throw '最终产物中的 compose 仍含 build 段'
 }
-$badPath = Select-String -Path $inTar -Pattern '^\s+-\s+\.\./'
+$badPath = Select-String -Path $inTar -Pattern '^\s+(?:-\s+|source:\s+)\.\./|^\s+source:\s+(?:[A-Za-z]:|/[^/])'
 if ($badPath) {
     $badPath | ForEach-Object { Write-Host "    L$($_.LineNumber): $($_.Line.Trim())" -ForegroundColor Red }
     throw '最终产物中的 compose 含越界挂载路径'
 }
-$imgCount = (Select-String -Path $inTar -Pattern '^\s+image:\s+kms-').Count
 # 这里原来写死「应为 8」，而旧分发服务下线后只剩 7 个 —— 断言写死数字的结果是
 # 脚本自己先挂掉，且报错说的是"镜像数不对"，看着像产物有问题。
 # 改成"与导出清单比对"：compose 引用的 kms-* 镜像必须都在我们要 save 的列表里。
@@ -283,8 +345,8 @@ $missingExport = @($refImages | Where-Object { $images -notcontains $_ })
 if ($missingExport.Count) {
     throw "compose 引用了未导出的镜像: $($missingExport -join ', ')"
 }
-Write-Ok "最终产物校验通过（无 build 段、无越界路径、$imgCount 个应用镜像且全部在导出清单内）"
-Remove-Item $verifyDir -Recurse -Force
+Write-Ok "最终产物校验通过（无 build 段、无越界路径、$(@($refImages).Count) 个不同应用镜像且全部在导出清单内）"
+Remove-PackageDirectory $verifyDir
 
 # ---------------------------------------------------------------------------
 # 4c2. 公共基础镜像：远端拉不到就起不来，必须显式告知
@@ -313,12 +375,25 @@ if ($WithBaseImages -and -not $SkipImages) {
 # nginx.conf 变成残缺配置（直接挂载即启动失败）。与上面 compose 一样，必须从
 # 最终 tar 里核对，而不是相信复制循环的结果。
 $tarList = @(tar -tzf $deployTar)
+if ($LASTEXITCODE -ne 0) { throw '读取最终部署包目录失败' }
+$businessData = @($tarList | Where-Object { $_ -match 'nodes/[^/]+/node\d+/(data|log)/|fisco/console/(accounts?|log)/|deploylog\.txt|\.bak\.|\.broken\.' })
+if ($businessData.Count) { throw '全新部署包混入了本地链数据、日志或备份' }
+foreach ($required in @('SERVER_DEPLOY.md', 'deploy.sh', 'mysql/init/03.sql')) {
+    if (-not ($tarList | Where-Object { $_ -eq "./$required" })) { throw "最终部署包缺少: $required" }
+}
+if (-not $WithoutDid) {
+    foreach ($required in @('WITH_DID', 'fabric-did-secrets/README.md', 'fabric-did-secrets/fabric.config.properties.example', 'fabric-did-secrets/gm-sdk.properties.example')) {
+        if (-not ($tarList | Where-Object { $_ -eq "./$required" })) { throw "最终部署包缺少 DID 条目: $required" }
+    }
+    $unexpectedSecrets = @($tarList | Where-Object { $_ -match '^\./fabric-did-secrets/.+\.(pem|key|crt)$|^\./fabric-did-secrets/(connection\.json|fabric\.config\.properties|gm-sdk\.properties)$' })
+    if ($unexpectedSecrets.Count) { throw '部署包意外包含真实 DID 凭据' }
+}
 $confEntry = $tarList | Where-Object { $_ -match 'nginx/nginx\.conf$' } | Select-Object -First 1
 if (-not $confEntry) { throw '包内未找到 nginx/nginx.conf' }
 # 注意：tar 条目形如 ./nginx/nginx.conf，解包会还原出相对目录结构，
 # 所以必须解到独立的临时目录再按条目名拼路径，不能假设解出来就叫 _nginx.conf。
 $nxDir = Join-Path $OutDir '_nginxcheck'
-if (Test-Path $nxDir) { Remove-Item $nxDir -Recurse -Force }
+Remove-PackageDirectory $nxDir
 New-Item -ItemType Directory -Force -Path $nxDir | Out-Null
 Push-Location $nxDir
 try {
@@ -330,7 +405,12 @@ $inNginx = Join-Path $nxDir ($confEntry -replace '^\./', '')
 if (-not (Test-Path $inNginx)) { throw "提取后未找到 nginx.conf（期望 $inNginx）" }
 $need = Select-String -Path $inNginx -Pattern 'include\s+/etc/nginx/snippets/([A-Za-z0-9_.\-]+)' -AllMatches |
     ForEach-Object { $_.Matches } | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
-Remove-Item $nxDir -Recurse -Force
+# Shared demo locations and generated proxy credentials are indirect includes.
+$need = @($need) + @('kms-security-headers.conf', 'kms-spa-no-store.conf', 'kms-demo-locations.conf', 'kms-demo-proxy.conf.template') | Sort-Object -Unique
+foreach ($f in @('demo-server.conf.template', '30-kms-demo.sh')) {
+    if (-not ($tarList | Where-Object { $_ -match "nginx/$([regex]::Escape($f))$" })) { throw "包内缺少 Demo 网关配置: $f" }
+}
+Remove-PackageDirectory $nxDir
 
 if (-not $need.Count) {
     Write-Warn2 '包内 nginx.conf 未 include 任何 snippet（若已改回单文件配置可忽略）'
@@ -355,7 +435,7 @@ $manifest += '【文件】'
 # 按实际产物列出（而非按是否执行了本次 save），
 # 避免用 -SkipImages 打包时清单漏报已存在的镜像文件。
 if (Test-Path $tarPath) {
-    $manifest += "  kms-images.tar       $([math]::Round((Get-Item $tarPath).Length/1MB,1)) MB   7 个应用镜像（bash deploy.sh load 载入）"
+$manifest += "  kms-images.tar       $([math]::Round((Get-Item $tarPath).Length/1MB,1)) MB   $($images.Count) 个应用镜像（bash deploy.sh load 载入）"
 } else {
     $manifest += '  kms-images.tar       （未生成：本次使用了 -SkipImages，请另行提供镜像）'
 }
@@ -376,7 +456,15 @@ $manifest += '  5) 浏览器强制刷新一次（Ctrl+F5）：此前被浏览器
 $manifest += '     不会自动失效，需手动清一次；此后 no-store 会让它每次回源。'
 $manifest += ''
 $manifest += '【镜像清单】'
-foreach ($img in $images) { $manifest += "  $img" }
+foreach ($img in $images) {
+    $manifest += "  $img"
+    if (-not $SkipImages) {
+        $identity = docker image inspect $img --format '{{.Id}} {{.Os}}/{{.Architecture}}'
+        if ($LASTEXITCODE -ne 0) { throw "无法核对已导出镜像: $img" }
+        $manifest += "    $identity"
+        if ($identity -notmatch 'linux/amd64$') { throw "镜像架构不是本包要求的 linux/amd64: $img" }
+    }
+}
 $manifest += ''
 $manifest += '【远端部署步骤】'
 $manifest += '  1) 上传两个文件到远端（例如 /opt/kms）:'
@@ -388,23 +476,26 @@ $manifest += '  5) 部署前检查:  bash deploy.sh check'
 $manifest += '  6) 启动:  bash deploy.sh up'
 $manifest += '  7) 健康检查:  bash deploy.sh verify'
 $manifest += ''
-$manifest += '【架构要求】（脚本会自动检查，不匹配会直接报错退出）'
+$manifest += '【架构要求】'
 $manifest += '  目标机必须为 linux/amd64（x86_64）。本包镜像全部由 amd64 构建，'
 $manifest += '  ARM 主机无法运行。'
 $manifest += ''
 $manifest += '【注意事项】'
 $manifest += '  - .env 内的口令为开发占位值，上线前必须轮换：'
 $manifest += '      MYSQL_ROOT_PASSWORD / KMS_TOKEN_SECRET / INTERNAL_TOKEN / DRUID_LOGIN_*'
-$manifest += '  - 本包内含**当前正在跑的 FISCO 链**（nodes/，已剔除历次排障留下的旧链现场），'
-$manifest += '    合约地址与部署账户私钥随 .env 一起提供（FISCO_CONTRACT_ADDRESS / FISCO_PRIVATE_KEY），'
-$manifest += '    因此远端启动即可上链，无需重新部署合约。'
-$manifest += '    （原说明里提到的 fisco/template/state 属于本地重建链用的模板，'
-$manifest += '      本包不带模板 —— 镜像模式下链数据直接来自 nodes/。）'
+$manifest += '  - 全新部署：nodes/ 仅含二进制、节点配置及证书，不含本机链数据/日志。'
+$manifest += '    输出 .env 已清空旧 FISCO 合约地址/账户私钥；远端 compose 默认暂停链写入。'
+$manifest += '    新链需另行部署合约；DID/SysPid 参数确认前不提交任何交易。'
+$manifest += '  - DID 默认包含镜像与内部服务，SDK 凭据不进包；参见 SERVER_DEPLOY.md。'
 $manifest += '  - 运行时状态目录（mysql/data、kafka/kafka_data、redis/data、nginx/logs、'
 $manifest += '    dvadmin-logs）刻意未打包，远端首次启动会自动初始化数据库与 Kafka。'
-$manifest += '  - 端口占用：80(网关) 3307(MySQL) 6379(Redis) 9092(Kafka) 8545~8548(链 RPC)'
-$manifest += '    20200~20203(链 channel) 30300~30303(链 p2p，仅容器内) 8081/8082(Go)'
-$manifest += '    9081/9082(Java) 8001(PQKDS)。冲突需先释放。'
+$manifest += '  - 基础 compose 已是单一 Demo 环境，无需 demo overlay；数据/项目不变。'
+$manifest += '    原本地材料入口 http://127.0.0.1:8088/updatedel/demo 保持不变。'
+$manifest += '    80/443/8443 与 localhost 入口只跳转到该地址，避免浏览器私钥按 origin 分裂。'
+$manifest += '  - 80/443/8088/8443 网关全部只绑定回环，仅提供 Demo，不开放普通登录。'
+$manifest += '    已有 .env 精确 Host/Origin 白名单须获授权核对；禁止通配/公网暴露。'
+$manifest += '  - 端口占用：80/443/8088/8443(网关) 3307(MySQL) 6379(Redis) 9092(Kafka)'
+$manifest += '    8545~8548(链 RPC) 20200~20203(链 channel)。Go/Java/PQKDS/验收仅容器内。'
 $manifest += ''
 $manifest += '【公共基础镜像：远端能不能联网，决定要不要带】'
 $manifest += '  下列 5 个镜像**不是本地构建的**，kms-images.tar 里没有它们：'
@@ -418,6 +509,15 @@ if (Test-Path $baseTar) {
     $manifest += '  并把多出来的 kms-base-images.tar 一并上传。'
 }
 Set-Content -Path (Join-Path $OutDir 'MANIFEST.txt') -Value ($manifest -join "`n") -Encoding utf8
+if (-not $SkipImages) {
+    $checksumFiles = @('kms-images.tar', 'kms-deploy.tar.gz', 'MANIFEST.txt')
+    if ($WithBaseImages) { $checksumFiles += 'kms-base-images.tar' }
+    $checksums = foreach ($file in $checksumFiles) {
+        $hash = (Get-FileHash (Join-Path $OutDir $file) -Algorithm SHA256).Hash.ToLowerInvariant()
+        "$hash  $file"
+    }
+    Set-Content (Join-Path $OutDir 'SHA256SUMS') -Value $checksums -Encoding utf8NoBOM
+}
 Write-Ok 'MANIFEST.txt 已生成'
 
 Write-Host "`n完成。产物目录: $OutDir" -ForegroundColor Green

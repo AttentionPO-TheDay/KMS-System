@@ -151,6 +151,60 @@ class DemoBoundaryTests(unittest.TestCase):
         request.path = '/api/pqkds/key-pool/generate/'
         self.assertEqual(D._check_scope(request, identity).status_code, 403)
 
+    def test_node_key_reviews_read_allowed(self):
+        identity = {'entryMode': 'DEMO', 'principalType': 'NODE', 'userId': 42, 'nodeId': 'Node-A'}
+        request = self.request()
+        request.path = '/api/pqkds/node-key-reviews/'
+        node = Mock(node_id='Node-A')
+        with patch('pqkds.models.Node.objects.filter') as query, patch(
+                'pqkds.node_self_views._public_status', return_value='ACTIVE'):
+            query.return_value.first.return_value = node
+            self.assertIsNone(D._check_scope(request, identity))
+
+    def test_admin_summary_is_exact_get_only(self):
+        for method, path, allowed in [
+                ('GET', 'security-monitor/summary/', True),
+                ('POST', 'security-monitor/summary/', False),
+                ('HEAD', 'security-monitor/summary/', False),
+                ('GET', 'security-monitor/summary/extra/', False),
+                ('GET', 'security-monitor/', False)]:
+            request = self.request(method)
+            request.path = '/api/pqkds/' + path
+            response = D._check_scope(request, self.identity)
+            self.assertEqual(response is None, allowed, (method, path))
+
+    def test_admin_hidden_key_reads_exports_and_writes_denied(self):
+        for method in ('GET', 'POST', 'PATCH', 'DELETE'):
+            for path in ('key-pool/', 'key-pool/generate/', 'key-pool/1/',
+                         'admin/node-long-term-keys/', 'session-keys/',
+                         'session-keys/1/', 'logs/', 'stats/', 'nodes/1/keys/',
+                         'nodes/1/update_keys/', 'user-symmetric-keys/1/'):
+                request = self.request(method)
+                request.path = '/api/pqkds/' + path
+                self.assertEqual(D._check_scope(request, self.identity).status_code,
+                                 403, (method, path))
+
+    def test_admin_node_management_and_authorization_methods_preserved(self):
+        for method, path in [('GET', 'nodes/'), ('GET', 'nodes/1/'),
+                             ('POST', 'nodes/register/'), ('PATCH', 'nodes/1/'),
+                             ('PUT', 'nodes/1/'), ('DELETE', 'nodes/1/'),
+                             ('POST', 'nodes/batch_delete/'), ('GET', 'admin/users/'),
+                             ('GET', 'admin/node-authorizations/'),
+                             ('POST', 'admin/node-authorizations/'),
+                             ('POST', 'admin/node-authorizations/1/revoke/'),
+                             ('GET', 'admin/node-authorization-requests/'),
+                             ('POST', 'admin/node-authorization-requests/1/decide/'),
+                             ('POST', 'admin/node-authorization-requests/decide-batch/')]:
+            request = self.request(method)
+            request.path = '/api/pqkds/' + path
+            self.assertIsNone(D._check_scope(request, self.identity), (method, path))
+        for method, path in [('POST', 'nodes/'), ('GET', 'nodes/register/'),
+                             ('DELETE', 'admin/users/'),
+                             ('GET', 'admin/node-authorizations/1/revoke/')]:
+            request = self.request(method)
+            request.path = '/api/pqkds/' + path
+            self.assertEqual(D._check_scope(request, self.identity).status_code, 403)
+
     def test_internal_lookup_requires_internal_secret_and_enable(self):
         request = self.factory.get('/internal/demo/node/', {'nodeId': 'Node-A'})
         self.assertEqual(D.internal_node_context(request).status_code, 403)

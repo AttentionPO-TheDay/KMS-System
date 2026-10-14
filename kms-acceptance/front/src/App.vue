@@ -7,32 +7,55 @@
         <span class="brand-text">KMS ACCEPTANCE</span>
       </div>
       <nav class="nav-links">
-        <router-link to="/load-test" class="nav-item">压测与回收</router-link>
-        <router-link to="/security" class="nav-item">安全演练</router-link>
-        <router-link to="/others" class="nav-item">机制测试（其他）</router-link>
+        <router-link to="/load-test" class="nav-item">验收测试台</router-link>
+        <router-link to="/lifecycle" class="nav-item">验收密钥生命周期</router-link>
       </nav>
     </header>
 
-    <div class="main-content">
+    <p v-if="demoState.message || error" role="status">{{ demoState.message || error }}</p>
+    <p v-if="demoState.busy" role="status">验收任务持有当前管理员租约，切换视角/退出须等待任务结束或取消。</p>
+    <fieldset class="main-content" :disabled="!demoState.available || demoState.stale || demoState.context?.principalType !== 'ADMIN'">
       <router-view v-slot="{ Component }">
         <transition name="page-fade" mode="out-in">
           <component :is="Component" />
         </transition>
       </router-view>
-    </div>
+    </fieldset>
   </main>
 </template>
 
 <script setup>
-import { onMounted } from 'vue'
-import { loadAll } from './store'
+import { onMounted, onUnmounted } from 'vue'
+import { loadAll, loadRuns, loadSecurityRuns, loadAcceptanceEvidence, error } from './store'
+import { demoState, refreshDemoContext } from './api/demo-context'
 
-onMounted(async () => {
+let timer
+let refreshing = false
+async function synchronize() {
+  if (refreshing || demoState.stale) return
+  refreshing = true
   try {
-    await loadAll()
+    await refreshDemoContext()
+    if (demoState.available && demoState.context?.principalType === 'ADMIN') await loadAll()
   } catch (err) {
-    console.error(err)
+    error.value = err.message
+  } finally {
+    refreshing = false
   }
+}
+onMounted(async () => {
+  await synchronize()
+  timer = setInterval(async () => {
+    if (demoState.busy && demoState.available && !demoState.stale) {
+      try { await Promise.all([loadRuns(), loadSecurityRuns(), loadAcceptanceEvidence()]) } catch (err) { error.value = err.message }
+    }
+    await synchronize()
+  }, 5000)
+  window.addEventListener('focus', synchronize)
+})
+onUnmounted(() => {
+  clearInterval(timer)
+  window.removeEventListener('focus', synchronize)
 })
 </script>
 
@@ -94,6 +117,7 @@ onMounted(async () => {
 }
 
 .nav-item {
+  white-space: nowrap;
   color: var(--kms-text-secondary);
   text-decoration: none;
   padding: 10px 24px;
@@ -116,8 +140,19 @@ onMounted(async () => {
 }
 
 .main-content {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
   position: relative;
   min-height: 500px;
+}
+
+@media (max-width: 640px) {
+  .top-nav { flex-direction: column; align-items: flex-start; gap: 12px; padding: 24px 0; }
+  .nav-links { flex-wrap: wrap; padding: 0; }
+  .nav-item { padding: 12px; font-size: .8125rem; }
+  .nav-brand { flex-shrink: 0; }
 }
 
 .page-fade-enter-active,

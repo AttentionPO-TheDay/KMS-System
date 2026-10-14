@@ -195,6 +195,10 @@ public class InternalLifecycleController {
             item.put("status", key == null ? null : key.getStatus());
             item.put("chainStatus", key == null ? null : key.getChainStatus());
             item.put("updatedAt", key == null ? null : key.getUpdTime());
+            // Acceptance audit metadata only; never include key material.
+            item.put("version", key == null ? null : key.getVersion());
+            item.put("userName", key == null ? null : key.getUserName());
+            item.put("keyDomain", key == null ? null : key.getKeyDomain());
             items.add(item);
         }
         Map<String, Object> payload = new LinkedHashMap<>();

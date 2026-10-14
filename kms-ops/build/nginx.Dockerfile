@@ -29,7 +29,7 @@ COPY nginx/snippets/ /etc/nginx/snippets/
 COPY nginx/demo-server.conf.template /etc/nginx/kms-demo.template
 COPY nginx/30-kms-demo.sh /docker-entrypoint.d/30-kms-demo.sh
 RUN chmod +x /docker-entrypoint.d/30-kms-demo.sh \
-    && printf '%s\n' 'server { listen 8088; server_name _; return 404; }' > /etc/nginx/kms-demo.conf
+    && printf '%s\n' 'server { listen 80 default_server; listen 8088 default_server; listen 443 ssl default_server; server_name _; ssl_certificate /etc/nginx/tls/localhost.crt; ssl_certificate_key /etc/nginx/tls/localhost.key; return 404; }' > /etc/nginx/kms-demo.conf
 
 # 静态资源：门户 + 2 个前端
 # （/generate/ 与 /distribute/ 两个静态前端均已退役：前者页面并入统一管理端，
@@ -46,7 +46,7 @@ COPY front/acceptance/  /usr/share/nginx/html/acceptance/
 # 清理镜像自带的示例页，避免 / 被默认页覆盖
 RUN rm -f /usr/share/nginx/html/index.nginx-debian.html 2>/dev/null || true
 
-EXPOSE 80
+EXPOSE 80 443 8088
 
 # 校验配置语法；配置有误会在此直接失败，而不是等到启动
 RUN nginx -t

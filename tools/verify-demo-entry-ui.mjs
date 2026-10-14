@@ -12,7 +12,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const ORIGIN = process.env.KMS_DEMO_UI_ORIGIN || 'http://127.0.0.1:8088'
-const STANDALONE = process.env.KMS_STANDALONE_UI_ORIGIN || 'http://127.0.0.1'
 assert.equal(new URL(ORIGIN).hostname, '127.0.0.1', 'only an explicitly enabled loopback test gateway is supported')
 const BASE = '/updatedel'
 const CDP_PORT = Number(process.env.KMS_DEMO_UI_CDP_PORT || 9397)
@@ -175,6 +174,28 @@ try {
   check('actual Demo cookie is HttpOnly and opaque, not a JWT', opaque?.httpOnly&&opaque.value.length>=32&&!opaque.value.includes('.'))
   const admin = requireOk(await api('/lifecycle/demo/context'), 'real admin context')
   check('server authority is ADMIN without nodeId', admin.principalType === 'ADMIN' && !admin.nodeId)
+  await waitFor(hasText('密钥总览'), 'admin aggregate homepage')
+  const summary = requireOk(await api('/pqkds/security-monitor/summary/'), 'admin aggregate endpoint')
+  check('aggregate response has no key material', !/"(?:key_value|private_key|encrypted_key|ciphertext)"/.test(JSON.stringify(summary)))
+  const sidebar = await main.evaluate(`document.querySelector('.sidebar-container')?.innerText || ''`)
+  // The admin surface intentionally groups the four read-only data views under
+  // one sidebar module.  Child labels are rendered after opening that group,
+  // so checking the collapsed text for every leaf would reject the intended IA.
+  check('admin sidebar contains the functional modules', ['密钥数据','节点管理','验收测试台'].every(label=>sidebar.includes(label)), JSON.stringify({sidebar}))
+  const dataMenuOpened = await main.evaluate(`(()=>{const item=[...document.querySelectorAll('.sidebar-container .el-sub-menu__title')].find(row=>row.innerText.includes('密钥数据'));if(!item)return false;item.click();return true})()`)
+  check('admin data sidebar exposes classified read-only views', dataMenuOpened && await main.evaluate(`(()=>{const text=document.querySelector('.sidebar-container')?.innerText||'';return ['密钥总览','预分配池','会话数据','分发批次'].every(label=>text.includes(label))})()`))
+  check('admin sidebar retires key-business entrances', ['密钥生成监管','密钥更新与回收监管','密钥分发监管','工作台','我的密钥','密钥池'].every(label=>!sidebar.includes(label)))
+  check('homepage requests only aggregate rather than key lists', requests.filter(row=>/keymanage|operation-record|dashboard\/summary/.test(row.url)).length === 0)
+  check('acceptance uses existing dynamic menu', await main.evaluate(`(()=>{const item=[...document.querySelectorAll('.sidebar-container .el-menu-item')].find(row=>row.innerText.includes('验收'));if(!item)return false;item.click();return true})()`))
+  await waitFor(`!![...document.querySelectorAll('iframe')].find(frame=>new URL(frame.src,location.origin).pathname.startsWith('/acceptance/'))`, 'existing acceptance iframe route')
+  await main.rpc('Page.reload')
+  await waitFor(`!![...document.querySelectorAll('iframe')].find(frame=>new URL(frame.src,location.origin).pathname.startsWith('/acceptance/'))`, 'acceptance iframe survives refresh')
+  await navigate('/demo/admin/index')
+  await waitFor(hasText('密钥总览'), 'return to aggregate homepage')
+  for (const path of ['/generate/keymanage/list','/lifecycle/keys/1','/pqkds/key-pool/','/pqkds/admin/node-long-term-keys/']) {
+    const denied = await api(path)
+    check(`admin hidden key API denied: ${path}`, denied.status === 403 || denied.body.code === 403)
+  }
   await createNode(nodeIds[0], 0); await createNode(nodeIds[1], 1)
 
   await navigate(`/demo?nodeId=${nodeIds[0]}`)
@@ -251,15 +272,17 @@ try {
   await main.evaluate(`(()=>new Promise((resolve,reject)=>{const r=indexedDB.deleteDatabase('kms-demo-node-keystore');r.onsuccess=()=>resolve(true);r.onerror=()=>reject(r.error);r.onblocked=()=>reject(new Error('test-owned Demo DB is still open in another tab'))}))()`)
   const writesBefore = requests.filter(row=>row.method==='POST'&&row.url.endsWith('/node-self/keys/')).length
   await navigate(`/demo?nodeId=${nodeIds[1]}`)
-  await waitFor(hasText('密钥材料需恢复，已禁止自动初始化或覆盖'), 'ACTIVE missing-material recovery gate')
+  await waitFor(`(${hasText('节点密钥材料恢复')}||${hasText('密钥材料需恢复，已禁止自动初始化或覆盖')})`, 'ACTIVE missing-material recovery gate')
   check('missing material blocks auto-generation and initialization UI', await main.evaluate(`![...document.querySelectorAll('.node-init__actions button')].some(b=>/开始初始化|继续初始化|进入工作台/.test(b.innerText))`))
   check('missing-material entry leaves server keys unchanged', hash(await serverSnapshot())===hash(bServer))
   check('missing-material entry never submits new keys', writesBefore===requests.filter(row=>row.method==='POST'&&row.url.endsWith('/node-self/keys/')).length)
   check('Demo does not send legacy Authorization on real browser requests', requests.length>0&&requests.every(row=>!('authorization'in row.headers)))
   check('standalone token remains unchanged throughout Demo', await main.evaluate(`document.cookie.includes('Admin-Token=demo-ui-standalone-sentinel')`))
-  await navigate('/standalone', STANDALONE)
-  await waitFor(hasText('独立运行'), 'return to original standalone gateway')
-  check('original 80 entry remains a separate standalone document', await main.evaluate(`location.origin===${JSON.stringify(STANDALONE)}&&!![...document.querySelectorAll('button')].find(b=>b.innerText==='节点登录')`))
+  await navigate('/standalone')
+  await waitFor(hasText('404 Not Found'), 'retired standalone link stays retired')
+  check('retired standalone entry cannot reappear', await main.evaluate(`document.body.innerText.includes('404 Not Found')&&!document.querySelector('input[type=password]')`))
+  await navigate('/login')
+  await waitFor(hasText('404 Not Found'), 'retired normal login stays retired')
   check('no uncaught application exceptions during real flow', runtimeErrors.length===0, runtimeErrors.join('; '))
   console.log(`Real Demo UI flow passed; ${requests.length} Demo requests observed; temporary profile ${profile}`)
 } finally {

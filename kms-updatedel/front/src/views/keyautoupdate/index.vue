@@ -1,5 +1,6 @@
 <template>
-  <div class="app-container">
+  <NodeKeyUpdate v-if="!isAdmin" auto-settings />
+  <div v-else class="app-container">
     <el-form :model="queryParams" ref="queryRef" :inline="true" v-show="showSearch" label-width="88px">
       <el-form-item label="用户ID" prop="userId">
         <el-input v-model="queryParams.userId" placeholder="请输入用户ID" clearable @keyup.enter="handleQuery" />
@@ -16,7 +17,7 @@
       </el-form-item>
     </el-form>
 
-    <el-row :gutter="10" class="mb8">
+    <el-row :gutter="10" class="mb8 kau-toolbar">
       <el-col :span="1.5">
         <el-button
           type="primary"
@@ -28,8 +29,34 @@
           style="padding: 6px 12px; margin-top: 15px"
         >配置自动更新</el-button>
       </el-col>
+      <el-col v-if="isAdmin" :span="1.5">
+        <el-button
+          type="success"
+          plain
+          icon="VideoPlay"
+          :loading="triggering"
+          @click="handleRunOnce"
+        >立即执行一轮</el-button>
+      </el-col>
+      <el-col v-if="isAdmin" :span="1.5">
+        <el-button
+          type="info"
+          plain
+          icon="Document"
+          @click="openRunRecords"
+        >查看执行记录</el-button>
+      </el-col>
       <right-toolbar v-model:showSearch="showSearch" @queryTable="getList" />
     </el-row>
+
+    <el-alert
+      class="kau-execution-hint"
+      type="info"
+      :closable="false"
+      show-icon
+      title="自动更新分为两步"
+      :description="executionHint"
+    />
 
     <el-table v-loading="loading" :data="keymanageList" @selection-change="handleSelectionChange">
       <el-table-column type="selection" width="55" align="center" />
@@ -136,9 +163,23 @@
 </template>
 
 <script setup name="KeyAutoUpdate">
-import { listKeymanage, getKeymanage, updateKeyAutoUpdate, listLatestAutoUpdateItems } from "@/api/lifecycle/lifecycle"
+import { useRouter } from 'vue-router'
+import { listKeymanage, getKeymanage, updateKeyAutoUpdate, listLatestAutoUpdateItems, triggerAutoUpdateRunOnce } from "@/api/lifecycle/lifecycle"
+import useUserStore from '@/store/modules/user'
+import { isAdminPrincipal } from '@/utils/principal'
+import { entryPath } from '@/utils/entry-mode'
+import NodeKeyUpdate from '@/views/keyupdate/index.vue'
 
 const { proxy } = getCurrentInstance()
+const router = useRouter()
+const userStore = useUserStore()
+const isAdmin = computed(() => isAdminPrincipal({
+  principalType: userStore.principalType,
+  roleLevel: userStore.roleLevel
+}))
+const executionHint = computed(() => isAdmin.value
+  ? '先在本页为支持托管轮换的密钥开启自动更新，再由定时任务按间隔执行轮换。点击“立即执行一轮”可扫描当前到期密钥；执行结果、失败原因和逐密钥明细可在“查看执行记录”中核对。'
+  : '先在本页为支持托管轮换的密钥开启自动更新，系统会按间隔自动执行轮换；最近一次执行结果可在“上次执行”列中核对。')
 
 const keymanageList = ref([])
 const latestByKey = ref({})
@@ -148,6 +189,7 @@ const showSearch = ref(true)
 const ids = ref([])
 const single = ref(true)
 const total = ref(0)
+const triggering = ref(false)
 
 const queryParams = ref({
   pageNum: 1,
@@ -269,6 +311,27 @@ function submitForm() {
   })
 }
 
+function openRunRecords() {
+  router.push(entryPath('/lifegov/autoupdrun'))
+}
+
+function handleRunOnce() {
+  proxy.$modal.confirm('将立即扫描并轮换已到期且已开启自动更新的密钥。该操作会真实执行密钥轮换，确定继续吗？').then(() => {
+    triggering.value = true
+    return triggerAutoUpdateRunOnce()
+  }).then(response => {
+    const run = response?.data
+    if (run) {
+      proxy.$modal.msgSuccess(`本轮完成：候选 ${run.candidateCount || 0}，成功 ${run.successCount || 0}，失败 ${run.failCount || 0}，跳过 ${run.skippedCount || 0}`)
+    } else {
+      proxy.$modal.msgSuccess('自动更新任务已执行')
+    }
+    getList()
+  }).catch(() => {}).finally(() => {
+    triggering.value = false
+  })
+}
+
 function isAutoUpdateEnabled(value) {
   return value === 1 || value === '1' || value === true || value === 'true'
 }
@@ -312,4 +375,6 @@ getList()
 <style scoped>
 .kau-time { color: var(--kms-text-secondary, #909399); font-size: 12px; margin-top: 2px; }
 .kau-muted { color: var(--kms-text-secondary, #909399); }
+.kau-toolbar { align-items: center; }
+.kau-execution-hint { margin: 0 0 14px; }
 </style>

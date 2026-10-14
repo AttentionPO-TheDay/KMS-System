@@ -33,6 +33,13 @@ def public_key_hex(record) -> str:
     raw = str(record.public_key or '').strip()
     if not raw:
         return ''
+    if record.algorithm == 'FALCON_CL_V1':
+        from .falcon_cl_v1 import parse_material
+        try:
+            parse_material(raw, 'PUBLIC', record.node.node_id)
+        except (ValueError, TypeError):
+            return ''
+        return raw
     if record.algorithm != 'KYBER':
         return raw.lower()
     # 先认 hex 再认 base64，顺序不能反：hex 的字母表是 base64 的子集，
@@ -60,12 +67,19 @@ def long_term_key_payload(k: NodeLongTermKey) -> dict:
     if is_fabric_did():
         from .chain_binding_service import get_binding_status
         chain_binding = get_binding_status(k)
+    else:
+        from .node_fisco_evidence import enabled, status
+        if enabled():
+            chain_binding = status(k)
     return {
         'algorithm': k.algorithm,
+        'purpose': 'ENCRYPT' if k.algorithm == 'FALCON_CL_V1' else ('SIGN' if k.algorithm == 'FALCON' else 'ENCRYPT'),
+        'materialVersion': 1 if k.algorithm == 'FALCON_CL_V1' else None,
+        'publicKeyEncoding': 'FCL_V1_BASE64_JSON' if k.algorithm == 'FALCON_CL_V1' else 'hex',
         **public_generation_payload(k),
         # 密钥可用与链上确认是两个事实；尚无配置时也不能显示成“上链成功”。
         'chainBinding': chain_binding,
-        'chainWriteState': chain_write_state(),
+        'chainWriteState': ('ENABLED' if chain_binding and chain_binding.get('provider') == 'FISCO' and chain_binding.get('writeEnabled') else chain_write_state()),
         'keyId': k.key_id,
         'keyVersion': k.key_version,
         'status': k.status,
@@ -87,7 +101,7 @@ def long_term_key_payload(k: NodeLongTermKey) -> dict:
         # 字节数而非字符串长度，也不是截断值：字节数才能与 Kyber 变体
         # （800/1184/1568）对上；截断后的串看起来仍像一把公钥、会被拿去比对，
         # 而它永远比不相等。要完整正文用上面那个字段。
-        'publicKeyBytes': len(public_key) // 2,
+        'publicKeyBytes': len(base64.b64decode(public_key)) if k.algorithm == 'FALCON_CL_V1' and public_key else len(public_key) // 2,
         'legacy': k.legacy,
         'legacySource': k.legacy_source,
         'effectiveAt': iso(k.effective_at),

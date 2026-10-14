@@ -170,8 +170,8 @@ def _public_status(node: Node) -> str:
     return 'PENDING_INIT'
 
 
-def _node_payload(node: Node) -> dict:
-    from .keygen_issuance import policy_enabled
+def _node_payload(node: Node, context=None) -> dict:
+    from .keygen_issuance import policy_enabled, falcon_cl_enabled
     from .chain_backend import get_chain_backend, chain_write_state
     return {
         'nodeId': node.node_id,
@@ -193,8 +193,14 @@ def _node_payload(node: Node) -> dict:
         # 前端拿它与**本机**的 deviceId 比对，判断"我是不是那台设备"——
         # 新设备登录时本地没有私钥，靠这个才能发现，否则界面看不出任何异常。
         'keyDeviceId': node.key_device_id or '',
+        'falconClCapability': {
+            'enabled': falcon_cl_enabled(), 'algorithm': 'FALCON_CL_V1',
+            'purpose': 'ENCRYPT', 'materialVersion': 1,
+            'ready': NodeLongTermKey.objects.filter(node=node, algorithm='FALCON_CL_V1', status=C.KEY_STATUS_ACTIVE).exists(),
+            'experimental': True,
+        },
         'keygenPolicy': {
-            'enabled': policy_enabled(), 'experimental': True,
+            'enabled': policy_enabled(context), 'experimental': True,
             'schemes': C.SPLIT_GENERATION_SCHEMES,
             'provenance': 'CLIENT_ATTESTED_SERVER_ISSUANCE_VALIDATED',
         },
@@ -227,6 +233,17 @@ def _long_term_keys_payload(node: Node, limit: int = 200) -> list:
     return [_long_term_key_payload(k) for k in rows]
 
 
+@csrf_exempt
+@require_http_methods(['GET'])
+@require_kms_user
+def node_self_workbench(request, identity):
+    node = _find_node(identity)
+    if node is None:
+        return _error('当前账号未关联任何节点', 403)
+    from .node_workbench import summary
+    return _ok(summary(node))
+
+
 def _find_node(identity) -> Node | None:
     """把登录身份映射到节点。取不到返回 None（由调用方给出明确错误）。"""
     user_id = identity.get('userId')
@@ -246,7 +263,7 @@ def node_self(request, identity):
         # 这不是错误状态，而是"这个账号不是节点"—— 由前端据此决定视图分流。
         return _ok({'mapped': False, 'node': None})
     from .keygen_issuance import trusted_binding
-    payload = _node_payload(node)
+    payload = _node_payload(node, identity)
     try:
         payload['keygenIdentity'] = trusted_binding(request, node, identity, require_init_lease=False)
         payload['keygenIdentityError'] = None
@@ -350,7 +367,11 @@ def node_self_keys(request, identity):
 
     if request.method == 'GET':
         # 读自己的状态在停用后也应当可用：停用的是"产生新密钥"的能力。
-        return _ok({'nodeId': node.node_id, 'keys': _long_term_keys_payload(node)})
+        data = {'nodeId': node.node_id, 'keys': _long_term_keys_payload(node)}
+        if request.GET.get('includeRegistry') == 'true':
+            data['keyIdentities'] = [dict(algorithm=row['algorithm'], keyId=row['key_id'], keyVersion=row['key_version'])
+                for row in NodeLongTermKey.objects.filter(node=node).order_by().values('algorithm', 'key_id', 'key_version')]
+        return _ok(data)
 
     if _public_status(node) == 'DISABLED':
         return _error('该节点已被停用，无法登记密钥', 403)
@@ -457,6 +478,8 @@ def node_self_keys(request, identity):
     #    None 并记日志（旁路增强），所以这里拿到的是"空"而不是异常。
     chain_tx = ''
     if result.get('rotated'):
+        from .node_auto_update import registered
+        registered(node, result.get('algorithm'), result.get('key_id'), result.get('key_version'))
         chain_tx = record_chain_event(
             'KEY_UPDATED',
             # 用 NodeLongTermKey 的整数主键作链上 keyId（见 store_node_public_key
@@ -475,7 +498,7 @@ def node_self_keys(request, identity):
 
     return _ok(
         {
-            'node': _node_payload(node),
+            'node': _node_payload(node, identity),
             # 回传落库后的身份：节点据此核对"服务端记下的就是我本地那把"。
             # 只在成功时给，失败时 data 里是 error_code（两种形状不会混）。
             'algorithm': result.get('algorithm'),
@@ -490,6 +513,92 @@ def node_self_keys(request, identity):
         },
         msg=result.get('message') or '公钥已登记',
     )
+
+
+@csrf_exempt
+@require_http_methods(['GET', 'PUT', 'POST'])
+@require_kms_user
+def node_self_auto_update(request, identity):
+    from . import node_auto_update as service
+    from .models import NodeKeyAutoUpdate
+    node = _find_node(identity)
+    if node is None:
+        return _error('当前账号未关联任何节点', 403)
+    if request.method == 'GET':
+        return _ok({'nodeId': node.node_id, 'serverTime': timezone.now().isoformat(),
+                    'policies': [service.payload(row) for row in
+                                 NodeKeyAutoUpdate.objects.filter(node=node).order_by('algorithm')]})
+    try:
+        data = json.loads(request.body or b'{}')
+        if not isinstance(data, dict):
+            raise ValueError('请求体应为 JSON 对象')
+        if request.method == 'PUT':
+            return _ok(service.configure(node, data))
+        if data.get('action') == 'claim' and set(data) == {'action', 'algorithm'}:
+            if data['algorithm'] not in service.ALGORITHMS:
+                raise ValueError('未知算法')
+            return _ok({'claim': service.claim(node, data['algorithm'])})
+        if data.get('action') == 'complete' and set(data) <= {'action', 'algorithm', 'leaseToken', 'message'}:
+            return _ok(service.complete(node, data))
+        raise ValueError('未知自动更新操作或字段')
+    except (ValueError, TypeError) as exc:
+        return _error(str(exc), error_code=C.ERR_INVALID_PARAMETER)
+
+
+@csrf_exempt
+@require_http_methods(['GET', 'POST'])
+@require_kms_user
+def node_self_did_handoffs(request, identity):
+    """生成或列出本节点 DID SDK 参数交接记录；不会调用 submit。"""
+    node = _find_node(identity)
+    if node is None:
+        return _error('当前账号未关联任何节点', 403, error_code=C.ERR_NOT_AUTHORIZED)
+    from .did_handoff_service import HandoffError, create_handoff, record_payload
+    from .models import DidSdkHandoff
+    if request.method == 'GET':
+        rows = DidSdkHandoff.objects.filter(node=node).order_by('-created_at', '-sequence')[:50]
+        return _ok({'records': [record_payload(row) for row in rows]})
+    try:
+        payload = json.loads(request.body or b'{}')
+        if not isinstance(payload, dict):
+            raise HandoffError('INVALID_PARAMETER', '请求体应为 JSON 对象')
+        private_names = {'privateKey', 'private_key', 'secretKey', 'secret_key', 'seed', 'mnemonic'}
+        if private_names.intersection(payload):
+            raise HandoffError('PRIVATE_MATERIAL_REJECTED', 'DID 参数交接不接受任何私钥材料')
+        if set(payload) != {'algorithm', 'keyId', 'keyVersion'}:
+            raise HandoffError('INVALID_PARAMETER', '只接受 algorithm、keyId、keyVersion')
+        record = create_handoff(
+            node, algorithm=payload.get('algorithm'), key_id=payload.get('keyId'),
+            key_version=payload.get('keyVersion'), requested_by=identity.get('userId'),
+        )
+        response = _ok(record_payload(record, include_package=True), msg='DID 参数交接记录已生成')
+    except HandoffError as exc:
+        response = _error(exc.message, 409, error_code=exc.code)
+    except (ValueError, TypeError):
+        response = _error('请求体不是合法 JSON', error_code=C.ERR_INVALID_PARAMETER)
+    except Exception:
+        logger.exception('节点 %s 生成 DID 参数交接记录失败', node.node_id)
+        response = _error('DID 参数交接服务暂时不可用', 503)
+    response['Cache-Control'] = 'no-store, private, max-age=0'
+    return response
+
+
+@csrf_exempt
+@require_http_methods(['GET'])
+@require_kms_user
+def node_self_did_handoff_detail(request, record_id, identity):
+    """读取本节点的一条完整交接包，禁止跨节点查看。"""
+    node = _find_node(identity)
+    if node is None:
+        return _error('当前账号未关联任何节点', 403, error_code=C.ERR_NOT_AUTHORIZED)
+    from .did_handoff_service import record_payload
+    from .models import DidSdkHandoff
+    record = DidSdkHandoff.objects.filter(node=node, record_id=record_id).first()
+    if record is None:
+        return _error('DID 参数交接记录不存在', 404, error_code='DID_HANDOFF_NOT_FOUND')
+    response = _ok(record_payload(record, include_package=True))
+    response['Cache-Control'] = 'no-store, private, max-age=0'
+    return response
 
 
 @csrf_exempt
@@ -665,7 +774,7 @@ def node_self_init(request, identity):
         {
             'alreadyInitialized': bool(result.get('already_initialized')),
             'completed': result.get('completed'),
-            'node': _node_payload(node),
+            'node': _node_payload(node, identity),
         },
         msg=result.get('message') or '初始化完成',
     )

@@ -77,6 +77,9 @@ export const NODE_ONLY_FRAME_PATHS = Object.freeze(['workbench'])
 /** 节点端的三个业务分区 + 节点信息分区（顶层目录的 path） */
 export const NODE_ONLY_ZONE_PATHS = Object.freeze(['/genzone', '/lifezone', '/distzone', '/selfzone'])
 
+/** 管理端已拆分到「密钥数据」分组的旧综合入口，不再出现在侧边栏。 */
+export const DEPRECATED_ADMIN_PATHS = Object.freeze(['/secmonitor'])
+
 /**
  * 管理端的顶层路径 —— 节点端侧边栏**不该出现**这些。
  *
@@ -115,6 +118,8 @@ export function filterSidebarByPrincipal(routes, roleLevel, principal) {
   routes = routes.filter(route => {
     if (String(route.path).startsWith('/demo/admin')) return principal === 'ADMIN'
     if (String(route.path).startsWith('/demo/node')) return principal === 'NODE'
+    const routePath = `/${String(route.path || '').replace(/^\/+|\/+$/g, '')}`
+    if (DEPRECATED_ADMIN_PATHS.includes(routePath)) return false
     return true
   })
 

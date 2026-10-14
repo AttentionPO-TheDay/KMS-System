@@ -296,11 +296,11 @@ public class KeyOperationRecordService {
         }
 
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("totalUpdates", keyOperationRecordMapper.countByActionType("UPDATE"));
-        payload.put("totalRevokes", keyOperationRecordMapper.countByActionType("REVOKE"));
+        payload.put("totalUpdates", keyOperationRecordMapper.countDashboardRecordsByActionType("UPDATE"));
+        payload.put("totalRevokes", keyOperationRecordMapper.countDashboardRecordsByActionType("REVOKE"));
         payload.put("autoUpdateEnabled", keymanageMapper.countAutoUpdateEnabled());
-        payload.put("pendingReceives", keyOperationRecordMapper.countPendingReceives());
-        payload.put("failedResults", keyOperationRecordMapper.countFailedResults());
+        payload.put("pendingReceives", keyOperationRecordMapper.countDashboardPendingReceives());
+        payload.put("failedResults", keyOperationRecordMapper.countDashboardFailedResults());
         payload.put("recent7Days", buildRecentSeries(labels, manualUpdateSeries, autoUpdateSeries, revokeSeries));
         payload.put("operationDistribution", operationDistribution);
         return payload;

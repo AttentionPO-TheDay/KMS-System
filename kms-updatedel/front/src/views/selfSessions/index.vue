@@ -1,6 +1,11 @@
 <template>
   <div class="app-container">
-    <el-card shadow="never">
+    <el-tabs v-model="activeTab" aria-label="会话管理">
+      <el-tab-pane label="会话列表" name="sessions" :disabled="signingBusy" />
+      <el-tab-pane label="会话签名密钥" name="signing" />
+    </el-tabs>
+    <KeyGenerationPage v-if="activeTab === 'signing'" purpose="signing" @busy="signingBusy = $event" />
+    <el-card v-else shadow="never">
       <template #header>
         <div class="panel-head">
           <span>会话管理</span>
@@ -193,6 +198,8 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import KeyGenerationPage from '@/views/generate/create.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   closeSelfSession,
@@ -220,10 +227,11 @@ import {
 
 const SESSION_TYPES = {
   aes_falcon: 'AES + Falcon',
-  kyber_kem: 'Kyber 密钥协商',
+  kyber_kem: '改进型双份额密钥封装（实验版 v1）',
   gm_sm2: '国密 SM2',
   gm_sscl: '国密 SSCL',
-  falcon_lattice: 'Falcon 格密码'
+  falcon_lattice: 'Falcon 格密码（历史格式）',
+  falcon_cl_v1: '改进型无证书格加密（实验版 v1）'
 }
 const SESSION_STATUS = {
   initiated: '已发起',
@@ -237,6 +245,19 @@ const SESSION_STATUS = {
 }
 
 const loading = ref(false)
+const route = useRoute()
+const router = useRouter()
+const signingBusy = ref(false)
+const activeTab = computed({
+  get: () => route.query.keyPurpose === 'signing' ? 'signing' : 'sessions',
+  set: value => {
+    if (signingBusy.value) return
+    const query = { ...route.query }
+    if (value === 'signing') query.keyPurpose = 'signing'
+    else delete query.keyPurpose
+    router.replace({ path: route.path, query })
+  }
+})
 const mapped = ref(false)
 const all = ref([])
 const selfNodeId = ref('')

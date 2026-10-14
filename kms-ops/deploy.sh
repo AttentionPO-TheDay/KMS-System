@@ -20,6 +20,15 @@ cd "$(dirname "$0")"
 COMPOSE_FILE="docker-compose.yml"
 ENV_FILE=".env"
 
+# ship.ps1 的完整包自带 DID 服务；只启动内部 Bridge，不打开 SDK/链写闸门。
+compose() {
+  if [ -f WITH_DID ]; then
+    docker compose -f "$COMPOSE_FILE" --profile fabric-did "$@"
+  else
+    docker compose -f "$COMPOSE_FILE" "$@"
+  fi
+}
+
 log()  { printf '\033[36m%s\033[0m\n' "$*"; }
 ok()   { printf '  \033[32m[OK]\033[0m %s\n' "$*"; }
 warn() { printf '  \033[33m[!]\033[0m %s\n' "$*"; }
@@ -73,6 +82,7 @@ do_check() {
 kms-updatedel-java:local kms-acceptance-backend:local
 kms-gateway-nginx:local kms-dvadmin3-django:local"
   local img_missing=0
+  if [ -f WITH_DID ]; then imgs="$imgs kms-fabric-did:local"; fi
   for i in $imgs; do
     if ! docker image inspect "$i" >/dev/null 2>&1; then
       warn "镜像未载入: $i"
@@ -80,7 +90,7 @@ kms-gateway-nginx:local kms-dvadmin3-django:local"
     fi
   done
   if [ "$img_missing" -eq 0 ]; then
-    ok "7 个应用镜像均已载入"
+    ok "全部所需应用镜像均已载入"
   else
     warn "有 $img_missing 个应用镜像尚未构建/载入"
     warn "  - 源码模式（本包）：bash deploy.sh build"
@@ -92,6 +102,7 @@ kms-gateway-nginx:local kms-dvadmin3-django:local"
   # 镜像里 COPY 的是本地构建产物（runtime/、front/）与 Dockerfile，
   # 它们平时被 .gitignore 排除，手工挑选上传时极易漏。
   # 这里逐一核对，让问题在上传后就暴露，而不是等 docker build 报一句难懂的错误。
+  if grep -qE '^\s+build:' "$COMPOSE_FILE"; then
   local build_missing=0
   for f in runtime/generate-java/kms-generate.jar \
            runtime/updatedel-java/kms-updatedel.jar \
@@ -122,6 +133,14 @@ kms-gateway-nginx:local kms-dvadmin3-django:local"
   else
     warn "有 $build_missing 项构建输入缺失 —— 构建一定失败，请补齐后再继续"
   fi
+  else
+    ok "镜像部署模式：无需上传源码、runtime/ 或 front/"
+  fi
+
+  if [ -f WITH_DID ]; then
+    [ -d fabric-did-secrets/work ] || die "缺少 DID 工作目录 fabric-did-secrets/work"
+    warn "DID Bridge 随包部署，实际 SDK 配置/证书需另外提供；启动不代表链连通或 SysPid 上链"
+  fi
 
   # -------- 架构 --------
   # kms-images.tar（镜像模式）只能在 amd64 上跑；源码模式在远端构建，
@@ -142,7 +161,7 @@ kms-gateway-nginx:local kms-dvadmin3-django:local"
   # 也就不该再要求部署环境"腾出"它们。要在本机直连调试请加覆盖文件：
   #   docker compose -f docker-compose.yml -f docker-compose.debug-ports.yml up -d
   local busy=""
-  for p in 80 3307 6379 9092 8545 20200; do
+  for p in 80 443 8088 8443 3307 6379 9092 8545 20200; do
     if command -v ss >/dev/null 2>&1 && ss -ltn "sport = :$p" 2>/dev/null | grep -q LISTEN; then
       local who
       who=$(docker ps --filter "publish=$p" --format '{{.Names}}' 2>/dev/null | head -1 || true)
@@ -160,13 +179,17 @@ kms-gateway-nginx:local kms-dvadmin3-django:local"
   # -------- 公共基础镜像 --------
   # 远端连不上 Docker Hub 时，构建会在第一步就失败（load metadata ... i/o timeout）。
   # 与其让用户去猜，这里直接点名缺哪个、怎么补。
-  local baseList="debian:bookworm-slim eclipse-temurin:8-jre nginx:alpine mysql:8.0 redis:6.2 apache/kafka:latest ubuntu:22.04"
+  local baseList="eclipse-temurin:8-jre mysql:8.0 redis:6.2 apache/kafka:latest ubuntu:22.04"
+  if grep -qE '^\s+build:' "$COMPOSE_FILE"; then
+    baseList="$baseList debian:bookworm-slim nginx:alpine"
+    if [ -f WITH_DID ]; then baseList="$baseList azul/zulu-openjdk:8-jre"; fi
+  fi
   local base_missing=""
   for bi in $baseList; do
     docker image inspect "$bi" >/dev/null 2>&1 || base_missing="$base_missing $bi"
   done
   if [ -z "$base_missing" ]; then
-    ok "7 个公共基础镜像均已就绪"
+    ok "所需公共基础镜像均已就绪"
   else
     warn "公共基础镜像缺失:$base_missing"
     warn "  远端拉不到 Docker Hub 时，两条修法："
@@ -229,6 +252,7 @@ do_load() {
 # 构建镜像（源码模式：包里带的是构建输入，镜像在远端构建）
 # ---------------------------------------------------------------------------
 do_build() {
+  grep -qE '^\s+build:' "$COMPOSE_FILE" || die "当前为镜像包，不能在服务器 build；请在本机用 ship.ps1 -Rebuild 重新打包"
   log "=== 构建应用镜像（源码模式）==="
   log "基础镜像（mysql/redis/kafka/ubuntu/temurin）会自动从仓库拉取"
   docker compose -f "$COMPOSE_FILE" build
@@ -283,19 +307,19 @@ do_up() {
   do_check
   prepare_runtime_dirs
   log "=== 启动服务 ==="
-  docker compose -f "$COMPOSE_FILE" up -d
+  compose up -d
   ok "已启动。等待健康检查…"
   sleep 20
-  docker compose -f "$COMPOSE_FILE" ps
+  compose ps
 }
 
 do_down() {
   log "=== 停止服务（数据卷保留）==="
-  docker compose -f "$COMPOSE_FILE" down
+  compose down
 }
 
-do_ps()   { docker compose -f "$COMPOSE_FILE" ps; }
-do_logs() { docker compose -f "$COMPOSE_FILE" logs -f nginx; }
+do_ps()   { compose ps; }
+do_logs() { compose logs -f nginx; }
 
 # ---------------------------------------------------------------------------
 # PQKDS 数据库修复
@@ -313,7 +337,7 @@ do_fix_pqkds() {
   log "=== 检查 falcon_kds 迁移状态 ==="
 
   local mysql_cid
-  mysql_cid=$(docker compose -f "$COMPOSE_FILE" ps -q mysql)
+  mysql_cid=$(compose ps -q mysql)
   [ -n "$mysql_cid" ] || die "MySQL 容器未运行"
 
   local pw
@@ -347,7 +371,7 @@ do_fix_pqkds() {
   ok "falcon_kds 已重建"
 
   log "重启 PQKDS 容器以执行迁移"
-  docker compose -f "$COMPOSE_FILE" up -d --force-recreate dvadmin3-django
+  compose up -d --force-recreate dvadmin3-django
   sleep 45
 
   tables=$(docker exec "$mysql_cid" mysql -N -uroot -p"$pw" \
@@ -366,7 +390,7 @@ do_verify() {
   log "=== HTTP 健康检查 ==="
   # 用 127.0.0.1 而非 localhost：启用 IPv6 的机器上 localhost 可能解析到 ::1，
   # 而 docker 端口转发通常只绑 IPv4，会导致误判为服务故障。
-  local base="http://127.0.0.1"
+  local base="http://127.0.0.1:8088"
   local fail=0
   probe() {
     local name="$1" url="$2"
@@ -375,12 +399,13 @@ do_verify() {
     if [ "$code" = "200" ]; then ok "$name -> 200"; else warn "$name -> $code"; fail=$((fail+1)); fi
   }
   probe "gateway /ping"        "$base/ping"
-  probe "portal /"             "$base/"
-  probe "updatedel"            "$base/updatedel/"
-  probe "acceptance"           "$base/acceptance/"
-  probe "generate-api"         "$base/generate-api/generate/ping"
-  probe "lifecycle-api"        "$base/lifecycle-api/lifecycle/ping"
-  probe "acceptance-api"       "$base/acceptance-api/health"
+  probe "demo frontend"       "$base/updatedel/demo"
+  probe "acceptance frontend" "$base/acceptance/"
+  # Acceptance API requires an authoritative ADMIN cookie/revision; an anonymous
+  # health request must not be treated as an authenticated functional check.
+  local redirect
+  redirect=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$base/" || echo 000)
+  if [ "$redirect" = "302" ]; then ok "demo root -> 302"; else warn "demo root -> $redirect"; fail=$((fail+1)); fi
 
   # 已退役的静态前端：按"应当 404"来验，而不是当 200 探。
   #
@@ -402,6 +427,13 @@ do_verify() {
   expect_404 "generate 前端 /generate/"     "$base/generate/"
   expect_404 "distribute 前端 /distribute/" "$base/distribute/"
   expect_404 "user 前端 /user/"             "$base/user/"
+  expect_404 "ordinary login"              "$base/updatedel/login"
+  expect_404 "standalone"                  "$base/updatedel/standalone"
+  expect_404 "ordinary generate API"       "$base/generate-api/generate/ping"
+  expect_404 "ordinary lifecycle API"      "$base/lifecycle-api/lifecycle/ping"
+  expect_404 "internal authority"          "$base/demo-api/lifecycle/internal/lifecycle/demo/introspect"
+  # Browser ADMIN/revision/CSRF checks and retained TLS entry are integration gates,
+  # not covered by these unauthenticated static probes.
 
   if [ "$fail" -eq 0 ]; then
     log "全部通过"

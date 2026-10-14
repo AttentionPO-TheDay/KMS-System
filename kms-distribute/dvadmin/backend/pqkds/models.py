@@ -3,6 +3,7 @@ from django.utils import timezone
 from dvadmin.utils.models import CoreModel, table_prefix
 import json
 import hashlib
+import uuid
 from typing import Dict, Any
 
 # 冻结契约（KMS-002）。models 只从这里取**取值**，不取任何业务逻辑 ——
@@ -733,6 +734,7 @@ class ChainKeyBinding(models.Model):
     status = models.CharField(max_length=24, choices=STATES, default='PENDING', db_index=True)
     did = models.CharField(max_length=512, blank=True, default='')
     tx_id = models.CharField(max_length=256, blank=True, default='')
+    block_height = models.PositiveBigIntegerField(null=True, blank=True)
     nonce = models.TextField(blank=True, default='')
     submit_started = models.BooleanField(default=False)
     transaction_valid = models.BooleanField(default=False)
@@ -755,6 +757,48 @@ class ChainKeyBinding(models.Model):
         indexes = [models.Index(fields=['node', 'status', 'sequence'], name='pqkds_binding_node_state')]
 
 
+class DidSdkHandoff(models.Model):
+    """DID SDK 调用参数交接记录，只保存公开量，永不代表链上提交。"""
+
+    STATES = tuple((value, value) for value in (
+        'RECORDED', 'PREPARED', 'NOT_CONFIGURED', 'BRIDGE_UNAVAILABLE', 'FAILED',
+    ))
+    record_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    node = models.ForeignKey(Node, on_delete=models.SET_NULL, null=True, blank=True,
+                             related_name='did_sdk_handoffs')
+    long_term_key = models.ForeignKey('NodeLongTermKey', on_delete=models.SET_NULL,
+                                      null=True, blank=True, related_name='did_sdk_handoffs')
+    node_id_snapshot = models.CharField(max_length=64)
+    algorithm = models.CharField(max_length=20)
+    key_id = models.CharField(max_length=64)
+    key_version = models.PositiveIntegerField()
+    key_status = models.CharField(max_length=20)
+    sequence = models.PositiveBigIntegerField()
+    event_id = models.CharField(max_length=64, unique=True)
+    interface_path = models.CharField(max_length=128,
+                                      default='/internal/fabric-did/bindings/handoff')
+    request_payload = models.TextField()
+    request_digest = models.CharField(max_length=64)
+    prepare_status = models.CharField(max_length=24, choices=STATES, default='RECORDED',
+                                      db_index=True)
+    prepared_payload = models.TextField(blank=True, default='')
+    did = models.CharField(max_length=512, blank=True, default='')
+    tx_id = models.CharField(max_length=256, blank=True, default='')
+    nonce = models.TextField(blank=True, default='')
+    last_error = models.CharField(max_length=64, blank=True, default='')
+    requested_by = models.CharField(max_length=64, blank=True, default='')
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = f'{table_prefix}pqkds_did_sdk_handoffs'
+        ordering = ['-created_at', '-sequence']
+        constraints = [models.UniqueConstraint(
+            fields=['node', 'sequence'], name='pqkds_did_handoff_node_sequence')]
+        indexes = [models.Index(fields=['node', '-created_at'],
+                                name='pqkds_did_handoff_node_time')]
+
+
 class KeyGenerationIssuance(models.Model):
     """Immutable public context of one contribution; no contribution/seed columns."""
 
@@ -764,6 +808,7 @@ class KeyGenerationIssuance(models.Model):
     key_id = models.CharField(max_length=64)
     key_version = models.PositiveIntegerField()
     context = models.JSONField()
+    partial_public_hash = models.CharField(max_length=64, blank=True, default='')
     status = models.CharField(max_length=16, default='ISSUED')
     public_key_hash = models.CharField(max_length=64, blank=True, default='')
     # Nullable ordinary unique key works on MySQL; no partial indexes.
@@ -796,6 +841,27 @@ class KeyGenerationAuthorization(models.Model):
         constraints = [models.UniqueConstraint(
             fields=['issuance', 'current_slot'], name='pqkds_keygen_uniq_auth',
         )]
+
+
+class NodeKeyAutoUpdate(models.Model):
+    """Node-owned schedule; secrets and rotation run on the original browser."""
+    node = models.ForeignKey(Node, on_delete=models.CASCADE)
+    algorithm = models.CharField(max_length=20)
+    key_id = models.CharField(max_length=64)
+    enabled = models.BooleanField(default=False)
+    interval_minutes = models.PositiveIntegerField(default=1440)
+    next_run_at = models.DateTimeField(null=True, blank=True)
+    last_run_at = models.DateTimeField(null=True, blank=True)
+    last_result = models.CharField(max_length=20, blank=True, default='')
+    last_message = models.CharField(max_length=500, blank=True, default='')
+    lease_token = models.CharField(max_length=36, blank=True, default='')
+    lease_until = models.DateTimeField(null=True, blank=True)
+    from_version = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = f"{table_prefix}pqkds_node_key_auto_update"
+        constraints = [models.UniqueConstraint(
+            fields=['node', 'algorithm'], name='pqkds_auto_update_node_alg')]
 
 
 class NodeLongTermKey(CoreModel):
@@ -838,7 +904,7 @@ class NodeLongTermKey(CoreModel):
     key_version = models.PositiveIntegerField(default=1, verbose_name="密钥版本")
     algorithm = models.CharField(
         max_length=20,
-        choices=[(a, a) for a in ('SM2', 'SSCL', 'KYBER', 'FALCON')],
+        choices=[(a, a) for a in ('SM2', 'SSCL', 'KYBER', 'FALCON', 'FALCON_CL_V1')],
         verbose_name="算法",
         help_text="SM2 / SSCL / KYBER 可保护 SM4；FALCON 只签名",
     )
@@ -1014,6 +1080,29 @@ class NodeKeyAutoRevocationBatch(models.Model):
 
     class Meta:
         db_table = f"{table_prefix}pqkds_node_key_revoke_batches"
+
+
+class AcceptancePreallocationEvidence(models.Model):
+    """节点侧预分配执行产生的结构化验收证据。"""
+
+    pool_id = models.CharField(max_length=64, unique=True)
+    node = models.ForeignKey(Node, on_delete=models.CASCADE, related_name='preallocation_acceptance_evidence')
+    target_node = models.ForeignKey(Node, on_delete=models.CASCADE, related_name='received_preallocation_acceptance_evidence')
+    requested = models.PositiveIntegerField()
+    generated = models.PositiveIntegerField()
+    failed = models.PositiveIntegerField()
+    local_ms = models.FloatField()
+    local_throughput = models.FloatField()
+    server_ms = models.FloatField(default=0)
+    server_throughput = models.FloatField(default=0)
+    measured_at = models.DateTimeField(default=timezone.now)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = f"{table_prefix}pqkds_acceptance_preallocation_evidence"
+        ordering = ['-measured_at', '-id']
+        indexes = [models.Index(fields=['node', '-measured_at'], name='pqkds_accept_prealloc_node')]
 
 class PreDistributedKey(CoreModel):
     """基于格的安全密钥预分配 - 密钥池模型"""

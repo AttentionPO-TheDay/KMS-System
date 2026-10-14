@@ -46,6 +46,11 @@ done
 
 echo "[start] 数据库已就绪（${waited}s），执行迁移"
 python manage.py migrate --noinput
+touch /tmp/kms-node-fisco-schema-ready
 
 echo "[start] 迁移完成，启动 gunicorn"
+if [ "${KMS_NODE_FISCO_ENABLED:-false}" = "true" ]; then
+    echo "[start] 启动节点公钥 FISCO 存证 worker（不启用旧 Web3/DID）"
+    (while true; do python manage.py process_node_fisco_evidence --loop; sleep 5; done) &
+fi
 exec gunicorn application.asgi:application -c gunicorn_conf.py

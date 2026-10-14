@@ -49,7 +49,7 @@
         </p>
         <p class="user-keys__lead">
           换新版本请走<strong>「密钥更新」</strong>，整把作废请走<strong>「密钥回收」</strong>；
-          本页是只读的，不提供任何写操作。
+          密钥生命周期仍是只读的。这里可以为 ACTIVE 公钥生成 DID SDK 参数交接包，但不会提交 DID 交易。
         </p>
 
         <!-- 后端一次最多回 200 行且没有分页参数，到顶必须说出来。 -->
@@ -109,6 +109,21 @@
               <span v-else>{{ row.chainWriteState === 'PAUSED' ? '本地公钥已保留；不提交新交易' : '旧链模式（非 DID 确认）' }}</span>
             </template>
           </el-table-column>
+          <el-table-column label="DID 参数交接" width="136" fixed="right">
+            <template #default="{ row }">
+              <el-tooltip :disabled="row.status === 'ACTIVE'" content="只有当前 ACTIVE 公钥可以生成交接包" placement="top">
+                <span>
+                  <el-button
+                    type="primary"
+                    link
+                    :disabled="row.status !== 'ACTIVE' || handoffBusyKey === handoffKey(row)"
+                    :loading="handoffBusyKey === handoffKey(row)"
+                    @click="createHandoff(row)"
+                  >生成参数</el-button>
+                </span>
+              </el-tooltip>
+            </template>
+          </el-table-column>
           <el-table-column label="可用性" width="132">
             <template #default="{ row }">{{ usableText(row) }}</template>
           </el-table-column>
@@ -131,6 +146,52 @@
         <p v-if="!loading && !filtered.length" class="user-keys__empty">
           {{ rows.length ? '没有符合筛选条件的密钥。' : '这个节点还没有登记过任何长期密钥 —— 先到「密钥生成」页生成第一把。' }}
         </p>
+
+        <section class="handoff-section" aria-labelledby="handoff-title">
+          <div class="handoff-section__heading">
+            <div>
+              <h3 id="handoff-title">DID SDK 参数交接记录</h3>
+              <p>记录与厂商上传接口同形的公开参数。状态始终不代表上链，系统不会调用 createDidDocument。</p>
+            </div>
+            <el-button size="small" :loading="handoffLoading" @click="loadHandoffs">刷新记录</el-button>
+          </div>
+          <el-table v-loading="handoffLoading" :data="handoffs" size="small" border empty-text="尚未生成交接记录">
+            <el-table-column label="记录编号" min-width="238" show-overflow-tooltip>
+              <template #default="{ row }"><span class="mono">{{ row.recordId }}</span></template>
+            </el-table-column>
+            <el-table-column label="密钥" min-width="210">
+              <template #default="{ row }">{{ row.algorithm }} / {{ row.keyId }} / v{{ row.keyVersion }}</template>
+            </el-table-column>
+            <el-table-column label="准备状态" width="138">
+              <template #default="{ row }">
+                <el-tag :type="handoffStatusType(row.prepareStatus)" size="small">{{ handoffStatusText(row.prepareStatus) }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="链上提交" width="100">
+              <template #default><el-tag type="info" size="small">未提交</el-tag></template>
+            </el-table-column>
+            <el-table-column label="生成时间" width="158">
+              <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
+            </el-table-column>
+            <el-table-column label="操作" width="100" fixed="right">
+              <template #default="{ row }"><el-button type="primary" link @click="showHandoff(row)">查看参数</el-button></template>
+            </el-table-column>
+          </el-table>
+
+          <div v-if="selectedHandoff" class="handoff-detail">
+            <div class="handoff-detail__heading">
+              <div>
+                <strong>交接包</strong>
+                <span class="mono">{{ selectedHandoff.recordId }}</span>
+              </div>
+              <div>
+                <el-button size="small" type="primary" @click="copyHandoff">复制 JSON</el-button>
+                <el-button size="small" @click="selectedHandoff = null">收起</el-button>
+              </div>
+            </div>
+            <pre>{{ handoffJson }}</pre>
+          </div>
+        </section>
       </template>
     </el-card>
   </div>
@@ -165,7 +226,13 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import useUserStore from '@/store/modules/user'
 import { IS_DEMO } from '@/utils/entry-mode'
-import { getSelfNode, listSelfNodeKeys } from '@/api/pqkds/node-self'
+import {
+  createSelfDidHandoff,
+  getSelfDidHandoff,
+  getSelfNode,
+  listSelfDidHandoffs,
+  listSelfNodeKeys
+} from '@/api/pqkds/node-self'
 
 const { proxy } = getCurrentInstance()
 const userStore = useUserStore()
@@ -180,6 +247,10 @@ const loading = ref(true)
 const mapped = ref(false)
 const node = ref({})
 const rows = ref([])
+const handoffs = ref([])
+const handoffLoading = ref(false)
+const handoffBusyKey = ref('')
+const selectedHandoff = ref(null)
 
 const algoFilter = ref('')
 const statusFilter = ref('')
@@ -206,6 +277,7 @@ async function load() {
     try {
       const payload = await listSelfNodeKeys()
       rows.value = payload?.keys || []
+      await loadHandoffs()
     } catch (error) {
       // 读不到 ≠ 没有密钥。后者会让用户以为密钥丢了（或去重新生成），
       // 而平台记录可能好好的。列空表 + 明确报错，不静默。
@@ -217,6 +289,80 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+function handoffKey(row) {
+  return `${row.algorithm}/${row.keyId}/${row.keyVersion}`
+}
+
+async function loadHandoffs() {
+  handoffLoading.value = true
+  try {
+    const payload = await listSelfDidHandoffs()
+    handoffs.value = payload?.records || []
+  } catch (error) {
+    handoffs.value = []
+    ElMessage.error(`读取 DID 参数交接记录失败：${error.message}`)
+  } finally {
+    handoffLoading.value = false
+  }
+}
+
+async function createHandoff(row) {
+  const key = handoffKey(row)
+  handoffBusyKey.value = key
+  try {
+    const record = await createSelfDidHandoff({
+      algorithm: row.algorithm,
+      keyId: row.keyId,
+      keyVersion: row.keyVersion
+    })
+    selectedHandoff.value = record
+    await loadHandoffs()
+    ElMessage.success(record.prepareStatus === 'PREPARED'
+      ? '交接参数已保存，SDK 准备参数已返回，未提交链上交易'
+      : '交接请求参数已保存，DID SDK 尚未完成准备，未提交链上交易')
+  } catch (error) {
+    ElMessage.error(`生成 DID 参数交接记录失败：${error.message}`)
+  } finally {
+    handoffBusyKey.value = ''
+  }
+}
+
+async function showHandoff(row) {
+  try {
+    selectedHandoff.value = await getSelfDidHandoff(row.recordId)
+  } catch (error) {
+    ElMessage.error(`读取交接包失败：${error.message}`)
+  }
+}
+
+const handoffJson = computed(() => selectedHandoff.value?.handoffPackage
+  ? JSON.stringify(selectedHandoff.value.handoffPackage, null, 2)
+  : '')
+
+async function copyHandoff() {
+  if (!handoffJson.value) return
+  try {
+    await navigator.clipboard.writeText(handoffJson.value)
+    ElMessage.success('交接包 JSON 已复制')
+  } catch (_) {
+    ElMessage.error('复制失败，请从下方文本中手动复制')
+  }
+}
+
+function handoffStatusText(status) {
+  return ({
+    PREPARED: 'SDK 参数已准备',
+    RECORDED: '请求已记录',
+    NOT_CONFIGURED: '请求已记录',
+    BRIDGE_UNAVAILABLE: 'Bridge 暂不可用',
+    FAILED: '准备失败'
+  })[status] || status || '请求已记录'
+}
+
+function handoffStatusType(status) {
+  return status === 'PREPARED' ? 'success' : (status === 'FAILED' ? 'danger' : 'warning')
 }
 
 const possiblyTruncated = computed(() => rows.value.length >= SERVER_ROW_LIMIT)
@@ -289,5 +435,17 @@ onMounted(load)
 .user-keys__filter { margin: 4px 0; }
 .user-keys__filter-select { width: 160px; }
 .user-keys__empty { margin: 12px 0 0; color: var(--kms-text-secondary, #909399); font-size: 13px; }
+.handoff-section { margin-top: 28px; padding-top: 22px; border-top: 1px solid var(--kms-border, #dcdfe6); }
+.handoff-section__heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 14px; }
+.handoff-section__heading h3 { margin: 0; color: var(--kms-text-primary, #303133); font-size: 16px; }
+.handoff-section__heading p { margin: 6px 0 0; color: var(--kms-text-secondary, #606266); font-size: 13px; line-height: 1.6; }
+.handoff-detail { margin-top: 16px; padding: 16px; border: 1px solid var(--kms-border, #dcdfe6); border-radius: 6px; background: var(--kms-surface-2, #f5f7fa); }
+.handoff-detail__heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+.handoff-detail__heading > div:first-child { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.handoff-detail__heading span { color: var(--kms-text-secondary, #606266); overflow-wrap: anywhere; }
+.handoff-detail pre { max-height: 420px; margin: 0; padding: 14px; overflow: auto; border-radius: 4px; background: var(--kms-surface-1, #fbfcfe); color: var(--kms-text-primary, #303133); font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+@media (max-width: 768px) {
+  .handoff-section__heading, .handoff-detail__heading { align-items: stretch; flex-direction: column; }
+}
 </style>

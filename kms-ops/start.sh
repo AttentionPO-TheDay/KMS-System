@@ -198,9 +198,8 @@ if [ ! -d "fisco/console/apps" ] || [ ! -d "fisco/console/lib" ]; then
     fi
 fi
 
-if [ -d "nodes/127.0.0.1/sdk" ]; then
-    cp -f nodes/127.0.0.1/sdk/* fisco/console/conf/
-fi
+# Keep existing SDK identity material; startup must not overwrite console certificates.
+# Missing chain files are restored only by the existing explicit template checks above.
 
 if ! chmod -R 0777 kafka/kafka_data 2>/dev/null; then
     echo "[WARN] 无法修改 kafka/kafka_data 权限，继续使用现有权限..."
@@ -208,12 +207,17 @@ fi
 
 echo "[INFO] 启动所有容器..."
 run_compose up -d --force-recreate \
-    fisco-node \
+    fisco-node0 \
+    fisco-node1 \
+    fisco-node2 \
+    fisco-node3 \
     fisco-console \
     generate-go \
     generate-java \
     updatedel-go \
     updatedel-java \
+    dvadmin3-django \
+    dvadmin3-key-reclaimer \
     acceptance-backend \
     nginx
 
@@ -270,9 +274,9 @@ ensure_key_operation_record_proof_path() {
 
 ensure_key_operation_record_proof_path
 
-# 默认不上链：缺地址/私钥是允许状态，绝不在启动时自动部署合约或提取账户。
-# deploy-keyevidence.sh 保留为独立的受控运维工具，不由任何默认启动流程调用。
-echo "[INFO] 真实链写入和链任务消费者已关闭，跳过合约自动部署/账户同步"
+# Base Compose enables existing legacy-chain writes/consumers; paused overlay is explicit.
+# Never automatically deploy contracts or synchronize account credentials during startup.
+echo "[INFO] 链写入/消费者以 Compose 配置为准；不自动部署合约或同步账户"
 
 echo ""
 echo "[INFO] 容器状态:"
@@ -283,11 +287,11 @@ echo "=========================================="
 echo "  KMS-OPS 启动完成!"
 echo ""
 echo "  访问地址:"
-echo "  - 网关:      http://localhost:80"
-echo "  - 生成系统:  http://localhost:80/generate/"
-echo "  - 生命周期:  http://localhost:80/lifecycle/"
+echo "  - Demo（保留本地材料 origin）: http://127.0.0.1:8088/updatedel/demo"
+echo "  - 验收平台: http://127.0.0.1:8088/acceptance/"
+echo "  - 80/443/8443 与 localhost 入口会统一跳转到上面的唯一 origin"
 echo ""
-echo "  后端端口:"
+echo "  后端端口（仅 Docker 内网，不发布到浏览器）:"
 echo "  - generate-go:     8081"
 echo "  - generate-java:  9081"
 echo "  - updatedel-go:   8082"

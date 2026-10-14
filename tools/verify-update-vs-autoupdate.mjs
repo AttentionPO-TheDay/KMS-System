@@ -24,6 +24,14 @@ const ORIGIN = process.argv[2] || 'http://127.0.0.1'
 const USER = process.argv[3] || 'acceptance_user'
 const PASS = process.argv[4] || 'admin123'
 
+// 该旧脚本会创建真实业务密钥；DELETE 在系统里的语义是“回收并保留审计”，
+// 不是物理清理。未经显式确认禁止运行，避免再次把验收夹具写进管理端统计。
+// 需要复核此历史边界时，请只在隔离数据库设置该变量。
+if (process.env.KMS_ALLOW_PERSISTENT_VERIFY_FIXTURE !== '1') {
+  console.error('已停止：该旧验证会留下永久回收记录。请在隔离数据库设置 KMS_ALLOW_PERSISTENT_VERIFY_FIXTURE=1 后运行。')
+  process.exit(2)
+}
+
 /**
  * 一个**合法的** SM2 用户部分公钥（130 位十六进制、04 开头、在曲线上）。
  *
@@ -163,9 +171,9 @@ async function main() {
     `code=${b.json?.code} msg=${b.json?.msg || ''}`
   )
 
-  // ---- 清理：回收这把测试密钥 ----
+  // ---- 业务回收：会保留审计记录，不等于物理清理 ----
   const revoked = await api('/lifecycle-api', `/lifecycle/keymanage/${keyId}`, { token, method: 'DELETE' })
-  check('清理测试密钥（回收）', revoked.json?.code === 200, `code=${revoked.json?.code}`)
+  check('回收测试密钥（隔离库保留审计）', revoked.json?.code === 200, `code=${revoked.json?.code}`)
 
   console.log(`\n结果: ${pass} 通过 / ${fail} 失败`)
   if (fail) {

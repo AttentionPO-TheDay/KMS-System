@@ -52,11 +52,9 @@
         </el-form-item>
 
         <el-form-item label="保护算法">
-          <!-- 只有 Kyber 可选，且**不是**"还没做另外两种"：
-               任务书 §20 的量化指标就是「Kyber 预分配 ≥ 50 条/秒」，
-               预分配这条按格密码做；SM2/SSCL 是「发起分发」页的现场封装算法。 -->
+          <!-- 预分配固定使用 Kyber 保护包；SM2/SSCL 是「发起分发」页的现场封装算法。 -->
           <el-tag size="small" type="success" effect="plain">Kyber（格密码）</el-tag>
-          <div class="hint">预分配按格密码口径量化（任务书 §20：≥ 50 条/秒）。</div>
+          <div class="hint">提前生成保护包，后续建立会话时直接取用。</div>
         </el-form-item>
 
         <el-form-item label="数量">
@@ -90,12 +88,8 @@
         </el-form-item>
       </el-form>
 
-      <!--
-        结果区：任务书 §20 要求的六项读数（任务 ID / 总数量 / 完成数量 / 失败数量 /
-        耗时 / 最终吞吐）。**服务端与浏览器分开度量**：服务端量的是"验签 + 落库"，
-        浏览器量的是"生成 + 封装 + 签名" —— 两个数说的是两件事，
-        合成一个"吞吐"就没人能解释了（并发/单机差别都在这里）。
-      -->
+      <!-- 这里只展示本次业务操作结果。验收阈值、通过/失败和证据回传均由
+           验收测试台的独立流程负责，普通预分配不得隐式触发。 -->
       <template v-if="result">
         <div class="section-title">最近一次预分配结果</div>
         <el-descriptions :column="2" border>
@@ -118,18 +112,6 @@
           </el-descriptions-item>
           <el-descriptions-item label="耗时（服务端）">
             {{ result.serverMs }} ms
-          </el-descriptions-item>
-          <el-descriptions-item label="本机吞吐">
-            <b :class="result.localThroughput >= 50 ? 'ok' : 'warn'">
-              {{ result.localThroughput }} 条/秒
-            </b>
-            <!-- 任务书 §20 的指标就是这一格：Kyber 预分配 ≥ 50 条/秒。
-                 达不到时**如实标红**，不四舍五入凑数。 -->
-            <span class="hint">（指标 ≥ 50）</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="服务端吞吐">
-            {{ result.serverThroughput }} 条/秒
-            <span class="hint">（验签 + 落库）</span>
           </el-descriptions-item>
         </el-descriptions>
 
@@ -175,7 +157,11 @@
  */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { getSelfNode, listSelfNodeKeys, preallocatePool } from '@/api/pqkds/node-self'
+import {
+  getSelfNode,
+  listSelfNodeKeys,
+  preallocatePool
+} from '@/api/pqkds/node-self'
 import { listUserNodes } from '@/services/user-distribution-api'
 import { cryptoProvider } from '@/utils/crypto/browser-provider.js'
 import { buildKeyRef } from '@/utils/crypto/key-ref.js'
@@ -330,10 +316,7 @@ async function submit() {
       failed,
       expiresAt,
       localMs: Math.round(localMs),
-      // 本机吞吐 —— 任务书 §20 的指标口径（生成 + 封装 + 签名）。
-      localThroughput: localMs > 0 ? Math.round((items.length / localMs) * 1000) : 0,
-      serverMs: Math.round(serverMs * 10) / 10,
-      serverThroughput: serverMs > 0 ? Math.round((generated / serverMs) * 1000) / 1000 : 0
+      serverMs: Math.round(serverMs * 10) / 10
     }
     if (generated) {
       ElMessage.success(`已入池 ${generated} 条（${poolId}）`)

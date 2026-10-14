@@ -177,11 +177,12 @@ NODE_DEFAULT_WRAPPING = 'kyber_kem'
 #:
 #: 正确分工（文档 §6.2）：
 #:   SM2 / SSCL / Kyber  → 保护 SM4（加密或 KEM）
-#:   Falcon              → 对分发消息签名、验签
+#:   FALCON_CL_V1       → 独立无证书 Falcon 格加密，保护 SM4
+#:   标准 Falcon         → 对分发消息签名、验签
 #:
-#: 本元组只约束**新的**选择；已存在的 falcon_lattice 历史记录不受影响
+#: 本元组只约束**新的**选择；已存在的历史记录不受影响
 #: —— 读取端按记录自身的 algorithm 字段分派，与这里无关。
-NODE_WRAPPING_CHOICES = ('kyber_kem', 'gm_sm2', 'gm_sscl')
+NODE_WRAPPING_CHOICES = ('kyber_kem', 'gm_sm2', 'gm_sscl', 'falcon_cl_v1')
 
 
 def wrap_for_node(payload_key: bytes, node, wrapping_algorithm: str = NODE_DEFAULT_WRAPPING):
@@ -207,6 +208,12 @@ def wrap_for_node(payload_key: bytes, node, wrapping_algorithm: str = NODE_DEFAU
     @return `(envelope, key_hash)`；封装失败抛 `WrapperError`
     """
     algorithm = wrapping_algorithm or NODE_DEFAULT_WRAPPING
+    if algorithm == 'falcon_cl_v1':
+        from .models import NodeLongTermKey
+        key = NodeLongTermKey.objects.filter(node=node, algorithm='FALCON_CL_V1', status='ACTIVE').first()
+        if key is None or not key.allows_new_work:
+            raise WrapperError('节点没有可用的独立 Falcon 加密密钥')
+        return wrap_with_public_key(payload_key, key.public_key, algorithm, recipient_node_id=node.node_id)
     column = _NODE_KEY_COLUMN.get(algorithm)
     if column is None:
         # 含 falcon_lattice：它曾在这张映射里，阶段 5 移除后与其它未知值同样处置。
@@ -239,6 +246,7 @@ NODE_WRAPPING_BY_CANONICAL = {
     'KYBER': 'kyber_kem',
     'SM2': 'gm_sm2',
     'SSCL': 'gm_sscl',
+    'FALCON_CL_V1': 'falcon_cl_v1',
 }
 
 
@@ -272,6 +280,18 @@ def wrap_with_public_key(payload_key: bytes, public_key_str: str, wrapping_algor
 
     where = f'（节点 {recipient_node_id}）' if recipient_node_id else ''
 
+    if algorithm == 'falcon_cl_v1':
+        from .falcon_cl_v1 import encrypt, public_material
+        from .keygen_issuance import falcon_cl_enabled
+        if not falcon_cl_enabled():
+            raise WrapperError('Falcon CL capability disabled')
+        recipient = public_material(public_key_str)['nodeId']
+        if recipient_node_id and recipient != recipient_node_id:
+            raise WrapperError('Falcon CL recipient mismatch')
+        envelope = {'ciphertext': encrypt(public_key_str, payload_key, recipient),
+                    'purpose': 'ENCRYPT', 'material_version': 1, 'recipient_node_id': recipient,
+                    'payload_algorithm': PAYLOAD_ALGORITHM_SM4, 'wrapping_algorithm': algorithm}
+        return envelope, hashlib.sha256(payload_key).hexdigest()
     if algorithm == 'kyber_kem':
         try:
             node_pk = base64.b64decode(public_key_str)

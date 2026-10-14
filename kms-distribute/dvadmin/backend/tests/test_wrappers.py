@@ -126,7 +126,10 @@ def test_d17_enforcement():
                   '仅支持 SM2 / SSCL')
 
     check('SM2 / SSCL 通过白名单',
-          W.assert_user_leg_allowed('SM2') == 'SM2' and W.assert_user_leg_allowed('sscl') == 'SSCL')
+           W.assert_user_leg_allowed('SM2') == 'SM2' and W.assert_user_leg_allowed('sscl') == 'SSCL')
+    check('节点腿包含独立无证书 Falcon 加密', 'falcon_cl_v1' in W.NODE_WRAPPING_CHOICES)
+    check('规范 FALCON_CL_V1 映射到节点封装值',
+          W.NODE_WRAPPING_BY_CANONICAL.get('FALCON_CL_V1') == 'falcon_cl_v1')
 
 
 def test_registry():

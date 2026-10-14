@@ -13,7 +13,7 @@
       </el-form>
       <p class="hint">节点不存在时不会自动创建。请进入管理控制台显式登记，再用节点 ID 进入；停用节点不能进入。</p>
       <p class="hint">演示私钥只在当前浏览器的独立密钥库内。不会复制独立运行材料，缺失或不匹配时不会覆盖已登记公钥。</p>
-      <a href="/updatedel/standalone">返回独立运行入口</a>
+      <p class="hint">普通登录入口已关闭。切换浏览器或 HTTPS 地址会改变本机材料作用域，不会自动复制私钥或重新初始化。</p>
     </el-card>
   </main>
 </template>

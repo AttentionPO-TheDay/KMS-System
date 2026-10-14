@@ -104,6 +104,12 @@ class SplitKeygenTests(unittest.TestCase):
         self.denied(C.ERR_KEYGEN_POLICY_DISABLED, self.issue)
         self.assertEqual(Issuance.objects.count(), 0)
 
+    def test_demo_policy_is_scoped_without_enabling_standalone(self):
+        os.environ['KMS_SPLIT_KEYGEN_ENABLED'] = 'false'
+        os.environ['KMS_DEMO_SPLIT_KEYGEN_ENABLED'] = 'true'
+        self.assertFalse(K.policy_enabled(self.binding))
+        self.assertTrue(K.policy_enabled({**self.binding, 'bindingKind': 'DEMO'}))
+
     def test_new_registration_missing_metadata_and_unknown_scheme_denied(self):
         self.denied(C.ERR_KEYGEN_GENERATION_REQUIRED, lambda: R.register_public_key(
             self.node, algorithm='KYBER', public_key=self.pk, key_id='pending-old'))

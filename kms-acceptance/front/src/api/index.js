@@ -1,29 +1,25 @@
-const apiBase = import.meta.env.VITE_APP_ACCEPTANCE_API || '/acceptance-api'
+import { acceptanceFetch } from './demo-context.js'
 
-async function fetchJson(url, options = {}) {
-  const res = await fetch(`${apiBase}${url}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers
-    }
-  })
-  const payload = await res.json()
-  if (!res.ok) {
-    throw new Error(payload.message || payload.error || 'Request Failed')
-  }
-  return payload
+function fetchJson(url, options = {}) {
+  return acceptanceFetch(url, options)
 }
 
 export const API = {
   getHealth: () => fetchJson('/health'),
   getScenarios: () => fetchJson('/scenarios'),
   getRuns: () => fetchJson('/runs'),
+  getRun: id => fetchJson(`/runs/${encodeURIComponent(id)}`),
+  cancelRun: id => fetchJson(`/runs/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: '{}' }),
   postRun: (data) => fetchJson('/runs', { method: 'POST', body: JSON.stringify(data) }),
   
   getSecurityRuns: () => fetchJson('/security/runs'),
   postSecurityRun: (data) => fetchJson('/security/runs', { method: 'POST', body: JSON.stringify(data) }),
+  cancelSecurityRun: id => fetchJson(`/security/runs/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: '{}' }),
 
   getProofRuns: () => fetchJson('/proof/runs'),
-  postProofRun: (data) => fetchJson('/proof/runs', { method: 'POST', body: JSON.stringify(data) })
+  postProofRun: (data) => fetchJson('/proof/runs', { method: 'POST', body: JSON.stringify(data) }),
+
+  getAcceptanceCriteria: () => fetchJson('/acceptance/criteria'),
+  getAcceptanceEvidence: () => fetchJson('/acceptance/evidence'),
+  postAcceptanceEvidence: (data) => fetchJson('/acceptance/evidence', { method: 'POST', body: JSON.stringify(data) })
 }

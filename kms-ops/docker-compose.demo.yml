@@ -1,21 +1,4 @@
-# 仅本机/隔离测试环境。与基础配置叠加，不改 .env、不重置数据库。
-# 原 80 端口仍只提供 Standalone；新增端口明确仅绑定 IPv4 回环。
-services:
-  updatedel-java:
-    environment:
-      KMS_DEMO_ENABLED: "true"
-  generate-java:
-    environment:
-      KMS_DEMO_ENABLED: "true"
-  dvadmin3-django:
-    environment:
-      KMS_DEMO_ENABLED: "true"
-      # 本机演示需要跑完四套基础密钥；实验版 KYBER/FALCON 签发只在
-      # demo 覆盖环境打开，基础 compose 仍保持门槛关闭。
-      KMS_SPLIT_KEYGEN_ENABLED: "true"
-  nginx:
-    environment:
-      KMS_DEMO_ENABLED: "true"
-    ports:
-      - "127.0.0.1:8088:8088"
-      - "127.0.0.1:8443:443"
+# Compatibility only: the base file now defines the same local demo stack.
+# Existing -f docker-compose.yml -f docker-compose.demo.yml commands remain valid.
+# No additional ports, environment overrides, containers or data volumes.
+services: {}

@@ -99,6 +99,17 @@ public class GenerateChainServiceImpl implements GenerateChainService {
             log.error("Invalid keymanage for chain sync");
             return false;
         }
+        // Kafka 至少一次投递可能把同一生成任务再次送达。必须以数据库中的
+        // 最新状态为准，不能用消息里生成时的旧快照再次调用 uploadKey。
+        Keymanage current = generateKeyService.selectKeyById(keymanage.getKeyId());
+        if (current != null) {
+            keymanage = current;
+        }
+        if (hasConfirmedEvidence(keymanage)) {
+            log.info("跳过重复生成上链任务：keyId={} 已确认 txHash={} blockHeight={}",
+                    keymanage.getKeyId(), keymanage.getChainHash(), keymanage.getBlockHeight());
+            return true;
+        }
         if (isFabricDidBackend()) {
             // 不能把旧生成记录的 PA 和数字主键伪装成 NodeLongTermKey 的 DID 绑定。
             generateKeyService.updateChainStatus(keymanage.getKeyId(), "2", null, null);
@@ -143,6 +154,15 @@ public class GenerateChainServiceImpl implements GenerateChainService {
             publishChainResult(keymanage.getKeyId(), "ENROLL_KEY", "2", null, null, e.getClass().getSimpleName());
             return false;
         }
+    }
+
+    private boolean hasConfirmedEvidence(Keymanage keymanage) {
+        return keymanage != null
+                && "1".equals(keymanage.getChainStatus())
+                && keymanage.getChainHash() != null
+                && !keymanage.getChainHash().trim().isEmpty()
+                && keymanage.getBlockHeight() != null
+                && keymanage.getBlockHeight() > 0;
     }
 
     @Override

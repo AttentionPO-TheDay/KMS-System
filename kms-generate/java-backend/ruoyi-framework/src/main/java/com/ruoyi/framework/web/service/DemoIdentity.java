@@ -14,8 +14,7 @@ import org.springframework.stereotype.Component;
 public class DemoIdentity {
     public static final String ATTRIBUTE = "kms.demo.identity";
     private static final Set<Long> ADMIN_MENUS = new HashSet<>(Arrays.asList(
-            9260L, 9440L, 9441L, 9442L, 9021L, 9450L, 9451L, 9452L, 9412L, 9413L,
-            9460L, 9101L, 9104L, 9105L, 9453L, 9470L, 9103L, 9005L, 9006L, 9461L, 9102L, 9280L));
+            9470L, 9103L, 9005L, 9006L, 9201L, 9431L));
     @Autowired private ISysUserService users;
     @Autowired private UserDetailsServiceImpl userDetails;
     @Autowired private ISysMenuService menus;
@@ -70,14 +69,14 @@ public class DemoIdentity {
 
     public boolean allowed(javax.servlet.http.HttpServletRequest request, Map<String, Object> identity) {
         String path = request.getServletPath();
-        boolean mutation = DemoBoundary.mutation(request);
-        if (path.equals("/getInfo") || path.equals("/getRouters")) return !mutation;
-        if (path.equals("/system/user/profile")) return !mutation && "NODE".equals(identity.get("principalType"));
-        if (path.startsWith("/system/dict/data/type/")) return !mutation;
-        if (path.equals("/monitor/operlog/list")) return !mutation && "ADMIN".equals(identity.get("principalType"));
+        boolean get = "GET".equals(request.getMethod());
+        if (path.equals("/getInfo") || path.equals("/getRouters")) return get;
+        if (path.matches("/system/dict/data/type/[A-Za-z0-9_]+")) return get;
+        if ("ADMIN".equals(identity.get("principalType"))) return false;
+        if (!"NODE".equals(identity.get("principalType"))) return false;
+        if (path.equals("/system/user/profile")) return get;
         if (path.startsWith("/generate/") || path.startsWith("/lifecycle/")) {
-            if (path.equals("/generate/user/register")) return false;
-            return !mutation || "NODE".equals(identity.get("principalType"));
+            return !path.equals("/generate/user/register");
         }
         return false;
     }

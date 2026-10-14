@@ -35,8 +35,18 @@
         <el-table-column label="时间" width="180">
           <template #default="scope">{{ formatTime(scope.row.timestamp) }}</template>
         </el-table-column>
-        <el-table-column label="节点" min-width="150">
-          <template #default="scope">{{ scope.row.node_name || scope.row.node }}</template>
+        <el-table-column label="发起节点" min-width="160">
+          <template #default="scope">
+            <div>{{ scope.row.node_name || scope.row.node || '-' }}</div>
+            <div class="cell-sub">{{ scope.row.node_id || '-' }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="目标节点" min-width="130" prop="targetNodeCode" />
+        <el-table-column label="批次 / 会话" min-width="210">
+          <template #default="scope">
+            <div>{{ scope.row.poolId || '-' }}</div>
+            <div class="cell-sub">{{ scope.row.batchId || scope.row.sessionId || '-' }}</div>
+          </template>
         </el-table-column>
         <el-table-column label="操作" width="140">
           <template #default="scope">{{ actionLabel(scope.row.action) }}</template>
@@ -79,7 +89,9 @@ const ACTION_LABELS = {
   user_key_gen: '用户密钥生成',
   blockchain_store: '区块链存储',
   key_update: '密钥更新',
-  key_revoke: '密钥撤销'
+  key_revoke: '密钥撤销',
+  pool_prealloc: '预分配保护包（备料）',
+  pool_consume: '取用预分配密钥（实际分发）'
 }
 
 const all = ref([])
@@ -115,7 +127,7 @@ function applyFilter() {
     // success 是布尔，下拉里是字符串，这里显式对齐，避免"选了失败却仍显示成功"
     if (filter.success !== '' && String(l.success ? '1' : '0') !== filter.success) return false
     if (!kw) return true
-    return [l.node_name, l.details, l.error_message, l.blockchain_tx_hash]
+    return [l.node_name, l.node_id, l.targetNodeCode, l.poolId, l.batchId, l.sessionId, l.details, l.error_message, l.blockchain_tx_hash]
       .filter(Boolean)
       .some((v) => String(v).toLowerCase().includes(kw))
   })
@@ -131,7 +143,7 @@ function resetFilter() {
 async function load() {
   loading.value = true
   try {
-    all.value = (await listDistributionLogs()) || []
+    all.value = ((await listDistributionLogs()) || []).map(enrichLog)
     applyFilter()
   } catch (error) {
     ElMessage.error(`加载分发日志失败：${error.message}`)
@@ -139,6 +151,22 @@ async function load() {
     rows.value = []
   } finally {
     loading.value = false
+  }
+}
+
+function enrichLog(log) {
+  let detail = {}
+  try {
+    detail = JSON.parse(log.details || '{}') || {}
+  } catch {
+    detail = {}
+  }
+  return {
+    ...log,
+    targetNodeCode: detail.targetNodeCode || detail.peerNodeCode || detail.receiverNodeCode || '-',
+    poolId: detail.poolId || '-',
+    batchId: detail.batchId || '-',
+    sessionId: detail.sessionId || '-'
   }
 }
 

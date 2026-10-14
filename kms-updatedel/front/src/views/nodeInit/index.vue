@@ -4,7 +4,7 @@
        页面自带退出登录，避免"没有导航、也走不掉"的死角。 -->
   <div class="node-init-page">
     <div class="node-init-page__bar">
-      <span class="node-init-page__brand">KMS · 节点首次初始化</span>
+      <span class="node-init-page__brand">KMS · {{ pageTitle }}</span>
       <div>
         <el-button v-if="IS_DEMO" link size="small" :disabled="initializing" @click="openAdmin">管理控制台</el-button>
         <el-button link size="small" :disabled="initializing" @click="handleLogout">退出登录</el-button>
@@ -14,7 +14,7 @@
       <el-card shadow="never" class="node-init__card">
         <template #header>
           <div class="node-init__header">
-            <h2>节点首次初始化</h2>
+            <h2>{{ pageTitle }}</h2>
             <el-tag :type="statusTagType" size="large">{{ statusText }}</el-tag>
           </div>
         </template>
@@ -31,11 +31,20 @@
 
       <template v-else>
         <p class="node-init__lead">
+          <template v-if="isActive && blocked">
+            节点已激活，但当前入口缺少与服务端登记匹配的本机密钥材料。普通模式与 Demo 模式使用不同的浏览器密钥库，不能自动复制私钥或覆盖已登记公钥。
+          </template>
+          <template v-else-if="isActive">
+            节点 <strong>{{ node.nodeId }}</strong><span v-if="node.name">（{{ node.name }}）</span> 已激活。
+            已回收或暂无可用版本的算法只会暂停对应业务，不影响进入工作台管理其它密钥。
+          </template>
+          <template v-else>
           节点
           <strong>{{ node.nodeId }}</strong>
           <span v-if="node.name">（{{ node.name }}）</span>
-          由管理员创建后获得登录资格。首次登录需要完成四套基础密钥的初始化，
+          由管理员创建后获得登录资格。首次登录需要完成全部启用算法的密钥初始化，
           之后才能进行密钥生成、更新与分发。
+          </template>
         </p>
 
         <el-descriptions :column="2" border class="node-init__meta">
@@ -47,8 +56,8 @@
           <el-descriptions-item label="初始化时间">{{ node.initializedAt || '-' }}</el-descriptions-item>
         </el-descriptions>
 
-        <!-- 四套密钥就绪情况。这是本页的核心信息：
-             只有四套都齐，节点才算可用（文档 §3.1）。 -->
+        <!-- 四套密钥就绪情况。首次初始化仍要求四套齐备；节点激活后，某套密钥
+             进入已回收等生命周期终态时只影响对应业务，不再阻断整个工作台。 -->
         <h3 class="node-init__section-title">基础密钥</h3>
         <div class="node-init__keys">
           <div
@@ -60,12 +69,16 @@
             <div class="node-init__key-name">{{ k.label }}</div>
             <div class="node-init__key-role">{{ k.role }}</div>
             <div v-if="k.core" class="node-init__key-role">{{ k.core }}</div>
-            <el-tag :type="k.ready ? 'success' : 'info'" size="small">
+            <el-tag :type="k.tagType" size="small">
               {{ k.ready ? '登记一致 · 本机可读' : k.text }}
             </el-tag>
           </div>
         </div>
 
+        <h3 v-if="isActive" class="node-init__section-title">改进型无证书格加密（实验版 v1） · 独立 ENCRYPT v1</h3>
+        <p>{{ encryptionStatus }} 标准 Falcon 签名材料保持不变；本操作不重置基础密钥。自定义实验方案，不是标准 Falcon KEM，无生产安全证明。</p>
+        <el-button v-if="isActive" :disabled="!node.falconClCapability?.enabled || encryptionRegistered || encryptionBusy || blocked" :loading="encryptionBusy" @click="handleEncryptionInit">主动补充 ENCRYPT 初始化</el-button>
+        <el-button v-if="encryptionBusy" @click="encryptionController?.abort()">取消矩阵运算</el-button>
         <el-alert
           v-if="ready"
           class="node-init__done"
@@ -73,7 +86,16 @@
           :closable="false"
           show-icon
           title="初始化已完成"
-          description="四套基础密钥均已就绪。你可以前往「密钥生成」创建业务密钥，或在「密钥分发」中与其它节点建立会话。"
+          description="初始化密钥均已就绪。你可以前往「密钥生成」创建业务密钥，或在「密钥分发」中与其它节点建立会话。"
+        />
+        <el-alert
+          v-else-if="workspaceReady && lifecycleUnavailableCount"
+          class="node-init__done"
+          type="warning"
+          :closable="false"
+          show-icon
+          title="节点可继续使用，部分算法暂无可用密钥"
+          description="你仍可进入工作台管理其它密钥；已回收或暂无可用版本的算法会在相关业务中保持不可用，直到明确生成并登记新密钥。"
         />
 
         <!-- §4.4 设备绑定：本机不是当初生成密钥的那台设备。
@@ -109,9 +131,9 @@
         </el-alert>
 
         <el-alert v-if="blocked" class="node-init__device" type="error" :closable="false" show-icon
-          title="密钥材料需恢复，已禁止自动初始化或覆盖">
+          :title="isActive ? '节点已激活，但当前入口缺少密钥材料' : '密钥材料需恢复，已禁止自动初始化或覆盖'">
           <p v-for="reason in inspection.reasons" :key="reason">{{ reason }}</p>
-          <p>请返回生成这些密钥的原浏览器，或恢复原本机材料。演示与独立运行密钥库彼此隔离，不会自动复制私钥；如需换钥，应走明确的新版本更新与旧密钥回收流程。</p>
+          <p>请返回生成这些密钥的原浏览器，或恢复当前入口对应的本机材料。{{ IS_DEMO ? '独立运行密钥不会自动复制到 Demo。' : 'Demo 密钥不会自动复制到普通模式。' }}如需换钥，应走明确的新版本更新与旧密钥回收流程。</p>
         </el-alert>
         <el-alert v-if="!locksAvailable" class="node-init__device" type="warning" :closable="false" show-icon
           title="浏览器不支持 Web Locks，初始化已关闭；请使用支持安全锁的浏览器和可信入口" />
@@ -127,7 +149,7 @@
           >
             {{ initializing ? '正在初始化…' : hasPartialMaterials ? '继续初始化（复用已有材料）' : '开始初始化' }}
           </el-button>
-          <el-button v-if="ready" type="primary" size="large" :disabled="loading || initializing" @click="goWorkbench">
+          <el-button v-if="workspaceReady" type="primary" size="large" :disabled="loading || initializing" @click="goWorkbench">
             进入工作台
           </el-button>
           <el-button :disabled="initializing" @click="load">刷新状态</el-button>
@@ -161,16 +183,20 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import { markNodeInitialized, resetNodeInitStatusCache } from '@/utils/node-init-status'
-import { inspectInitialization, initializeNode } from '@/utils/node-initialization'
+import { inspectInitialization, initializeNode, generateAndRegisterNodeKey } from '@/utils/node-initialization'
+import { listSelfNodeKeys } from '@/api/pqkds/node-self'
+import { cryptoProvider } from '@/utils/crypto/browser-provider.js'
+import { buildKeyRef } from '@/utils/crypto/key-ref.js'
 import { hasDeviceKey } from '@/utils/crypto/device-credential.js'
 import { IS_DEMO, entryPath } from '@/utils/entry-mode'
 import { switchDemo } from '@/utils/demo-context'
 import { formatGenerationName, coreDetail, GENERATION_SCHEMES } from '@/utils/crypto/generation-scheme.js'
+import { canEnterNodeWorkspace } from '@/utils/node-workspace-access'
 import useUserStore from '@/store/modules/user'
 
 const router = useRouter()
@@ -181,9 +207,28 @@ const initializing = ref(false)
 const mapped = ref(false)
 const node = ref({})
 const progress = ref([])
+const encryptionBusy = ref(false)
+const encryptionRegistered = ref(false)
+const encryptionStatus = ref('尚未检查独立加密能力。')
+let encryptionController
+onBeforeUnmount(() => encryptionController?.abort())
+async function handleEncryptionInit() {
+  if (encryptionBusy.value || encryptionRegistered.value || !node.value.falconClCapability?.enabled) return
+  encryptionBusy.value = true
+  encryptionController = new AbortController()
+  try {
+    await generateAndRegisterNodeKey({ algorithm: 'FALCON_CL_V1', nodeId: node.value.nodeId, variant: 512, signal: encryptionController.signal,
+      confirmUnusedIssuance: async record => { await ElMessageBox.confirm(record.message, '明确弃用未完成部分签发', { type: 'warning' }); return true }
+    })
+    ElMessage.success('独立 ENCRYPT 公钥已登记，完整私钥只保留在本机')
+  } catch (error) { ElMessage.error(error.message) }
+  finally { encryptionBusy.value = false; encryptionController = null; await load() }
+}
 const inspection = ref({ ready: false, blocked: false, algorithms: [], reasons: [] })
 const ready = computed(() => inspection.value.ready)
 const blocked = computed(() => inspection.value.blocked)
+const workspaceReady = computed(() => canEnterNodeWorkspace(inspection.value))
+const lifecycleUnavailableCount = computed(() => inspection.value.algorithms.filter(step => step.lifecycleUnavailable).length)
 const hasPartialMaterials = computed(() => inspection.value.algorithms.some(step => step.local || step.complete))
 const locksAvailable = Boolean(globalThis.navigator?.locks?.request)
 
@@ -191,16 +236,21 @@ const KEY_META = [
   { key: 'kyber', label: 'Kyber', role: '后量子密钥封装 / 建立共享秘密' },
   { key: 'sscl', label: 'SSCL', role: '保护 / 封装 SM4 会话密钥' },
   { key: 'sm2', label: 'SM2', role: '保护 / 封装 SM4 会话密钥' },
-  { key: 'falcon', label: 'Falcon', role: '对分发消息签名与验签' }
+  { key: 'falcon', label: 'Falcon', role: '对分发消息签名与验签' },
+  { key: 'falcon_cl_v1', label: '改进型无证书格加密（实验版 v1）', role: '保护 / 封装 SM4 会话密钥' }
 ]
 
-const keyCards = computed(() => KEY_META.map(meta => {
+const keyCards = computed(() => KEY_META.filter(meta => inspection.value.algorithms.some(row => row.algorithm === meta.key.toUpperCase())).map(meta => {
   const step = inspection.value.algorithms.find(row => row.algorithm === meta.key.toUpperCase())
   const algorithm = meta.key.toUpperCase()
-  const source = step?.server || step?.local
+  const source = step?.server || step?.latestServer || step?.local
+  const lifecycleText = step?.state === 'REVOKED'
+    ? '已回收 · 暂无可用版本'
+    : step?.lifecycleUnavailable ? '暂无当前可用版本' : ''
   return { ...meta, label: formatGenerationName(algorithm, source ? source.generation : GENERATION_SCHEMES[algorithm]),
     core: coreDetail(algorithm, source?.variant || source?.securityLevel),
-    ready: Boolean(step?.complete), text: step?.blocked ? '需恢复材料' : step?.local ? '本机已封存 · 待登记' : '尚未生成' }
+    ready: Boolean(step?.complete), tagType: step?.complete ? 'success' : step?.lifecycleUnavailable ? 'warning' : 'info',
+    text: lifecycleText || (step?.blocked ? '需恢复材料' : step?.local ? '本机已封存 · 待登记' : '尚未生成') }
 }))
 
 const statusText = computed(() => {
@@ -218,6 +268,7 @@ const statusTagType = computed(() => {
 })
 
 const isActive = computed(() => node.value.status === 'ACTIVE')
+const pageTitle = computed(() => isActive.value ? (blocked.value ? '节点密钥材料恢复' : '节点密钥状态') : '节点首次初始化')
 
 // ---------------------------------------------------------------------------
 // §4.4 设备绑定
@@ -252,7 +303,7 @@ function acceptInspection(data) {
   inspection.value = data
   mapped.value = data.mapped
   node.value = data.node
-  if (data.ready) markNodeInitialized()
+  if (canEnterNodeWorkspace(data)) markNodeInitialized()
   else resetNodeInitStatusCache()
 }
 
@@ -260,6 +311,15 @@ async function load() {
   loading.value = true
   try {
     acceptInspection(await inspectInitialization())
+    if (mapped.value) {
+      const keys = (await listSelfNodeKeys()).keys || []
+      const row = keys.find(k => k.algorithm === 'FALCON_CL_V1' && k.allowsNewWork)
+      encryptionRegistered.value = keys.some(k => k.algorithm === 'FALCON_CL_V1')
+      const locals = await cryptoProvider.listLocalKeys()
+      const ref = row && buildKeyRef({ nodeId: node.value.nodeId, algorithm: row.algorithm, keyId: row.keyId, version: row.keyVersion })
+      const local = ref && locals.find(k => k.keyRef === ref)
+      encryptionStatus.value = !node.value.falconClCapability?.enabled ? '独立审查开关尚未启用。' : row && local?.publicKey === row.publicKey && await cryptoProvider.hasKey(ref) ? '独立 ENCRYPT v1 已就绪，登记与本机材料匹配。' : encryptionRegistered.value ? '已有加密登记，但本机缺失/版本不可用：请恢复原材料，不自动重置。' : '尚无独立加密材料，请主动补充初始化。'
+    }
     // Demo never reads or creates device credentials/fingerprints.
     if (!IS_DEMO && mapped.value) hasDeviceCredential.value = await hasDeviceKey(node.value.nodeId)
   } catch (error) {
@@ -300,7 +360,7 @@ async function handleInit() {
 }
 
 function goWorkbench() {
-  if (ready.value) router.push(entryPath('/workbench', 'NODE'))
+  if (workspaceReady.value) router.push(entryPath('/workbench', 'NODE'))
 }
 
 async function openAdmin() {

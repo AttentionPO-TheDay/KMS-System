@@ -37,6 +37,30 @@ class GenerateChainBackendBoundaryTest {
     }
 
     @Test
+    void duplicateDeliverySkipsUploadWhenDatabaseAlreadyConfirmed() {
+        GenerateChainServiceImpl service = new GenerateChainServiceImpl();
+        GenerateKeyService keys = mock(GenerateKeyService.class);
+        @SuppressWarnings("unchecked") KafkaTemplate<String, String> kafka = mock(KafkaTemplate.class);
+        ReflectionTestUtils.setField(service, "generateKeyService", keys);
+        ReflectionTestUtils.setField(service, "kafkaTemplate", kafka);
+        ReflectionTestUtils.setField(service, "chainWritesEnabled", true);
+        Keymanage message = new Keymanage();
+        message.setKeyId(1550L);
+        Keymanage confirmed = new Keymanage();
+        confirmed.setKeyId(1550L);
+        confirmed.setChainStatus("1");
+        confirmed.setChainHash("0xconfirmed");
+        confirmed.setBlockHeight(544L);
+        when(keys.selectKeyById(1550L)).thenReturn(confirmed);
+
+        assertTrue(service.processChainSync(message));
+        verify(keys).selectKeyById(1550L);
+        verifyNoMoreInteractions(keys);
+        verifyNoInteractions(kafka);
+        assertNull(ReflectionTestUtils.getField(service, "fiscoWrapper"));
+    }
+
+    @Test
     void pauseBlocksExistingWrapperBeforeCacheLookup() throws Exception {
         GenerateChainServiceImpl service = new GenerateChainServiceImpl();
         Class<?> type = Class.forName(GenerateChainServiceImpl.class.getName() + "$FiscoBcosWrapper");

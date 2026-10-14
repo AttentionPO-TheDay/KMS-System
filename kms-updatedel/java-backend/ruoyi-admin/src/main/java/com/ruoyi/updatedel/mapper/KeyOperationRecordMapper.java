@@ -45,9 +45,19 @@ public interface KeyOperationRecordMapper {
 
     int countByActionType(@Param("actionType") String actionType);
 
+    /**
+     * 管理端生产统计：排除验收/压测账号产生的生命周期记录。
+     * 验收数据仍保留在操作记录与验收测试台中，不应进入生产首页指标。
+     */
+    int countDashboardRecordsByActionType(@Param("actionType") String actionType);
+
     int countPendingReceives();
 
+    int countDashboardPendingReceives();
+
     int countFailedResults();
+
+    int countDashboardFailedResults();
 
     List<KeyOperationRecord> selectRecentDashboardRecordsSince(@Param("startTime") Date startTime);
 

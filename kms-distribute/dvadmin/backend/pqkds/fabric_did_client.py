@@ -81,6 +81,9 @@ class FabricDidClient:
     def prepare(self, binding):
         return self._request('POST', 'bindings/prepare', json.loads(binding['metadata']))
 
+    def prepare_handoff(self, payload):
+        return self._request('POST', 'bindings/handoff', payload)
+
     def submit(self, binding, prepared):
         return self._request('POST', 'bindings/submit', dict(prepared, binding=json.loads(binding['metadata'])))
 

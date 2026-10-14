@@ -75,6 +75,7 @@ New-Item -ItemType Directory -Force -Path $opsStage | Out-Null
 # 目录级排除（相对 kms-ops）
 $excludeDirs = @(
     'dist',                  # 本脚本自己的产物
+    'releases',              # 增量镜像交付包不是源码构建输入
     'experiments',           # 本地实验（含 .venv，极大）
     '.omc',                  # 本地代理状态
     'mysql\data',            # 运行态：远端首次启动自动初始化

@@ -3,7 +3,7 @@
     <el-card shadow="never" class="gen-create__card">
       <template #header>
         <div class="gen-create__header">
-          <h2>密钥生成</h2>
+          <h2>{{ purpose === 'signing' ? '会话签名密钥' : '密钥生成' }}</h2>
           <div class="gen-create__header-side">
             <el-tag v-if="node.nodeId" type="info" size="small">{{ node.nodeId }}</el-tag>
             <el-button size="small" :loading="loading" @click="load">刷新</el-button>
@@ -24,7 +24,11 @@
       <template v-else>
         <p class="gen-create__lead">
           私钥在<strong>本机</strong>生成并留在本机，平台只收到<strong>公钥</strong>。
-          按算法独立生成 —— 用哪几种就生成哪几种，不要求四套成套。
+          {{ purpose === 'signing' ? '这里单独管理标准 Falcon 签名密钥，不替换任何分发保护密钥。' : '这里生成分发保护密钥；改进型 Falcon 使用独立的 FALCON_CL_V1 材料。' }}
+        </p>
+        <p v-if="purpose === 'protection'" class="gen-create__lead">
+          会话签名使用标准 Falcon，请前往
+          <router-link :to="{ path: entryPath('/distzone/selfsess'), query: { keyPurpose: 'signing' } }">会话管理 → 会话签名密钥</router-link>。
         </p>
 
         <!-- 设备不一致**提前**说。等到用户点了生成、转完 Falcon 的几秒、
@@ -134,7 +138,7 @@
                 type="primary"
                 size="small"
                 :loading="generating === c.algorithm"
-                :disabled="Boolean(generating) && generating !== c.algorithm"
+                :disabled="Boolean(generationBlocked(c)) || (Boolean(generating) && generating !== c.algorithm)"
                 @click="handleGenerate(c)"
               >
                 {{ generating === c.algorithm ? '生成中…' : (c.active ? '生成新密钥' : '生成并登记') }}
@@ -149,12 +153,13 @@
                 自检
               </el-button>
             </div>
+            <p v-if="generationBlocked(c)" class="gen-create__algo-role">{{ generationBlocked(c) }}</p>
           </div>
         </div>
 
 
         <h3 class="gen-create__section-title">
-          本节点密钥对照
+          {{ purpose === 'signing' ? '本节点签名密钥对照' : '本节点分发保护密钥对照' }}
           <span class="gen-create__section-note">
             只列 {{ node.nodeId }} 的密钥 —— 同一浏览器上其它节点的材料不会出现在这里
           </span>
@@ -170,6 +175,15 @@
           </el-table-column>
           <el-table-column label="版本" width="70">
             <template #default="{ row }">v{{ row.version }}</template>
+          </el-table-column>
+          <el-table-column label="上链存证" width="140">
+            <template #default="{ row }">{{ chainEvidenceText(row.server?.chainBinding) }}</template>
+          </el-table-column>
+          <el-table-column label="交易哈希" min-width="200" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.server?.chainBinding?.txId || '—' }}</template>
+          </el-table-column>
+          <el-table-column label="区块高度" width="100">
+            <template #default="{ row }">{{ row.server?.chainBinding?.blockHeight ?? '—' }}</template>
           </el-table-column>
           <el-table-column label="平台" width="150">
             <template #default="{ row }">
@@ -257,7 +271,7 @@
  * 真要收紧，应当先在后端登记路径上校验能力（届时前端读 `capabilities` 即可），
  * 而不是在界面上单方面拦住用户。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { CircleCheck } from '@element-plus/icons-vue'
 import {
@@ -274,9 +288,15 @@ import {
 } from '@/utils/crypto/node-key-compare.js'
 import { cryptoProvider } from '@/utils/crypto/browser-provider.js'
 import { deviceFingerprint, hasDeviceKey } from '@/utils/crypto/device-credential.js'
-import { IS_DEMO } from '@/utils/entry-mode'
+import { IS_DEMO, entryPath } from '@/utils/entry-mode'
 import { generateAndRegisterNodeKey } from '@/utils/node-initialization'
-import { formatGenerationName, coreDetail, GENERATION_SCHEMES } from '@/utils/crypto/generation-scheme.js'
+import { formatGenerationName, coreDetail } from '@/utils/crypto/generation-scheme.js'
+import { generationAlgorithms, GENERATION_ALGORITHM_META } from '@/utils/key-generation-purpose.js'
+import { chainEvidenceText } from '@/utils/node-chain-evidence.js'
+
+const props = defineProps({ purpose: { type: String, default: 'protection', validator: value => ['protection', 'signing'].includes(value) } })
+const emit = defineEmits(['busy'])
+const allowedAlgorithms = computed(() => generationAlgorithms(props.purpose))
 
 const loading = ref(true)
 const mapped = ref(false)
@@ -291,6 +311,7 @@ const deviceFingerprintValue = ref('')
 
 /** 正在生成的算法名（同时只允许生成一个 —— 生成是重计算，并发只会更慢） */
 const generating = ref('')
+watch(generating, value => emit('busy', Boolean(value)))
 /** 正在自检的 keyRef */
 const testing = ref('')
 /** keyRef → {ok, detail}，自检结论。不持久化：自检是"此刻这把能不能用" */
@@ -298,28 +319,7 @@ const selfTestResults = ref({})
 
 const kyberVariant = ref(768)
 
-const ALGO_META = [
-  {
-    algorithm: 'KYBER',
-    label: formatGenerationName('KYBER', GENERATION_SCHEMES.KYBER),
-    role: '密钥封装（KEM）：与其它节点协商共享秘密。抗量子，是节点腿的默认档位。'
-  },
-  {
-    algorithm: 'SSCL',
-    label: 'SSCL',
-    role: '国密无证书：封装 SM4 会话密钥。'
-  },
-  {
-    algorithm: 'SM2',
-    label: 'SM2',
-    role: '国密：封装 SM4 会话密钥。'
-  },
-  {
-    algorithm: 'FALCON',
-    label: formatGenerationName('FALCON', GENERATION_SCHEMES.FALCON),
-    role: '对分发消息签名与验签。签名算法，不做封装 —— 要封装请选 KEM。'
-  }
-]
+const algorithmMeta = computed(() => allowedAlgorithms.value.map(algorithm => ({ algorithm, ...GENERATION_ALGORITHM_META[algorithm] })))
 
 // ---------------------------------------------------------------------------
 // 载入
@@ -379,7 +379,7 @@ async function load() {
 // 卡片：按算法对「平台在产的那一版」做对账
 // ---------------------------------------------------------------------------
 const cards = computed(() =>
-  ALGO_META.map((meta) => {
+  algorithmMeta.value.map((meta) => {
     const active = activeServerKey(serverKeys.value, meta.algorithm)
     const local = active
       ? findLocalKey(localKeys.value, {
@@ -421,6 +421,7 @@ function usableText(row) {
 // ---------------------------------------------------------------------------
 const rows = computed(() =>
   compareNodeKeys({ serverKeys: serverKeys.value, localKeys: localKeys.value })
+    .filter(row => allowedAlgorithms.value.includes(row.algorithm))
 )
 
 // ---------------------------------------------------------------------------
@@ -468,6 +469,12 @@ function selfTestKeyRef(card) {
   return mine.length ? mine[mine.length - 1].keyRef : ''
 }
 
+function generationBlocked(card) {
+  if (card.algorithm !== 'FALCON_CL_V1') return ''
+  if (!node.value.falconClCapability?.enabled) return '改进型格加密尚未启用，不能降级为标准 Falcon 生成。'
+  return ''
+}
+
 /**
  * 生成一把新密钥并登记公钥。
  *
@@ -483,8 +490,12 @@ function selfTestKeyRef(card) {
  */
 async function handleGenerate(card) {
   if (generating.value) return
+  if (!allowedAlgorithms.value.includes(card.algorithm)) throw new Error('该算法不属于当前页面的密钥用途')
   generating.value = card.algorithm
   try {
+    if (card.algorithm === 'FALCON_CL_V1' && card.active) {
+      await ElMessageBox.confirm('将生成独立的新格加密密钥，使用新的 keyId、版本从 1 开始；原密钥保留为历史记录。版本递增请使用「密钥更新」。', '生成新格加密密钥', { type: 'warning', confirmButtonText: '生成新密钥', cancelButtonText: '取消' })
+    }
     const { material: generated, check } = await generateAndRegisterNodeKey({
       algorithm: card.algorithm, nodeId: node.value.nodeId,
       variant: card.algorithm === 'KYBER' ? kyberVariant.value : undefined,
@@ -507,6 +518,7 @@ async function handleGenerate(card) {
       ElMessage.warning(`${head}；但自检未过：${check.detail}`)
     }
   } catch (error) {
+    if (error === 'cancel' || error === 'close') return
     ElMessage.error(`${card.label} 生成/登记失败：${describeError(error)}（已封存材料保留；重试不重新生成）`)
     await load()
   } finally {
@@ -547,7 +559,7 @@ function describeError(error) {
     case NODE_SELF_ERR.KEY_VERSION_MISMATCH:
       return `${message}。本地与平台身份或版本冲突；请确认并恢复原材料，不会自动换钥`
     case NODE_SELF_ERR.ALGORITHM_NOT_ALLOWED:
-      return `${message}。平台只接受 SM2 / SSCL / KYBER / FALCON 四个规范名`
+      return `${message}。平台接受 SM2 / SSCL / KYBER / FALCON_CL_V1 分发保护密钥，以及独立的 FALCON 签名密钥`
     default:
       return message
   }
@@ -562,7 +574,14 @@ function formatTime(value) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-onMounted(load)
+let chainStatusTimer
+onMounted(() => {
+  load()
+  chainStatusTimer = setInterval(() => {
+    if (!loading.value && !generating.value && serverKeys.value.some(key => ['PENDING', 'PREPARED', 'SUBMITTED', 'PENDING_VERIFICATION', 'NOT_CONFIGURED'].includes(key.chainBinding?.status))) load()
+  }, 5000)
+})
+onBeforeUnmount(() => clearInterval(chainStatusTimer))
 </script>
 
 <style scoped>

@@ -69,6 +69,23 @@ export function getSelfNode() {
   return http.get('/node-self/').then(unwrap)
 }
 
+export function getSelfWorkbench() {
+  return http.get('/node-self/workbench/').then(unwrap)
+}
+
+export function getSelfAutoUpdate() {
+  return http.get('/node-self/auto-update/').then(unwrap)
+}
+export function saveSelfAutoUpdate(policy) {
+  return http.put('/node-self/auto-update/', policy).then(unwrap)
+}
+export function claimSelfAutoUpdate(algorithm) {
+  return http.post('/node-self/auto-update/', { action: 'claim', algorithm }).then(unwrap)
+}
+export function completeSelfAutoUpdate(algorithm, leaseToken, message = '') {
+  return http.post('/node-self/auto-update/', { action: 'complete', algorithm, leaseToken, message }).then(unwrap)
+}
+
 /**
  * 登记一个算法的**公钥**（§4.4）。
  *
@@ -173,8 +190,21 @@ export function renewSelfNodeKeygenAuthorization({ generationIssuanceId, publicK
  *    "筛完就这些"，而用户以为自己筛过了。
  *    页面需要筛选时在本地筛已载入的全量数据（数据量本来就是这个节点的密钥数）。
  */
-export function listSelfNodeKeys() {
-  return http.get('/node-self/keys/').then(unwrap)
+export function listSelfNodeKeys(options = {}) {
+  return http.get('/node-self/keys/', { params: options.includeRegistry ? { includeRegistry: 'true' } : {} }).then(unwrap)
+}
+
+/** DID SDK 参数交接记录。只生成/保存参数，服务端不会提交 DID 交易。 */
+export function listSelfDidHandoffs() {
+  return http.get('/node-self/did-handoffs/').then(unwrap)
+}
+
+export function createSelfDidHandoff({ algorithm, keyId, keyVersion }) {
+  return http.post('/node-self/did-handoffs/', { algorithm, keyId, keyVersion }).then(unwrap)
+}
+
+export function getSelfDidHandoff(recordId) {
+  return http.get(`/node-self/did-handoffs/${encodeURIComponent(recordId)}/`).then(unwrap)
 }
 
 /** Paginated revocation and pending-review records; backend scopes node accounts. */
@@ -261,6 +291,19 @@ export function listSelfSessions(options = {}) {
   if (options.includeExpired) params.includeExpired = 1
   if (options.limit) params.limit = options.limit
   return http.get('/node-self/sessions/', { params }).then(unwrap)
+}
+
+/**
+ * 当前节点参与的分发批次（发送方和接收方均可见）。
+ *
+ * 该接口读取节点到节点分发会话，不依赖旧的用户 `DistributionBatch`
+ * 属主过滤，因此不会因 Demo 账号与节点映射不同而出现批次空白。
+ */
+export function listSelfDistributionBatches(options = {}) {
+  const params = {}
+  if (options.includeExpired) params.includeExpired = 1
+  if (options.limit) params.limit = options.limit
+  return http.get('/node-self/distribution-batches/', { params }).then(unwrap)
 }
 
 /**

@@ -16,14 +16,19 @@ import { buildKeyRef } from './crypto/key-ref.js'
 import { deviceFingerprint, hasDeviceKey } from './crypto/device-credential.js'
 import { IS_DEMO, ENTRY_MODE } from './entry-mode'
 import { getDemoContext } from './demo-context'
+import { classifyUnavailableAlgorithm } from './node-workspace-access.js'
 
 export const INITIALIZATION_ALGORITHMS = ['KYBER', 'SSCL', 'SM2', 'FALCON']
+export function initializationAlgorithms(node) {
+  return node.status === 'PENDING_INIT' && node.falconClCapability?.enabled
+    ? [...INITIALIZATION_ALGORITHMS, 'FALCON_CL_V1'] : [...INITIALIZATION_ALGORITHMS]
+}
 const metadataKey = (nodeId, algorithm) => `initialization/${nodeId}/${algorithm}`
-const isPQ = algorithm => algorithm === 'KYBER' || algorithm === 'FALCON'
+const isPQ = algorithm => algorithm === 'KYBER' || algorithm === 'FALCON' || algorithm === 'FALCON_CL_V1'
 
 // Public registration fields only. Never serialize generated/private material into meta or requests.
 function registrationFields(local, requireGeneration = true) {
-  let securityLevel
+  let securityLevel = local.algorithm === 'FALCON_CL_V1' ? '512' : undefined
   if (local.algorithm === 'KYBER') {
     securityLevel = ({ 800: '512', 1184: '768', 1568: '1024' })[String(local.publicKey || '').length / 2]
     if (!securityLevel) throw new Error('KEM 公钥长度无法识别，不能猜测登记参数')
@@ -79,7 +84,7 @@ export function createNodeInitializationService(deps) {
     const serverKeys = response.keys
     const localKeys = (await deps.inspectNodeKeys(node.nodeId)).keys || []
     const algorithms = []
-    for (const algorithm of INITIALIZATION_ALGORITHMS) {
+    for (const algorithm of initializationAlgorithms(node)) {
       const rows = serverKeys.filter(row => row.algorithm === algorithm)
       const current = activeServerKey(serverKeys, algorithm)
       let pending = await deps.readMetaRecord(metadataKey(node.nodeId, algorithm))
@@ -90,9 +95,18 @@ export function createNodeInitializationService(deps) {
       let reason = ''
       let blocked = false
       let complete = false
+      let lifecycleUnavailable = false
+      let latestServer = rows[0] || null
+      const unavailable = classifyUnavailableAlgorithm(rows, node.status)
       if (current) {
         blocked = state !== RECONCILE.MATCH
         reason = blocked ? `${algorithm}：${reconcileRow(current, local).text}` : ''
+      } else if (unavailable) {
+        // 已激活节点允许主动回收某一算法的当前密钥。此时该算法暂时不能承接
+        // 新业务，但它不是“本机材料丢失”，更不能把整个节点踢回首次初始化。
+        lifecycleUnavailable = true
+        latestServer = unavailable.latestServer
+        state = unavailable.state
       } else if (rows.length || node.keys?.[algorithm.toLowerCase()] || node.status === 'ACTIVE') {
         blocked = true
         state = 'SERVER_UNUSABLE'
@@ -132,7 +146,7 @@ export function createNodeInitializationService(deps) {
           reason = `${algorithm}：${error.message}`
         }
       }
-      algorithms.push({ algorithm, server: current, local, pending, state, complete, blocked, reason })
+      algorithms.push({ algorithm, server: current, latestServer, local, pending, state, complete, blocked, lifecycleUnavailable, reason })
     }
     const reasons = algorithms.filter(row => row.blocked).map(row => row.reason)
     if (node.status === 'DISABLED') reasons.unshift('节点已停用，不能初始化')
@@ -246,7 +260,7 @@ export function createNodeInitializationService(deps) {
     const abandoned = unused[0]
     if (abandoned) {
       const context = publicGenerationContext(abandoned.context)
-      if (options.keyId && Number(context.variant) !== Number(options.variant || (algorithm === 'FALCON' ? 512 : 768))) {
+      if (options.keyId && Number(context.variant) !== Number(options.variant || (algorithm === 'KYBER' ? 768 : 512))) {
         throw new Error('未完成签发参数与当前生产版本不一致；禁止改变轮换参数或自动修复')
       }
       options = { ...options, keyId: context.keyId, version: Number(context.keyVersion), variant: Number(context.variant) }
@@ -326,9 +340,9 @@ export function createNodeInitializationService(deps) {
         assertIdentity()
         inspection = await inspectInitialization()
         if (inspection.node.nodeId !== nodeId || inspection.blocked || !inspection.algorithms.every(row => row.complete)) {
-          throw new Error(inspection.reasons.join('；') || '四套登记公钥尚未与本机材料精确匹配')
+          throw new Error(inspection.reasons.join('；') || '完整登记公钥尚未与本机材料精确匹配')
         }
-        onProgress({ algorithm: 'FINISH', status: 'finishing', message: '四套公钥齐备，正在收尾…' })
+        onProgress({ algorithm: 'FINISH', status: 'finishing', message: '完整公钥集合齐备，正在收尾…' })
         await deps.initSelfNodeKeys(headers)
         const final = await inspectInitialization()
         if (final.node.nodeId !== nodeId || !final.ready) throw new Error('初始化收尾后仍未通过四套材料对账，请刷新检查')
@@ -344,7 +358,7 @@ export function createNodeInitializationService(deps) {
     })
   }
 
-  async function generateAndRegisterNodeKey({ algorithm, nodeId, keyId, version = 1, variant, rotate = false, confirmUnusedIssuance }) {
+  async function generateAndRegisterNodeKey({ algorithm, nodeId, keyId, version = 1, variant, rotate = false, confirmUnusedIssuance, signal }) {
     if (!deps.locks?.request) throw new Error('当前浏览器不支持 Web Locks；为避免覆盖密钥，生成已关闭')
     const assertIdentity = identityGuard(nodeId)
     // Same per-node lock as initialization: no tab can create another pending key in parallel.
@@ -355,10 +369,16 @@ export function createNodeInitializationService(deps) {
       if (!current?.mapped || current.node?.nodeId !== nodeId || current.node.status !== 'ACTIVE') {
         throw new Error('节点身份或状态已变化；请先完成初始化或刷新')
       }
+      if (algorithm === 'FALCON_CL_V1' && !current.node.falconClCapability?.enabled) throw new Error('Falcon 无证书格加密尚未通过独立审查启用门槛')
       const fingerprint = await fingerprintFor(nodeId)
       const identity = isPQ(algorithm) ? trustedIdentity(current.node, fingerprint, assertIdentity) : null
-      const response = await deps.listSelfNodeKeys()
+      const response = await deps.listSelfNodeKeys({ includeRegistry: true })
       if (response?.nodeId !== nodeId || !Array.isArray(response.keys)) throw new Error('节点公钥清单与当前身份不一致')
+      const registeredKeys = response.keyIdentities || response.keys
+      if (!Array.isArray(registeredKeys)) throw new Error('节点登记索引不可用，请刷新后重试')
+      if (!rotate && (Number(version) !== 1 || (keyId && registeredKeys.some(server => server.keyId === keyId)))) {
+        throw new Error('生成必须使用新的 keyId、版本从 1 开始；更新原密钥请使用密钥更新')
+      }
       const localKeys = (await deps.inspectNodeKeys(nodeId)).keys || []
       if (rotate) {
         const active = activeServerKey(response.keys, algorithm)
@@ -366,15 +386,19 @@ export function createNodeInitializationService(deps) {
         if (!active || active.keyId !== keyId || Number(active.keyVersion) + 1 !== Number(version) ||
             reconcileRow(active, existing).state !== RECONCILE.MATCH) throw new Error('生产版本已变化或本机材料不匹配；禁止基于旧页面换钥')
         await readable(existing, nodeId)
+        if (algorithm === 'KYBER' && variant === undefined) {
+          variant = ({ 800: 512, 1184: 768, 1568: 1024 })[Number(active.publicKeyBytes)]
+          if (!variant) throw new Error('无法确认当前 KEM 参数，已停止自动更新')
+        }
       }
       const candidates = localKeys.filter(local => local.algorithm === algorithm && (rotate
         ? local.keyId === keyId && Number(local.version) === Number(version)
-        : !response.keys.some(server => server.algorithm === algorithm && server.keyId === local.keyId && Number(server.keyVersion) === Number(local.version))))
+        : !registeredKeys.some(server => server.algorithm === algorithm && server.keyId === local.keyId && Number(server.keyVersion) === Number(local.version))))
       if (candidates.length > 1) throw new Error('存在多份未登记材料，请显式恢复原材料；禁止生成替代')
       const pendingKey = rotate ? `rotation/${buildKeyRef({ nodeId, algorithm, keyId, version })}` : metadataKey(nodeId, algorithm)
       const pending = await deps.readMetaRecord(pendingKey)
-      const pendingRegistered = pending && response.keys.some(server => server.algorithm === algorithm &&
-        server.keyId === pending.keyId && Number(server.keyVersion) === Number(pending.version) && server.publicKey === pending.publicKey)
+      const pendingRegistered = pending && registeredKeys.some(server => server.algorithm === algorithm &&
+        server.keyId === pending.keyId && Number(server.keyVersion) === Number(pending.version))
       if (pending && !pendingRegistered && (!candidates[0] || candidates[0].keyRef !== pending.keyRef ||
           candidates[0].keyId !== pending.keyId || Number(candidates[0].version) !== Number(pending.version) || candidates[0].publicKey !== pending.publicKey)) {
         throw new Error('待登记材料缺失或已变化，请恢复原本机材料；禁止生成另一把替代')
@@ -387,11 +411,21 @@ export function createNodeInitializationService(deps) {
       } else {
         const options = await generationOptions(algorithm,
           { nodeId, keyId, version, variant, rotate }, fingerprint, identity, undefined, assertIdentity, confirmUnusedIssuance)
-        material = await deps.generate(algorithm, options)
+        const controller = new AbortController()
+        const abort = () => controller.abort()
+        signal?.addEventListener('abort', abort, { once: true })
+        if (signal?.aborted) controller.abort()
+        const revisionTimer = setInterval(() => { try { assertIdentity() } catch { controller.abort() } }, 100)
+        try { material = await deps.generate(algorithm, { ...options, signal: controller.signal }) }
+        finally { clearInterval(revisionTimer); signal?.removeEventListener('abort', abort) }
       }
+      if (signal?.aborted) throw new Error('已取消；封存材料保留，不自动换钥')
       material = await readable(material, nodeId)
       registrationFields(material)
       // Sealed record is authoritative even if the pending write fails.
+      if (!rotate && (Number(material.version) !== 1 || registeredKeys.some(server => server.keyId === material.keyId))) {
+        throw new Error('新生成材料必须具有独立 keyId 和版本 1；已封存材料保留，请检查生成来源')
+      }
       await deps.writeMetaRecord({ k: rotate ? `rotation/${material.keyRef}` : metadataKey(nodeId, algorithm), ...registrationFields(material) })
       assertIdentity()
       const check = await deps.selfTest(algorithm, material.keyRef)

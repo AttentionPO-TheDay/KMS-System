@@ -40,11 +40,11 @@ public class DemoContextController {
                 sessions.save(id, state);
                 csrf = (String) state.get("csrfToken");
                 revision = "0";
-                cookie(response, id, 28800);
+                cookie(request, response, id, 28800);
             }
             String nodeId = body == null || body.get("nodeId") == null ? null : String.valueOf(body.get("nodeId"));
             Map<String, Object> state = sessions.change(id, action, nodeId, csrf, revision);
-            if ("logout".equals(action)) cookie(response, "", 0);
+            if ("logout".equals(action)) cookie(request, response, "", 0);
             if (state.get("errorCode") != null) {
                 AjaxResult result = failure(String.valueOf(state.get("errorCode")));
                 result.put("data", state);
@@ -54,9 +54,9 @@ public class DemoContextController {
         } catch (IllegalArgumentException ex) { return failure(ex.getMessage()); }
     }
 
-    private void cookie(HttpServletResponse response, String id, int maxAge) {
+    private void cookie(HttpServletRequest request, HttpServletResponse response, String id, int maxAge) {
         response.addHeader("Set-Cookie", DemoBoundary.COOKIE + "=" + id + "; Path=/; HttpOnly; SameSite=Strict; Max-Age=" + maxAge
-                + (boundary.isSecure() ? "; Secure" : ""));
+                + (boundary.isSecure(request) ? "; Secure" : ""));
     }
 
     private AjaxResult failure(String code) {

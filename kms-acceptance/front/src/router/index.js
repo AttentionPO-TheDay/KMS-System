@@ -1,6 +1,7 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 
 const routes = [
+  { path: '/lifecycle', name: 'LifecycleAudit', component: () => import('../views/LifecycleAudit.vue') },
   {
     path: '/',
     redirect: '/load-test'
@@ -9,16 +10,6 @@ const routes = [
     path: '/load-test',
     name: 'LoadTest',
     component: () => import('../views/LoadTestView.vue')
-  },
-  {
-    path: '/security',
-    name: 'Security',
-    component: () => import('../views/SecurityView.vue')
-  },
-  {
-    path: '/others',
-    name: 'Others',
-    component: () => import('../views/OthersView.vue')
   }
 ]
 

@@ -25,7 +25,7 @@
  * - `publicKey`：公开量。可以自由落库、上报、展示。
  */
 
-export const ALGORITHMS = ['SM2', 'SSCL', 'KYBER', 'FALCON']
+export const ALGORITHMS = ['SM2', 'SSCL', 'KYBER', 'FALCON', 'FALCON_CL_V1']
 
 /** 归一算法名。库里历史写法混杂（`Kyber` / `KYBER` / `CL-Kyber`），统一收口。 */
 export function normalizeAlgorithm(name) {

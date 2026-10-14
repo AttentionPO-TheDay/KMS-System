@@ -18,6 +18,19 @@ export function listKeyPool(params) {
   return http.get('/key-pool/', { params: { page: 1, limit: 500, ...(params || {}) } }).then(unwrapList)
 }
 
+/** 分页读取密钥池，保留服务端 total / page / limit。 */
+export function listKeyPoolPage(params = {}) {
+  return http.get('/key-pool/', { params: { page: 1, limit: 20, ...params } }).then((body) => {
+    const items = Array.isArray(body?.data) ? body.data : (Array.isArray(body) ? body : [])
+    return {
+      items,
+      total: Number(body?.total ?? items.length),
+      page: Number(body?.page ?? params.page ?? 1),
+      limit: Number(body?.limit ?? params.limit ?? 20),
+    }
+  })
+}
+
 /** 密钥池统计（总数 / 未用 / 已用 / 过期 / 按算法分布） */
 export function getKeyPoolStats(params) {
   return http.get('/key-pool/stats/', { params: params || undefined }).then(unwrap)

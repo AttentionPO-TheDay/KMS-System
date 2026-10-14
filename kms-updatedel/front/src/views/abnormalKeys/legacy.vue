@@ -47,16 +47,6 @@
         </el-form-item>
       </el-form>
 
-      <el-alert
-        v-if="filter.scope !== 'revoked'"
-        type="info"
-        :closable="false"
-        show-icon
-        class="mb16"
-        title="除「已回收」外，这里的筛选只是指向可疑对象，不等同于判定为异常"
-        description="点「复核」会调该密钥的健康检查接口给出结论。异常判据只维护在后端一处。"
-      />
-
       <el-table v-loading="loading" :data="rows" border empty-text="没有符合条件的密钥">
         <el-table-column label="密钥ID" prop="keyId" width="90" align="center" />
         <el-table-column label="密钥名称" prop="keyName" min-width="150" show-overflow-tooltip />

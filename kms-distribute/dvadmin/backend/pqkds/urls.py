@@ -43,6 +43,10 @@ from .node_self_views import (
     node_pool_preallocate,
     node_pool_summary,
     node_self,
+    node_self_workbench,
+    node_self_auto_update,
+    node_self_did_handoff_detail,
+    node_self_did_handoffs,
     node_self_distributions,
     node_self_init,
     node_self_keys,
@@ -59,6 +63,7 @@ from .node_session_views import (
     node_envelopes,
     node_session_close,
     node_session_confirm,
+    node_distribution_batches,
     node_session_versions,
     node_sessions,
 )
@@ -67,8 +72,13 @@ from .node_session_views import (
 from .node_auth_views import node_activate, node_challenge, node_login, node_still_exists
 # 阶段 6：长期密钥回收后连带失效预分配池项（内部通道，X-Internal-Token 鉴权）
 from .internal_pool_views import revoke_pool_by_key
+from .acceptance_evidence_views import (
+    internal_preallocation_evidence,
+    node_preallocation_evidence,
+)
 # 阶段 7 §8.7：安全监控总览
 from .security_monitor_views import security_summary
+from .admin_data_views import admin_data_records
 from .node_key_review_views import (node_key_reviews, node_key_review_impact,
                                     node_key_review_action)
 from .admin_key_views import admin_node_long_term_keys, chain_runtime_status
@@ -106,9 +116,15 @@ urlpatterns = [
     # `node-self/` 吃成 pk='node-self'，请求落到 NodeViewSet 返回 200 但没有 data，
     # 现象是"接口通了但字段全 undefined"。
     path('node-self/', node_self, name='node-self'),
+    path('node-self/workbench/', node_self_workbench, name='node-self-workbench'),
     # §4.4：节点侧生成密钥后**只上传公钥**。必须与 init 分开 ——
     # 先逐个登记四套公钥，再由 init 收尾置 ACTIVE（见 node_service 的说明）。
     path('node-self/keys/', node_self_keys, name='node-self-keys'),
+    path('node-self/auto-update/', node_self_auto_update, name='node-self-auto-update'),
+    path('node-self/did-handoffs/', node_self_did_handoffs,
+         name='node-self-did-handoffs'),
+    path('node-self/did-handoffs/<uuid:record_id>/', node_self_did_handoff_detail,
+         name='node-self-did-handoff-detail'),
     path('node-self/keygen/issuances/', node_self_keygen_issuances, name='node-self-keygen-issuances'),
     path('node-self/keygen/authorizations/', node_self_keygen_authorizations, name='node-self-keygen-authorizations'),
     # KMS-007：节点侧「密钥回收」菜单的落点。改的是 `NodeLongTermKey` 那一行，
@@ -126,6 +142,8 @@ urlpatterns = [
     # §10.10：本节点参与的会话。同样必须排在 router 之前，
     # 否则 `session-keys/<pk>/` 的通配段会把它吃掉。
     path('node-self/sessions/', node_sessions, name='node-self-sessions'),
+    path('node-self/distribution-batches/', node_distribution_batches,
+         name='node-self-distribution-batches'),
     path('node-self/sessions/<str:session_id>/confirm/', node_session_confirm,
          name='node-self-session-confirm'),
     # KMS-012：关闭（终态）。双方可关；关闭后不再接受确认或状态变更。
@@ -181,6 +199,8 @@ urlpatterns = [
     #    末段不同，互不吃掉。
     path('node-self/pool/preallocate/', node_pool_preallocate,
          name='node-self-pool-preallocate'),
+    path('node-self/acceptance/preallocation-evidence/', node_preallocation_evidence,
+         name='node-self-acceptance-preallocation-evidence'),
     path('node-self/pool/summary/', node_pool_summary, name='node-self-pool-summary'),
     path('node-self/pool/consume/', node_pool_consume, name='node-self-pool-consume'),
     # --- §3 激活 / §5 登录（设备凭据）---
@@ -199,9 +219,12 @@ urlpatterns = [
     # 阶段 6：内部通道（X-Internal-Token 鉴权，不对外暴露）。
     # 同样排在 router 之前，理由同上。
     path('internal/pool/revoke-by-key/', revoke_pool_by_key, name='revoke-pool-by-key'),
+    path('internal/acceptance/preallocation-evidence/', internal_preallocation_evidence,
+         name='internal-acceptance-preallocation-evidence'),
 
     # 阶段 7 §8.7：安全监控总览（管理员视角聚合统计，需登录态）
     path('security-monitor/summary/', security_summary, name='security-summary'),
+    path('security-monitor/records/', admin_data_records, name='admin-data-records'),
     path('user-symmetric-keys/', user_symmetric_keys, name='user-symmetric-keys'),
     path('user-symmetric-keys/<int:pk>/', user_symmetric_key_detail, name='user-symmetric-key-detail'),
     path('distribution-batches/', distribution_batches, name='distribution-batches'),

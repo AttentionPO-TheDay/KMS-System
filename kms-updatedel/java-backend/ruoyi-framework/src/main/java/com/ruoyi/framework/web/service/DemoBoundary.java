@@ -44,7 +44,15 @@ public class DemoBoundary {
         return null;
     }
 
-    public boolean isSecure() { return secure; }
+    public boolean isSecure(HttpServletRequest request) {
+        // Forwarded scheme is authoritative only inside the verified gateway.
+        requireGateway(request);
+        String scheme = request.getHeader("X-Forwarded-Proto");
+        if (scheme != null && !"http".equals(scheme) && !"https".equals(scheme)) {
+            throw new IllegalArgumentException("DEMO_SCHEME_REJECTED");
+        }
+        return secure || "https".equals(scheme) || request.isSecure();
+    }
     public static boolean mutation(HttpServletRequest request) {
         return !Arrays.asList("GET", "HEAD", "OPTIONS").contains(request.getMethod());
     }

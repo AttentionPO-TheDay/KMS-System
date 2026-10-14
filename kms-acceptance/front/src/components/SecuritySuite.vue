@@ -2,8 +2,8 @@
   <div class="security-wrapper">
     <div class="panel-header">
       <div>
-        <h2>全维漏洞防护安全靶场</h2>
-        <p class="subtitle">针对 3 类常见生成攻击与 5 类高频更新攻击进行真实业务层入侵防御探测。</p>
+        <h2>当前系统安全协议测试</h2>
+        <p class="subtitle">围绕生成签发、抗量子方案参数与无密码会话边界进行固定探针测试。不代表完整渗透测试或抗量子安全证明。</p>
       </div>
       <span class="badge" :class="health?.securityAvailable ? 'ok' : 'warn'">
         {{ health?.securityAvailable ? '安全引擎已就绪' : '安全引擎未就绪' }}
@@ -43,7 +43,7 @@
               <button class="btn-ghost small"
                 :disabled="loadingCaseId === item.caseId"
                 @click="doSecurityRun(item.caseId)">
-                {{ loadingCaseId === item.caseId ? '执行中...' : '执行真实攻击' }}
+                {{ loadingCaseId === item.caseId ? '执行中...' : '执行协议测试' }}
               </button>
             </div>
 

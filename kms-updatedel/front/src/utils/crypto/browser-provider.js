@@ -200,6 +200,13 @@ export class BrowserCryptoProvider extends CryptoProvider {
       inFlightGenerations.add(keyRef)
       try {
         if (await hasSecret(keyRef)) throw new Error('该 keyRef 已有封存密钥，请复用/恢复；禁止重新生成或覆盖私钥')
+        if (name === 'FALCON_CL_V1') {
+          const { issueFalconPartial } = await import('./falcon-cl-browser.js')
+          const material = await issueFalconPartial({ algorithm: name, nodeId, keyId, keyVersion: version, variant: 512 }, options.issueKeygen, options.generationContext, options.signal)
+          if (options.signal?.aborted) throw new Error('Falcon CL operation cancelled')
+          await sealSecret(keyRef, { algorithm: name, secret: material.privateKey, publicKey: material.publicKey, version, generation: material.generation, generationContext: material.generationContext, createOnly: true })
+          return { publicKey: material.publicKey, keyRef, keyId, nodeId, version, algorithm: name, variant: 512, generation: material.generation, generationContext: material.generationContext }
+        }
         if (name === 'KYBER' || name === 'FALCON') {
           const scheme = generationScheme(name)
           if (options.generationScheme != null && options.generationScheme !== scheme.schemeId) throw new Error('未知或不匹配的生成方案，禁止降级')
@@ -432,12 +439,19 @@ export class BrowserCryptoProvider extends CryptoProvider {
    */
   async wrapForPeer(algorithm, recipientPublicKeyHex, payloadKey) {
     const name = normalizeAlgorithm(algorithm)
-    const publicKeyHex = String(recipientPublicKeyHex || '').trim().toLowerCase()
+    const publicKeyHex = name === 'FALCON_CL_V1' ? String(recipientPublicKeyHex || '') : String(recipientPublicKeyHex || '').trim().toLowerCase()
     const key = toBytes(payloadKey)
     if (!key || key.length !== 16) {
       throw new Error(`载荷密钥必须是 16 字节的 SM4 密钥（收到 ${key ? `${key.length} 字节` : '非字节'}）`)
     }
 
+    if (name === 'FALCON_CL_V1') {
+      const { parseMaterial } = await import('./falcon-cl-v1.js')
+      const { runFalconWorker } = await import('./falcon-cl-browser.js')
+      const recipient = parseMaterial(publicKeyHex, 'PUBLIC').nodeId
+      const ciphertext = await runFalconWorker('encrypt', [publicKeyHex, Uint8Array.from(key), recipient])
+      return { wrapping: 'falcon_cl_v1', envelope: { ciphertext, purpose: 'ENCRYPT', material_version: 1, recipient_node_id: recipient, payload_algorithm: 'sm4', wrapping_algorithm: 'falcon_cl_v1' } }
+    }
     if (name === 'KYBER') {
       const { sm4GcmEncrypt } = await import('../sm4.js')
       const encapsulated = await this.encapsulate('KYBER', publicKeyHex)
@@ -562,6 +576,13 @@ export class BrowserCryptoProvider extends CryptoProvider {
         }
       }
 
+      if (name === 'FALCON_CL_V1') {
+        const probe = crypto.getRandomValues(new Uint8Array(16))
+        const { envelope } = await this.wrapForPeer(name, publicKey, probe)
+        const recovered = await this.unwrapEnvelope(name, keyRef, envelope)
+        try { return { ok: toHex(probe) === toHex(recovered), detail: 'Falcon（无证书格加密，实验性）：16 字节往返比对；不构成安全证明' } }
+        finally { probe.fill(0); recovered.fill(0) }
+      }
       if (name === 'FALCON') {
         if (!publicKey) {
           return { ok: false, detail: '本地记录里没有公钥，无法验签（重新生成一次）' }
@@ -642,6 +663,13 @@ export class BrowserCryptoProvider extends CryptoProvider {
     const wrapping = String(envelope?.wrapping_algorithm || algorithm || '').trim().toLowerCase()
 
     try {
+      if (wrapping === 'falcon_cl_v1') {
+        const parsed = parseKeyRef(keyRef)
+        if (!parsed || parsed.algorithm !== 'FALCON_CL_V1' || parsed.nodeId !== envelope.recipient_node_id || envelope.purpose !== 'ENCRYPT' || envelope.material_version !== 1 || envelope.payload_algorithm !== 'sm4') throw new Error('Falcon CL envelope contract invalid')
+        await requireLocalKey(keyRef, { nodeId: parsed.nodeId, algorithm: 'FALCON_CL_V1', version: parsed.version })
+        const { runFalconWorker } = await import('./falcon-cl-browser.js')
+        return await runFalconWorker('decrypt', [await this._secretHex(keyRef), envelope.ciphertext, parsed.nodeId])
+      }
       if (wrapping === 'kyber_kem') {
         const { sm4GcmDecrypt } = await import('../sm4.js')
         const shared = await this.decapsulate('KYBER', keyRef, fromHex(b64ToHex(envelope.kem_ciphertext)))
