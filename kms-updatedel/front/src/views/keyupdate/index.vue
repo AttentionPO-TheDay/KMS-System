@@ -23,7 +23,7 @@
       />
 
       <template v-else>
-        <TechnicalView kind="update" />
+        <TechnicalView ref="technicalFlow" kind="update" />
         <section v-if="showAutoSettings" class="key-update__auto" aria-label="自动更新设置">
           <h3>自动更新设置</h3>
 
@@ -350,6 +350,7 @@
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import TechnicalView from '@/components/TechnicalView/index.vue'
+const technicalFlow = ref(null)
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { CircleCheck } from '@element-plus/icons-vue'
 import {
@@ -692,6 +693,8 @@ async function handleRotate(card) {
   const nextVersion = Number(active.keyVersion) + 1
   updating.value = card.algorithm
   lastRotate.value = null
+  technicalFlow.value?.start({ nodeId: node.value.nodeId, algorithm: card.algorithm, keyId: active.keyId, version: Number(active.keyVersion), nextVersion })
+  technicalFlow.value?.record('进入本地生成、封存、自检与公钥登记流程')
   try {
     // Shared workflow re-reads production identity, recovers sealed next version,
     // self-tests and renews ONLY expired registration authorization (never KeyGen).
@@ -699,12 +702,14 @@ async function handleRotate(card) {
       algorithm: card.algorithm, nodeId: node.value.nodeId,
       keyId: active.keyId, version: nextVersion, rotate: true,
       variant: card.algorithm === 'KYBER' ? variantOf(active) : undefined,
+      onStage: event => technicalFlow.value?.stage(event.id, event.status, event.label, event.values),
       confirmUnusedIssuance: async record => {
         await ElMessageBox.confirm(record.message, '确认恢复未完成签发', { type: 'warning', confirmButtonText: '弃用未使用签发并重试', cancelButtonText: '取消，不换钥' })
         return true
       }
     })
     selfTestResults.value = { ...selfTestResults.value, [material.keyRef]: check }
+    technicalFlow.value?.record('更新流程返回，新版本已登记', { keyId: result?.keyId || material.keyId, nextVersion: Number(result?.keyVersion || material.version) })
 
     lastRotate.value = {
       algorithm: card.algorithm,
@@ -720,19 +725,20 @@ async function handleRotate(card) {
       reused: Boolean(reused)
     }
 
+    technicalFlow.value?.stage('refresh', 'running', '重新读取平台与本机材料并对账')
     await load()
+    const refreshed = cards.value.find(item => item.algorithm === card.algorithm)
+    const reconciled = refreshed?.active?.keyId === lastRotate.value.keyId &&
+      Number(refreshed.active.keyVersion) === lastRotate.value.toVersion && refreshed.reconcile?.state === RECONCILE.MATCH
+    technicalFlow.value?.stage('refresh', reconciled ? 'success' : 'partial', reconciled ? '平台公钥、本机公钥与目标版本一致' : '版本回执已收到，刷新对账尚未确认一致', { reconciled })
+    technicalFlow.value?.finish(check.ok && reconciled ? 'success' : 'partial', reconciled ? '版本更新与本机对账完成' : '版本已登记，待完成刷新对账')
 
-    // 「已更新」与「已上链」分开说。存证是旁路增强（`record_chain_event` 失败
-    // 只返回空串），合成一句"更新成功"会把审计缺口盖掉 —— 之后谁也说不清
-    // 这一次更新到底有没有留痕。
+    // 操作消息只报告更新结果，存证状态保留在本页结果与记录中。
     const head = `${card.label} 已更新：v${lastRotate.value.fromVersion} → v${lastRotate.value.toVersion}`
-    if (lastRotate.value.chainHash) {
-      ElMessage.success(`${head}；存证已上链`)
-    } else {
-      ElMessage.warning(`${head}；但存证未成功（更新本身已生效，链上少一条 KEY_UPDATED）`)
-    }
+    ElMessage.success(head)
   } catch (error) {
     ElMessage.error(`${card.label} 更新失败：${describeError(error, card)}`)
+    technicalFlow.value?.finish('failed', '更新未取得完整成功结果，正在重新对账')
     // ⚠️ 失败之后**必须**刷新对账，这不是为了界面好看。
     //
     // `stagedKey` 是从 `load()` 写下的 `localKeys` 推导的（第 466 行），只有 `load()`

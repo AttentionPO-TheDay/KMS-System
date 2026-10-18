@@ -23,7 +23,8 @@ final class BindingService {
                 "capabilities", Json.map("immutableBinding", true, "transactionVerification", true,
                 "currentNodeProjection", false, "compareAndSet", false, "lifecycleEquivalent", false,
                 "networkChecked", false, "createPolicyApproved", config.policyApproved,
-                "handoffPrepare", true));
+                "handoffPrepare", true, "sysPidOnchain", true,
+                "sysPidRecordsConfigured", config.sysPidRecordsPath != null));
     }
     Map<String, Object> read(String did) {
         if (did == null || !did.startsWith("did:") || did.length() > 512) throw new BridgeException(400, "INVALID_DID");

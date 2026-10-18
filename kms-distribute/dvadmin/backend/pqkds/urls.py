@@ -72,6 +72,7 @@ from .node_session_views import (
 # §3 激活 / §5 登录：设备凭据认证（节点**唯一的**登录方式，节点没有口令）。
 # ⚠️ 这两个端点刻意**不要求登录态** —— 它们就是用来产生令牌的。
 from .node_auth_views import node_activate, node_challenge, node_login, node_still_exists
+from .group_agreement_views import agreements, agreement
 # 阶段 6：长期密钥回收后连带失效预分配池项（内部通道，X-Internal-Token 鉴权）
 from .internal_pool_views import revoke_pool_by_key
 from .acceptance_evidence_views import (
@@ -98,6 +99,8 @@ router.register(r'logs', KeyDistributionLogViewSet, basename='logs')
 router.register(r'stats', SystemStatsViewSet, basename='stats')
 router.register(r'key-pool', KeyPoolViewSet, basename='keypool')
 urlpatterns = [
+    path('node-self/group-agreements/', agreements, name='node-group-agreements'),
+    path('node-self/group-agreements/<str:agreement_id>/', agreement, name='node-group-agreement'),
     path('node-self/key-health/', node_key_health, name='node-key-health'),
     path('node-self/key-analysis/', node_key_analysis, name='node-key-analysis'),
     path('domains/', domains, name='domains'),

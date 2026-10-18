@@ -42,7 +42,7 @@ try{
  server=await createServer({server:{port:5197,strictPort:true,fs:{allow:[join(process.cwd(),'../..')]}},plugins:[{
   name:'isolated-diagnostics',enforce:'pre',
   resolveId(id){if(/\/api\/pqkds\/key-diagnostics(\.js)?$/.test(id))return '\0diagnostics';if(/\/api\/(lifecycle\/lifecycle|pqkds\/node-self)(\.js)?$/.test(id))return '\0legacy';if(/\/store\/modules\/user(\.js)?$/.test(id))return '\0user'},
-  load(id){if(id==='\0diagnostics')return fixture;if(id==='\0legacy')return legacy;if(id==='\0user')return `export default()=>({principalType:'NODE'})`},
+  load(id){if(id==='\0diagnostics')return fixture;if(id==='\0legacy')return legacy;if(id==='\0user')return `export default()=>({principalType:location.search.includes('admin')?'ADMIN':'NODE'})`},
   configureServer(instance){instance.middlewares.use('/diagnostic-fixture',async(_req,res)=>{
    const html=`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><div id="app"></div><script type="module">
    import {createApp,h} from 'vue';import ElementPlus from 'element-plus';import 'element-plus/dist/index.css';import '/src/assets/styles/index.scss';
@@ -59,6 +59,11 @@ try{
  await rpc('Runtime.enable');await rpc('Page.enable')
  for(const page of ['health','analysis']){
   windowName=page==='health'?'kh':'la';await navigate(page)
+  if(page==='analysis'){
+   assert.equal(await evaluate(`document.querySelectorAll('.la-query .el-radio-group').length`),0)
+   assert(!await evaluate(`document.body.innerText.includes('用户密钥')`))
+   assert.equal(await evaluate(`document.querySelector('.la-query .el-input input').placeholder`),'输入节点密钥 keyId')
+  }
   await input('diagnostic-KYBER');await delay(100)
   assert.equal(await evaluate('window.__requests.length'),0)
   assert(!await evaluate(`document.body.innerText.includes('全部检查通过')||document.body.innerText.includes('未发现关联痕迹')`))
@@ -75,6 +80,8 @@ try{
    await input('123');await click();await waitFor(`window.__requests.at(-1).id==='123'`)
    assert.equal((await evaluate('window.__requests.at(-1)')).kind,'health')
   }else{
+   await input('123');await click();await waitFor(`window.__requests.at(-1).id==='123'`)
+   assert.equal((await evaluate('window.__requests.at(-1)')).kind,'analysis')
    const before=await evaluate('window.__requests.length');await input('-1',1);await click();await waitFor(`document.body.innerText.includes('版本须为正整数')`)
    assert.equal(await evaluate('window.__requests.length'),before)
   }
@@ -82,14 +89,29 @@ try{
   assert(await evaluate(`document.documentElement.scrollWidth<=innerWidth+1`))
   const shot=await rpc('Page.captureScreenshot',{format:'png',captureBeyondViewport:true});writeFileSync(`.diagnostic-${page}-390.png`,Buffer.from(shot.data,'base64'))
  }
+ await navigate('analysis-admin')
+ assert.equal(await evaluate(`document.querySelectorAll('.la-query .el-radio-button').length`),2)
+ assert(await evaluate(`document.body.innerText.includes('用户密钥')`))
+ await evaluate(`[...document.querySelectorAll('.la-query .el-radio-button')].find(e=>e.innerText==='节点密钥').click()`)
+ await waitFor(`document.querySelector('.la-query .el-input input').placeholder==='输入节点密钥 keyId'`)
  await navigate('technical');await evaluate(`document.querySelectorAll('.el-collapse-item__header').forEach(e=>e.click())`)
  await waitFor(`document.body.innerText.includes('半诚实安全模型')`)
+ assert.equal(await evaluate(`document.querySelectorAll('.simulation').length`),3)
+ assert.equal(await evaluate(`document.querySelectorAll('.simulation-mode').length`),3)
+ await evaluate(`[...document.querySelectorAll('.simulation .el-button--primary')].forEach(e=>e.click())`)
+ await waitFor(`document.querySelectorAll('.simulation-result').length===3`)
+ assert.equal(await evaluate(`document.querySelectorAll('.simulation-console>div').length`),15)
  for(const width of [1500,390]){
   await rpc('Emulation.setDeviceMetricsOverride',{width,height:1100,deviceScaleFactor:1,mobile:false});await delay(300)
   assert(await evaluate(`document.documentElement.scrollWidth<=innerWidth+1`))
   const shot=await rpc('Page.captureScreenshot',{format:'png',captureBeyondViewport:true});writeFileSync(`.technical-${width}.png`,Buffer.from(shot.data,'base64'))
  }
  assert.equal(await evaluate('window.__requests.length'),0)
+ await evaluate(`document.querySelector('.simulation-actions .el-button').click()`)
+ await waitFor(`document.querySelector('.simulation').innerText.includes('待演示')&&!document.querySelector('.simulation').querySelector('.simulation-console')`)
+ await evaluate(`document.querySelector('.simulation .el-button--primary').click()`)
+ await waitFor(`document.querySelectorAll('.simulation-result').length===3`)
+ assert.equal(await evaluate(`document.querySelectorAll('.simulation-console>div').length`),15)
  assert.equal(errors.length,0,errors.join(';'))
- console.log('PASS: 点击才查询、节点字符串/数字ID分流、失败无假成功/弹框、晚到请求隔离、版本校验、手机布局、三种技术图解；无真实业务写入')
+ console.log('PASS: 点击才查询、节点字符串/数字ID分流、失败无假成功/弹框、晚到请求隔离、版本校验、手机布局、三种技术流程模拟；无真实业务写入')
 }finally{socket?.close();browser?.kill();await server?.close()}

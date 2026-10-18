@@ -7,7 +7,7 @@
       </div>
     </header>
 
-    <TechnicalView kind="distribution" />
+    <TechnicalView ref="technicalFlow" kind="distribution" />
     <el-row :gutter="16">
       <!-- ------------------------------------------------------------------
            发起分发（KMS-008 新请求契约）
@@ -372,6 +372,7 @@
  */
 import { computed, onMounted, reactive, ref } from 'vue'
 import TechnicalView from '@/components/TechnicalView/index.vue'
+const technicalFlow = ref(null)
 import { ElMessage } from 'element-plus'
 import FalconEncryptionSupplement from '@/components/FalconEncryptionSupplement/index.vue'
 import { PROTECTION_LABELS, protectionLabel, falconRecipientState } from '@/utils/protection-algorithms.js'
@@ -391,7 +392,7 @@ import {
 } from '@/services/user-distribution-api'
 import { cryptoProvider } from '@/utils/crypto/browser-provider.js'
 import { buildKeyRef } from '@/utils/crypto/key-ref.js'
-import { sealSessionSecret } from '@/utils/crypto/node-key-store.js'
+import { sealSessionSecret, nextLocalPoolSecret, bindPoolSecretToSession } from '@/utils/crypto/node-key-store.js'
 import {
   buildNodeEnvelope,
   generatePayloadKey,
@@ -745,9 +746,8 @@ async function loadBatches() {
  *   * 取预分配：池子里**早就备好**的那条，K 是当初预分配时生成的 ——
  *     服务端把保护包改写成可签信封交回来，本机签名后补交即可。
  *
- * ⚠️ K 由服务端在取用时**原样回传**（`keyHex`）—— 它不是服务端生成的，
- *    服务端只是从节点自己上传的保护包里把它取出来。所以本机要**存一份**：
- *    会话确认（`HMAC(K, session_id)`）两边都要用，不存就永远确认不了。
+ * K remains in the sender's encrypted local pool store. The server returns only
+ * poolId + keyHash, which bind the original local K to the new sessionId.
  */
 async function handleDistributeFromPool() {
   if (!poolAvailable.value || submitting.value) {
@@ -756,40 +756,52 @@ async function handleDistributeFromPool() {
   submitting.value = true
   errorMessage.value = ''
   result.value = null
-  let payloadKey = null
+  const nodeId = selfNodeId.value, peerNodeId = form.receiverNodeCode
+  technicalFlow.value?.start({ nodeId, peerNodeId, algorithm: 'KYBER' }, { mode: 'pool' })
   try {
     const batchId = newBatchId()
+    technicalFlow.value?.record('发起预分配池取用', { batchId })
+    technicalFlow.value?.stage('consume', 'running', '请求取用一条可用预分配资源')
+    const local = await nextLocalPoolSecret(nodeId, peerNodeId)
     const consumed = await consumePoolItem({
-      peerNodeCode: form.receiverNodeCode,
+      peerNodeCode: peerNodeId,
+      poolId: local.poolId,
+      keyHash: local.keyHash,
       batchId,
       protectionAlgorithm: 'KYBER',
       falconKeyId: falconKey.value.keyId,
       falconKeyVersion: falconKey.value.keyVersion
     })
+    if (consumed.poolId !== local.poolId || consumed.keyHash !== local.keyHash) throw new Error('取用回执与本机预分配材料不一致，已停止提交')
     // ---- 本机签名（信封已盖好本次交付的元数据，签名覆盖它们）----
+    technicalFlow.value?.stage('consume', 'success', '已取得预分配保护包及对应会话', { sessionId: consumed.sessionId, keyId: consumed.recipientKeyId, version: consumed.recipientKeyVersion, remaining: consumed.remaining })
+    technicalFlow.value?.stage('sign', 'running', '使用本机 Falcon 私钥签署信封')
     const signature = await signNodeEnvelope(cryptoProvider, falconKey.value.keyRef, consumed.envelope)
+    technicalFlow.value?.stage('sign', 'success', '本机信封签名完成', { signed: 1 })
+    technicalFlow.value?.stage('submit', 'running', '提交本次信封签名')
     await signPoolEnvelope(consumed.envelopeId, {
       signature,
       falconKeyId: falconKey.value.keyId,
       falconKeyVersion: falconKey.value.keyVersion
     })
     // ---- 把 K 存在本机（会话确认要用）----
+    technicalFlow.value?.stage('submit', 'success', '信封签名提交完成')
+    technicalFlow.value?.stage('store', 'running', '将会话材料加密保存到本机')
     let keyStored = false
     let keyStoreError = ''
     try {
-      await sealSessionSecret(consumed.sessionId, Uint8Array.from(
-        (String(consumed.keyHex || '').match(/../g) || []).map((h) => parseInt(h, 16))
-      ))
+      await bindPoolSecretToSession({ nodeId, peerNodeId, poolId: consumed.poolId, keyHash: consumed.keyHash }, consumed.sessionId)
       keyStored = true
     } catch (error) {
       keyStoreError = String(error?.message || error)
     }
+    technicalFlow.value?.stage('store', keyStored ? 'success' : 'partial', keyStored ? '本机会话材料已保存' : '本机会话材料保存未完成', { keyStored, sessionStatus: 'initiated' })
     result.value = {
       batchId,
       recipientKeyId: consumed.recipientKeyId,
       recipientKeyVersion: consumed.recipientKeyVersion,
       protectionLabel: PROTECTION_LABELS.KYBER,
-      receiverNodeName: form.receiverNodeCode,
+      receiverNodeName: peerNodeId,
       sessionCount: 1,
       expiresAt: consumed.expiresAt,
       chainHash: consumed.chainHash || '',
@@ -805,14 +817,13 @@ async function handleDistributeFromPool() {
       fromPool: true,
       poolRemaining: consumed.remaining
     }
-    if (consumed.chainWarning) {
-      ElMessage.warning(consumed.chainWarning)
-    }
     ElMessage.success(`已取用一条预分配资源（剩余 ${consumed.remaining} 条）`)
+    technicalFlow.value?.finish(keyStored ? 'success' : 'partial', '取用完成，会话等待双方确认', { sessionStatus: 'initiated', keyStored })
     await loadBatches()
     await loadPoolSummary()
   } catch (error) {
     errorMessage.value = describeError(error)
+    technicalFlow.value?.finish('failed', '预分配池取用失败')
     // 池子可能在别处被取空了/过期了：刷新余量让用户下一眼看到真实状态。
     await loadPoolSummary()
   } finally {
@@ -838,7 +849,10 @@ async function handleDistribute() {
   submitting.value = true
   errorMessage.value = ''
   result.value = null
+  let payloadKey = null
+  technicalFlow.value?.start({ nodeId: selfNodeId.value, peerNodeId: form.receiverNodeCode, algorithm: form.protectionAlgorithm, keyId: parsed.keyId, version: parsed.keyVersion })
   try {
+    technicalFlow.value?.stage('prepare', 'running', '生成本次会话载荷密钥并绑定接收公钥版本')
     // ---- 以下三步全在**本机**完成（KMS-009）----
     // 1) 本地生成 SM4 载荷密钥；
     payloadKey = generatePayloadKey()
@@ -848,6 +862,8 @@ async function handleDistribute() {
     // `envelope-signing.js` 文件头的说明），服务端仍会校验形状与上界。
     const batchId = newBatchId()
     const expiresAt = new Date(Date.now() + Number(form.expiresInHours) * 3600 * 1000).toISOString()
+    technicalFlow.value?.stage('prepare', 'success', '本地载荷、批次与接收方已绑定', { batchId, expiresAt })
+    technicalFlow.value?.stage('wrap', 'running', '使用所选接收公钥封装载荷密钥')
     const { envelope, keyHash, wrapping } = await buildNodeEnvelope({
       provider: cryptoProvider,
       payloadKey,
@@ -860,8 +876,12 @@ async function handleDistribute() {
       recipientKeyVersion: parsed.keyVersion,
       expiresAt
     })
+    technicalFlow.value?.stage('wrap', 'success', '载荷密钥封装完成', { wrapped: 1 })
+    technicalFlow.value?.stage('sign', 'running', '使用本机 Falcon 私钥签署信封')
     const signature = await signNodeEnvelope(cryptoProvider, falconKey.value.keyRef, envelope)
+    technicalFlow.value?.stage('sign', 'success', '本机信封签名完成', { signed: 1 })
 
+    technicalFlow.value?.stage('submit', 'running', '提交分发信封并等待服务端回执')
     const data = await createNodeDistribution({
       receiverNodeId: form.receiverNodeCode,
       protectionAlgorithm: form.protectionAlgorithm,
@@ -899,6 +919,8 @@ async function handleDistribute() {
       keyStored: false,
       keyStoreError: ''
     }
+    technicalFlow.value?.stage('submit', 'success', '服务端已返回分发记录', { sessionId: result.value.sessionId, sessionStatus: result.value.sessionStatus })
+    technicalFlow.value?.stage('store', 'running', '将会话材料加密保存到本机')
     // KMS-012（计划 §7 阶段 4：「解封得到 SM4 后保存到本地会话密钥库」）：
     // 发起方这把 K 是它自己生成的，同样要**留在本机** —— 会话双方各自提交
     // `HMAC(K, session_id)`，发起方不存 K 就永远确认不了（刷新一次即失联，
@@ -913,12 +935,15 @@ async function handleDistribute() {
         result.value.keyStoreError = String(error?.message || error)
       }
     }
+    technicalFlow.value?.stage('store', result.value.keyStored ? 'success' : 'partial', result.value.keyStored ? '本机会话材料已保存' : '本机会话材料保存未完成', { keyStored: result.value.keyStored })
     ElMessage.success('分发完成')
+    technicalFlow.value?.finish(result.value.keyStored ? 'success' : 'partial', '分发响应完成，双方确认仍由会话流程处理', { keyStored: result.value.keyStored })
     await loadBatches()
   } catch (error) {
     // 服务端的拒绝理由已经足够具体（没授权 / 版本不对 / 已回收 / 算法不允许），
     // 按**错误码**给下一步，而不是把文案原样抛回去 —— 用户要知道的是"该做什么"。
     errorMessage.value = describeError(error)
+    technicalFlow.value?.finish('failed', '分发操作失败')
     // 版本类的失败多半是因为列表已经过时（对方刚更新/回收），顺手刷一次，
     // 让用户下一眼看到的是当前真实可用的版本。
     if (error?.errorCode && error.errorCode !== 'NOT_AUTHORIZED') {
@@ -940,8 +965,10 @@ async function handleDistribute() {
 function describeError(error) {
   const fallback = error?.message || String(error) || '未知错误'
   switch (error?.errorCode) {
+    case 'NODE_CAPABILITY_REQUIRED':
+      return `${fallback}。请联系管理员在「节点管理 → 编辑 → 权限等级」中设置为 L2 或 L3，再重试分发。`
     case 'NOT_AUTHORIZED':
-      return '当前账号没有向该节点分发的权限（或未关联节点）。到「密钥分发 → 节点授权」发起申请，管理员批准后即可分发。'
+      return `${fallback}。请检查当前账号的节点关联和接收节点的通信授权；通信授权可在「密钥分发 → 节点授权」申请，由管理员批准。`
     case 'KEY_NOT_FOUND':
       return '接收方的这一版密钥不存在 —— 它可能刚被更新或回收。列表已刷新，请重选一版。'
     case 'KEY_REVOKED':

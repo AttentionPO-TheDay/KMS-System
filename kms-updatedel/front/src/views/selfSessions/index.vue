@@ -1,10 +1,12 @@
 <template>
   <div class="app-container">
     <el-tabs v-model="activeTab" aria-label="会话管理">
-      <el-tab-pane label="会话列表" name="sessions" :disabled="signingBusy" />
-      <el-tab-pane label="会话签名密钥" name="signing" />
+      <el-tab-pane label="会话列表" name="sessions" :disabled="signingBusy || groupBusy" />
+      <el-tab-pane label="多方协商" name="group" :disabled="signingBusy || groupBusy" />
+      <el-tab-pane label="会话签名密钥" name="signing" :disabled="groupBusy" />
     </el-tabs>
     <KeyGenerationPage v-if="activeTab === 'signing'" purpose="signing" @busy="signingBusy = $event" />
+    <GroupAgreement v-else-if="activeTab === 'group'" @busy="groupBusy = $event" />
     <el-card v-else shadow="never">
       <template #header>
         <div class="panel-head">
@@ -157,6 +159,9 @@
               >
                 确认
               </el-button>
+              <el-tooltip v-else-if="row.isSender && canProcess(row)" content="本浏览器缺少该会话密钥，请使用原浏览器；旧预分配批次需重新预分配。">
+                <span><el-button link size="small" disabled>确认</el-button></span>
+              </el-tooltip>
               <el-button
                 v-if="canClose(row)"
                 link type="danger" size="small"
@@ -175,31 +180,14 @@
       </template>
     </el-card>
 
-    <!-- 处理结果：每一步都如实列出（验签 / 解封 / 自查 / proof / 状态），失败时停在失败那一步 -->
-    <el-card v-if="progress" shadow="never" class="mt16">
-      <template #header>
-        <div class="panel-head">
-          <span>处理会话 {{ progress.sessionId }}</span>
-          <el-tag size="small" :type="progress.ok ? 'success' : 'danger'">
-            {{ progress.ok ? '处理完成' : '处理中止' }}
-          </el-tag>
-        </div>
-      </template>
-      <ol class="steps">
-        <li v-for="(step, index) in progress.steps" :key="index" :class="step.state">
-          <b>{{ step.title }}</b>
-          <span class="muted"> —— {{ step.detail }}</span>
-        </li>
-      </ol>
-      <p v-if="progress.message" class="muted">{{ progress.message }}</p>
-    </el-card>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onActivated, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import KeyGenerationPage from '@/views/generate/create.vue'
+import GroupAgreement from './GroupAgreement.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   closeSelfSession,
@@ -248,13 +236,16 @@ const loading = ref(false)
 const route = useRoute()
 const router = useRouter()
 const signingBusy = ref(false)
+const groupBusy = ref(false)
 const activeTab = computed({
-  get: () => route.query.keyPurpose === 'signing' ? 'signing' : 'sessions',
+  get: () => route.query.keyPurpose === 'signing' ? 'signing' : route.query.mode === 'group' ? 'group' : 'sessions',
   set: value => {
-    if (signingBusy.value) return
+    if (signingBusy.value || groupBusy.value) return
     const query = { ...route.query }
     if (value === 'signing') query.keyPurpose = 'signing'
     else delete query.keyPurpose
+    if (value === 'group') query.mode = 'group'
+    else delete query.mode
     router.replace({ path: route.path, query })
   }
 })
@@ -262,9 +253,8 @@ const mapped = ref(false)
 const all = ref([])
 const selfNodeId = ref('')
 const filter = reactive({ role: 'all', status: '', keyword: '', includeExpired: false })
-/** 正在处理的会话 ID（按钮 loading），以及上一次处理的逐步记录。 */
+/** 正在处理的会话 ID（按钮 loading）。 */
 const busySession = ref('')
-const progress = ref(null)
 
 /** 本机会话密钥库里有副本的会话 ID 集合（决定"确认"按钮的可用性）。 */
 const localKeySessions = ref(new Set())
@@ -317,9 +307,8 @@ function canProcess(row) {
  * 判据是"还没建立、未到终态、且本机存着这把 K"——三者缺一不可：
  *   * 已建立：没什么可确认的（服务端也会幂等回 ok，但按钮留着是噪音）；
  *   * 终态：服务端明确不收"死后确认"（SESSION_TERMINAL）；
- *   * 本机没有 K：算不出 proof。**不显示按钮**而不是让用户点了才报错 ——
- *     但也不隐藏这条会话（它确实存在），页面在该列显示"—"，用户需要知道
- *     要回原设备。
+ *   * 本机没有 K：算不出 proof。发送方显示禁用的确认按钮和材料缺失提示，
+ *     不允许无密钥确认，也不隐藏这条会话。
  * 已经确认过的一方会重复提交（服务端 upsert，幂等），所以不区分"我交没交过"——
  * 服务端返回的 confirmedCount 分不出是哪一方交的。
  */
@@ -357,42 +346,22 @@ function formatTime(value) {
   return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleString('zh-CN', { hour12: false })
 }
 
-/** 把每一步汇成一条可读记录（成功/失败/跳过），处理中止时停在失败那一步。 */
-function makeSteps() {
-  const steps = []
-  return {
-    steps,
-    add(title, state, detail) {
-      steps.push({ title, state, detail })
-    },
-    lists() {
-      return steps
-    }
-  }
-}
-
 /**
  * 处理一条会话（KMS-011）。全程在**本机**做密码学运算，服务端只收回报。
  *
  * 顺序是契约：取版本 → 取信封 → 验签 → 解封 → 自查 key_hash →
  * 回报 verify → 回报 recover → 算 proof → 提交确认。
- * 任何一步失败都**立即停**并如实显示停在哪一步 —— 不"跳过继续"，
+ * 任何一步失败都**立即停**并提示原因，不"跳过继续"，
  * 因为后面的每一句回报都以前面成立为前提（服务端状态机也会拒）。
  */
 async function handleProcess(row) {
   const sessionId = row.sessionId
   busySession.value = sessionId
-  progress.value = null
-  const tracker = makeSteps()
   let recoveredPayloadKey = null
   try {
     // ---- 1. 取这条会话的两版密钥（服务端从会话行读，不是"当前生产版"）----
     const versions = await getSessionVersions(sessionId)
-    tracker.add('取密钥版本', 'ok',
-      `验证用发送方 Falcon ${shortId(versions?.falconKeyId)} v${versions?.falconKeyVersion}；`
-      + `解封用接收方 ${shortId(versions?.recipientKeyId)} v${versions?.recipientKeyVersion}`)
     if (!versions?.falconPublicKey) {
-      tracker.add('取密钥版本', 'fail', '服务端没有可用的发送方 Falcon 公钥，无法验收（历史会话？）')
       throw new Error('缺少发送方 Falcon 公钥')
     }
 
@@ -400,10 +369,8 @@ async function handleProcess(row) {
     const envelopes = await listSelfEnvelopes()
     const entry = (envelopes?.items || []).find((item) => item.sessionId === sessionId)
     if (!entry) {
-      tracker.add('取信封', 'fail', '本节点的信封列表里没有这条会话（可能已过期，勾选"含已过期"再试）')
       throw new Error('没有可处理的信封')
     }
-    tracker.add('取信封', 'ok', `信封 #${entry.envelopeId}（${entry.wrappingAlgorithm}），密文摘要在信封内`)
 
     // ---- 3. 本机验签（用**发送方那一版**公钥 + 服务端同一份规范化实现）----
     const verified = await verifyNodeEnvelope({
@@ -413,16 +380,13 @@ async function handleProcess(row) {
       senderFalconPublicKeyHex: versions.falconPublicKey
     })
     if (!verified.ok) {
-      tracker.add('本机验签', 'fail', verified.detail)
       throw new Error(verified.detail)
     }
-    tracker.add('本机验签', 'ok', verified.detail)
 
     // ---- 4. 本机解封（密钥引用必须拼自**服务端记的那一版**，不是猜）----
     const recipientKeyId = versions.recipientKeyId
     const recipientKeyVersion = Number(versions.recipientKeyVersion)
     if (!recipientKeyId || !Number.isInteger(recipientKeyVersion)) {
-      tracker.add('本机解封', 'fail', '会话没有记录接收方密钥版本（历史会话），本页不做猜测解封')
       throw new Error('缺少接收方密钥版本')
     }
     const keyRef = buildKeyRef({
@@ -432,64 +396,44 @@ async function handleProcess(row) {
       version: recipientKeyVersion
     })
     if (!(await cryptoProvider.hasKey(keyRef))) {
-      tracker.add('本机解封', 'fail',
-        `本机密钥库里没有 ${keyRef} 的私钥（换过设备或清过站点数据）—— 需回原设备处理`)
       throw new Error('本机缺少对应私钥')
     }
     recoveredPayloadKey = await unwrapNodeEnvelope({
       provider: cryptoProvider, keyRef, envelope: entry.envelope
     })
-    tracker.add('本机解封', 'ok', `用 ${shortId(recipientKeyId)} v${recipientKeyVersion} 解出 16 字节 SM4`)
 
     // ---- 5. 自查：解出的 K 与发送方声明的是同一把 ----
     const hashCheck = await checkRecoveredKeyHash(recoveredPayloadKey, entry.envelope)
     if (!hashCheck.ok) {
-      tracker.add('密钥自查', 'fail', hashCheck.detail)
       throw new Error(hashCheck.detail)
     }
-    tracker.add('密钥自查', 'ok', hashCheck.detail)
 
     // ---- 5.5 存进**本地会话密钥库**（KMS-012 / 计划 §7 阶段 4）----
     // 存了之后：刷新页面仍能提交确认、关闭后能删；
     // 不存的话这次确认提交完，本机就再也算不出 proof（而页面上看不出为什么）。
     await sealSessionSecret(sessionId, recoveredPayloadKey)
     localKeySessions.value = new Set([...localKeySessions.value, sessionId])
-    tracker.add('保存会话密钥', 'ok', 'K 已存进本机会话密钥库（不上传服务端）')
 
     // ---- 6. 回报验签通过（服务端会独立复核一次再推进状态）----
-    const verifyResp = await verifyEnvelope(entry.envelopeId)
-    tracker.add('回报验签通过', 'ok',
-      `会话状态 → ${verifyResp?.status}${verifyResp?.advanced ? '' : '（此前已越过这一步）'}`)
+    await verifyEnvelope(entry.envelopeId)
 
     // ---- 7. 回报解封成功 ----
-    const recoverResp = await recoverEnvelope(entry.envelopeId)
-    tracker.add('回报解封成功', 'ok', `会话状态 → ${recoverResp?.status}`)
+    await recoverEnvelope(entry.envelopeId)
 
     // ---- 8. 算 proof 并提交（对方提交后双方一致才算建立）----
     // 用**库里那把**算，而不是手头这个变量：证明"存进去的那把"就是
     // 之后所有确认要用的那一把（取错长度或存坏的库会被这条当场抓到）。
     const proof = await sessionProofFromStore(sessionId)
     const confirmResp = await confirmSelfSession(sessionId, proof)
-    tracker.add('提交持有证明', 'ok', confirmResp?.msg || '已提交')
+    if (confirmResp?.reason === 'PROOF_MISMATCH') {
+      throw new Error(confirmResp?.msg || '双方证明不一致')
+    }
 
     const established = Boolean(confirmResp?.established) || confirmResp?.status === 'established'
-    progress.value = {
-      sessionId,
-      ok: established,
-      steps: tracker.lists(),
-      message: established
-        ? '双方确认一致，会话已建立。'
-        : '本机三步已如实回报；等待会话另一方确认 —— 双方 proof 一致才会提升为已建立。'
-    }
     ElMessage.success(established ? '会话已建立' : '本机处理完成，等待对方确认')
     await load()
   } catch (error) {
-    // 失败时把已完成/失败的那几步如实留下（progress.steps 里最后一条是 fail）
-    const steps = tracker.lists()
-    if (!steps.some((s) => s.state === 'fail')) {
-      steps.push({ title: '处理中止', state: 'fail', detail: describeError(error) })
-    }
-    progress.value = { sessionId, ok: false, steps, message: describeError(error) }
+    ElMessage.error(describeError(error))
   } finally {
     if (recoveredPayloadKey instanceof Uint8Array) recoveredPayloadKey.fill(0)
     busySession.value = ''
@@ -656,6 +600,7 @@ async function load() {
 }
 
 onMounted(load)
+onActivated(() => { if (!loading.value) load() })
 </script>
 
 <style scoped>
@@ -666,18 +611,7 @@ onMounted(load)
 }
 .filter-bar { margin-bottom: 8px; }
 .mb16 { margin-bottom: 16px; }
-.mt16 { margin-top: 16px; }
 .muted { color: var(--kms-text-secondary); font-size: 13px; }
-
-.steps {
-  margin: 0;
-  padding-left: 20px;
-}
-.steps li {
-  margin: 6px 0;
-  font-size: 13px;
-}
-.steps li.fail { color: var(--kms-danger-strong, #f53f3f); }
 
 .stat-row .stat {
   border: 1px solid var(--kms-border);

@@ -5,19 +5,14 @@
         <div class="la-header">
           <h2>泄漏关联分析</h2>
           <div class="la-query">
-            <!-- KMS-014：两类密钥的关联面**在不同表**里（用户密钥 = kms.keymanage、
-                 节点长期密钥 = falcon_kds.NodeLongTermKey），keyId 空间也不同
-                 （数字 vs 形如 KRb-XX-KYBER-1a2b3c4d 的字符串）。后端因此分成
-                 两个入口；这里显式选，避免"输入框填错表 → 查到空、看起来像没泄漏"。
-                 KMS-008 之后的节点到节点分发**完全不用用户密钥**，处置节点密钥
-                 泄漏要选第二项。 -->
-            <el-radio-group v-model="space" size="small">
+            <!-- 旧用户密钥空间仅保留给非节点主体；节点始终查询自身密钥。 -->
+            <el-radio-group v-if="!isNode" v-model="space" size="small">
               <el-radio-button value="user">用户密钥</el-radio-button>
-              <el-radio-button value="node">节点长期密钥</el-radio-button>
+              <el-radio-button value="node">节点密钥</el-radio-button>
             </el-radio-group>
             <el-input
               v-model="keyId"
-              :placeholder="space === 'user' ? '输入疑遭泄漏的用户密钥ID（数字）' : '输入节点长期密钥 keyId'"
+              :placeholder="space === 'user' ? '输入疑遭泄漏的用户密钥ID（数字）' : '输入节点密钥 keyId'"
               clearable
               style="width: 240px"
               @keyup.enter="load"
@@ -97,7 +92,7 @@
 </template>
 
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { getKeymanageAnalysis, getNodeKeyAnalysis } from '@/api/lifecycle/lifecycle'
 import { getOwnNodeKeyAnalysis } from '@/api/pqkds/key-diagnostics'
@@ -107,7 +102,12 @@ const route = useRoute()
 const keyId = ref('')
 /** KMS-014：'user' = 用户密钥（kms.keymanage）；'node' = 节点长期密钥。 */
 const userStore = useUserStore()
-const space = ref(userStore.principalType === 'NODE' ? 'node' : 'user')
+const isNode = computed(() => userStore.principalType === 'NODE')
+const selectedSpace = ref('user')
+const space = computed({
+  get: () => isNode.value ? 'node' : selectedSpace.value,
+  set: value => { selectedSpace.value = value }
+})
 const version = ref('')
 const loading = ref(false)
 const loaded = ref(false)
@@ -148,7 +148,7 @@ async function load() {
   const id = String(keyId.value || '').trim()
   if (!id || loading.value) return
   if (version.value && (!/^\d+$/.test(version.value) || Number(version.value) < 1 || Number(version.value) > 2147483647)) { analysisError.value = '版本须为正整数'; return }
-  if (space.value === 'user' && !/^\d+$/.test(id)) { analysisError.value = '请选择节点长期密钥'; return }
+  if (space.value === 'user' && !/^\d+$/.test(id)) { analysisError.value = '请选择节点密钥'; return }
   const requestId = ++analysisRequest
   loaded.value = false
   analysisError.value = ''

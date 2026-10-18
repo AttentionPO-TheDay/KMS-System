@@ -1,6 +1,7 @@
 # 独立 Fabric 国密 DID Bridge
 
 独立 Java 8 JVM，复用 `../jarFile` 的供应方定制 DID/Fabric SDK，不与现有 FISCO 服务共享 provider 或 SDK singleton。
+SysPid 系统标识上链独立入口、供应方链选择及调用方式见 [SYSPID_ONCHAIN.md](SYSPID_ONCHAIN.md)。原 `bindings/*` 接口行为保持不变。
 **本轮交付是离线适配，不是实链连通证明；默认关闭、默认禁止写链。** 生产源码没有模拟链或自动确认开关。
 
 ## 构建与依赖

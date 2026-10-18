@@ -203,7 +203,8 @@ def pool_summary(sender: Node, peers) -> list:
 
 def consume_pool_item(*, sender: Node, receiver: Node, batch_id: str,
                       protection_algorithm: str, falcon_key_id: Any = None,
-                      falcon_key_version: Any = None) -> Dict[str, Any]:
+                      falcon_key_version: Any = None, pool_id: str = None,
+                      key_hash: str = None) -> Dict[str, Any]:
     """取用一条预分配资源并**建立 initiated 会话**。见模块 docstring。
 
     @return `{item, envelope, session, session_id, recipient_key, remaining}`
@@ -246,7 +247,8 @@ def consume_pool_item(*, sender: Node, receiver: Node, batch_id: str,
 
     with transaction.atomic():
         # 取用（行锁 + 状态机 + 未过期 + 长期密钥复核全在 consume_key 里）。
-        result = KeyPoolService.consume_key(sender.node_id, receiver.node_id, 'kyber_kem')
+        selection = {'pool_id': pool_id, 'key_hash': key_hash} if pool_id is not None else {}
+        result = KeyPoolService.consume_key(sender.node_id, receiver.node_id, 'kyber_kem', **selection)
         if not result.get('success'):
             raise PoolConsumeError(
                 result.get('message') or '没有可用的预分配密钥',

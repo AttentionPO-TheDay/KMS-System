@@ -33,7 +33,7 @@ public class BridgeOfflineTest {
         System.setProperty("user.dir", work.toString());
         for (String name : new String[] {"connection.json", "certificate.pem", "msp-key.pem", "controller-public.pem", "gm.properties"})
             Files.write(runtime.resolve(name), "OFFLINE_TEST_FIXTURE_NOT_A_REAL_IDENTITY".getBytes(StandardCharsets.UTF_8));
-        String props = "networkConfigPath=../connection.json\ncertificatePath=../certificate.pem\nprivateKeyPath=../msp-key.pem\nchannelName=offline\nmspId=offline\nchaincodeId=offline\nuserName=offline\nencryption=SM2\ntimeOut=10\n";
+        String props = "networkConfigPath=../connection.json\ncertificatePath=../certificate.pem\nprivateKeyPath=../msp-key.pem\nchannelName=offline\nmethodId=offline\nmspId=offline\nchaincodeId=offline\nuserName=offline\nencryption=SM2\ntimeOut=10\n";
         Files.write(runtime.resolve("fabric.config.properties"), props.getBytes(StandardCharsets.UTF_8));
         Files.write(runtime.resolve("gm.properties"), ("org.hyperledger.fabric.sdk.crypto.default_crypto_suite_factory=org.hyperledger.fabric.sdk.security.GMCryptoSuiteFactory\n"
                 + "org.hyperledger.fabric.sdk.hash_algorithm=SM3\norg.hyperledger.fabric.sdk.security_level=256\n").getBytes(StandardCharsets.UTF_8));
@@ -60,6 +60,7 @@ public class BridgeOfflineTest {
         env.put("FABRIC_DID_PROPERTIES_FILE", runtime.resolve("fabric.config.properties").toString());
         env.put("FABRIC_DID_CONTROLLER_PUBLIC_KEY_FILE", runtime.resolve("controller-public.pem").toString());
         env.put("FABRIC_DID_PORT", "0");
+        env.put("FABRIC_DID_SYSPID_RECORDS_DIR", runtime.resolve("sys-pids").toString());
         return env;
     }
     private ObjectNode binding(String algorithm) {
@@ -302,6 +303,168 @@ public class BridgeOfflineTest {
         HttpReply duplicateJson = http("/internal/fabric-did/bindings/prepare", "offline-secret", "POST", "{\"a\":1,\"a\":2}");
         assertEquals(400, duplicateJson.code);
     }
+    private static final String SYS_PID = "3059301306072a8648ce3d020106082a811ccf5501822d034200044a02994903204dccb1bf325586fc028dcbe556fad25b6101abb307ce47d2baeceaa2c62fb3ee36ca3491137d6f2586cdc9ef4c88b2caa6149691daebdfc14db1";
+    private ObjectNode systemBody() { return Json.MAPPER.valueToTree(Json.map("sysPid", SYS_PID)); }
+    private SysPidService systemService() { return new SysPidService(config, () -> { initialized.incrementAndGet(); return fake; }); }
+    private Path systemRecordFolder() { return config.sysPidRecordsPath.resolve(Json.digest(config.chainId + "\n" + SysPidService.did(SYS_PID, config))); }
+    @Test public void systemIdentifierRequestMatchesVendorSpecification() {
+        String did = SysPidService.did(SYS_PID, config);
+        assertEquals("did:offline:offline:zhxun-test" + SYS_PID, did);
+        com.yunphant.yunid.sdk.req.DocumentReq request = VendorDidSdk.systemIdentifierRequest(did, SYS_PID, "GENERATED_CONTROLLER_PUBLIC_KEY");
+        assertEquals(did, request.getId()); assertEquals(SYS_PID, request.getMetadata());
+        assertEquals("ZHXUN_DID", request.getAlsoKnownAs()); assertEquals("GENERATED_CONTROLLER_PUBLIC_KEY", request.getPublicKey());
+        assertEquals(0, initialized.get());
+    }
+    @Test public void vendorMissingDidAcceptsOnlyKnownNumericOrDelimitedSdkCode() {
+        assertTrue(VendorDidSdk.isMissingDidError(new com.yunphant.yunid.sdk.exception.DidSdkException(400001, "not found")));
+        assertTrue(VendorDidSdk.isMissingDidError(new com.yunphant.yunid.sdk.exception.DidSdkException("400001|DID不存在")));
+        assertFalse(VendorDidSdk.isMissingDidError(new com.yunphant.yunid.sdk.exception.DidSdkException(900000, "blockchain error")));
+        assertFalse(VendorDidSdk.isMissingDidError(new com.yunphant.yunid.sdk.exception.DidSdkException("network error mentions 400001")));
+        assertFalse(VendorDidSdk.isMissingDidError(new com.yunphant.yunid.sdk.exception.DidSdkException("4000019|different code")));
+    }
+    @Test public void systemOnchainPersistsPlanBeforeSdkAndKeepsPrivateKeyLocal() throws Exception {
+        fake.beforeSystemSubmit = () -> {
+            try {
+                JsonNode saved = Json.MAPPER.readTree(Files.readAllBytes(systemRecordFolder().resolve("record.json")));
+                assertEquals("PENDING_VERIFICATION", saved.get("status").asText());
+                assertEquals(SYS_PID, saved.get("metadata").asText());
+                assertTrue(Files.isRegularFile(systemRecordFolder().resolve("controller-private.pem")));
+                assertFalse(saved.has("privateKey"));
+            } catch (Exception e) { throw new AssertionError(e); }
+        };
+        Map<String, Object> result = systemService().onchain(systemBody());
+        assertEquals("CONFIRMED", result.get("status")); assertEquals(fake.txId, result.get("txId"));
+        assertEquals(SYS_PID, fake.document.get("metadata")); assertEquals("ZHXUN_DID", fake.document.get("alsoKnownAs"));
+        assertFalse(Json.encode(result).contains("PRIVATE KEY")); assertFalse(result.containsKey("nonce"));
+        assertTrue(Files.isRegularFile(systemRecordFolder().resolve("verification.json")));
+        assertEquals(1, fake.submits); assertEquals(1, fake.systemKeys);
+    }
+    @Test public void systemRetryAndRestartReuseRecordedTransactionAndKey() {
+        SysPidService service = systemService();
+        Map<String, Object> first = service.onchain(systemBody());
+        assertEquals("CONFIRMED", service.onchain(systemBody()).get("status"));
+        assertEquals(first.get("txId"), systemService().onchain(systemBody()).get("txId"));
+        assertEquals(1, fake.submits); assertEquals(1, fake.systemKeys);
+    }
+    @Test public void systemTimeoutAndRestartNeverResubmitUnknownOutcome() {
+        fake.throwSubmit = true;
+        Map<String, Object> result = systemService().onchain(systemBody());
+        assertEquals("PENDING_VERIFICATION", result.get("status"));
+        assertEquals("SUBMISSION_OUTCOME_UNKNOWN", result.get("errorCode"));
+        assertEquals("PENDING_VERIFICATION", systemService().onchain(systemBody()).get("status"));
+        assertEquals(1, fake.submits); assertEquals(1, fake.systemKeys);
+    }
+    @Test public void explicitSystemRetryRequiresConfirmedAbsenceAndReusesKeyAndTransaction() {
+        fake.throwSubmit = true; fake.valid = null;
+        systemService().onchain(systemBody());
+        assertEquals(1, fake.submits);
+        systemService().retryUnrecordedTransaction(systemBody());
+        assertEquals(1, fake.submits); // 普通未知结果或网络失败，不能当作账本已明确不存在。
+        fake.absent = true; fake.throwSubmit = false;
+        Map<String, Object> retried = systemService().retryUnrecordedTransaction(systemBody());
+        assertEquals(fake.txId, retried.get("txId")); assertEquals(2, fake.submits); assertEquals(1, fake.systemKeys);
+        fake.valid = true;
+        assertEquals("CONFIRMED", systemService().verify(systemBody()).get("status"));
+        systemService().retryUnrecordedTransaction(systemBody()); assertEquals(2, fake.submits);
+    }
+    @Test public void systemVerificationRequiresValidTransactionAndExactDocument() {
+        SysPidService service = systemService(); service.onchain(systemBody());
+        fake.valid = null; assertEquals("PENDING_VERIFICATION", service.verify(systemBody()).get("status"));
+        fake.valid = false; assertEquals("FAILED", service.verify(systemBody()).get("status"));
+        fake.valid = true; fake.document.put("metadata", "foreign");
+        assertEquals("FAILED", service.verify(systemBody()).get("status"));
+        fake.document.put("metadata", SYS_PID); fake.document.put("alsoKnownAs", "other");
+        assertEquals("FAILED", service.verify(systemBody()).get("status"));
+        fake.document.put("alsoKnownAs", "ZHXUN_DID"); fake.document.put("verificationMethod", java.util.Collections.emptyList());
+        assertEquals("FAILED", service.verify(systemBody()).get("status"));
+        fake.document.put("deactivated", true);
+        assertEquals("FAILED", service.verify(systemBody()).get("status"));
+        assertEquals(1, fake.submits);
+    }
+    @Test public void existingSystemDocumentIsNotOverwrittenOrGivenInventedReceipt() {
+        fake.document = Json.map("id", SysPidService.did(SYS_PID, config), "metadata", SYS_PID, "alsoKnownAs", "ZHXUN_DID", "deactivated", false);
+        Map<String, Object> result = systemService().onchain(systemBody());
+        assertEquals("EXISTS", result.get("status")); assertFalse(result.containsKey("txId"));
+        assertEquals(0, fake.submits); assertEquals(0, fake.systemKeys);
+        fake.document.put("metadata", "foreign");
+        expect("SYSPID_DOCUMENT_CONFLICT", () -> systemService().onchain(systemBody()));
+        assertEquals(0, fake.submits);
+    }
+    @Test public void systemPidMustBeDerSequenceNotBusinessKeyIdOrPem() {
+        for (String invalid : new String[] {"logical-key-SM2", "-----BEGIN PUBLIC KEY-----", "0x" + SYS_PID,
+                " " + SYS_PID, "abc", "020101", SYS_PID + "00", "308103020101", ""}) {
+            ObjectNode body = systemBody(); body.put("sysPid", invalid);
+            expect(invalid.isEmpty() ? "INVALID_FIELD" : "INVALID_SYS_PID", () -> systemService().onchain(body));
+        }
+        ObjectNode injected = systemBody(); injected.put("privateKey", "never accept");
+        expect("UNKNOWN_FIELD", () -> systemService().onchain(injected));
+        assertEquals(0, initialized.get()); assertEquals(0, fake.systemKeys);
+    }
+    @Test public void systemMethodMustBeExplicitAlphabeticAndMatchSdkConfiguration() {
+        config.fabric.remove("methodId");
+        expect("SYSPID_METHOD_ID_NOT_CONFIGURED", () -> systemService().onchain(systemBody()));
+        config.fabric.setProperty("methodId", "method1");
+        expect("SYSPID_METHOD_ID_NOT_CONFIGURED", () -> systemService().onchain(systemBody()));
+        config.fabric.setProperty("methodId", "another");
+        expect("SYSPID_METHOD_ID_MISMATCH", () -> systemService().onchain(systemBody()));
+        assertEquals(0, initialized.get());
+    }
+    @Test public void systemWriteGatesPrecedeAllSdkCallsButVerificationWorksWhenPaused() {
+        systemService().onchain(systemBody());
+        Map<String, String> env = environment(); env.put("KMS_CHAIN_WRITES_ENABLED", "false");
+        SysPidService paused = new SysPidService(new BridgeConfig(env), () -> fake);
+        int before = fake.calls;
+        expect("CHAIN_WRITES_PAUSED", () -> paused.onchain(systemBody()));
+        assertEquals(before, fake.calls); assertEquals("CONFIRMED", paused.verify(systemBody()).get("status"));
+        env = environment(); env.put("FABRIC_DID_WRITE_ENABLED", "false");
+        SysPidService disabled = new SysPidService(new BridgeConfig(env), () -> { throw new AssertionError("No SDK"); });
+        expect("WRITE_DISABLED", () -> disabled.onchain(systemBody()));
+        env = environment(); env.put("FABRIC_DID_CREATE_POLICY_APPROVED", "false");
+        SysPidService unapproved = new SysPidService(new BridgeConfig(env), () -> { throw new AssertionError("No SDK"); });
+        expect("CHAIN_POLICY_NOT_APPROVED", () -> unapproved.onchain(systemBody()));
+    }
+    @Test public void systemStorageIsMandatoryAndFailureCannotSubmit() throws Exception {
+        Map<String, String> env = environment(); env.remove("FABRIC_DID_SYSPID_RECORDS_DIR");
+        SysPidService noStorage = new SysPidService(new BridgeConfig(env), () -> { throw new AssertionError("No SDK"); });
+        expect("SYSPID_RECORDS_NOT_CONFIGURED", () -> noStorage.onchain(systemBody()));
+        Path file = runtime.resolve("not-a-folder"); Files.write(file, new byte[] {1});
+        env = environment(); env.put("FABRIC_DID_SYSPID_RECORDS_DIR", file.toString());
+        SysPidService badStorage = new SysPidService(new BridgeConfig(env), () -> { throw new AssertionError("No SDK"); });
+        expect("SYSPID_RECORD_STORAGE_FAILED", () -> badStorage.onchain(systemBody()));
+        expect("SYSPID_RECORD_NOT_FOUND", () -> systemService().verify(systemBody()));
+        assertEquals(0, fake.submits);
+    }
+    @Test public void systemTamperedTransactionRecordCannotSubmitAgain() throws Exception {
+        systemService().onchain(systemBody());
+        Path record = systemRecordFolder().resolve("record.json");
+        ObjectNode plan = (ObjectNode) Json.MAPPER.readTree(Files.readAllBytes(record));
+        plan.put("nonce", FakeDidSdk.hex('c', 48));
+        Files.write(record, Json.encode(plan).getBytes(StandardCharsets.UTF_8));
+        expect("SYSPID_RECORD_MISMATCH", () -> systemService().onchain(systemBody()));
+        assertEquals(1, fake.submits);
+    }
+    @Test public void systemHttpRequiresAuthenticationAndAcceptsOnlySysPid() throws Exception {
+        server = new BridgeServer(config, () -> fake); server.start();
+        String path = "/internal/fabric-did/sys-pids/onchain";
+        assertEquals(401, http(path, null, "POST", Json.encode(systemBody())).code);
+        assertEquals(400, http(path, "offline-secret", "POST", "{\"sysPid\":42}").code);
+        ObjectNode extra = systemBody(); extra.put("publicKey", "not allowed");
+        assertEquals(400, http(path, "offline-secret", "POST", Json.encode(extra)).code);
+        assertEquals(0, fake.submits);
+        HttpReply result = http(path, "offline-secret", "POST", Json.encode(systemBody()));
+        assertEquals(200, result.code); assertEquals("CONFIRMED", result.body.get("data").get("status").asText());
+        HttpReply verified = http("/internal/fabric-did/sys-pids/verify", "offline-secret", "POST", Json.encode(systemBody()));
+        assertEquals("CONFIRMED", verified.body.get("data").get("status").asText()); assertEquals(1, fake.submits);
+    }
+    @Test public void vendorGeneratesRealIndependentSm2SystemKeysOffline() {
+        Map<String, String> first = VendorDidSdk.generateSystemKey(), second = VendorDidSdk.generateSystemKey();
+        assertTrue(first.get("publicKey").contains("BEGIN PUBLIC KEY"));
+        assertTrue(first.get("privateKey").contains("PRIVATE KEY"));
+        assertNotEquals(first.get("publicKey"), second.get("publicKey"));
+        com.yunphant.core.service.KmsService kms = new com.yunphant.core.service.impl.KmsServiceImpl();
+        String signature = kms.sign(first.get("privateKey"), "offline-system-identifier-test");
+        assertTrue(kms.verify(first.get("publicKey"), "offline-system-identifier-test", signature));
+    }
     private HttpReply http(String path, String token, String method, String request) throws Exception {
         HttpURLConnection connection = (HttpURLConnection) new URL("http://127.0.0.1:" + server.port() + path).openConnection();
         connection.setRequestMethod(method); connection.setConnectTimeout(2000); connection.setReadTimeout(2000);
@@ -327,7 +490,8 @@ public class BridgeOfflineTest {
     // 假 SDK 只存在于测试源码，生产不存在自动 CONFIRMED 的模拟开关。
     private static class FakeDidSdk implements DidSdk {
         final String txId = hex('a', 64), nonce = hex('b', 48);
-        int submits, calls; Boolean valid = true; boolean throwSubmit; String lastDid, readError;
+        int submits, calls, systemKeys; Boolean valid = true; boolean throwSubmit, absent; String lastDid, readError;
+        Runnable beforeSystemSubmit;
         Map<String, Object> document;
         static String hex(char value, int size) { StringBuilder text = new StringBuilder(); for (int i = 0; i < size; i++) text.append(value); return text.toString(); }
         @Override public Map<String, Object> newTransaction() { calls++; return Json.map("txId", txId, "nonce", nonce); }
@@ -344,6 +508,21 @@ public class BridgeOfflineTest {
             document = Json.map("id", did, "metadata", metadata, "deactivated", false, "status", "FOUND");
             return "SDK_PAYLOAD_OR_DID_NOT_A_TRANSACTION_ID";
         }
+        @Override public Map<String, String> newSystemKey() {
+            systemKeys++;
+            Map<String, String> result = new HashMap<>();
+            result.put("publicKey", "-----BEGIN PUBLIC KEY-----\nOFFLINE\n-----END PUBLIC KEY-----");
+            result.put("privateKey", "-----BEGIN PRIVATE KEY-----\nOFFLINE\n-----END PRIVATE KEY-----");
+            return result;
+        }
+        @Override public String createSystemIdentifier(String did, String sysPid, String publicKey, String nonce) {
+            if (beforeSystemSubmit != null) beforeSystemSubmit.run();
+            String result = create(did, sysPid, nonce);
+            document.put("alsoKnownAs", "ZHXUN_DID");
+            document.put("verificationMethod", java.util.Collections.singletonList(Json.map("publicKeyPem", publicKey)));
+            return result;
+        }
         @Override public Boolean transactionValid(String txId) { calls++; return submits == 0 ? null : valid; }
+        @Override public boolean transactionAbsent(String txId) { calls++; return absent; }
     }
 }

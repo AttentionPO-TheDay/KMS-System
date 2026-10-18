@@ -358,7 +358,12 @@ export function createNodeInitializationService(deps) {
     })
   }
 
-  async function generateAndRegisterNodeKey({ algorithm, nodeId, keyId, version = 1, variant, rotate = false, confirmUnusedIssuance, signal }) {
+  async function generateAndRegisterNodeKey({ algorithm, nodeId, keyId, version = 1, variant, rotate = false, confirmUnusedIssuance, signal, onStage }) {
+    // Presentation is an observer only; it must never alter the key workflow.
+    const report = (id, status, label, values = {}) => {
+      try { onStage?.({ id, status, label, values }) } catch { /* UI observer is non-blocking. */ }
+    }
+    report('identity', 'running', '读取节点身份及当前生产版本')
     if (!deps.locks?.request) throw new Error('当前浏览器不支持 Web Locks；为避免覆盖密钥，生成已关闭')
     const assertIdentity = identityGuard(nodeId)
     // Same per-node lock as initialization: no tab can create another pending key in parallel.
@@ -391,6 +396,8 @@ export function createNodeInitializationService(deps) {
           if (!variant) throw new Error('无法确认当前 KEM 参数，已停止自动更新')
         }
       }
+      report('identity', 'success', '节点身份、本机材料与生产版本校验完成')
+      report('material', 'running', '准备目标版本材料，已有封存材料优先复用')
       const candidates = localKeys.filter(local => local.algorithm === algorithm && (rotate
         ? local.keyId === keyId && Number(local.version) === Number(version)
         : !registeredKeys.some(server => server.algorithm === algorithm && server.keyId === local.keyId && Number(server.keyVersion) === Number(local.version))))
@@ -428,9 +435,14 @@ export function createNodeInitializationService(deps) {
       }
       await deps.writeMetaRecord({ k: rotate ? `rotation/${material.keyRef}` : metadataKey(nodeId, algorithm), ...registrationFields(material) })
       assertIdentity()
+      report('material', 'success', reused ? '已读取并复用目标版本的封存材料' : '目标版本已在本机生成并封存', { keyId: material.keyId, nextVersion: Number(material.version), reused })
+      report('selftest', 'running', '使用已封存材料执行本机自检')
       const check = await deps.selfTest(algorithm, material.keyRef)
+      report('selftest', check.ok ? 'success' : 'failed', check.ok ? '本机材料自检通过' : '本机材料自检未通过', { selfTestOk: Boolean(check.ok) })
       if (!check.ok) throw new Error(`新材料已封存，但自检未过：${check.detail}；未登记，平台生产版本不变，重试复用原材料`)
+      report('register', 'running', '提交目标版本公钥，等待登记回执')
       const result = await registerMaterial(material, { nodeId, fingerprint, identity, rotate, assertIdentity })
+      report('register', 'success', '服务端公钥登记回执已收到', { keyId: result?.keyId || material.keyId, nextVersion: Number(result?.keyVersion || material.version) })
       return { material, result, check, reused }
     })
   }

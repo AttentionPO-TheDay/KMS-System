@@ -118,7 +118,7 @@ class NodeListSerializer(CustomModelSerializer):
         return bool(obj.kyber_public_key)
 
     def get_falcon_key_ready(self, obj):
-        return bool(obj.falcon_public_key)
+        return bool(obj.falcon_sign_public_key or obj.falcon_public_key)
 
     def get_gm_key_ready(self, obj):
         return bool(obj.gm_public_key)

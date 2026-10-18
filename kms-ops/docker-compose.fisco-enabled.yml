@@ -1,0 +1,39 @@
+{
+  "services": {
+    "generate-java": {
+      "environment": {
+        "KMS_CHAIN_BACKEND": "legacy",
+        "KMS_CHAIN_WRITES_ENABLED": "true",
+        "KMS_CHAIN_CONSUMER_ENABLED": "true",
+        "FISCO_HOST": "fisco-node",
+        "FISCO_CONTRACT_ADDRESS": "0x1a61f0b42915fa8e25dbfd111e3db2c5c725bcb0",
+        "FISCO_PRIVATE_KEY": "${FISCO_PRIVATE_KEY:?FISCO_PRIVATE_KEY is required}",
+        "FABRIC_DID_ENABLED": "false",
+        "FABRIC_DID_WRITE_ENABLED": "false"
+      }
+    },
+    "updatedel-java": {
+      "environment": {
+        "KMS_CHAIN_BACKEND": "legacy",
+        "KMS_CHAIN_WRITES_ENABLED": "true",
+        "KMS_CHAIN_CONSUMER_ENABLED": "true",
+        "FISCO_HOST": "fisco-node",
+        "FISCO_CONTRACT_ADDRESS": "0x1a61f0b42915fa8e25dbfd111e3db2c5c725bcb0",
+        "FISCO_PRIVATE_KEY": "${FISCO_PRIVATE_KEY:?FISCO_PRIVATE_KEY is required}",
+        "FABRIC_DID_ENABLED": "false",
+        "FABRIC_DID_WRITE_ENABLED": "false",
+        "KMS_LIFECYCLE_CHAIN_SYNC_ENABLED": "true",
+        "KMS_LIFECYCLE_CHAIN_CONSUMER_ENABLED": "true"
+      }
+    },
+    "dvadmin3-django": {
+      "environment": {
+        "KMS_NODE_FISCO_ENABLED": "true",
+        "KMS_NODE_FISCO_CONTRACT_ADDRESS": "0x1a61f0b42915fa8e25dbfd111e3db2c5c725bcb0",
+        "KMS_NODE_FISCO_BASE": "http://updatedel-java:9082",
+        "KMS_CHAIN_BACKEND": "legacy",
+        "KMS_CHAIN_WRITES_ENABLED": "true"
+      }
+    }
+  }
+}

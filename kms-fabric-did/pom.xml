@@ -5,7 +5,10 @@
   <properties><maven.compiler.source>8</maven.compiler.source><maven.compiler.target>8</maven.compiler.target><project.build.sourceEncoding>UTF-8</project.build.sourceEncoding></properties>
   <repositories><repository><id>vendor-jars</id><url>file://${project.basedir}/../jarFile</url><releases><checksumPolicy>warn</checksumPolicy></releases><snapshots><enabled>true</enabled><checksumPolicy>warn</checksumPolicy></snapshots></repository></repositories>
   <dependencies>
-    <dependency><groupId>com.yunphant</groupId><artifactId>did-sdk-gm</artifactId><version>1.1.1</version></dependency>
+    <dependency><groupId>com.yunphant</groupId><artifactId>did-sdk-gm</artifactId><version>1.1.1</version><exclusions><exclusion><groupId>commons-logging</groupId><artifactId>commons-logging</artifactId></exclusion></exclusions></dependency>
+    <!-- SDK 使用 Commons Logging；统一桥接到 SLF4J，避免无实现或双份 LogFactory 吞掉错误。 -->
+    <dependency><groupId>org.slf4j</groupId><artifactId>jcl-over-slf4j</artifactId><version>1.7.30</version></dependency>
+    <dependency><groupId>org.slf4j</groupId><artifactId>slf4j-simple</artifactId><version>1.7.30</version><scope>runtime</scope></dependency>
     <dependency><groupId>com.fasterxml.jackson.core</groupId><artifactId>jackson-databind</artifactId><version>2.13.3</version></dependency>
     <dependency><groupId>junit</groupId><artifactId>junit</artifactId><version>4.13.2</version><scope>test</scope></dependency>
   </dependencies>

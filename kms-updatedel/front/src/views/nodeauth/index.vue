@@ -429,10 +429,6 @@ async function handleApprove(row) {
     if (created.length) parts.push(`新建授权 ${created.length} 条`)
     if (reactivated.length) parts.push(`重新激活 ${reactivated.length} 条`)
     ElMessage.success(`已批准${parts.length ? '（' + parts.join('、') + '）' : '（授权此前已存在）'}`)
-    if (data?.chainWarning) {
-      // 存证失败与授权成功是两件事：不隐藏，但不阻断。
-      ElMessage.warning(data.chainWarning)
-    }
     await Promise.all([loadPendingRequests(), load()])
   } catch (error) {
     ElMessage.error(`批准失败：${error.message}`)
@@ -460,11 +456,8 @@ async function handleReject(row) {
     return
   }
   try {
-    const data = await decideAuthorizationRequest(row.id, { decision: 'reject', remark })
+    await decideAuthorizationRequest(row.id, { decision: 'reject', remark })
     ElMessage.success('已驳回（未授予任何权限）')
-    if (data?.chainWarning) {
-      ElMessage.warning(data.chainWarning)
-    }
     await loadPendingRequests()
   } catch (error) {
     ElMessage.error(`驳回失败：${error.message}`)

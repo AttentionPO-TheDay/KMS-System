@@ -4,6 +4,8 @@ networkConfigPath=
 certificatePath=
 privateKeyPath=
 channelName=
+# SysPid DID 的 methodId 必须为纯英文字母，并与 FABRIC_DID_METHOD_ID 完全一致。
+methodId=
 mspId=
 chaincodeId=
 userName=

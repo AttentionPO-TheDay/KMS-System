@@ -947,7 +947,7 @@ def node_self_distributions(request, identity):
     try:
         require_capability(node, CAP_DISTRIBUTE)
     except NodePermissionError as exc:
-        return _error(str(exc), 403, error_code=C.ERR_NOT_AUTHORIZED)
+        return _error(str(exc), 403, error_code=C.ERR_NODE_CAPABILITY_REQUIRED)
 
     if receiver.id not in set(authorized_node_ids(identity['userId'])):
         return _error(
@@ -1677,6 +1677,11 @@ def node_pool_consume(request, identity):
         return _error('缺少或非法的 batchId（形状 dist-<14位时间>-<8位hex>，由节点侧生成）',
                       error_code=C.ERR_INVALID_PARAMETER)
 
+    pool_id, key_hash = payload.get('poolId'), payload.get('keyHash')
+    if pool_id is not None or key_hash is not None:
+        if (not isinstance(pool_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', pool_id)
+                or not isinstance(key_hash, str) or not re.fullmatch(r'[0-9a-f]{64}', key_hash)):
+            return _error('指定预分配资源必须同时提供有效的 poolId 与 keyHash', error_code=C.ERR_INVALID_PARAMETER)
     try:
         result = consume_pool_item(
             sender=node, receiver=peer, batch_id=batch_id,
@@ -1687,6 +1692,7 @@ def node_pool_consume(request, identity):
             falcon_key_version=payload.get('falconKeyVersion')
             if payload.get('falconKeyVersion') is not None
             else payload.get('falcon_key_version'),
+            pool_id=pool_id, key_hash=key_hash,
         )
     except PoolConsumeError as exc:
         return _error(exc.message, exc.http_status, error_code=exc.code)

@@ -1300,11 +1300,11 @@ class NodeViewSet(CustomModelViewSet):
             data = {
                 'node_id': node.node_id,
                 'kyber_public_key_fingerprint': fingerprint(node.kyber_public_key),
-                'falcon_public_key_fingerprint': fingerprint(node.falcon_public_key),
+                'falcon_public_key_fingerprint': fingerprint(node.falcon_sign_public_key or node.falcon_public_key),
                 'gm_public_key': node.gm_public_key,
                 'sscl_public_key': node.sscl_public_key,
                 'kyber_key_ready': bool(node.kyber_public_key),
-                'falcon_key_ready': bool(node.falcon_public_key),
+                'falcon_key_ready': bool(node.falcon_sign_public_key or node.falcon_public_key),
                 'gm_key_ready': bool(node.gm_public_key),
                 'sscl_key_ready': bool(node.sscl_public_key),
                 'kyber_security_level': node.kyber_security_level,

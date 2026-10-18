@@ -67,11 +67,15 @@ const DB_NAME = KEYSTORE_DB_NAME
 //        node/设备引用，而会话材料的主键是会话 ID —— 塞进 keys 会被
 //        canonicalRefForLookup 拒（或更糟：被当成人造 ref 存进去、
 //        永远查不出来）。
-const DB_VERSION = 4
+// v5: encrypted local contribution/retry state, separate from usable session keys.
+// v6: sender-owned pool secrets, retained before any protected package is uploaded.
+const DB_VERSION = 6
 const STORE_META = 'meta'
 const STORE_KEYS = 'keys'
 const STORE_DEVICE_KEYS = 'deviceKeys'
 const STORE_SESSION_KEYS = 'sessionKeys'
+const STORE_AGREEMENTS = 'agreementStates'
+const STORE_POOL_KEYS = 'poolKeys'
 
 const META_PROTECTOR = 'protector'
 const META_DEVICE = 'deviceId'
@@ -235,6 +239,12 @@ function openDb() {
         // （保护密钥 AES-GCM 封装后存字节），主键是会话 ID。
         // 它与 keys 分开的理由见文首 v4 那段：会话材料没有 keyRef。
         db.createObjectStore(STORE_SESSION_KEYS, { keyPath: 'sessionId' })
+      }
+      if (!db.objectStoreNames.contains(STORE_AGREEMENTS)) {
+        db.createObjectStore(STORE_AGREEMENTS, { keyPath: 'id' })
+      }
+      if (!db.objectStoreNames.contains(STORE_POOL_KEYS)) {
+        db.createObjectStore(STORE_POOL_KEYS, { keyPath: 'id' })
       }
       if (event.oldVersion < 3) {
         // 迁移必须用升级事务自己的 objectStore 请求完成 —— 见 migrateLegacyRefs
@@ -827,6 +837,76 @@ export async function sealSessionSecret(sessionId, payloadKey) {
   return { sessionId: id, bytes: bytes.length }
 }
 
+function poolSecretIdentity({ nodeId, peerNodeId, poolId, keyHash }) {
+  if (![nodeId, peerNodeId, poolId].every(value => typeof value === 'string' && value.trim()) ||
+      !/^[0-9a-f]{64}$/i.test(String(keyHash || ''))) throw new Error('预分配本地材料的节点、池号或摘要无效')
+  const context = { nodeId, peerNodeId, poolId, keyHash: keyHash.toLowerCase() }
+  return { ...context, id: JSON.stringify([nodeId, poolId, context.keyHash]) }
+}
+
+const poolSecretAAD = context => textEncoder.encode(JSON.stringify([
+  context.nodeId, context.peerNodeId, context.poolId, context.keyHash
+]))
+const poolSecretHash = async bytes => secretBytesHex(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)))
+
+/** Persist the sender's SM4 before upload; never send these bytes to the server. */
+export async function sealPoolSecret(values, payloadKey) {
+  const context = poolSecretIdentity(values)
+  const bytes = new Uint8Array(payloadKey)
+  try {
+    if (bytes.length !== 16 || await poolSecretHash(bytes) !== context.keyHash) throw new Error('预分配密钥长度或摘要不匹配，未上传')
+    const protector = await getOrCreateProtector()
+    const iv = crypto.getRandomValues(new Uint8Array(12))
+    const sealed = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: poolSecretAAD(context) }, protector, bytes)
+    await tx(STORE_POOL_KEYS, 'readwrite', store => req(store.add({
+      ...context, iv, sealed, expiresAt: values.expiresAt, createdAt: new Date().toISOString(), sessionId: '', uploaded: false
+    })))
+  } finally { bytes.fill(0) }
+}
+
+/** A partial upload publishes only the packages explicitly accepted by the API. */
+export async function markPoolSecretsUploaded(nodeId, poolId, keyHashes) {
+  const hashes = new Set(keyHashes)
+  const all = await tx(STORE_POOL_KEYS, 'readonly', store => req(store.getAll()))
+  const records = all.filter(item => item.nodeId === nodeId && item.poolId === poolId && hashes.has(item.keyHash))
+  if (records.length !== hashes.size) throw new Error('入池回执对应的本地预分配材料缺失')
+  await tx(STORE_POOL_KEYS, 'readwrite', store => Promise.all(records.map(record => req(store.put({ ...record, uploaded: true })))))
+}
+
+/** Select only an unconsumed, unexpired package whose sender secret exists here. */
+export async function nextLocalPoolSecret(nodeId, peerNodeId) {
+  const all = await tx(STORE_POOL_KEYS, 'readonly', store => req(store.getAll()))
+  const record = all.filter(item => item.nodeId === nodeId && item.peerNodeId === peerNodeId &&
+    item.uploaded && !item.sessionId && new Date(item.expiresAt).getTime() > Date.now())
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))[0]
+  if (!record) throw new Error('本机没有可取用的预分配密钥副本，请在本浏览器重新预分配；旧批次不能用于发送方确认')
+  return { poolId: record.poolId, keyHash: record.keyHash }
+}
+
+/** Match the consumed package by sender + peer + pool + hash, then bind its K. */
+export async function bindPoolSecretToSession(values, sessionId) {
+  const context = poolSecretIdentity(values)
+  if (typeof sessionId !== 'string' || !sessionId.trim()) throw new Error('缺少预分配会话 ID')
+  const record = await tx(STORE_POOL_KEYS, 'readonly', store => req(store.get(context.id)))
+  if (!record || record.peerNodeId !== context.peerNodeId) throw new Error('本机缺少此预分配资源的密钥副本，请使用原浏览器或重新预分配')
+  if (record.sessionId && record.sessionId !== sessionId) throw new Error('此预分配材料已绑定其他会话，禁止重复取用')
+  const protector = await getOrCreateProtector()
+  const bytes = new Uint8Array(await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: record.iv, additionalData: poolSecretAAD(context) }, protector, record.sealed
+  ))
+  try {
+    if (bytes.length !== 16 || await poolSecretHash(bytes) !== context.keyHash) throw new Error('预分配本地材料摘要不一致')
+    if (await hasSessionSecret(sessionId)) {
+      const existing = await unsealSessionSecret(sessionId)
+      try {
+        if (await poolSecretHash(existing) !== context.keyHash) throw new Error('该会话已保存不同材料，禁止覆盖')
+      } finally { existing.fill(0) }
+    } else await sealSessionSecret(sessionId, bytes)
+    await tx(STORE_POOL_KEYS, 'readwrite', store => req(store.put({ ...record, sessionId })))
+    return { sessionId, bytes: bytes.length }
+  } finally { bytes.fill(0) }
+}
+
 /** 读回会话密钥明文（本机）。没有该会话或解密失败时抛错 —— 不返回半截内容。 */
 export async function unsealSessionSecret(sessionId) {
   const id = String(sessionId ?? '').trim()
@@ -871,6 +951,36 @@ export async function listSessionSecrets() {
 export async function removeSessionSecret(sessionId) {
   const id = String(sessionId ?? '').trim()
   await tx(STORE_SESSION_KEYS, 'readwrite', (store) => req(store.delete(id)))
+}
+
+/** Group contributions and retry packets are encrypted and bound to group + node. */
+export async function saveAgreementState(agreementId, nodeId, state) {
+  const id = JSON.stringify([agreementId, nodeId])
+  const protector = await getOrCreateProtector()
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const bytes = textEncoder.encode(JSON.stringify(state))
+  try {
+    const sealed = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv, additionalData: textEncoder.encode(id) }, protector, bytes
+    )
+    await tx(STORE_AGREEMENTS, 'readwrite', store => req(store.put({ id, iv, sealed })))
+  } finally { bytes.fill(0) }
+}
+
+export async function readAgreementState(agreementId, nodeId) {
+  const id = JSON.stringify([agreementId, nodeId])
+  const record = await tx(STORE_AGREEMENTS, 'readonly', store => req(store.get(id)))
+  if (!record) return null
+  const protector = await getOrCreateProtector()
+  const bytes = new Uint8Array(await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: record.iv, additionalData: textEncoder.encode(id) }, protector, record.sealed
+  ))
+  try { return JSON.parse(new TextDecoder().decode(bytes)) } finally { bytes.fill(0) }
+}
+
+export async function removeAgreementState(agreementId, nodeId) {
+  const id = JSON.stringify([agreementId, nodeId])
+  await tx(STORE_AGREEMENTS, 'readwrite', store => req(store.delete(id)))
 }
 
 /**

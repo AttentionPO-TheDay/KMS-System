@@ -15,7 +15,7 @@ final class BridgeConfig {
     final int port, maxMetadataBytes;
     final Properties fabric = new Properties();
     final List<String> missingFields = new ArrayList<>();
-    final Path propertiesPath, controllerPublicKeyPath;
+    final Path propertiesPath, controllerPublicKeyPath, sysPidRecordsPath;
 
     BridgeConfig(Map<String, String> env) {
         enabled = bool(env, "FABRIC_DID_ENABLED");
@@ -33,8 +33,9 @@ final class BridgeConfig {
         Path parent = cwd.getParent();
         propertiesPath = path(env.get("FABRIC_DID_PROPERTIES_FILE"), cwd);
         controllerPublicKeyPath = path(env.get("FABRIC_DID_CONTROLLER_PUBLIC_KEY_FILE"), cwd);
+        sysPidRecordsPath = path(env.get("FABRIC_DID_SYSPID_RECORDS_DIR"), cwd);
         require("FABRIC_DID_CHAIN_ID", !chainId.trim().isEmpty());
-        require("FABRIC_DID_METHOD_ID", methodId.matches("[a-z0-9]+"));
+        require("FABRIC_DID_METHOD_ID", methodId.matches("[a-zA-Z0-9]+"));
         require("FABRIC_DID_NAMESPACE", namespace.matches("[a-zA-Z0-9_-]{1,80}"));
         require("INTERNAL_TOKEN", !internalToken.isEmpty());
         // SDK 固定从工作目录父目录取配置；不偷偷复制凭据，也不修改进程全局工作目录。

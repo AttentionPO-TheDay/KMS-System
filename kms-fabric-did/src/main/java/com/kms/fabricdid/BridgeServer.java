@@ -18,9 +18,11 @@ public final class BridgeServer {
     private final HttpServer server;
     private final ThreadPoolExecutor executor;
     private final BindingService service;
+    private final SysPidService sysPidService;
     private static final String BASE = "/internal/fabric-did/";
     BridgeServer(BridgeConfig config, DidSdk.Factory factory) throws Exception {
         service = new BindingService(config, factory);
+        sysPidService = new SysPidService(config, factory);
         server = HttpServer.create(new InetSocketAddress(config.host, config.port), 32);
         executor = new ThreadPoolExecutor(2, 8, 30, TimeUnit.SECONDS, new ArrayBlockingQueue<Runnable>(32), new ThreadPoolExecutor.AbortPolicy());
         server.setExecutor(executor);
@@ -53,6 +55,8 @@ public final class BridgeServer {
                 else if ("bindings/handoff".equals(action)) result = service.prepareHandoff(body);
                 else if ("bindings/submit".equals(action)) result = service.submit(body);
                 else if ("bindings/verify".equals(action)) result = service.verify(body);
+                else if ("sys-pids/onchain".equals(action)) result = sysPidService.onchain(body);
+                else if ("sys-pids/verify".equals(action)) result = sysPidService.verify(body);
                 else throw new BridgeException(404, "NOT_FOUND");
             } else throw new BridgeException(405, "METHOD_NOT_ALLOWED");
             reply(exchange, 200, Json.map("code", 200, "msg", "ok", "data", result));

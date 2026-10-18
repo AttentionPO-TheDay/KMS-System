@@ -588,6 +588,7 @@ export function getPoolSummary() {
 
 /**
  * 取用一条预分配资源（标记消费 + 建 initiated 会话 + 归还待签信封）。
+ * `poolId` + `keyHash` 可指定本机持有原密钥的资源；响应不包含明文 keyHex。
  *
  * @returns {Promise<{envelopeId, poolId, keyIndex, keyHash, wrappingAlgorithm,
  *                    recipientKeyId, recipientKeyVersion, expiresAt, sessionId,

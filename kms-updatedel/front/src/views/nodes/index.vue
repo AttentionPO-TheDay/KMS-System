@@ -68,6 +68,11 @@
         <el-table-column label="类型" width="100">
           <template #default="scope">{{ typeLabel(scope.row.node_type) }}</template>
         </el-table-column>
+        <el-table-column label="权限等级" min-width="230">
+          <template #default="scope">
+            {{ PERMISSION_LEVELS.find(level => level.value === scope.row.permission_level)?.label || 'L1（仅查询）' }}
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="120">
           <template #default="scope">
             <el-tag size="small" :type="statusTagType(scope.row.status)">
@@ -160,6 +165,11 @@
         <el-form-item label="所属组织">
           <el-input v-model="createForm.organization" />
         </el-form-item>
+        <el-form-item label="权限等级" prop="permission_level">
+          <el-select v-model="createForm.permission_level" style="width: 100%">
+            <el-option v-for="level in PERMISSION_LEVELS" :key="level.value" :label="level.label" :value="level.value" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="所属域" prop="domain_id">
           <el-select v-model="createForm.domain_id" filterable style="width: 100%" placeholder="选择已创建的域">
             <el-option v-for="domain in domainOptions" :key="domain" :label="domain" :value="domain" />
@@ -201,6 +211,11 @@
 </el-form-item>
         <el-form-item label="所属组织">
           <el-input v-model="editForm.organization" />
+        </el-form-item>
+        <el-form-item label="权限等级">
+          <el-select v-model="editForm.permission_level" style="width: 100%">
+            <el-option v-for="level in PERMISSION_LEVELS" :key="level.value" :label="level.label" :value="level.value" />
+          </el-select>
         </el-form-item>
         <el-form-item label="所属域">
           <el-select v-model="editForm.domain_id" filterable style="width: 100%" placeholder="选择已创建的域">
@@ -374,6 +389,12 @@ const NODE_TYPES = [
   { value: 'compute', label: '计算节点' }
 ]
 
+const PERMISSION_LEVELS = [
+  { value: 'L1', label: 'L1（仅查询）' },
+  { value: 'L2', label: 'L2（查询、生成、分发）' },
+  { value: 'L3', label: 'L3（查询、生成、分发、更新、回收）' }
+]
+
 const NODE_STATUS = [
   { value: 'registered', label: '已注册' },
   { value: 'kyber_uploaded', label: 'Kyber公钥已上传' },
@@ -418,6 +439,7 @@ const createForm = reactive({
   ip_address: '',
   port: 9003,
   node_type: 'full',
+  permission_level: 'L1',
   organization: '',
   domain_id: 'domain-1',
   contact_person: '',
@@ -427,7 +449,8 @@ const createRules = {
   node_id: [{ required: true, message: '节点ID必填', trigger: 'blur' }],
   name: [{ required: true, message: '节点名称必填', trigger: 'blur' }],
   ip_address: [{ required: true, message: 'IP 地址必填', trigger: 'blur' }],
-  port: [{ required: true, message: '端口必填', trigger: 'blur' }]
+  port: [{ required: true, message: '端口必填', trigger: 'blur' }],
+  permission_level: [{ required: true, type: 'enum', enum: ['L1', 'L2', 'L3'], message: '请选择有效的权限等级', trigger: 'change' }]
 }
 
 const editOpen = ref(false)
@@ -523,6 +546,7 @@ function openCreate() {
     ip_address: '',
     port: 9003,
     node_type: 'full',
+    permission_level: 'L1',
     organization: '',
     domain_id: 'domain-1',
     contact_person: '',
@@ -621,6 +645,7 @@ function openEdit(row) {
   Object.assign(editForm, {
     id: row.id,
     node_id: row.node_id,
+    permission_level: row.permission_level || 'L1',
     organization: row.organization || '',
     domain_id: row.domain_id || 'domain-1',
     department: row.department || '',
@@ -637,6 +662,10 @@ function openEdit(row) {
 
 async function submitEdit() {
   editError.value = ''
+  if (!PERMISSION_LEVELS.some(level => level.value === editForm.permission_level)) {
+    editError.value = '请选择有效的权限等级'
+    return
+  }
   saving.value = true
   try {
     const { id, node_id, ...payload } = editForm

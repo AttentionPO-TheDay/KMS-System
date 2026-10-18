@@ -7,6 +7,9 @@ interface DidSdk {
     Map<String, Object> read(String did);
     String transactionId(String nonce);
     String create(String did, String metadata, String nonce);
+    Map<String, String> newSystemKey();
+    String createSystemIdentifier(String did, String sysPid, String publicKey, String nonce);
     Boolean transactionValid(String txId);
+    default boolean transactionAbsent(String txId) { return false; }
     interface Factory { DidSdk create(); }
 }

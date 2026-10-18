@@ -33,6 +33,7 @@
 import 'fake-indexeddb/auto'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { KEYSTORE_DB_NAME } from '../src/utils/entry-mode.js'
 
 const HERE = fileURLToPath(import.meta.url)
 
@@ -338,7 +339,7 @@ async function runParent() {
 // ===========================================================================
 async function runMigrationChild() {
   console.log('\n=== 6. v2 → v3 迁移（子进程内造 v2 现场，再加载模块触发升级）===')
-  const DB = 'kms-node-keystore'
+  const DB = KEYSTORE_DB_NAME
   const LEGACY_SECRET = 'LEGACY-SECRET-1'
   const LEGACY_SM2_SECRET = 'LEGACY-SM2-SECRET'
 

@@ -19,6 +19,45 @@ from .api_contract import (
     key_status_allows_new_work,
     key_status_allows_unwrap,
 )
+class GroupKeyAgreement(models.Model):
+    """Independent contributory agreement. Never stores plaintext contributions or keys."""
+    agreement_id = models.CharField(max_length=64, unique=True)
+    initiator = models.ForeignKey('Node', on_delete=models.SET_NULL, null=True, related_name='initiated_agreements')
+    initiator_node_code = models.CharField(max_length=64)
+    roster = models.JSONField(default=list)
+    channels = models.JSONField(default=list)
+    scope_hash = models.CharField(max_length=64)
+    transcript_hash = models.CharField(max_length=64, blank=True)
+    status = models.CharField(max_length=20, default='committing')
+    failure_reason = models.CharField(max_length=200, blank=True)
+    events = models.JSONField(default=list)
+    created_at = models.DateTimeField(default=timezone.now)
+    expires_at = models.DateTimeField()
+
+    class Meta:
+        db_table = f'{table_prefix}pqkds_group_agreements'
+        ordering = ['-created_at', '-id']
+
+
+class GroupAgreementMember(models.Model):
+    agreement = models.ForeignKey(GroupKeyAgreement, on_delete=models.CASCADE, related_name='members')
+    node = models.ForeignKey('Node', on_delete=models.SET_NULL, null=True, related_name='group_agreement_memberships')
+    participant_node_code = models.CharField(max_length=64)
+    commitment = models.CharField(max_length=64, blank=True)
+    packets = models.JSONField(default=list)
+    proof = models.CharField(max_length=64, blank=True)
+    committed_at = models.DateTimeField(null=True)
+    exchanged_at = models.DateTimeField(null=True)
+    confirmed_at = models.DateTimeField(null=True)
+
+    class Meta:
+        db_table = f'{table_prefix}pqkds_group_agreement_members'
+        constraints = [
+            models.UniqueConstraint(fields=['agreement', 'node'], name='pqkds_group_member_unique'),
+            models.UniqueConstraint(fields=['agreement', 'participant_node_code'], name='pqkds_group_code_unique'),
+        ]
+
+
 class SystemParameters(CoreModel):
     name = models.CharField(max_length=100, unique=True, verbose_name="参数名称", help_text="系统参数名称")
     n = models.IntegerField(verbose_name="安全参数n", help_text="Falcon安全参数n")

@@ -395,6 +395,7 @@ class KeyPoolService:
         node1_id: str, node2_id: str,
         algorithm: str = None, session: SessionKey = None,
         skip_locked: bool = True,
+        pool_id: str = None, key_hash: str = None,
     ) -> Dict[str, Any]:
         """从密钥池中取出一条未使用的密钥。支持双向查找（A↔B 或 B↔A）。
 
@@ -471,6 +472,13 @@ class KeyPoolService:
         )
         if algorithm:
             q = q.filter(algorithm=algorithm)
+
+        # A sender may select only packages whose original K is sealed locally.
+        # Existing pair/expiry/revocation/row-lock checks still apply unchanged.
+        if pool_id is not None:
+            q = q.filter(pool_id=pool_id)
+        if key_hash is not None:
+            q = q.filter(key_hash=key_hash)
 
         # ---- 整个临界区在一个事务里（见 docstring 断口 2）----
         # `MAX_PROBE`：同一次消费内最多探测的候选条数。池子被大规模污染时

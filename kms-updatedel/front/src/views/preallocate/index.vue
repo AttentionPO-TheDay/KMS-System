@@ -28,7 +28,7 @@
         description="预分配是给某条通信线路备料，要先有通信权限。到「密钥分发 → 节点授权」挑对端发起申请，管理员批准后即可预分配。"
       />
 
-      <TechnicalView kind="preallocation" />
+      <TechnicalView ref="technicalFlow" kind="preallocation" />
       <el-form label-width="120px" class="alloc-form" @submit.prevent>
         <el-form-item label="接收节点">
           <el-select
@@ -159,6 +159,7 @@ import {
 import { listUserNodes } from '@/services/user-distribution-api'
 import { cryptoProvider } from '@/utils/crypto/browser-provider.js'
 import { buildKeyRef } from '@/utils/crypto/key-ref.js'
+import { sealPoolSecret, markPoolSecretsUploaded } from '@/utils/crypto/node-key-store.js'
 import {
   buildNodeEnvelope,
   generatePayloadKey,
@@ -174,6 +175,7 @@ const loading = ref(false)
 const submitting = ref(false)
 const nodes = ref([])
 const result = ref(null)
+const technicalFlow = ref(null)
 const selfNodeId = ref('')
 const falconKey = ref(null)
 const falconReady = ref(false)
@@ -250,45 +252,57 @@ async function submit() {
   }
   submitting.value = true
   result.value = null
+  const nodeId = selfNodeId.value, peerNodeId = form.nodeCode, requested = Number(form.count)
+  technicalFlow.value?.start({ nodeId, peerNodeId, algorithm: 'KYBER', requested })
   try {
-    const peerKey = await fetchPeerKyberKey(form.nodeCode)
+    technicalFlow.value?.stage('peer', 'running', '读取接收节点当前可用公钥')
+    const peerKey = await fetchPeerKyberKey(peerNodeId)
+    technicalFlow.value?.stage('peer', 'success', '接收公钥及版本已取得', { keyId: peerKey.keyId, version: peerKey.keyVersion })
     // 池号与有效期**必须在签名之前**定下（它们进签名：`batch_id`/`expires_at`）。
     const poolId = `pool_${toHex(crypto.getRandomValues(new Uint8Array(16)))}`
     const expiresAt = new Date(Date.now() + Number(form.ttlHours) * 3600 * 1000).toISOString()
+    technicalFlow.value?.record('预分配批次与有效期已绑定', { poolId, expiresAt })
+    technicalFlow.value?.stage('prepare', 'running', '逐条生成载荷密钥、封装保护包并签名', { generated: 0, wrapped: 0, signed: 0 })
 
     // ---- 本机生成 + 封装 + 签名（任务书那句"提前生成…形成加密保护包"）----
     const t0 = performance.now()
     const items = []
-    for (let i = 0; i < form.count; i++) {
+    for (let i = 0; i < requested; i++) {
       const payloadKey = generatePayloadKey()
-      const built = await buildNodeEnvelope({
-        provider: cryptoProvider,
-        payloadKey,
-        wrapping: 'KYBER',
-        recipientPublicKeyHex: peerKey.publicKey,
-        batchId: poolId,
-        senderNodeId: selfNodeId.value,
-        receiverNodeId: form.nodeCode,
-        recipientKeyId: peerKey.keyId,
-        recipientKeyVersion: peerKey.keyVersion,
-        expiresAt
-      })
-      const signature = await signNodeEnvelope(cryptoProvider, falconKey.value.keyRef, built.envelope)
-      // ⚠️ 不在这里把 K 存进本机会话库：此刻还没有会话（会话号是取用时才产生的），
-      //    存了也关联不上。发送方**在取用时**才需要持有 K —— 而它此刻就在本页的
-      //    内存里，落库时机归取用那条路径（见分发页的取用流程）。
-      items.push({ envelope: built.envelope, signature, keyHash: built.keyHash })
+      try {
+        technicalFlow.value?.progress('prepare', { generated: i + 1 })
+        const built = await buildNodeEnvelope({
+          provider: cryptoProvider,
+          payloadKey,
+          wrapping: 'KYBER',
+          recipientPublicKeyHex: peerKey.publicKey,
+          batchId: poolId,
+          senderNodeId: nodeId,
+          receiverNodeId: peerNodeId,
+          recipientKeyId: peerKey.keyId,
+          recipientKeyVersion: peerKey.keyVersion,
+          expiresAt
+        })
+        technicalFlow.value?.progress('prepare', { wrapped: i + 1 })
+        const signature = await signNodeEnvelope(cryptoProvider, falconKey.value.keyRef, built.envelope)
+        technicalFlow.value?.progress('prepare', { signed: i + 1 })
+        // Retain the sender's K before upload; consume later binds it to a session.
+        await sealPoolSecret({ nodeId, peerNodeId, poolId, keyHash: built.keyHash, expiresAt }, payloadKey)
+        items.push({ envelope: built.envelope, signature, keyHash: built.keyHash })
+      } finally { payloadKey.fill(0) }
     }
     const localMs = performance.now() - t0
+    technicalFlow.value?.stage('prepare', 'success', '本机保护包全部准备完成', { prepared: items.length })
 
     // ---- 分批上传（服务端逐条验签；一批太大响应时间不可控）----
     let generated = 0
     const failed = []
     let serverMs = 0
+    technicalFlow.value?.stage('submit', 'running', '上传保护包，等待服务端逐批入池回执', { uploaded: 0, accepted: 0, rejected: 0 })
     for (let start = 0; start < items.length; start += chunkSize) {
       const chunk = items.slice(start, start + chunkSize)
       const data = await preallocatePool({
-        targetNodeCode: form.nodeCode,
+        targetNodeCode: peerNodeId,
         poolId,
         expiresAt,
         items: chunk,
@@ -300,11 +314,19 @@ async function submit() {
       for (const item of (data?.failed || [])) {
         failed.push({ ...item, index: start + Number(item.index || 0) })
       }
+      technicalFlow.value?.progress('submit', { uploaded: start + chunk.length, accepted: generated, rejected: failed.length })
+      technicalFlow.value?.record('服务端批次入池响应', { accepted: generated, rejected: failed.length })
+      const rejected = new Set((data?.failed || []).map(item => Number(item.index)))
+      const accepted = chunk.filter((_item, index) => !rejected.has(index))
+      if (Number(data?.generated) === accepted.length) {
+        await markPoolSecretsUploaded(nodeId, poolId, accepted.map(item => item.keyHash))
+      }
     }
 
+    technicalFlow.value?.stage('submit', generated === items.length ? 'success' : (generated > 0 ? 'partial' : 'failed'), '本次入池回执已汇总', { accepted: generated, rejected: failed.length })
     result.value = {
       poolId,
-      nodeCode: form.nodeCode,
+      nodeCode: peerNodeId,
       requested: items.length,
       generated,
       failed,
@@ -319,7 +341,9 @@ async function submit() {
       // 部分成功**如实说**：不能因为"有成功的"就把失败那几条吞掉。
       ElMessage.warning(`${failed.length} 条未通过，原因见下方明细`)
     }
+    technicalFlow.value?.finish(generated === items.length ? 'success' : (generated > 0 ? 'partial' : 'failed'), '本次预分配响应汇总', { accepted: generated, rejected: failed.length })
   } catch (error) {
+    technicalFlow.value?.finish('failed', '预分配中断，保留已收到的业务记录')
     ElMessage.error(error?.errorCode ? error.message : (error?.message || '预分配失败'))
   } finally {
     submitting.value = false
