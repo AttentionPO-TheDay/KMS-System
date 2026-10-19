@@ -1,0 +1,5 @@
+*.tar.gz
+payload/
+backup/
+__pycache__/
+applied

@@ -206,3 +206,19 @@ kms-distribute/111.7z
 /kms-acceptance/front/.*.png
 /kms-updatedel/front/.*.png
 # 发布镜像归档已由 *.tar/*.tar.gz 排除；保留发布说明和校验清单。
+
+# 本地临时环境、交接记录与参考材料，不显示在源代码管理列表中。
+/tmp/
+/output/
+/CODEX_HANDOFF.md
+/1.3项目任务书（盖章）.pdf
+
+# 发布过程生成的构建副本、源码快照、截图、报告和差异备份。
+# 发布脚本、说明和 SHA256SUMS 校验清单仍由 Git 管理。
+/kms-ops/releases/*/ui-dist/
+/kms-ops/releases/*/source/
+/kms-ops/releases/*/*.png
+/kms-ops/releases/*/*.json
+/kms-ops/releases/*/*.patch
+/kms-ops/releases/*/*.diff
+/kms-ops/releases/*/security-tests
