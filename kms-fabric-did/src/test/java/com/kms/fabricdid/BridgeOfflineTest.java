@@ -381,6 +381,20 @@ public class BridgeOfflineTest {
         assertEquals("FAILED", service.verify(systemBody()).get("status"));
         assertEquals(1, fake.submits);
     }
+    @Test public void migratedCreatorSerializationCanVerifyWithoutResubmitting() {
+        systemService().onchain(systemBody()); fake.migratedCreator = true;
+        assertEquals("CONFIRMED", systemService().verify(systemBody()).get("status"));
+        assertEquals("CONFIRMED", systemService().onchain(systemBody()).get("status"));
+        assertEquals(1, fake.submits); assertEquals(1, fake.systemKeys);
+    }
+    @Test public void migratedCreatorCannotRetryWithAnotherTransactionId() throws Exception {
+        fake.throwSubmit = true; fake.valid = null;
+        systemService().onchain(systemBody()); fake.migratedCreator = true; fake.absent = true;
+        byte[] original = Files.readAllBytes(systemRecordFolder().resolve("record.json"));
+        expect("SYSPID_SIGNER_SERIALIZATION_CHANGED", () -> systemService().retryUnrecordedTransaction(systemBody()));
+        assertArrayEquals(original, Files.readAllBytes(systemRecordFolder().resolve("record.json")));
+        assertEquals(1, fake.submits); assertEquals(1, fake.systemKeys);
+    }
     @Test public void existingSystemDocumentIsNotOverwrittenOrGivenInventedReceipt() {
         fake.document = Json.map("id", SysPidService.did(SYS_PID, config), "metadata", SYS_PID, "alsoKnownAs", "ZHXUN_DID", "deactivated", false);
         Map<String, Object> result = systemService().onchain(systemBody());
@@ -490,12 +504,15 @@ public class BridgeOfflineTest {
     // 假 SDK 只存在于测试源码，生产不存在自动 CONFIRMED 的模拟开关。
     private static class FakeDidSdk implements DidSdk {
         final String txId = hex('a', 64), nonce = hex('b', 48);
-        int submits, calls, systemKeys; Boolean valid = true; boolean throwSubmit, absent; String lastDid, readError;
+        int submits, calls, systemKeys; Boolean valid = true; boolean throwSubmit, absent, migratedCreator; String lastDid, readError;
         Runnable beforeSystemSubmit;
         Map<String, Object> document;
         static String hex(char value, int size) { StringBuilder text = new StringBuilder(); for (int i = 0; i < size; i++) text.append(value); return text.toString(); }
         @Override public Map<String, Object> newTransaction() { calls++; return Json.map("txId", txId, "nonce", nonce); }
-        @Override public String transactionId(String candidate) { calls++; return nonce.equals(candidate) ? txId : hex('d', 64); }
+        @Override public String transactionId(String candidate) { calls++; return nonce.equals(candidate) && !migratedCreator ? txId : hex('d', 64); }
+        @Override public boolean matchesRecordedTransactionId(String candidate, String expected) {
+            return migratedCreator && nonce.equals(candidate) && txId.equals(expected) || DidSdk.super.matchesRecordedTransactionId(candidate, expected);
+        }
         @Override public Map<String, Object> read(String did) {
             calls++; lastDid = did;
             if (readError != null) throw new BridgeException(502, readError);

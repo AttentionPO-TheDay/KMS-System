@@ -1,0 +1,15 @@
+services:
+  fabric-did-bridge:
+    image: kms-fabric-did:local
+    environment:
+      FABRIC_DID_ENABLED: "true"
+      KMS_CHAIN_WRITES_ENABLED: "false"
+      FABRIC_DID_WRITE_ENABLED: "false"
+      FABRIC_DID_CREATE_POLICY_APPROVED: "false"
+      FABRIC_DID_CHAIN_ID: "vendor-didchannel4"
+      FABRIC_DID_METHOD_ID: "yunId"
+      FABRIC_DID_SYSPID_RECORDS_DIR: "/run/fabric-did/records"
+    volumes:
+      - /home/rbf/kms-sys/fabric-did-secrets/syspid-yunId-channel4:/run/fabric-did:ro
+      - /home/rbf/kms-sys/fabric-did-secrets/syspid-yunId-channel4/work:/run/fabric-did/work:rw
+      - /home/rbf/kms-sys/fabric-did-secrets/syspid-yunId-channel4/records:/run/fabric-did/records:rw

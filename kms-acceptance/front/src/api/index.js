@@ -13,6 +13,7 @@ export const API = {
   postRun: (data) => fetchJson('/runs', { method: 'POST', body: JSON.stringify(data) }),
   
   getSecurityRuns: () => fetchJson('/security/runs'),
+  getSecurityRun: id => fetchJson(`/security/runs/${encodeURIComponent(id)}`),
   postSecurityRun: (data) => fetchJson('/security/runs', { method: 'POST', body: JSON.stringify(data) }),
   cancelSecurityRun: id => fetchJson(`/security/runs/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: '{}' }),
 

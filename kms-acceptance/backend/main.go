@@ -145,22 +145,33 @@ type SecurityRequestTrace struct {
 	Outcome      string `json:"outcome,omitempty"`
 	Message      string `json:"message,omitempty"`
 	ResponseBody string `json:"responseBody,omitempty"`
+	RecordedAt   string `json:"recordedAt,omitempty"`
+	DurationMs   int64  `json:"durationMs"`
 }
 
 type SecurityRunResult struct {
-	ID         string                 `json:"id"`
-	CaseID     string                 `json:"caseId"`
-	Status     string                 `json:"status"`
-	Stage      string                 `json:"stage,omitempty"`
-	Verdict    string                 `json:"verdict"`
-	Passed     bool                   `json:"passed"`
-	StartedAt  string                 `json:"startedAt"`
-	FinishedAt string                 `json:"finishedAt,omitempty"`
-	Summary    string                 `json:"summary,omitempty"`
-	Error      string                 `json:"error,omitempty"`
-	Notes      []string               `json:"notes,omitempty"`
-	Requests   []SecurityRequestTrace `json:"requests,omitempty"`
-	RawOutput  string                 `json:"rawOutput,omitempty"`
+	ID                 string                 `json:"id"`
+	CaseID             string                 `json:"caseId"`
+	Status             string                 `json:"status"`
+	Stage              string                 `json:"stage,omitempty"`
+	Verdict            string                 `json:"verdict"`
+	Passed             bool                   `json:"passed"`
+	StartedAt          string                 `json:"startedAt"`
+	FinishedAt         string                 `json:"finishedAt,omitempty"`
+	Summary            string                 `json:"summary,omitempty"`
+	Error              string                 `json:"error,omitempty"`
+	Notes              []string               `json:"notes,omitempty"`
+	Requests           []SecurityRequestTrace `json:"requests,omitempty"`
+	RawOutput          string                 `json:"rawOutput,omitempty"`
+	ExpectedCode       string                 `json:"expectedCode,omitempty"`
+	ActualCode         string                 `json:"actualCode,omitempty"`
+	LegalControlPassed bool                   `json:"legalControlPassed"`
+	EvidenceVersion    int                    `json:"evidenceVersion,omitempty"`
+	TestInput          string                 `json:"testInput,omitempty"`
+	ValidationRule     string                 `json:"validationRule,omitempty"`
+	ExpectedReason     string                 `json:"expectedReason,omitempty"`
+	ActualReason       string                 `json:"actualReason,omitempty"`
+	ReasonMatched      bool                   `json:"reasonMatched"`
 }
 
 type ProofRunRequest struct {
@@ -272,21 +283,27 @@ type MetricCheck struct {
 	ReportedAt string  `json:"reportedAt,omitempty"`
 }
 
+type ExecutionStage struct {
+	At    string `json:"at"`
+	Label string `json:"label"`
+}
+
 type RunResult struct {
-	ID          string      `json:"id"`
-	ScenarioID  string      `json:"scenarioId"`
-	Scenario    string      `json:"scenario"`
-	Status      string      `json:"status"`
-	Stage       string      `json:"stage,omitempty"`
-	StartedAt   string      `json:"startedAt"`
-	FinishedAt  string      `json:"finishedAt,omitempty"`
-	TargetTPS   float64     `json:"targetTps"`
-	PassedTPS   bool        `json:"passedTps"`
-	WrkCommand  []string    `json:"wrkCommand"`
-	Summary     RunSummary  `json:"summary"`
-	MetricCheck MetricCheck `json:"metricCheck"`
-	Notes       []string    `json:"notes,omitempty"`
-	Error       string      `json:"error,omitempty"`
+	ID          string           `json:"id"`
+	ScenarioID  string           `json:"scenarioId"`
+	Scenario    string           `json:"scenario"`
+	Status      string           `json:"status"`
+	Stage       string           `json:"stage,omitempty"`
+	Stages      []ExecutionStage `json:"stages,omitempty"`
+	StartedAt   string           `json:"startedAt"`
+	FinishedAt  string           `json:"finishedAt,omitempty"`
+	TargetTPS   float64          `json:"targetTps"`
+	PassedTPS   bool             `json:"passedTps"`
+	WrkCommand  []string         `json:"wrkCommand"`
+	Summary     RunSummary       `json:"summary"`
+	MetricCheck MetricCheck      `json:"metricCheck"`
+	Notes       []string         `json:"notes,omitempty"`
+	Error       string           `json:"error,omitempty"`
 }
 
 type persistedRuns struct {
@@ -632,9 +649,9 @@ func acceptanceCriteria() []AcceptanceCriterion {
 		{ID: "key-update", Category: "performance", Title: "密钥更新速率", Requirement: "成功更新 TPS ≥ 5000 条/秒", Kind: "scenario", Target: 5000, Operator: ">=", Unit: "TPS", ScenarioID: "update-tps", ExecutionScope: "admin", EvidenceSource: "kms-updatedel / UPDATE_KEY"},
 		{ID: "abnormal-revoke", Category: "performance", Title: "异常密钥回收速率", Requirement: "成功回收 TPS ≥ 5000 条/秒", Kind: "scenario", Target: 5000, Operator: ">=", Unit: "TPS", ScenarioID: "revoke-tps", ExecutionScope: "admin", EvidenceSource: "kms-updatedel / REVOKE_KEY", Notes: []string{"只使用验收专用密钥池，不触碰生产密钥。"}},
 		{ID: "revoke-rate", Category: "performance", Title: "密钥最终回收率", Requirement: "最终状态回收率 > 98%", Kind: "scenario", Target: 98, Operator: ">", Unit: "%", ScenarioID: "revoke-rate", ExecutionScope: "admin", EvidenceSource: "生命周期最终状态查询（status=3）"},
-		{ID: "generation-attacks", Category: "security", Title: "密钥生成协议校验", Requirement: "3 类签发入口非法请求明确拒绝", Kind: "security-suite", Target: 3, Operator: ">=", Unit: "类", CaseIDs: []string{"generation-identity-injection", "generation-unknown-algorithm", "generation-malformed-json"}, ExecutionScope: "admin", EvidenceSource: "system_security.go / 实际 Demo 网关"},
-		{ID: "quantum-attacks", Category: "security", Title: "抗量子生成协议安全", Requirement: "3 类参数与私密字段边界校验（非量子攻击）", Kind: "security-suite", Target: 3, Operator: ">=", Unit: "类", CaseIDs: []string{"pq-parameter-downgrade", "pq-sign-encrypt-confusion", "pq-secret-upload"}, ExecutionScope: "admin", EvidenceSource: "system_security.go / 实际生成签发接口", Notes: []string{"仅验证协议参数策略，不证明抗 Shor/Grover 或 HNDL 能力。节点侧密文篡改、私钥隔离和材料版本校验需独立密码学验收，不计入本组。"}},
-		{ID: "network-attacks", Category: "security", Title: "无密码会话与网络边界", Requirement: "5 类会话与权限边界请求明确拒绝", Kind: "security-suite", Target: 5, Operator: ">=", Unit: "类", CaseIDs: []string{"network-session-forgery", "network-csrf", "network-stale-revision", "network-role-isolation", "network-origin"}, ExecutionScope: "admin", EvidenceSource: "system_security.go / 实际会话与权限接口"},
+		{ID: "generation-attacks", Category: "security", Title: "密钥生成协议校验", Requirement: "签发入口非法请求明确拒绝", Kind: "security-suite", Target: 3, Operator: ">=", Unit: "类", CaseIDs: []string{"generation-identity-injection", "generation-unknown-algorithm", "generation-malformed-json", "generation-invalid-version"}, ExecutionScope: "admin", EvidenceSource: "system_security.go / 实际 Demo 网关"},
+		{ID: "quantum-attacks", Category: "security", Title: "抗量子生成协议安全", Requirement: "签发协议边界校验；抗量子算法安全尚待验证", Kind: "security-suite", Target: 3, Operator: ">=", Unit: "类", CaseIDs: []string{"pq-parameter-downgrade", "pq-sign-encrypt-confusion", "pq-secret-upload", "pq-issuance-source-forgery"}, ExecutionScope: "admin", EvidenceSource: "system_security.go / 实际生成签发接口", Notes: []string{"4个场景覆盖3条协议规则；参数降级与参数混用共用参数白名单。私密字段与来源存在性也是通用协议规则。全部协议场景通过不计为抗量子攻击类别指标达标。", "节点侧密文篡改、签名验签与跨密钥材料隔离尚待独立密码学验收；不证明抗 Shor/Grover 或 HNDL 能力。"}},
+		{ID: "network-attacks", Category: "security", Title: "无密码会话与网络边界", Requirement: "会话与权限边界请求明确拒绝", Kind: "security-suite", Target: 5, Operator: ">=", Unit: "类", CaseIDs: []string{"network-session-forgery", "network-csrf", "network-stale-revision", "network-role-isolation", "network-origin", "network-missing-session"}, ExecutionScope: "admin", EvidenceSource: "system_security.go / 实际会话与权限接口"},
 	}
 }
 
@@ -803,6 +820,15 @@ func (s *server) handleCreateSecurityRun(c *fiber.Ctx) error {
 	run.Notes = append([]string{}, result.Notes...)
 	run.Requests = append([]SecurityRequestTrace{}, result.Requests...)
 	run.RawOutput = result.RawOutput
+	run.ExpectedCode = result.ExpectedCode
+	run.ActualCode = result.ActualCode
+	run.LegalControlPassed = result.LegalControlPassed
+	run.EvidenceVersion = result.EvidenceVersion
+	run.TestInput = result.TestInput
+	run.ValidationRule = result.ValidationRule
+	run.ExpectedReason = result.ExpectedReason
+	run.ActualReason = result.ActualReason
+	run.ReasonMatched = result.ReasonMatched
 	s.storeSecurityRun(run)
 
 	if run.Status == "error" {

@@ -49,6 +49,22 @@ final class VendorDidSdk implements DidSdk {
     @Override public String transactionId(String nonce) {
         return NetworkHolder.getContract("DidController").createTransaction("createDidDocument", Utils.toByteString(nonce)).getTransactionId();
     }
+    @Override public boolean matchesRecordedTransactionId(String nonce, String txId) {
+        org.hyperledger.fabric.sdk.transaction.TransactionContext context = NetworkHolder.getInstance().getChannel()
+                .newTransactionContext(Utils.toByteString(nonce));
+        return txId.equals(context.getTxID()) || matchesCreatorTransaction(txId, context.getNonce(), context.getIdentity(), context.getCryptoPrimitives());
+    }
+    static boolean matchesCreatorTransaction(String txId, com.google.protobuf.ByteString nonce,
+            org.hyperledger.fabric.protos.msp.Identities.SerializedIdentity identity,
+            org.hyperledger.fabric.sdk.security.CryptoSuite crypto) {
+        // Gateway 的 PEMWriter 使用平台换行；仅兼容同一 MSP、同一证书的 LF/CRLF 序列化，不能接受其他身份。
+        String lf = identity.getIdBytes().toStringUtf8().replace("\r\n", "\n");
+        for (String pem : new String[] {lf, lf.replace("\n", "\r\n")}) {
+            com.google.protobuf.ByteString creator = identity.toBuilder().setIdBytes(com.google.protobuf.ByteString.copyFromUtf8(pem)).build().toByteString();
+            if (txId.equals(org.bouncycastle.util.encoders.Hex.toHexString(crypto.hash(nonce.concat(creator).toByteArray())))) return true;
+        }
+        return false;
+    }
     @Override public String create(String did, String metadata, String nonce) {
         // 管理 SM2 公钥永远来自固定配置；业务四算法公钥只写入 metadata，不生成临时管理私钥。
         return handler.createDidDocument(documentRequest(did, metadata, controllerPublicKey), nonce);

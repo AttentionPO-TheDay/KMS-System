@@ -23,7 +23,7 @@
           <p>{{ step.description }}</p>
           <div class="step-meta">
             <span>{{ step.scenario?.name || '未加载场景' }}</span>
-            <strong v-if="step.scenario?.targetTps">目标 {{ formatTps(step.scenario.targetTps) }} TPS</strong>
+            <strong>{{ step.measurement }}</strong>
           </div>
         </div>
       </article>
@@ -32,7 +32,7 @@
     <div class="overview-foot">
       <span class="foot-label">推荐顺序</span>
       <span>生成准备</span><i>→</i><span>更新吞吐</span><i>→</i><span>回收吞吐</span><i>→</i><span>回收率核验</span>
-      <span class="foot-note">安全演练、批量证明可独立执行</span>
+      <span class="foot-note">安全测试可独立执行，证明可视化需专用测试流程</span>
     </div>
   </section>
 </template>
@@ -40,6 +40,7 @@
 <script setup>
 import { computed } from 'vue'
 import { health, scenarios, runs } from '../store'
+import { performanceOutcome, measuredPerformance } from '../utils/test-results'
 
 const scenarioMap = computed(() => new Map(scenarios.value.map((item) => [item.id, item])))
 const steps = computed(() => {
@@ -52,13 +53,16 @@ const steps = computed(() => {
   return config.map((item) => {
     const scenario = scenarioMap.value.get(item.id)
     const last = [...runs.value].find((run) => run.scenarioId === item.id)
-    return { ...item, scenario, state: last?.status === 'passed' ? 'passed' : last ? 'attention' : 'idle', stateText: last?.status === 'passed' ? '最近通过' : last ? '待复核' : '待执行' }
+    const outcome = performanceOutcome(last)
+    const value = measuredPerformance(last)
+    const unit = item.id === 'revoke-rate' ? '%' : 'TPS'
+    return { ...item, scenario, state: outcome.state === 'passed' ? 'passed' : last ? 'attention' : 'idle', stateText: outcome.label, measurement: value === null ? '尚无有效测量' : `实测 ${formatTps(value)} ${unit}` }
   })
 })
 
 function formatTps(value) {
   const n = Number(value || 0)
-  return n >= 1000 ? `${Math.round(n / 1000)}k` : n.toLocaleString('zh-CN')
+  return n.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
 }
 </script>
 

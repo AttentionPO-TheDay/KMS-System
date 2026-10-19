@@ -101,6 +101,9 @@ final class SysPidService {
                             "txId", txId, "nonce", nonce, "status", "PREPARED", "submitted", false);
                     save(record, Json.encode(plan));
                 }
+                // 跨平台可核验已落账的旧身份序列化，但恢复提交必须仍产生原 txId，不能把新交易伪装成旧交易。
+                if (!plan.get("txId").equals(sdk().transactionId((String) plan.get("nonce"))))
+                    throw new BridgeException(409, "SYSPID_SIGNER_SERIALIZATION_CHANGED");
                 // 必须在 SDK 调用前持久化不确定状态，不能将 createDidDocument 的 DID 返回值当回执。
                 plan.put("status", "PENDING_VERIFICATION");
                 plan.put("submitted", true);
@@ -146,7 +149,7 @@ final class SysPidService {
                 || ((String) plan.get("publicKey")).contains("PRIVATE KEY")
                 || !("PREPARED".equals(plan.get("status")) || "PENDING_VERIFICATION".equals(plan.get("status")))
                 || !txId.matches("[0-9a-f]{64}") || !nonce.matches("[0-9a-f]{48}")
-                || !txId.equals(sdk().transactionId(nonce))) throw new BridgeException(409, "SYSPID_RECORD_MISMATCH");
+                || !sdk().matchesRecordedTransactionId(nonce, txId)) throw new BridgeException(409, "SYSPID_RECORD_MISMATCH");
     }
     private Map<String, Object> readOrAbsent(String did) {
         try { return sdk().read(did); }

@@ -448,8 +448,8 @@ func (g *demoGuard) watchBinding(ctx context.Context, session string, revision i
 func (g *demoGuard) updateRunStage(job *demoJob, status, stage string) {
 	g.mu.Lock()
 	job.result.Status = status
-	job.result.Stage = "结果已归档"
 	job.result.Stage = stage
+	job.result.Stages = append(append([]ExecutionStage(nil), job.result.Stages...), ExecutionStage{At: time.Now().Format(time.RFC3339Nano), Label: stage})
 	g.mu.Unlock()
 }
 
@@ -499,12 +499,14 @@ func (g *demoGuard) executePerformance(ctx context.Context, job *demoJob, wrkPat
 	result := job.result
 	result.Status = "failed"
 	result.Stage = "启动前核验"
+	g.updateRunStage(job, "preparing", "核验操作权限与测试会话")
 	if err := g.validateBinding(ctx, job.session, job.revision, job.lease); err != nil {
 		result.Error = "启动前权威校验失败: " + err.Error()
 		g.finishPerformance(job, result)
 		return
 	}
 
+	g.updateRunStage(job, "preparing", "准备固定性能场景与验收数据")
 	prepared, notes, err := g.server.prepareScenario(scenario)
 	if err != nil {
 		result.Error = err.Error()
@@ -512,6 +514,7 @@ func (g *demoGuard) executePerformance(ctx context.Context, job *demoJob, wrkPat
 		g.finishPerformance(job, result)
 		return
 	}
+	g.updateRunStage(job, "preparing", "记录验收密钥初始状态")
 	job.audit, job.auditRows, err = g.server.beginLifecycleAudit(ctx, prepared, result, job.session, job.revision)
 	if err != nil {
 		result.Error = "无法记录验收密钥初始状态，未启动压测：" + err.Error()
@@ -529,6 +532,7 @@ func (g *demoGuard) executePerformance(ctx context.Context, job *demoJob, wrkPat
 	g.updateRunStage(job, "running", "执行固定性能场景")
 	stopWatch, watchDone := g.watchBinding(ctx, job.session, job.revision, job.lease, job.cancel)
 	executed := g.executeRun(ctx, wrkPath, prepared)
+	g.updateRunStage(job, "running", "核验最终状态并归档测量证据")
 	if err := g.server.finishLifecycleAudit(ctx, job.audit, job.auditRows, executed); err != nil {
 		executed.Status = "failed"
 		executed.Error = "验收生命周期归档失败，结果不予采信"
@@ -582,6 +586,7 @@ func (g *demoGuard) finishPerformance(job *demoJob, result RunResult) {
 		}
 	}
 	g.mu.Lock()
+	result.Stages = append(append([]ExecutionStage(nil), job.result.Stages...), ExecutionStage{At: result.FinishedAt, Label: "结果已归档"})
 	job.result = result
 	g.mu.Unlock()
 	close(job.done)
@@ -598,7 +603,25 @@ func (g *demoGuard) executeSecurity(ctx context.Context, job *demoSecurityJob) {
 	}
 	g.updateSecurityStage(job, "running", "执行固定安全用例")
 	stopWatch, watchDone := g.watchBinding(ctx, job.session, job.revision, job.lease, job.cancel)
-	executed := g.executeSecurityRun(ctx, job.result.CaseID)
+	progressCtx := context.WithValue(ctx, securityProgressKey{}, func(snapshot SecurityRunResult) {
+		snapshot = g.sanitizeSecurityResult(snapshot)
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		if job.result.Status != "running" {
+			return
+		}
+		job.result.Stage = snapshot.Stage
+		job.result.Requests = snapshot.Requests
+		job.result.ExpectedCode = snapshot.ExpectedCode
+		job.result.ActualCode = snapshot.ActualCode
+		job.result.EvidenceVersion = snapshot.EvidenceVersion
+		job.result.TestInput = snapshot.TestInput
+		job.result.ValidationRule = snapshot.ValidationRule
+		job.result.ExpectedReason = snapshot.ExpectedReason
+		job.result.ActualReason = snapshot.ActualReason
+		job.result.ReasonMatched = snapshot.ReasonMatched
+	})
+	executed := g.executeSecurityRun(progressCtx, job.result.CaseID)
 	close(stopWatch)
 	watchErr := <-watchDone
 	result = g.sanitizeSecurityResult(executed)

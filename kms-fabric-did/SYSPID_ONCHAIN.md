@@ -4,12 +4,17 @@
 
 ## 已确认的链选择
 
-- `channelName=didchannel3`
-- `chaincodeId=didchaincode3`
-- `methodId=kmsdid`：用户确认固定使用该纯字母方法名，不在每次请求时重新随机生成。
-- 待使用的 SysPid 参数已保存在项目根目录 `output/did-parameters/controller-public-key.hex.txt`；来源与编码验证见该目录 README。
+- `channelName=didchannel4`
+- `chaincodeId=didchaincode4`
+- `methodId=yunId`，大小写固定，不在每次请求时随机生成。
+- `ordererName=orderer-1-baas1`，公网 `122.224.205.114:18134`，保留原 CA 和 TLS 名称校验。
+- `peer-1-baas1`，公网 `122.224.205.114:18139`；`userName=peer-1-baas1`，`mspId=baas1`。
+- 已使用的 SysPid 参数保存在项目根目录 `output/did-parameters/controller-public-key.hex.txt`。
 
-以上固定选择另存于 `config/syspid-target.properties`。已进行真实链联调，但提交尚未获得链上确认，详见文末。
+以上固定选择另存于 `config/syspid-target.properties`。已上链成功，并通过独立回读复核：
+`CONFIRMED`、`transactionValid=true`、`metadataMatches=true`。
+查询参数与命令见 `../output/did-parameters/DID_QUERY_PARAMETERS.md`；
+非敏感凭证见 `../output/did-parameters/channel4-confirmed-result-20261019.json`。
 
 ## 请求与执行
 
@@ -73,7 +78,8 @@ FABRIC_DID_SYSPID_RECORDS_DIR=<专用可写持久化目录>
 
 `KMS_CHAIN_WRITES_ENABLED`、`FABRIC_DID_ENABLED`、`FABRIC_DID_WRITE_ENABLED`、`FABRIC_DID_CREATE_POLICY_APPROVED` 均须明确设为 true 才允许上链。仅这一功能需要开启时，不要顺带更改原业务链路的路由选择。
 
-默认 Docker 可选服务依然禁止写链。本次没有擅自启用它。运行 SysPid 写入时，需要单独提供可写持久化卷和上述显式配置。
+默认 Docker 可选服务禁止写链。通道4服务器部署使用独立覆盖文件启用只读查询，写开关仍为 false。
+运行 SysPid 写入需另行明确授权；不得因查询部署顺带开启业务批量上链。
 
 ## 单次命令调用
 
@@ -101,7 +107,9 @@ java -DfabricSDK.configuration=/run/fabric-did/gm-sdk.properties \
 
 本地测试覆盖实际 SM2 密钥生成/签验、文档字段、参数校验、内部认证、写入闸门、先记录后提交、私钥不进入响应、记录冲突、重启重试与未知结果不重发。测试链读写使用测试源码内的 FakeDidSdk，不代表供应方实链已写入。真实链提交需在实际配置与授权明确后执行，以真实 txId 和回读结果为准。
 
-## 本次实际联调记录（2026-10-16）
+## 历史联调记录（已解决，不作为当前配置）
+
+当前有效目标为通道4、orderer-1；本节保留通道3及早期失败诊断以便追溯。
 
 - 固定 methodId 为用户确认的 `kmsdid`，不是每次随机生成。
 - 来源为 `sdk_java_new.yml`；该文件两个公网 url 缩进到节点同级，只在独立连接副本中修复。运行副本仅选公网 orderer-0-baas1 和 peer-1-baas1，TLS 证书及名称覆盖保留供应方原值。
@@ -166,3 +174,62 @@ DidService 仅用错误消息构造新异常，已丢掉的 cause 无法从外�
 只读 `verify` 可以验证诊断链路，但不能重现 Broadcast 写入故障。旧提交没有保存的
 底层原因无法事后还原；需经操作员明确确认后执行一次原交易的受控 `retry` 才能捕获
 当前提交错误。补齐日志和测试期间不自动执行 `retry`，不生成新的 txId/nonce/管理密钥。
+
+## 通道4配置切换（2026-10-19）
+
+提供方新参数为 `channelName=didchannel4`、`chaincodeId=didchaincode4`、
+`methodId=yunId`、`userName=peer-1-baas1`、`mspId=baas1`，大小写原样保留。
+新来源为 `无证书课题项目did演示环境网络-didadminSDK文件/sdk_java.yml`，
+SHA-256 为 `cf370005b37c6a5138df931765826219ecc32221803521b7e71cb577f54057e8`。
+该文件补齐了通道4的 peer；所选应用证书、私钥和 TLS CA 与通道3运行资料一致。
+
+配置生成工具新增四参数形式：
+
+```sh
+java -cp '<主JAR与完整lib的classpath>' com.kms.fabricdid.PrepareSysPidRuntime \
+  '<sdk_java.yml绝对路径>' '<新的受限运行目录>' \
+  '<kms-fabric-did/config/syspid-target.properties绝对路径>' '<sysPid参数文件绝对路径>'
+```
+
+目标参数文件记录提供方身份及此前已提供的公网映射。新 YAML 的节点地址为内网
+`192.168.11.234:30034`、`192.168.11.234:30039`；本次本机 TCP 检查超时。
+此前公网 `122.224.205.114:18134`、`:18139` 可连接，但这不等于 TLS 或上链成功。
+生成器只修改运行副本的 URL，不修改原 YAML、TLS CA、主机名覆盖或校验设置。
+原六参数形式仍兼容；新形式验证必需身份参数、MSP 一致性及 grpcs 地址。
+
+通道4使用独立目录 `kms-ops/fabric-did-secrets/syspid-yunId-channel4`，不得迁移或覆盖
+通道3的 txId、nonce、管理密钥和记录。生成后的写开关仍为 false；只有显式 `onchain`
+子进程临时开启写入。用户本轮已授权修改并重新测试提交；真实结果以该新通道的交易核验为准。
+
+本次新增 7 项配置生成回归测试，合计 50 项 Java 测试和 3 项 Python 测试通过。
+新通道 orderer 配置读取及 DID 查询可用；一次真实提交仍报同一 TLS SAN 名称不匹配，
+随后核验未查到交易与 DID，未自动重试。新 txId 为
+`c8d71eb02674be41eab59a05a3909faa895d53aff6658cc7e88dad5d29d3faaf`。
+完整非敏感记录见 `../output/did-parameters/channel4-submission-20261019.md`。
+
+随后用户确认公网映射：peer-1 为 `:18139`，orderer-0 为 `:18134`，与本次运行副本一致。
+只读国密 TLS 探针实测 `:18134` 返回的证书 DNS SAN 却为 `orderer-1-baas1`；
+使用原供应方 CA 与该 SAN 名称时，严格 TLS 握手通过。`:18139` 返回的 SAN 为
+`peer-1-baas1`，与配置一致，严格握手同样通过。此证据定位到 orderer 端证书身份不一致，
+不单凭证书断言端口实际对应 orderer-1。未修改业务配置或重试交易；待提供方确认正确 TLS 名称。
+
+### 最新结果：orderer-1 已上链成功
+
+用户随后明确授权使用 `orderer-1-baas1` 上传。目标配置新增 `ordererName`，生成器校验通道
+orderer 列表并选用 YAML 中相应节点的 TLS 设置；默认值仍保留原六参数调用的兼容行为。
+运行副本切换到 orderer-1，原 CA 与公网地址保留，原连接文件已备份，未关闭 TLS 校验。
+52 项 Java 测试与 3 项 Python 测试通过。
+
+对同一 txId `c8d71eb02674be41eab59a05a3909faa895d53aff6658cc7e88dad5d29d3faaf`
+先核验，再受控重试一次；没有生成新管理密钥或 nonce。重试结果与随后独立 JVM 只读复核
+均为 `CONFIRMED`、`transactionValid=true`、`metadataMatches=true`。
+运行目录默认写开关保持 false，旧通道3记录未修改。
+结果副本：`../output/did-parameters/channel4-confirmed-result-20261019.json`。
+
+### 服务器部署状态
+
+最新程序与受限身份材料已上传 `/home/rbf/kms-sys/releases/did-channel4-20261019`。
+灰度检查发现并修复Windows/Linux证书PEM换行导致的原交易ID校验差异；60项Java测试通过。
+核验只兼容同一MSP/同一证书的LF与CRLF序列化，不忽略nonce校验；创建/重试仍强制SDK产生原txId。
+服务器到供应方 `122.224.205.114:18134/18139` 连接超时，而本机正常，正式服务尚未切换。
+详细状态见该发布目录 `RESULT.md`；网络开通后先灰度实时回读，再部署。

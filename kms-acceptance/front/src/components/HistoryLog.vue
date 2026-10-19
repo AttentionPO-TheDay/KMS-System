@@ -12,33 +12,10 @@
             <h3>{{ item.scenario }}</h3>
             <p class="timestamp">{{ item.startedAt }} <span v-if="item.finishedAt">-> {{ item.finishedAt }}</span></p>
           </div>
-          <span class="badge" :class="item.status === 'passed' ? 'ok' : 'error'">{{ item.status }}</span>
+          <span class="badge" :class="performanceOutcome(item).state === 'passed' ? 'ok' : 'warn'">{{ performanceOutcome(item).label }}</span>
         </div>
 
-        <div class="history-metrics">
-          <div class="metric-box">
-            <span>TPS 峰值</span>
-            <strong :class="item.status === 'passed'? 'text-ok' : 'text-error'">{{ item.summary.requestsPerSec?.toFixed?.(2) || '0.00' }}</strong>
-            <small>TARGET: {{ item.targetTps }}</small>
-          </div>
-          <div class="metric-box">
-            <span>AVG 延迟</span>
-            <strong>{{ item.summary.avgLatencyMs?.toFixed?.(2) || '0.00' }} ms</strong>
-          </div>
-          <div class="metric-box">
-            <span>P99 等候</span>
-            <strong>{{ item.summary.p99LatencyMs?.toFixed?.(2) || '0.00' }} ms</strong>
-          </div>
-          <div class="metric-box">
-            <span>回收探查/其他</span>
-            <strong>{{ metricLabel(item) }}</strong>
-          </div>
-        </div>
-
-        <details class="raw-output">
-          <summary>查看节点 WRK OUTPUT 原始探针数据</summary>
-          <pre><code>{{ item.summary.rawOutput }}</code></pre>
-        </details>
+        <PerformanceResult :run="item" />
       </article>
       <div v-if="runs.length === 0" class="empty-state">
         <div class="empty-icon" aria-hidden="true"></div>
@@ -50,13 +27,8 @@
 
 <script setup>
 import { runs } from '../store'
-
-function metricLabel(item) {
-  if (!item.metricCheck || !item.metricCheck.kind) {
-    return '未采集 (NOT FOUND)'
-  }
-  return `${item.metricCheck.value?.toFixed?.(2) || item.metricCheck.value}% / ${item.metricCheck.target}%`
-}
+import { performanceOutcome } from '../utils/test-results'
+import PerformanceResult from './PerformanceResult.vue'
 </script>
 
 <style scoped>

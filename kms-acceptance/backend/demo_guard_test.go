@@ -478,6 +478,15 @@ func TestDemoFixedPerformanceAndSecurityJobsExecuteAndStaySessionScoped(t *testi
 	if performance.Status != "passed" || !performance.PassedTPS || strings.Contains(performance.Summary.RawOutput, "private-must-not-leak") || len(performance.WrkCommand) != 0 {
 		t.Fatalf("unsafe performance result %#v", performance)
 	}
+	wantStages := []string{"核验操作权限与测试会话", "准备固定性能场景与验收数据", "记录验收密钥初始状态", "执行固定性能场景", "核验最终状态并归档测量证据", "结果已归档"}
+	if len(performance.Stages) != len(wantStages) {
+		t.Fatalf("missing execution history: %#v", performance.Stages)
+	}
+	for index, stage := range performance.Stages {
+		if stage.Label != wantStages[index] || stage.At == "" {
+			t.Fatalf("invalid stage %d: %#v", index, stage)
+		}
+	}
 
 	status, body = demoResponse(t, app, demoRequest("POST", "/api/security/runs", `{"caseId":"generation-identity-injection"}`))
 	if status != 202 {

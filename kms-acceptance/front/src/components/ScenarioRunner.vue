@@ -29,7 +29,7 @@
         <button class="btn-primary cyber-btn" :disabled="loading || !canRunAcceptance || activeScenario?.available !== true" @click="doRun">
           {{ loading ? '执行中…' : '开始执行' }}
         </button>
-        <button v-if="activeRun" class="btn-ghost" :disabled="loading" @click="cancelRun">停止探针</button>
+        <button v-if="activeRun" class="btn-ghost" @click="cancelRun">停止任务</button>
         <button class="btn-ghost" @click="loadRuns">刷新历史</button>
       </div>
     </div>
@@ -61,6 +61,7 @@
       </div>
     </details>
     <p v-if="error" class="error-msg">{{ error }}</p>
+    <PerformanceResult v-if="selectedRun" :run="selectedRun" :scenario="activeScenario" />
   </div>
 </template>
 
@@ -68,8 +69,10 @@
 import { ref, computed, watch } from 'vue'
 import { scenarios, health, runs, API, loadRuns } from '../store'
 import { canRunAcceptance } from '../api/demo-context'
+import { isActiveRun } from '../utils/test-results'
+import PerformanceResult from './PerformanceResult.vue'
 
-const activeRun = computed(() => runs.value.find(run => run.status === 'running'))
+const activeRun = computed(() => runs.value.find(isActiveRun))
 
 const loading = ref(false)
 const error = ref('')
@@ -81,6 +84,7 @@ const form = ref({
 })
 
 const activeScenario = computed(() => scenarios.value.find(s => s.id === form.value.scenarioId) || null)
+const selectedRun = computed(() => runs.value.find(run => run.scenarioId === form.value.scenarioId))
 const isRevokeScenario = computed(() => ['revoke-tps', 'revoke-rate'].includes(form.value.scenarioId))
 
 watch(() => scenarios.value, (newVals) => {
@@ -123,8 +127,15 @@ async function doRun() {
   error.value = ''
   loading.value = true
   try {
-    await API.postRun({ scenarioId: form.value.scenarioId })
+    let run = await API.postRun({ scenarioId: form.value.scenarioId })
     await loadRuns()
+    const deadline = Date.now() + 180000
+    while (isActiveRun(run) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      run = await API.getRun(run.id)
+      await loadRuns()
+    }
+    if (isActiveRun(run)) throw new Error('等待结果超时，请刷新历史查看最终状态')
   } catch (err) {
     error.value = err.message
   } finally {

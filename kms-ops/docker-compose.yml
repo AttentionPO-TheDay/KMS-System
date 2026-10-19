@@ -578,6 +578,8 @@ services:
       - ACCEPTANCE_GENERATE_BASE_URL=http://generate-go:8081
       - ACCEPTANCE_LIFECYCLE_BASE_URL=http://updatedel-go:8082
       - ACCEPTANCE_USER=acceptance_user
+      # Existing Demo node name; override with B/C when needed. Never create a node in a probe.
+      - ACCEPTANCE_SECURITY_NODE_ID=${ACCEPTANCE_SECURITY_NODE_ID:-A}
       - ACCEPTANCE_ATTACK_USER_NAME=acceptance_user
       - ACCEPTANCE_ATTACK_USER_PASSWORD=admin123
       - ACCEPTANCE_ATTACK_ADMIN_NAME=admin

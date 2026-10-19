@@ -41,22 +41,14 @@
 
             <div v-if="item.caseId" class="attack-actions">
               <button class="btn-ghost small"
-                :disabled="loadingCaseId === item.caseId"
+                :disabled="Boolean(loadingCaseId) || !canRunAcceptance"
                 @click="doSecurityRun(item.caseId)">
                 {{ loadingCaseId === item.caseId ? '执行中...' : '执行协议测试' }}
               </button>
             </div>
 
             <!-- Result Box -->
-            <div v-if="item.caseId && displayedRun(item.caseId)" class="attack-result" :class="verdictClass(item.caseId)">
-              <div class="result-header">本次执行结论</div>
-              <p><strong>结论：</strong> {{ displayedRun(item.caseId).summary }}</p>
-              <p v-if="displayedRun(item.caseId).error"><strong>异常：</strong> {{ displayedRun(item.caseId).error }}</p>
-              <details v-if="displayedRun(item.caseId).requests?.length" class="raw-output">
-                <summary>查看本次请求详情</summary>
-                <pre>{{ JSON.stringify(displayedRun(item.caseId).requests, null, 2) }}</pre>
-              </details>
-            </div>
+            <SecurityResult v-if="item.caseId && displayedRun(item.caseId)" :run="displayedRun(item.caseId)" />
           </div>
         </div>
       </article>
@@ -68,32 +60,27 @@
 import { ref } from 'vue'
 import { health, securityRuns, API, loadSecurityRuns } from '../store'
 import { securitySuites } from '../config/securityCases'
+import { canRunAcceptance } from '../api/demo-context'
+import { isActiveRun, securityOutcome } from '../utils/test-results'
+import SecurityResult from './SecurityResult.vue'
 
 const loadingCaseId = ref('')
 const error = ref('')
 const localRuns = ref({})
 
 function displayedRun(caseId) {
-  return localRuns.value[caseId] || null
-}
-
-function hasHistory(caseId) {
-  return securityRuns.value.some((item) => item.caseId === caseId)
+  return localRuns.value[caseId] || securityRuns.value.find(item => item.caseId === caseId) || null
 }
 
 function verdictLabel(caseId) {
   const item = displayedRun(caseId)
   if (loadingCaseId.value === caseId) return '执行中'
-  if (!item) return hasHistory(caseId) ? '待重新执行' : '待执行'
-  if (item.status === 'error') return '执行异常'
-  return item.passed ? '防御成功' : '防御失败'
+  return securityOutcome(item).label
 }
 
 function verdictClass(caseId) {
   const item = displayedRun(caseId)
-  if (!item) return 'warn'
-  if (item.status === 'error') return 'accent-red'
-  return item.passed ? 'ok' : 'accent-orange'
+  return { passed: 'ok', failed: 'accent-red', incomplete: 'warn', running: 'warn', pending: 'warn' }[securityOutcome(item).state]
 }
 
 async function doSecurityRun(caseId) {
@@ -101,8 +88,15 @@ async function doSecurityRun(caseId) {
   localRuns.value = { ...localRuns.value, [caseId]: null }
   loadingCaseId.value = caseId
   try {
-    const run = await API.postSecurityRun({ caseId })
+    let run = await API.postSecurityRun({ caseId })
     localRuns.value = { ...localRuns.value, [caseId]: run }
+    const deadline = Date.now() + 180000
+    while (isActiveRun(run) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 700))
+      run = await API.getSecurityRun(run.id)
+      localRuns.value = { ...localRuns.value, [caseId]: run }
+    }
+    if (isActiveRun(run)) throw new Error('等待结果超时，请刷新页面查看最终状态')
     await loadSecurityRuns()
   } catch (err) {
     console.error(err)

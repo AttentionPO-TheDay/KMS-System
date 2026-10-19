@@ -68,16 +68,16 @@ func TestAcceptanceSecurityCriteriaUseRequiredCaseCounts(t *testing.T) {
 	for _, item := range acceptanceCriteria() {
 		switch item.ID {
 		case "generation-attacks":
-			if len(item.CaseIDs) != 3 {
-				t.Fatalf("generation attacks = %d, want 3", len(item.CaseIDs))
+			if len(item.CaseIDs) != 4 || item.Target != 3 {
+				t.Fatalf("generation attacks = %d, want 4 with target 3", len(item.CaseIDs))
 			}
 		case "quantum-attacks":
-			if len(item.CaseIDs) != 3 {
-				t.Fatalf("quantum attacks = %d, want 3", len(item.CaseIDs))
+			if len(item.CaseIDs) != 4 || item.Target != 3 {
+				t.Fatalf("quantum attacks = %d, want 4 with target 3", len(item.CaseIDs))
 			}
 		case "network-attacks":
-			if len(item.CaseIDs) != 5 {
-				t.Fatalf("network attacks = %d, want 5", len(item.CaseIDs))
+			if len(item.CaseIDs) != 6 || item.Target != 5 {
+				t.Fatalf("network attacks = %d, want 6 with target 5", len(item.CaseIDs))
 			}
 		}
 	}
