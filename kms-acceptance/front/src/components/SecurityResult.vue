@@ -1,8 +1,20 @@
 <template>
   <section class="security-result" :class="outcome.state" :data-case-id="run.caseId">
     <div class="result-heading"><strong>{{ outcome.label }}</strong><time :title="run.finishedAt || run.startedAt">{{ formatTime(run.finishedAt || run.startedAt) }}</time></div>
-    <p v-if="legacyEvidence">此记录只有旧版判定证据，请重新执行；不计入本次通过数量。</p>
+    <p v-if="legacyEvidence">证据版本已过期，请重新执行。</p>
     <p v-else>{{ run.error || run.summary || run.stage || '尚未获得完整判定证据。' }}</p>
+    <details v-if="run.algorithmEvidence" class="algorithm-evidence" aria-label="真实算法测试过程与结果">
+      <summary>密钥算法核验过程（{{ run.algorithmEvidence.checks?.length || 0 }} 项）</summary>
+      <strong>算法验证：{{ run.algorithmEvidence.category }}</strong>
+      <p>{{ run.algorithmEvidence.source }}</p>
+      <ol>
+        <li v-for="check in run.algorithmEvidence.checks" :key="check.id" :class="`check-${check.status}`">
+          <div class="trace-heading"><strong>{{ check.name }}</strong><span>{{ check.status === 'error' ? '执行异常' : check.passed ? '通过' : '失败' }} · {{ check.durationMs }} ms · {{ formatTime(check.recordedAt) }}</span></div>
+          <p>预期：{{ check.expected }}</p><p>实际：{{ check.actual }}</p>
+        </li>
+      </ol>
+      <p>{{ run.algorithmEvidence.scope }}</p>
+    </details>
     <dl v-if="run.testInput || run.validationRule" class="rule-evidence">
       <div><dt>本次测试输入</dt><dd>{{ run.testInput }}</dd></div>
       <div><dt>对应校验规则</dt><dd>{{ run.validationRule }}</dd></div>
@@ -30,7 +42,8 @@ import { securityOutcome } from '../utils/test-results'
 const props = defineProps({ run: { type: Object, required: true } })
 const outcome = computed(() => securityOutcome(props.run))
 const notes = computed(() => (props.run.notes || []).filter(note => !note.startsWith('固定协议探针；')))
-const legacyEvidence = computed(() => props.run.status === 'completed' && props.run.passed === true && props.run.evidenceVersion !== 2)
+const legacyEvidence = computed(() => props.run.status === 'completed' && props.run.passed === true &&
+  (props.run.caseId?.startsWith('pq-') ? props.run.evidenceVersion !== 3 : props.run.evidenceVersion !== 2))
 function formatTime(value) { const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleTimeString('zh-CN', { hour12: false }) }
 </script>
 
@@ -48,6 +61,9 @@ p { margin: 8px 0; overflow-wrap: anywhere; color: var(--kms-text-secondary); }
 dt { font-size: 11px; color: var(--kms-text-tertiary); }
 dd { margin: 4px 0 0; font-size: 11px; font-weight: 550; overflow-wrap: anywhere; color: var(--kms-text-primary); }
 .rule-evidence { margin: 12px 0; display: grid; gap: 8px; }
+.algorithm-evidence { margin: 16px 0; padding: 12px 0; border-top: 1px solid var(--kms-border); border-bottom: 1px solid var(--kms-border); }
+.check-passed .trace-heading > span { color: var(--kms-success-strong); }
+.check-failed .trace-heading > span, .check-error .trace-heading > span { color: var(--kms-danger-strong); }
 .rule-evidence > div { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 12px; }
 .rule-evidence dd { margin: 0; font-size: 12px; font-weight: 400; }
 .evidence-details { margin-top: 10px; color: var(--kms-text-secondary); }

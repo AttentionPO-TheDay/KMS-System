@@ -9,7 +9,6 @@
             <h2 class="hero-name">{{ greeting }}，{{ userStore.name || '未登录用户' }}</h2>
             <div class="hero-meta">
               <el-tag size="small" effect="plain">{{ levelText }}</el-tag>
-              <span class="hero-tip">以下数据仅统计你本人的密钥与分发记录</span>
             </div>
           </div>
         </div>
@@ -44,7 +43,6 @@
           </span>
           <span class="subsystem-copy">
             <strong>{{ entry.title }}</strong>
-            <span>{{ entry.description }}</span>
           </span>
           <span class="subsystem-action" aria-hidden="true">
             {{ entry.available ? '进入' : '暂无权限' }}

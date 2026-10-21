@@ -47,7 +47,6 @@
         show-icon
         class="mb16"
         title="当前账号没有对应的 KMS 节点"
-        description="管理员账号不映射到节点，因此没有自己的会话。全系统的会话请见「密钥分发监管 → 会话监控」。"
       />
 
       <template v-if="mapped">

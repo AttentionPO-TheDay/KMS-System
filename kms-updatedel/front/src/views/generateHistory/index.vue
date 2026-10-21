@@ -17,15 +17,9 @@
         :closable="false"
         show-icon
         title="当前账号未关联任何节点"
-        description="密钥历史是节点的账本。请用节点账号登录。"
       />
 
       <template v-else>
-        <p class="gen-history__lead">
-          这里是<strong>平台登记的</strong>本节点长期密钥，含被取代、已回收的历史版本。
-          私钥不在本表、也不在服务端 —— 它是本机生成的，只存在于本机加密密钥库。
-          「本机材料」一列说的是<strong>当前这台浏览器</strong>有没有对应的私钥。
-        </p>
 
         <!-- 换了设备 / 清过站点数据：本页最要紧的一条结论。
              不提示的话，表格里每行都写着"平台有、本机无私钥"，用户只会以为页面坏了。 -->
@@ -36,7 +30,7 @@
           :closable="false"
           show-icon
           title="平台上有本节点的密钥，本机却没有任何一把私钥"
-          description="这说明密钥是在另一台设备（或另一个浏览器配置）上生成的 —— 本机解不开平台按它们分发的信封。请改回原设备；确实换机了就在「节点首次初始化」里用本机重新生成并登记一套。"
+          description="请返回原设备或恢复本机密钥材料。"
         />
 
         <!-- 后端一次最多回 200 行且没有分页参数。到顶时**必须**说出来：
@@ -48,7 +42,6 @@
           :closable="false"
           show-icon
           :title="`只显示了最近 ${SERVER_ROW_LIMIT} 条`"
-          description="本节点登记过的密钥行数达到接口上限，更早的版本没有列出来。需要完整历史请直接查服务端 dvadmin_pqkds_node_long_term_keys 表。"
         />
 
         <el-form inline class="gen-history__filter" @submit.prevent>
@@ -181,7 +174,6 @@
             <template v-else>
               本机密钥库里<strong>没有</strong>对应的私钥。
             </template>
-            <template v-if="!detail.reconcile.ok"> 该结论的处置方式见「密钥生成」页对应算法的卡片。</template>
           </p>
         </div>
 
@@ -402,7 +394,6 @@ onMounted(load)
 .gen-history__header { display: flex; align-items: center; justify-content: space-between; }
 .gen-history__header h2 { margin: 0; font-size: 18px; }
 .gen-history__header-side { display: flex; align-items: center; gap: 8px; }
-.gen-history__lead { margin: 0 0 16px; color: var(--kms-text-secondary, #606266); line-height: 1.7; }
 .gen-history__alert { margin-bottom: 12px; }
 .gen-history__filter { margin-bottom: 4px; }
 .gen-history__filter-select { width: 160px; }

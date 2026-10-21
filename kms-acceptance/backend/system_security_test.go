@@ -38,15 +38,15 @@ func TestCurrentSecurityRefusesUnavailableAndWrongEvidence(t *testing.T) {
 		pass     bool
 		reason   string
 	}{
-		{400, "INVALID_PARAMETER", 400, true, "签发只接受白名单字段，可信上下文由后端确定"},
-		{404, "INVALID_PARAMETER", 404, false, "签发只接受白名单字段，可信上下文由后端确定"},
-		{503, "INVALID_PARAMETER", 503, false, "签发只接受白名单字段，可信上下文由后端确定"},
+		{400, "KEYGEN_IDENTITY_FIELD_FORBIDDEN", 400, true, "签发只接受白名单字段，可信上下文由后端确定"},
+		{404, "KEYGEN_IDENTITY_FIELD_FORBIDDEN", 404, false, "签发只接受白名单字段，可信上下文由后端确定"},
+		{503, "KEYGEN_IDENTITY_FIELD_FORBIDDEN", 503, false, "签发只接受白名单字段，可信上下文由后端确定"},
 		{403, "NOT_AUTHORIZED", 403, false, "签发只接受白名单字段，可信上下文由后端确定"},
-		{200, "INVALID_PARAMETER", 200, false, "签发只接受白名单字段，可信上下文由后端确定"},
-		{200, "INVALID_PARAMETER", 409, true, "签发只接受白名单字段，可信上下文由后端确定"},
-		{200, "INVALID_PARAMETER", 409, false, "生成参数集无效"},
-		{200, "INVALID_PARAMETER", 409, false, ""},
-		{200, "INVALID_PARAMETER", 409, false, "secretKey=must-not-be-recorded"},
+		{200, "KEYGEN_IDENTITY_FIELD_FORBIDDEN", 200, false, "签发只接受白名单字段，可信上下文由后端确定"},
+		{200, "KEYGEN_IDENTITY_FIELD_FORBIDDEN", 409, true, "签发只接受白名单字段，可信上下文由后端确定"},
+		{200, "KEYGEN_IDENTITY_FIELD_FORBIDDEN", 409, false, "生成参数集无效"},
+		{200, "KEYGEN_IDENTITY_FIELD_FORBIDDEN", 409, false, ""},
+		{200, "KEYGEN_IDENTITY_FIELD_FORBIDDEN", 409, false, "secretKey=must-not-be-recorded"},
 	} {
 		mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -124,7 +124,7 @@ func TestCurrentSecurityUsesExistingNode(t *testing.T) {
 				case "/demo-api/pqkds/node-self/keygen/issuances/":
 					attacks++
 					w.WriteHeader(http.StatusBadRequest)
-					json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": "签发只接受白名单字段，可信上下文由后端确定", "data": map[string]string{"error_code": "INVALID_PARAMETER"}})
+					json.NewEncoder(w).Encode(map[string]interface{}{"code": 400, "msg": "签发只接受白名单字段，可信上下文由后端确定", "data": map[string]string{"error_code": "KEYGEN_IDENTITY_FIELD_FORBIDDEN"}})
 				case "/demo-api/lifecycle/demo/context/logout":
 					json.NewEncoder(w).Encode(map[string]int{"code": 200})
 				default:
@@ -143,7 +143,7 @@ func TestCurrentSecurityUsesExistingNode(t *testing.T) {
 			if entries != 1 || result.Passed != tc.available {
 				t.Fatalf("entries=%d passed=%v error=%s", entries, result.Passed, result.Error)
 			}
-			if tc.available && (result.ExpectedCode != "INVALID_PARAMETER" || result.ActualCode != result.ExpectedCode || !result.LegalControlPassed) {
+			if tc.available && (result.ExpectedCode != "KEYGEN_IDENTITY_FIELD_FORBIDDEN" || result.ActualCode != result.ExpectedCode || !result.LegalControlPassed) {
 				t.Fatal("a pass must expose rejection evidence and a successful legal control")
 			}
 			if tc.available {
@@ -167,6 +167,7 @@ func TestCurrentSecurityLiveGateway(t *testing.T) {
 	if os.Getenv("KMS_SECURITY_LIVE") != "1" {
 		t.Skip("explicit local live gateway test only")
 	}
+	seenCodes := map[string]string{}
 	for _, group := range acceptanceCriteria() {
 		for _, id := range group.CaseIDs {
 			t.Run(id, func(t *testing.T) {
@@ -174,6 +175,10 @@ func TestCurrentSecurityLiveGateway(t *testing.T) {
 				if !result.Passed {
 					t.Fatalf("%s: %s %s", result.Status, result.Summary, result.Error)
 				}
+				if previous, duplicate := seenCodes[result.ActualCode]; duplicate {
+					t.Fatalf("duplicate rejection code %s in %s and %s", result.ActualCode, previous, id)
+				}
+				seenCodes[result.ActualCode] = id
 				t.Log(result.Summary)
 			})
 			time.Sleep(400 * time.Millisecond)

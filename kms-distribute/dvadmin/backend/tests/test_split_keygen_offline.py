@@ -210,7 +210,9 @@ class SplitKeygenTests(unittest.TestCase):
         issued = self.issue()
         for change in [dict(key_id='different'), dict(key_version=2), dict(security_level='768')]:
             with self.subTest(change=change):
-                self.denied(C.ERR_KEYGEN_CONTEXT_MISMATCH, lambda: self.register(issued, **change))
+                # New registration rejects version != 1 before generation binding.
+                expected = C.ERR_KEY_VERSION_MISMATCH if 'key_version' in change else C.ERR_KEYGEN_CONTEXT_MISMATCH
+                self.denied(expected, lambda: self.register(issued, **change))
         other = self.issue(key_id='other')
         gen = dict(self.generation(issued), authorizationTicketId=other['authorizationTicketId'])
         self.denied(C.ERR_KEYGEN_CONTEXT_MISMATCH, lambda: self.register(issued, generation=gen))
@@ -274,6 +276,42 @@ class SplitKeygenTests(unittest.TestCase):
         gen = dict(self.generation(issued), metadata={'arbitrary': 'marker'})
         self.denied(C.ERR_KEYGEN_SCHEME_INVALID, lambda: self.register(issued, generation=gen))
 
+    def test_issuance_rejections_have_distinct_codes_at_real_validation_sites(self):
+        # Execute the real view and issuance validators with in-memory models.
+        # Only authenticated binding/transport are fixtures; no business DB/API.
+        tree = ast.parse((BACKEND / 'pqkds/node_self_views.py').read_text(encoding='utf-8'))
+        names = {'_keygen_response', '_ok', '_error'}
+        module = ast.Module(body=[n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names], type_ignores=[])
+        namespace = dict(__name__='pqkds.offline_keygen_views', __package__='pqkds',
+                         json=json, JsonResponse=JsonResponse, C=C, _find_node=lambda identity: self.node)
+        exec(compile(module, 'actual_keygen_views', 'exec'), namespace)
+        base = dict(algorithm='KYBER', keyId='acceptance-invalid', keyVersion=1, variant='768')
+        cases = [
+            ({**base, 'nodeId': 'foreign-node'}, C.ERR_KEYGEN_IDENTITY_FIELD_FORBIDDEN),
+            ({**base, 'algorithm': 'RSA-512'}, C.ERR_KEYGEN_SCHEME_INVALID),
+            ('{"algorithm":', C.ERR_KEYGEN_JSON_INVALID),
+            ({**base, 'keyVersion': 1.5}, C.ERR_KEYGEN_VERSION_INVALID),
+            ({**base, 'variant': '128'}, C.ERR_KYBER_KEYGEN_VARIANT_INVALID),
+            ({**base, 'algorithm': 'FALCON', 'variant': '768'}, C.ERR_FALCON_KEYGEN_VARIANT_INVALID),
+            ({**base, 'secretKey': 'fake-not-a-key'}, C.ERR_KEYGEN_PRIVATE_MATERIAL_FORBIDDEN),
+            ({**base, 'abandonGenerationIssuanceId': 'acceptance-not-an-issuance'}, C.ERR_KEYGEN_ISSUANCE_CONFLICT),
+        ]
+        self.assertEqual(len({code for _, code in cases}), 8)
+        for payload, expected in cases:
+            with self.subTest(expected=expected):
+                body = payload if isinstance(payload, str) else json.dumps(payload)
+                request = RequestFactory().post('/api/pqkds/node-self/keygen/issuances/', data=body, content_type='application/json')
+                with patch.object(K, 'trusted_binding', return_value=self.binding), patch.object(K, 'require_confidential_transport'):
+                    response = namespace['_keygen_response'](request, {'userId': 102}, renewal=False)
+                data = json.loads(response.content)
+                self.assertGreaterEqual(data['code'], 400)
+                self.assertEqual(data['data']['error_code'], expected)
+                self.assertNotIn('fake-not-a-key', response.content.decode())
+                self.assertEqual(response['Cache-Control'], 'no-store, private, max-age=0')
+        self.assertEqual(Issuance.objects.count(), 0)
+        self.assertEqual(Auth.objects.count(), 0)
+        self.assertEqual(NodeLongTermKey.objects.count(), 0)
+
     def test_nonloopback_https_required_and_host_forwarded_spoof_denied(self):
         factory = RequestFactory()
         request = factory.post('/api/pqkds/node-self/keygen/issuances/', HTTP_HOST='localhost',
@@ -286,6 +324,27 @@ class SplitKeygenTests(unittest.TestCase):
     def settings_hosts(self):
         from django.test import override_settings
         return override_settings(ALLOWED_HOSTS=['localhost', 'example.test'])
+
+
+class DemoRejectionCodeTests(unittest.TestCase):
+    def test_missing_invalid_and_stale_sessions_remain_distinct_without_db_access(self):
+        from pqkds import demo_context as D
+        for supplied, reason, expected in [
+            (False, '', 'DEMO_SESSION_REQUIRED'),
+            (True, 'DEMO_SESSION_INVALID', 'DEMO_SESSION_INVALID'),
+            (True, 'DEMO_REVISION_STALE', 'DEMO_CONTEXT_STALE'),
+        ]:
+            request = RequestFactory().get('/api/pqkds/node-self/', HTTP_X_KMS_ENTRY_MODE='demo', HTTP_X_KMS_DEMO_REVISION='2')
+            if supplied:
+                request.COOKIES[D.COOKIE_NAME] = 'invalid-session'
+            handler = Mock()
+            with patch.object(D, 'trusted_demo_request', return_value=True), patch.object(D, 'demo_rpc', side_effect=D.kms.KmsTokenInvalid(reason)) as rpc:
+                response = D.DemoContextMiddleware(handler)(request)
+            self.assertEqual(response.status_code, 401)
+            self.assertEqual(json.loads(response.content)['data']['error_code'], expected)
+            handler.assert_not_called()
+            if not supplied:
+                rpc.assert_not_called()
 
 
 class AuditBoundaryTests(unittest.TestCase):

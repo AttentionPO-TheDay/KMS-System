@@ -77,6 +77,8 @@ public class InternalGenerateController {
             }
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("keyId", key.getKeyId());
+            item.put("sysPid", key.getSysPid());
+            item.put("didRequestId", key.getDidRequestId());
             item.put("userName", key.getUserName());
             item.put("encrytName", key.getEncrytName());
             item.put("keyName", key.getKeyName());

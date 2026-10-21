@@ -2,9 +2,7 @@
   <main class="admin-data app-container">
     <header class="data-header">
       <div>
-        <p class="eyebrow">密钥数据 / 管理员只读</p>
         <h1>{{ config.title }}</h1>
-        <p class="page-description">{{ config.description }}</p>
       </div>
       <div class="header-actions">
         <span class="updated-at">{{ loadedAt ? `更新于 ${loadedAt}` : '尚未取得数据' }}</span>
@@ -17,7 +15,6 @@
       <el-tab-pane label="验收压测记录" name="acceptance" />
     </el-tabs>
     <p v-if="kind === 'acceptance'" class="dataset-notice">
-      专用测试账户 {{ result?.account || 'acceptance_user' }} · 与节点密钥分开统计。这里只展示已入库记录，HTTP 压测速率不等于落库或上链完成速率。
       <a href="/acceptance/#/lifecycle">查看更新与回收测试批次</a>
     </p>
 
@@ -43,7 +40,6 @@
     <section class="records-panel" aria-label="筛选与记录明细">
       <div class="records-heading">
         <h2>{{ config.recordTitle }}</h2>
-        <span>全量统计与筛选结果分开显示 · 仅查询元数据</span>
       </div>
       <el-form class="filter-bar" label-position="top" @submit.prevent="search">
         <el-form-item :label="config.searchLabel">
@@ -79,7 +75,6 @@
       <div class="result-bar">
         <div>
           <strong>{{ loading ? '正在读取…' : result ? `匹配 ${number(result.total)} 条` : '数据尚不可用' }}</strong>
-          <span v-if="kind === 'keys'">{{ filters.status === 'ACTIVE' ? '当前默认仅看有效密钥' : '按当前条件查看版本记录' }}</span>
         </div>
         <el-button v-if="kind === 'keys'" link type="primary" :disabled="loading" @click="toggleHistory">
           {{ filters.status === 'ACTIVE' ? '查看全部历史版本' : '仅看当前有效' }}
@@ -115,12 +110,10 @@
         </el-table-column>
         <template #empty>
           <div class="empty-state"><strong>没有符合条件的{{ config.recordTitle }}</strong>
-            <span>{{ kind === 'acceptance' ? '测试结果需经异步消费后入库；也可以清除筛选条件再查询。' : '调整节点、状态或时间范围后重新查询。' }}</span>
           </div>
         </template>
       </el-table>
       <footer class="table-footer">
-        <span>{{ result?.source || '查询只读元数据，不展示密钥材料' }}</span>
         <el-pagination :current-page="page" :page-size="pageSize" :page-sizes="[20, 50, 100]" :total="result?.total || 0"
           :disabled="loading" :pager-count="5" layout="total, sizes, prev, pager, next"
           @current-change="changePage" @size-change="changeSize" />

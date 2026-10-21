@@ -307,6 +307,39 @@ public class BridgeOfflineTest {
     private ObjectNode systemBody() { return Json.MAPPER.valueToTree(Json.map("sysPid", SYS_PID)); }
     private SysPidService systemService() { return new SysPidService(config, () -> { initialized.incrementAndGet(); return fake; }); }
     private Path systemRecordFolder() { return config.sysPidRecordsPath.resolve(Json.digest(config.chainId + "\n" + SysPidService.did(SYS_PID, config))); }
+    @Test public void generatedSysPidIsDistinctAndSurvivesRetryAndServiceRestart() {
+        fake.generateRealPublicKeys = true;
+        JsonNode firstRequest = Json.MAPPER.valueToTree(Json.map("requestId", "00000000-0000-4000-8000-000000000001"));
+        Map<String, Object> first = systemService().prepare(firstRequest);
+        Map<String, Object> duplicate = systemService().prepare(firstRequest);
+        assertEquals(first, duplicate); assertEquals(1, fake.systemKeys); assertEquals(0, fake.submits);
+        assertEquals("PREPARED", first.get("status")); assertEquals(false, first.get("submitted"));
+        Map<String, Object> second = systemService().prepare(Json.MAPPER.valueToTree(
+                Json.map("requestId", "00000000-0000-4000-8000-000000000002")));
+        assertNotEquals(first.get("sysPid"), second.get("sysPid"));
+        assertFalse(Json.encode(first).contains("PRIVATE KEY")); assertFalse(first.containsKey("nonce"));
+        assertEquals("did:offline:offline:zhxun-test" + first.get("sysPid"), first.get("did"));
+    }
+    @Test public void generatedSysPidCanBeSubmittedAndQueriedWithoutCreatingAnotherIdentity() {
+        fake.generateRealPublicKeys = true;
+        Map<String, Object> prepared = systemService().prepare(Json.MAPPER.valueToTree(
+                Json.map("requestId", "00000000-0000-4000-8000-000000000003")));
+        JsonNode input = Json.MAPPER.valueToTree(Json.map("sysPid", prepared.get("sysPid")));
+        Map<String, Object> submitted = systemService().onchain(input);
+        assertEquals("CONFIRMED", submitted.get("status")); assertEquals(prepared.get("txId"), submitted.get("txId"));
+        assertEquals(1, fake.systemKeys); assertEquals(1, fake.submits);
+        assertEquals("CONFIRMED", systemService().verify(input).get("status"));
+        assertEquals("CONFIRMED", systemService().onchain(input).get("status"));
+        assertEquals(1, fake.submits);
+    }
+    @Test public void generatedSysPidRejectsReadOnlyModeAndInvalidIdBeforeAllocatingKeys() {
+        expect("INVALID_REQUEST_ID", () -> systemService().prepare(Json.MAPPER.valueToTree(Json.map("requestId", "../record"))));
+        expect("UNKNOWN_FIELD", () -> systemService().prepare(Json.MAPPER.valueToTree(Json.map("requestId", "x", "privateKey", "secret"))));
+        Map<String, String> env = environment(); env.put("FABRIC_DID_WRITE_ENABLED", "false");
+        SysPidService readonly = new SysPidService(new BridgeConfig(env), () -> fake);
+        expect("WRITE_DISABLED", () -> readonly.prepare(Json.MAPPER.valueToTree(Json.map("requestId", "00000000-0000-4000-8000-000000000001"))));
+        assertEquals(0, fake.systemKeys);
+    }
     @Test public void systemIdentifierRequestMatchesVendorSpecification() {
         String did = SysPidService.did(SYS_PID, config);
         assertEquals("did:offline:offline:zhxun-test" + SYS_PID, did);
@@ -506,6 +539,7 @@ public class BridgeOfflineTest {
         final String txId = hex('a', 64), nonce = hex('b', 48);
         int submits, calls, systemKeys; Boolean valid = true; boolean throwSubmit, absent, migratedCreator; String lastDid, readError;
         Runnable beforeSystemSubmit;
+        boolean generateRealPublicKeys;
         Map<String, Object> document;
         static String hex(char value, int size) { StringBuilder text = new StringBuilder(); for (int i = 0; i < size; i++) text.append(value); return text.toString(); }
         @Override public Map<String, Object> newTransaction() { calls++; return Json.map("txId", txId, "nonce", nonce); }
@@ -527,6 +561,7 @@ public class BridgeOfflineTest {
         }
         @Override public Map<String, String> newSystemKey() {
             systemKeys++;
+            if (generateRealPublicKeys) return VendorDidSdk.generateSystemKey();
             Map<String, String> result = new HashMap<>();
             result.put("publicKey", "-----BEGIN PUBLIC KEY-----\nOFFLINE\n-----END PUBLIC KEY-----");
             result.put("privateKey", "-----BEGIN PRIVATE KEY-----\nOFFLINE\n-----END PRIVATE KEY-----");

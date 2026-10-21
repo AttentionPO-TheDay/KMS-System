@@ -23,7 +23,6 @@
         type="info"
         :closable="false"
         show-icon
-        description="管理员账号不映射到节点。节点资料由管理员在「节点管理」中创建并分配。"
       />
 
       <template v-else-if="mapped">

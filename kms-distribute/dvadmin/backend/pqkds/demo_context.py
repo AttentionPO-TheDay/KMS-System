@@ -198,7 +198,12 @@ class DemoContextMiddleware:
                                           'leaseId': request.demo_lease_id})
                 return response
         except kms.KmsTokenInvalid as exc:
-            return _error(str(exc), 409 if mutation else 401, 'DEMO_CONTEXT_STALE')
+            # Keep anonymous access distinct from a supplied, invalid session.
+            # Revision/lease failures retain their existing stale-context category.
+            code = ('DEMO_SESSION_REQUIRED' if not session_id else
+                    'DEMO_SESSION_INVALID' if str(exc) == 'DEMO_SESSION_INVALID' else
+                    'DEMO_CONTEXT_STALE')
+            return _error(str(exc), 409 if mutation else 401, code)
         except kms.KmsServiceError as exc:
             logger.warning('Demo 请求身份服务失败: %s', exc)
             return _error('演示身份服务暂时不可用', 503, 'DEMO_SERVICE_UNAVAILABLE')

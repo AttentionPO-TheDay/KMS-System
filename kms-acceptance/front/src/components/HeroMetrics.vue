@@ -6,9 +6,6 @@
         <p class="eyebrow">ACCEPTANCE ENV</p>
       </div>
       <h1 class="gradient-text">测试系统</h1>
-      <p class="hero-copy">
-        独立前后端的测试系统，用于执行 <code>wrk</code> 压测、汇总 TPS 指标，并支撑联调验证与回收率判定。
-      </p>
     </div>
     
     <div class="hero-cards">
@@ -88,12 +85,6 @@ const passRate = computed(() => {
   margin: 0 0 var(--kms-space-3) 0;
   color: var(--kms-text-primary);
   line-height: var(--kms-line-height-tight);
-}
-.hero-copy {
-  color: var(--kms-text-tertiary);
-  line-height: 1.8;
-  font-size: 16px;
-  max-width: 500px;
 }
 
 .hero-cards {

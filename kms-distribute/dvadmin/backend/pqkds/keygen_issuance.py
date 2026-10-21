@@ -65,17 +65,17 @@ def _fail(message, code=C.ERR_INVALID_PARAMETER):
     raise C.ContractError(message, code=code)
 
 
-def reject_private_fields(value):
+def reject_private_fields(value, *, error_code=C.ERR_INVALID_PARAMETER):
     """Reject nested secret fields before service/logging/metadata paths."""
     if isinstance(value, dict):
         for name, child in value.items():
             normalized = str(name).replace('_', '').replace('-', '').lower()
             if normalized in PRIVATE_FIELDS:
-                _fail('公钥接口禁止上传私密生成材料')
-            reject_private_fields(child)
+                _fail('公钥接口禁止上传私密生成材料', error_code)
+            reject_private_fields(child, error_code=error_code)
     elif isinstance(value, list):
         for child in value:
-            reject_private_fields(child)
+            reject_private_fields(child, error_code=error_code)
 
 
 def validate_generation(generation, algorithm):
@@ -264,8 +264,15 @@ def issue_contribution(node, binding, *, algorithm, key_id, key_version, variant
         _fail('Falcon 无证书格加密尚未通过独立审查启用门槛', C.ERR_KEYGEN_POLICY_DISABLED)
     variant = str(variant)
     if variant not in ({'512', '768', '1024'} if algorithm == 'KYBER' else {'512'}):
-        _fail('生成参数集无效')
-    kid, version = _validate_key_id(key_id), _as_version(key_version)
+        _fail('生成参数集无效', C.ERR_KYBER_KEYGEN_VARIANT_INVALID if algorithm == 'KYBER'
+              else C.ERR_FALCON_KEYGEN_VARIANT_INVALID)
+    kid = _validate_key_id(key_id)
+    try:
+        version = _as_version(key_version)
+    except C.ContractError as exc:
+        if exc.code != C.ERR_INVALID_PARAMETER:
+            raise
+        _fail(exc.message, C.ERR_KEYGEN_VERSION_INVALID)
     if not kid:
         _fail('签发必须显式提供 keyId')
     locked = _lock_node(node)

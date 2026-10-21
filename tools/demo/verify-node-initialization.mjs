@@ -12,9 +12,11 @@ const core = source.slice(source.indexOf('export const INITIALIZATION_ALGORITHMS
 const compareURL = pathToFileURL(path.join(front, 'utils/crypto/node-key-compare.js')).href
 const keyRefURL = pathToFileURL(path.join(front, 'utils/crypto/key-ref.js')).href
 const schemeURL = pathToFileURL(path.join(front, 'utils/crypto/generation-scheme.js')).href
+const workspaceURL = pathToFileURL(path.join(front, 'utils/node-workspace-access.js')).href
 const NODE_SELF_ERR = { KEYGEN_AUTHORIZATION_EXPIRED: 'KEYGEN_AUTHORIZATION_EXPIRED', KEYGEN_GENERATION_REQUIRED: 'KEYGEN_GENERATION_REQUIRED' }
 const moduleURL = `data:text/javascript;base64,${Buffer.from(`import {activeServerKey,findLocalKey,reconcileRow,RECONCILE} from '${compareURL}';\nimport {publicGeneration,publicGenerationContext,formatGenerationName,GENERATION_SCHEMES} from '${schemeURL}';\nimport {buildKeyRef} from '${keyRefURL}';\nconst NODE_SELF_ERR=${JSON.stringify(NODE_SELF_ERR)};\n${core}`).toString('base64')}`
-const { createNodeInitializationService, INITIALIZATION_ALGORITHMS } = await import(moduleURL)
+const wiredModuleURL = `data:text/javascript;base64,${Buffer.from(`import {classifyUnavailableAlgorithm} from '${workspaceURL}';\n${Buffer.from(moduleURL.split(',')[1], 'base64').toString()}`).toString('base64')}`
+const { createNodeInitializationService, INITIALIZATION_ALGORITHMS } = await import(wiredModuleURL)
 
 function fixture({ demo = true, status = 'PENDING_INIT' } = {}) {
   const node = { nodeId: 'Node-A', status, keys: {}, keygenIdentity: {
@@ -153,6 +155,21 @@ function fixture({ demo = true, status = 'PENDING_INIT' } = {}) {
 }
 
 for (const demo of [true, false]) {
+  test(`${demo ? 'Demo' : 'Standalone'} generation forwards DID opt-in and returns the same SysPid receipt`, async () => {
+    const f = fixture({ demo, status: 'ACTIVE' })
+    const receipt = { sysPid: 'a'.repeat(182), didOnchain: { status: 'PENDING_VERIFICATION', sysPid: 'a'.repeat(182) } }
+    f.deps.registerSelfNodePublicKey = async (...args) => {
+      assert.equal(args[8].didOnchain, true)
+      f.calls.registered.push(args)
+      return { keyId: args[4], keyVersion: args[5], ...receipt }
+    }
+    const done = await f.service().generateAndRegisterNodeKey({ nodeId: f.node.nodeId, algorithm: 'SM2', didOnchain: true })
+    assert.deepEqual(done.result.didOnchain, receipt.didOnchain)
+    assert.equal(done.result.sysPid, receipt.sysPid)
+    assert.equal(f.calls.registered.length, 1)
+    assert.equal(f.calls.generated.length, 1)
+  })
+
   test(`${demo ? 'Demo' : 'Standalone'} generates only missing algorithms and is idempotent`, async () => {
     const f = fixture({ demo })
     const progress = []
@@ -466,7 +483,7 @@ for (const rotate of [false, true]) {
     f.meta.set(rotate ? 'rotation/node/Node-A/KYBER/stable/2' : 'initialization/Node-A/KYBER',
       { keyRef: 'node/Node-A/KYBER/stable/2', algorithm: 'KYBER', keyId: 'stable', version: 2, publicKey: 'missing' })
     await assert.rejects(f.service().generateAndRegisterNodeKey({ nodeId: f.node.nodeId, algorithm: 'KYBER',
-      ...(rotate ? { keyId: 'stable', version: 2, rotate: true } : {}) }), /待登记材料缺失/)
+      ...(rotate ? { keyId: 'stable', version: 2, rotate: true, variant: 768 } : {}) }), /待登记材料缺失/)
     assert.equal(f.calls.issued.length, 0)
     assert.equal(f.calls.generated.length, 0)
   })

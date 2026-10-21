@@ -18,15 +18,9 @@
         :closable="false"
         show-icon
         title="当前账号未关联任何节点"
-        description="版本历史是节点自己长期密钥的记录。请用节点账号登录。"
       />
 
       <template v-else>
-        <p class="version-history__lead">
-          本节点<strong>每一把</strong>长期密钥的全部版本，按 keyId 分组、最新在前。
-          更新与回收都不会让旧版本消失：被取代的版本仍要能解开按它分发出去的旧信封，
-          已回收的版本是终态 —— 两者都留在这里可查，状态与可用性均来自服务端下发。
-        </p>
 
         <!-- 后端一次最多回 200 行且没有分页参数，到顶必须说出来：
              被截掉的正是更早的版本，而"看不见"会被当成"不存在"。 -->
@@ -37,7 +31,6 @@
           :closable="false"
           show-icon
           :title="`只显示了最近 ${SERVER_ROW_LIMIT} 条`"
-          description="本节点登记过的密钥行数达到接口上限，更早的版本没有列出来。需要完整历史请直接查服务端 dvadmin_pqkds_node_long_term_keys 表。"
         />
 
         <el-form inline class="version-history__filter" @submit.prevent>
@@ -242,7 +235,6 @@ onMounted(load)
 .version-history__header { display: flex; align-items: center; justify-content: space-between; }
 .version-history__header h2 { margin: 0; font-size: 18px; }
 .version-history__header-side { display: flex; align-items: center; gap: 8px; }
-.version-history__lead { margin: 0 0 12px; color: var(--kms-text-secondary, #606266); line-height: 1.7; }
 .version-history__notice { margin-bottom: 12px; }
 .version-history__filter { margin-bottom: 4px; }
 .version-history__filter-select { width: 160px; }

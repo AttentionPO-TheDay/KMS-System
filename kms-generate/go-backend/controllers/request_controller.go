@@ -137,9 +137,12 @@ func (c *RequestController) EnrollKey(ctx *fiber.Ctx) error {
 	}
 
 	return ctx.Status(fiber.StatusOK).JSON(fiber.Map{
-		"code": 200,
-		"msg":  "操作成功",
-		"data": keyValue,
+		"code":         200,
+		"msg":          "操作成功",
+		"data":         keyValue,
+		"sysPid":       km.SysPid,
+		"didRequestId": km.DidRequestID,
+		"didOnchain":   km.DidOnchain,
 	})
 }
 

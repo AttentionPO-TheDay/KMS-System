@@ -620,6 +620,8 @@ func (g *demoGuard) executeSecurity(ctx context.Context, job *demoSecurityJob) {
 		job.result.ExpectedReason = snapshot.ExpectedReason
 		job.result.ActualReason = snapshot.ActualReason
 		job.result.ReasonMatched = snapshot.ReasonMatched
+		job.result.ProtocolPassed = snapshot.ProtocolPassed
+		job.result.AlgorithmEvidence = snapshot.AlgorithmEvidence
 	})
 	executed := g.executeSecurityRun(progressCtx, job.result.CaseID)
 	close(stopWatch)

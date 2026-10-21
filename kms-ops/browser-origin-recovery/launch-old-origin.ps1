@@ -2,7 +2,7 @@ param([switch]$CheckOnly, [string]$ProfileDirectory, [switch]$TrustCertificate, 
 
 $ErrorActionPreference = 'Stop'
 $oldOrigin = 'https://10.112.125.22:8443'
-$newIp = '10.129.114.144'
+$newIp = '10.112.125.22'
 $expectedCertificateSha256 = '130A2051D968A46EDE55020E2AE9A5B7727F6C6CA2DDB5DE3021A6038AD038DB'
 $certPath = Join-Path $PSScriptRoot 'kms-compatible-server.cer'
 
@@ -49,17 +49,17 @@ try {
     }
 
     Write-Host 'KMS 原浏览器入口恢复' -ForegroundColor Cyan
-    Write-Host '继续使用旧网址和原 Chrome 配置，实际连接新服务器。不读取、复制或重新生成私钥。'
+    Write-Host '继续使用原网址和原 Chrome 配置，直连当前服务器。不读取、复制或重新生成私钥。'
     Write-Host ''
     while (Get-Process chrome -ErrorAction SilentlyContinue) {
         $browsers = @(Get-CimInstance Win32_Process -Filter "Name = 'chrome.exe'" |
             Where-Object { $_.CommandLine -and $_.CommandLine -notmatch '--type=' })
         $incompatible = @($browsers | Where-Object {
-            $_.CommandLine -notmatch '--host-resolver-rules="?MAP 10\.112\.125\.22 10\.129\.114\.144' -or
+            $_.CommandLine -notmatch '--host-resolver-rules="?MAP 10\.112\.125\.22 10\.112\.125\.22' -or
             $_.CommandLine -match '--ignore-certificate-errors'
         })
         if ($browsers.Count -gt 0 -and $incompatible.Count -eq 0) {
-            Write-Host '复用已带旧入口映射的 Chrome，可同时打开多个节点配置。'
+            Write-Host '复用已带当前服务器直连规则的 Chrome，可同时打开多个节点配置。'
             break
         }
         if ($ProfileDirectory) { throw 'Chrome 尚未完全退出，请先退出所有 Chrome。' }
@@ -95,12 +95,12 @@ try {
         $selectedProfiles = @($profiles[$number - 1])
     }
     $commonArguments = @(
-        '--host-resolver-rules="MAP 10.112.125.22 10.129.114.144"'
+        '--host-resolver-rules="MAP 10.112.125.22 10.112.125.22"'
     )
     if ($proxy.ProxyEnable -and $proxy.ProxyServer) {
-        # Keep the user's current proxy. Only the two KMS IPs are sent directly.
+        # Keep the user's current proxy. Only the current KMS IP is sent directly.
         $commonArguments += '--proxy-server="' + $proxy.ProxyServer + '"'
-        $commonArguments += '--proxy-bypass-list="' + $proxy.ProxyOverride + ';10.112.125.22;10.129.114.144"'
+        $commonArguments += '--proxy-bypass-list="' + $proxy.ProxyOverride + ';10.112.125.22"'
     } elseif ($proxy.AutoConfigURL) {
         throw '检测到系统 PAC 代理。未更改它；需先为旧 KMS IP 配置直连后再使用此入口。'
     }

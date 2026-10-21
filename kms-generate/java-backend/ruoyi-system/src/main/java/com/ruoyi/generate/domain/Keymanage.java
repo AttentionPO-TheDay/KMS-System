@@ -2,6 +2,7 @@ package com.ruoyi.generate.domain;
 
 import com.alibaba.fastjson2.annotation.JSONField;
 import java.io.Serializable;
+import java.util.Map;
 
 /**
  * 密钥管理对象 keymanage
@@ -94,6 +95,19 @@ public class Keymanage implements Serializable {
     private String algorithmVersion;
     /** 材料可用状态：active / legacy_unusable。 */
     private String keyMaterialState;
+
+    @JSONField(name = "sysPid", alternateNames = {"sys_pid"})
+    private String sysPid;
+    @JSONField(name = "didRequestId", alternateNames = {"did_request_id"})
+    private String didRequestId;
+    private Map<String, Object> didOnchain;
+
+    public String getSysPid() { return sysPid; }
+    public void setSysPid(String value) { sysPid = value; }
+    public String getDidRequestId() { return didRequestId; }
+    public void setDidRequestId(String value) { didRequestId = value; }
+    public Map<String, Object> getDidOnchain() { return didOnchain; }
+    public void setDidOnchain(Map<String, Object> value) { didOnchain = value; }
 
     public Long getKeyId() { return keyId; }
     public void setKeyId(Long keyId) { this.keyId = keyId; }

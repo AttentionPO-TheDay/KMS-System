@@ -78,6 +78,15 @@ class FabricDidClient:
     def status(self):
         return self._request('GET', 'status')
 
+    def prepare_sys_pid(self, request_id):
+        return self._request('POST', 'sys-pids/prepare', {'requestId': str(request_id)})
+
+    def submit_sys_pid(self, sys_pid):
+        return self._request('POST', 'sys-pids/onchain', {'sysPid': sys_pid})
+
+    def verify_sys_pid(self, sys_pid):
+        return self._request('POST', 'sys-pids/verify', {'sysPid': sys_pid})
+
     def prepare(self, binding):
         return self._request('POST', 'bindings/prepare', json.loads(binding['metadata']))
 

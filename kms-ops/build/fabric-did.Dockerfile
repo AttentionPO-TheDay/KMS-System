@@ -7,4 +7,4 @@ COPY runtime/fabric-did/app.jar /app/app.jar
 COPY runtime/fabric-did/lib/ /app/lib/
 RUN mkdir -p /run/fabric-did/work
 EXPOSE 9094
-ENTRYPOINT ["java", "-DfabricSDK.configuration=/run/fabric-did/gm-sdk.properties", "-jar", "/app/app.jar"]
+ENTRYPOINT ["java", "-DfabricSDK.configuration=/run/fabric-did/gm-sdk.properties", "-Dorg.hyperledger.fabric.sdk.configuration=/run/fabric-did/gm-sdk.properties", "-jar", "/app/app.jar"]

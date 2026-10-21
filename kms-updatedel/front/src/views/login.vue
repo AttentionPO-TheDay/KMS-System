@@ -2,8 +2,6 @@
   <div class="login">
     <el-form ref="loginRef" :model="loginForm" :rules="loginRules" class="login-form">
       <h3 class="title">密钥管理系统</h3>
-      <p class="principal-hint">独立运行 · 使用账号或本机设备凭据</p>
-      <p class="principal-hint"><a href="http://127.0.0.1:8088/demo">受控本机演示入口（默认关闭，需先启用）</a></p>
 
       <!--
         身份选择（单一登录入口）。

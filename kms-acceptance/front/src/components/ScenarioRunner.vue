@@ -2,7 +2,6 @@
   <div class="runner-wrapper">
     <div class="panel-header">
       <div>
-        <p class="panel-eyebrow">业务链路验收</p>
         <h2>压测控制台</h2>
       </div>
       <div class="status-indicator" :class="health?.boundaryProbeAvailable ? 'healthy' : 'error'">
@@ -22,8 +21,7 @@
       </label>
       <div class="target-panel" v-if="activeScenario">
         <span>脚本目标</span>
-        <strong>{{ activeScenario.id === 'demo-boundary-probe' ? '无业务副作用 / 权威与入口校验' : `${formatTps(activeScenario.targetTps)} TPS` }}</strong>
-        <small>{{ activeScenario.method }} {{ activeScenario.path }}</small>
+        <strong>{{ activeScenario.id === 'demo-boundary-probe' ? '会话与入口校验' : `${formatTps(activeScenario.targetTps)} TPS` }}</strong>
       </div>
       <div class="runner-actions">
         <button class="btn-primary cyber-btn" :disabled="loading || !canRunAcceptance || activeScenario?.available !== true" @click="doRun">
@@ -34,14 +32,12 @@
       </div>
     </div>
 
-    <div v-if="activeScenario" class="scenario-note info-box" :class="{ 'danger-note': isRevokeScenario }">
-      <p>{{ activeScenario.description }}</p>
-      <ul><li v-for="n in activeScenario.notes || []" :key="n">{{ n }}</li></ul>
-      <strong v-if="isRevokeScenario">回收不可逆，仅允许使用验收专用密钥。</strong>
+    <div v-if="isRevokeScenario" class="scenario-note info-box danger-note">
+      <strong>回收不可逆，仅允许使用验收专用密钥。</strong>
     </div>
 
     <details v-if="activeScenario?.configurable === true" class="advanced-panel">
-      <summary>高级参数（默认脚本配置）</summary>
+      <summary>高级参数</summary>
       <div class="grid-form">
         <div class="form-core">
           <div class="field-row">
@@ -150,7 +146,6 @@ async function doRun() {
   grid-column: 1 / -1;
   margin-bottom: 24px;
 }
-.panel-eyebrow { margin: 0 0 5px; color: var(--kms-brand-text); font-size: 11px; font-weight: 700; letter-spacing: .14em; }
 .runner-primary { display: grid; grid-template-columns: minmax(260px, 1.4fr) minmax(180px, .8fr) auto; align-items: end; gap: 18px; }
 .runner-primary .field { margin-bottom: 0; }
 .target-panel { display: flex; flex-direction: column; gap: 4px; padding: 11px 14px; border: 1px solid var(--kms-border); border-radius: var(--kms-radius); background: var(--kms-surface-2); }

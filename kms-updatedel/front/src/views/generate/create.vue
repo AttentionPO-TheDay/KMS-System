@@ -18,17 +18,11 @@
         :closable="false"
         show-icon
         title="当前账号未关联任何节点"
-        description="密钥生成是节点的动作。请用节点账号登录，或在「节点管理」里创建节点后再由节点自行登录。"
       />
 
       <template v-else>
-        <p class="gen-create__lead">
-          私钥在<strong>本机</strong>生成并留在本机，平台只收到<strong>公钥</strong>。
-          {{ purpose === 'signing' ? '这里单独管理标准 Falcon 签名密钥，不替换任何分发保护密钥。' : '这里生成分发保护密钥；改进型 Falcon 使用独立的 FALCON_CL_V1 材料。' }}
-        </p>
         <p v-if="purpose === 'protection'" class="gen-create__lead">
-          会话签名使用标准 Falcon，请前往
-          <router-link :to="{ path: entryPath('/distzone/selfsess'), query: { keyPurpose: 'signing' } }">会话管理 → 会话签名密钥</router-link>。
+          <router-link :to="{ path: entryPath('/distzone/selfsess'), query: { keyPurpose: 'signing' } }">会话签名密钥</router-link>
         </p>
 
         <!-- 设备不一致**提前**说。等到用户点了生成、转完 Falcon 的几秒、
@@ -61,8 +55,6 @@
               </el-tag>
               <el-tag v-else type="info" size="small" effect="plain">未登记</el-tag>
             </div>
-            <p class="gen-create__algo-role">{{ c.role }}</p>
-            <p class="gen-create__algo-role">{{ coreDetail(c.algorithm, c.algorithm === 'KYBER' ? kyberVariant : undefined) }}</p>
             <p v-if="c.active" class="gen-create__algo-role">当前登记来源：{{ formatGenerationName(c.algorithm, c.active.generation) }}</p>
 
             <dl class="gen-create__facts">
@@ -90,7 +82,7 @@
               :closable="false"
               show-icon
               title="平台记着这把公钥，本机却没有对应私钥"
-              description="该密钥是在另一台设备上生成的。本机解不开平台按它分发的信封 —— 需要在「节点首次初始化」里用本机重新生成并登记。"
+              description="请返回原设备或恢复本机密钥材料。"
             />
             <el-alert
               v-else-if="c.reconcile && c.reconcile.state === RECONCILE.MISMATCH"
@@ -99,7 +91,7 @@
               :closable="false"
               show-icon
               title="同一 keyId 下，本机公钥与平台记录不一致"
-              description="正常路径不会出现。请勿继续用它分发 —— 先确认本机密钥库是否被导入或被改写过。"
+              description="请停止分发并核对本机密钥库。"
             />
             <el-alert
               v-else-if="c.reconcile && c.reconcile.state === RECONCILE.SERVER_EMPTY_PK"
@@ -108,7 +100,7 @@
               :closable="false"
               show-icon
               title="平台记录的公钥无法换算成可比对的形式"
-              description="可能是历史行（编码与当前口径不同）。登录服务器查该行原文，不要据本页判断它是否可用。"
+              description="请核查服务端公钥记录。"
             />
             <div v-else-if="c.reconcile && c.reconcile.state === RECONCILE.LOCAL_ONLY" class="gen-create__pending">
               本机已生成，平台上<strong>没有</strong>登记 —— 点下面的按钮重新登记一次。
@@ -154,6 +146,7 @@
               </el-button>
             </div>
             <p v-if="generationBlocked(c)" class="gen-create__algo-role">{{ generationBlocked(c) }}</p>
+            <KeyDidEvidence v-if="c.active" :record="c.active.didOnchain" :key-identity="c.active" @updated="load" />
           </div>
         </div>
 
@@ -162,6 +155,11 @@
           {{ purpose === 'signing' ? '本节点签名密钥对照' : '本节点分发保护密钥对照' }}
         </h3>
         <el-table :data="rows" size="small" border class="gen-create__table">
+          <el-table-column type="expand">
+            <template #default="{ row }">
+              <KeyDidEvidence v-if="row.server" :record="row.server.didOnchain" :key-identity="row.server" @updated="load" />
+            </template>
+          </el-table-column>
           <el-table-column label="生成方案" min-width="240">
             <template #default="{ row }">{{ formatGenerationName(row.algorithm, (row.server || row.local)?.generation) }}<small v-if="!row.server && row.local?.generation">（本机声明 · 待服务端校验）</small></template>
           </el-table-column>
@@ -173,7 +171,13 @@
           <el-table-column label="版本" width="70">
             <template #default="{ row }">v{{ row.version }}</template>
           </el-table-column>
-          <el-table-column label="上链存证" width="140">
+          <el-table-column label="DID 上链" min-width="150">
+            <template #default="{ row }">{{ didStatusText(row.server?.didOnchain) }}</template>
+          </el-table-column>
+          <el-table-column label="SysPid（展开查看完整记录）" min-width="230" show-overflow-tooltip>
+            <template #default="{ row }"><span class="mono">{{ row.server?.sysPid || '—' }}</span></template>
+          </el-table-column>
+          <el-table-column label="公钥业务存证" width="140">
             <template #default="{ row }">{{ chainEvidenceText(row.server?.chainBinding) }}</template>
           </el-table-column>
           <el-table-column label="交易哈希" min-width="200" show-overflow-tooltip>
@@ -287,9 +291,11 @@ import { cryptoProvider } from '@/utils/crypto/browser-provider.js'
 import { deviceFingerprint, hasDeviceKey } from '@/utils/crypto/device-credential.js'
 import { IS_DEMO, entryPath } from '@/utils/entry-mode'
 import { generateAndRegisterNodeKey } from '@/utils/node-initialization'
-import { formatGenerationName, coreDetail } from '@/utils/crypto/generation-scheme.js'
+import { formatGenerationName } from '@/utils/crypto/generation-scheme.js'
 import { generationAlgorithms, GENERATION_ALGORITHM_META } from '@/utils/key-generation-purpose.js'
 import { chainEvidenceText } from '@/utils/node-chain-evidence.js'
+import KeyDidEvidence from '@/components/KeyDidEvidence.vue'
+import { didConfirmed, didStatusText } from '@/utils/key-did-evidence.js'
 
 const props = defineProps({ purpose: { type: String, default: 'protection', validator: value => ['protection', 'signing'].includes(value) } })
 const emit = defineEmits(['busy'])
@@ -493,8 +499,9 @@ async function handleGenerate(card) {
     if (card.algorithm === 'FALCON_CL_V1' && card.active) {
       await ElMessageBox.confirm('将生成独立的新格加密密钥，使用新的 keyId、版本从 1 开始；原密钥保留为历史记录。版本递增请使用「密钥更新」。', '生成新格加密密钥', { type: 'warning', confirmButtonText: '生成新密钥', cancelButtonText: '取消' })
     }
-    const { material: generated, check } = await generateAndRegisterNodeKey({
+    const { material: generated, check, result } = await generateAndRegisterNodeKey({
       algorithm: card.algorithm, nodeId: node.value.nodeId,
+      didOnchain: true,
       variant: card.algorithm === 'KYBER' ? kyberVariant.value : undefined,
       confirmUnusedIssuance: async record => {
         await ElMessageBox.confirm(record.message, '确认恢复未完成签发', { type: 'warning', confirmButtonText: '弃用未使用签发并重试', cancelButtonText: '取消，不换钥' })
@@ -510,7 +517,8 @@ async function handleGenerate(card) {
       ? `${card.label} 新密钥已登记，旧的（${card.active.keyId}）已降为「已被取代」`
       : `${card.label} 公钥已登记`
     if (check.ok) {
-      ElMessage.success(`${head}；自检通过`)
+      if (didConfirmed(result?.didOnchain)) ElMessage.success(`${head}；自检通过；DID 上链已确认`)
+      else ElMessage.warning(`${head}；自检通过；${didStatusText(result?.didOnchain)}，请查看卡片中的 DID 上链记录`)
     } else {
       ElMessage.warning(`${head}；但自检未过：${check.detail}`)
     }
@@ -591,6 +599,7 @@ onBeforeUnmount(() => clearInterval(chainStatusTimer))
 .gen-create__device p { margin: 6px 0 0; line-height: 1.7; }
 .gen-create__grid {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  align-items: start;
   gap: 12px; margin-bottom: 20px;
 }
 .gen-create__algo {

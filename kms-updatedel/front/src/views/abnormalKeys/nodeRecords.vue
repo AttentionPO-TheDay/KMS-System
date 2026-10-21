@@ -7,9 +7,6 @@
       </div>
     </template>
 
-    <p class="records-lead">
-      材料缺失或公钥摘要不一致会自动回收；其余一致性问题留待复核。忽略不等于修复，被忽略的漂移仍会在安全监控里可见；人工回收会同步失效关联池项和会话。
-    </p>
     <el-alert v-if="latestBatch" type="info" :closable="false" class="records-batch">
       <template #title>
         最近自动回收批次：{{ latestBatch.keys }} 把密钥，{{ latestBatch.poolItems }} 条池项，{{ latestBatch.sessions }} 个会话，耗时 {{ latestBatch.elapsedMs }} ms，完成速率 {{ latestBatch.keysPerSecond }} 条/秒（目标 ≥ 5000 条/秒）

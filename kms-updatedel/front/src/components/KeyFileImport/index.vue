@@ -8,13 +8,6 @@
     </el-tag>
 
     <el-dialog v-model="dialogOpen" title="导入密钥文件" width="640px" append-to-body destroy-on-close>
-      <el-alert
-        title="密钥文件是本机解开分发信封的唯一凭据。文件只在本机解析，不会上传到服务端。"
-        type="info"
-        :closable="false"
-        show-icon
-        class="mb12"
-      />
 
       <!-- 选择文件 / 粘贴内容 两条路都留着：前者是常规路径，
            后者在用户只存了文本（比如从聊天记录里翻出来）时很有用 -->

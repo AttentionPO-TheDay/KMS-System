@@ -5,7 +5,6 @@
         <div class="panel-head">
           <div>
             <span>区块链存证</span>
-            <span class="sub">密钥生命周期写入 FISCO 链的结果</span>
           </div>
           <el-button size="small" :loading="loading" @click="load">刷 新</el-button>
         </div>

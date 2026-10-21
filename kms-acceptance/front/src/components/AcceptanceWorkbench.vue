@@ -3,7 +3,6 @@
     <header class="workbench-header">
       <div>
         <h1>验收测试台</h1>
-        <p class="lead">选择测试项目，查看执行过程与判定结果。</p>
       </div>
       <div class="header-actions">
         <span class="admin-label">Demo 管理员</span>
@@ -14,13 +13,13 @@
 
     <section class="console-panel" aria-labelledby="performance-heading">
       <div class="section-heading">
-        <div><h2 id="performance-heading">性能测试</h2><p class="section-description">按项目测量，保留执行阶段与测量证据。</p></div>
+        <div><h2 id="performance-heading">性能测试</h2></div>
       </div>
       <div class="performance-list">
         <div class="performance-columns" aria-hidden="true"><span>测试项目</span><span>验收指标</span><span>状态</span><span>操作</span></div>
         <article v-for="item in performanceItems" :key="item.key" class="performance-item" :class="item.state" :data-criterion-id="item.id">
           <div class="performance-row">
-            <div class="project-name"><h3>{{ item.title }}</h3><p>{{ item.evidenceSource }}</p></div>
+            <div class="project-name"><h3>{{ item.title }}</h3></div>
             <span class="target-value">{{ item.targetLabel }}</span>
             <span class="item-status" :class="item.state">{{ item.statusLabel }}</span>
             <button v-if="item.running" class="btn-ghost small" @click="cancelItem(item)">停止任务</button>
@@ -33,7 +32,7 @@
     </section>
 
     <section class="security-panel" aria-labelledby="security-heading">
-      <div class="section-heading"><div><h2 id="security-heading">安全测试</h2><p class="section-description">逐项查看请求过程、拒绝码与正常请求对照。</p></div></div>
+      <div class="section-heading"><div><h2 id="security-heading">安全测试</h2></div></div>
       <div class="security-suites">
         <article v-for="(item, index) in securityItems" :key="item.key" class="security-suite" :class="item.state" :data-criterion-id="item.id">
           <div class="suite-controls">
@@ -60,12 +59,11 @@
           </div>
         </article>
       </div>
-      <p class="console-hint">安全测试使用独立临时会话，不改变业务密钥。抗量子协议校验不等同于量子攻击防御验证。</p>
     </section>
 
     <p v-if="error" class="error-msg" role="alert">{{ error }}</p>
     <section v-if="nodeItems.length" class="node-panel" aria-label="节点侧测试">
-      <article v-for="item in nodeItems" :key="item.id" class="node-item"><div><span class="node-label">节点侧测试</span><h3>{{ item.title }}</h3><p>从节点侧单独发起测量，结果记录在验收看板。</p></div><span class="target-value">{{ item.targetLabel }}</span><span class="item-status" :class="item.state">{{ item.statusLabel }}</span></article>
+      <article v-for="item in nodeItems" :key="item.id" class="node-item"><div><span class="node-label">节点侧测试</span><h3>{{ item.title }}</h3></div><span class="target-value">{{ item.targetLabel }}</span><span class="item-status" :class="item.state">{{ item.statusLabel }}</span></article>
     </section>
 
     <section class="dashboard-panel">
@@ -75,7 +73,7 @@
         <table class="result-table"><thead><tr><th>指标</th><th>目标</th><th>实测</th><th>状态</th><th>证据来源</th><th>执行时间</th><th>说明</th></tr></thead>
           <tbody><tr v-for="row in resultRows" :key="row.id" :class="row.state"><td><strong>{{ row.title }}</strong><small>{{ row.categoryLabel }}</small></td><td>{{ row.targetLabel }}</td><td>{{ row.valueLabel || '—' }}</td><td><span class="status-badge">{{ row.statusLabel }}</span></td><td>{{ row.source }}</td><td>{{ row.timeLabel }}</td><td>{{ row.note || '—' }}</td></tr></tbody>
         </table>
-        <div v-if="!resultRows.length" class="empty-state">执行项目后，服务端实测值、判定状态和原始输出摘要会显示在这里。</div>
+        <div v-if="!resultRows.length" class="empty-state">暂无测试结果</div>
       </div>
     </section>
   </section>
@@ -126,7 +124,7 @@ const resultRows = computed(() => [...executableItems.value, ...nodeItems.value]
 const summary = computed(() => resultRows.value.reduce((s, r) => { s[r.state] = (s[r.state] || 0) + 1; return s }, { passed: 0, partial: 0, running: 0, pending: 0, incomplete: 0, failed: 0 }))
 
 function formatValue(value, unit) { return `${Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 })} ${unit || ''}`.trim() }
-function valueFor(row) { if (row.kind === 'scenario') { const value = measuredPerformance(latestRuns.value.get(row.scenarioId), row); return value === null ? '尚无有效测量' : formatValue(value, row.unit) } return row.progress?.passedCount ? `${row.progress.passedCount} 项${row.id === 'quantum-attacks' ? '协议校验通过，算法待验' : '防御成功'}` : '—' }
+function valueFor(row) { if (row.kind === 'scenario') { const value = measuredPerformance(latestRuns.value.get(row.scenarioId), row); return value === null ? '尚无有效测量' : formatValue(value, row.unit) } return row.progress?.passedCount ? `${row.progress.passedCount} 项${row.id === 'quantum-attacks' ? '算法与协议验证通过' : '防御成功'}` : '—' }
 function timeFor(row) { const run = row.scenarioId ? latestRuns.value.get(row.scenarioId) : (row.caseIds || []).map(id => latestSecurity.value.get(id)).filter(Boolean).sort((a, b) => String(b.finishedAt || '').localeCompare(String(a.finishedAt || '')))[0]; return run?.finishedAt || latestEvidence.value.get(row.id)?.measuredAt || '' }
 function selectedSecurityCase(item) { return selectedSecurityCases.value[item.id] || '' }
 function securityCaseIds(item, forceAll = false) { const selected = selectedSecurityCase(item); return item.kind === 'security-suite' ? (!forceAll && selected ? [selected] : item.caseIds) : [] }
@@ -158,7 +156,7 @@ async function waitForCompletion(ids) {
     if (!active) return
     await new Promise(resolve => setTimeout(resolve, 1000))
   }
-  throw new Error('任务超过前端轮询时限，请在结果看板查看最终状态')
+  throw new Error('等待结果超时，请刷新结果看板')
 }
 </script>
 
@@ -171,7 +169,6 @@ h1, h2, h3 { color: var(--kms-text-primary); }
 h1 { font-size: 28px; font-weight: 700; letter-spacing: -.025em; }
 h2 { font-size: 18px; font-weight: 650; }
 h3 { font-size: 14px; font-weight: 650; line-height: 1.6; }
-.lead { margin-top: 8px; font-size: 13px; color: var(--kms-text-secondary); }
 .header-actions { justify-content: flex-end; flex-wrap: wrap; }
 .admin-label { font-size: 12px; color: var(--kms-text-tertiary); margin-right: 4px; }
 button { min-height: 36px; transition: background-color .18s ease-out, border-color .18s ease-out, color .18s ease-out; }
@@ -179,7 +176,6 @@ button:focus-visible, select:focus-visible { outline: 2px solid var(--kms-brand)
 .small, .header-actions .btn-primary { padding: 8px 14px; font-size: 12px; }
 .console-panel, .security-panel, .node-panel { margin-bottom: 32px; }
 .section-heading { margin-bottom: 16px; }
-.section-description { margin-top: 5px; font-size: 12px; color: var(--kms-text-tertiary); line-height: 1.6; }
 .performance-list { border: 1px solid var(--kms-border); border-radius: 12px; background: var(--kms-surface-1); overflow: hidden; }
 .performance-columns, .performance-row { display: grid; grid-template-columns: minmax(240px, 1fr) 190px 130px 110px; align-items: center; gap: 24px; padding: 16px 24px; }
 .performance-columns { padding-top: 12px; padding-bottom: 12px; font-size: 11px; color: var(--kms-text-tertiary); background: var(--kms-surface-2); }
@@ -187,7 +183,6 @@ button:focus-visible, select:focus-visible { outline: 2px solid var(--kms-brand)
 .performance-item { border-top: 1px solid var(--kms-border); }
 .performance-item .performance-result, .performance-item > .item-note { margin: 0 24px 20px; }
 .performance-row > button { justify-self: end; display: inline-flex; align-items: center; gap: 14px; }
-.project-name p { color: var(--kms-text-tertiary); font-size: 11px; margin-top: 3px; overflow-wrap: anywhere; }
 .target-value { font-size: 13px; color: var(--kms-text-primary); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .item-status { display: inline-flex; align-items: center; justify-content: center; gap: 6px; justify-self: start; width: fit-content; font-size: 11px; font-weight: 500; color: var(--kms-text-secondary); background: var(--kms-surface-3); padding: 4px 9px; border-radius: 6px; white-space: nowrap; }
 .item-status::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
@@ -213,7 +208,6 @@ button:focus-visible, select:focus-visible { outline: 2px solid var(--kms-brand)
 .case-name strong { font-weight: 550; }
 .case-index { color: var(--kms-text-tertiary); font-size: 11px; font-variant-numeric: tabular-nums; flex-shrink: 0; }
 .pending-label { color: var(--kms-text-tertiary); font-size: 11px; white-space: nowrap; }
-.console-hint { font-size: 11px; color: var(--kms-text-tertiary); margin-top: 12px; line-height: 1.7; }
 .item-note { font-size: 12px; line-height: 1.7; color: var(--kms-warning-strong); overflow-wrap: anywhere; }
 .error-msg { padding: 12px 16px; border: 1px solid var(--kms-danger-border); border-radius: 8px; background: var(--kms-danger-subtle); color: var(--kms-danger-strong); font-size: 13px; margin-bottom: 24px; }
 .node-panel { border: 1px solid var(--kms-border); background: var(--kms-surface-2); border-radius: 10px; }

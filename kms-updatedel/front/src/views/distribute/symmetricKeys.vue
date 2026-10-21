@@ -83,7 +83,7 @@
         :closable="false"
         show-icon
         title="这条信封还没有本机密钥副本"
-        description="请到“会话管理”执行验签和解封。解封成功后，本机副本会出现在这里。"
+        description="请到“会话管理”验签并解封。"
       />
       <el-alert
         v-else-if="current"
@@ -96,7 +96,6 @@
       <div v-if="localSecretHex" class="secret-box mt16">
         <span>本机解封出的 SM4 密钥</span>
         <code>{{ localSecretHex }}</code>
-        <small>仅当前页面临时显示，刷新或关闭详情后清除。</small>
       </div>
       <template #footer>
         <el-button @click="detailOpen = false">关闭</el-button>

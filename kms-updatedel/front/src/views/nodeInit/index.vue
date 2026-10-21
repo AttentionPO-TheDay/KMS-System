@@ -30,7 +30,7 @@
 
       <template v-else>
         <p v-if="isActive && blocked" class="node-init__lead">
-            节点已激活，但当前入口缺少与服务端登记匹配的本机密钥材料。普通模式与 Demo 模式使用不同的浏览器密钥库，不能自动复制私钥或覆盖已登记公钥。
+          节点已激活，当前浏览器缺少匹配的本机密钥材料。
         </p>
 
         <el-descriptions :column="2" border class="node-init__meta">
@@ -53,17 +53,15 @@
             :class="{ 'is-ready': k.ready }"
           >
             <div class="node-init__key-name">{{ k.label }}</div>
-            <div class="node-init__key-role">{{ k.role }}</div>
-            <div v-if="k.core" class="node-init__key-role">{{ k.core }}</div>
             <el-tag :type="k.tagType" size="small">
               {{ k.ready ? '登记一致 · 本机可读' : k.text }}
             </el-tag>
           </div>
         </div>
 
-        <h3 v-if="isActive" class="node-init__section-title">改进型无证书格加密（实验版 v1） · 独立 ENCRYPT v1</h3>
-        <p>{{ encryptionStatus }} 标准 Falcon 签名材料保持不变；本操作不重置基础密钥。自定义实验方案，不是标准 Falcon KEM，无生产安全证明。</p>
-        <el-button v-if="isActive" :disabled="!node.falconClCapability?.enabled || encryptionRegistered || encryptionBusy || blocked" :loading="encryptionBusy" @click="handleEncryptionInit">主动补充 ENCRYPT 初始化</el-button>
+        <h3 v-if="isActive" class="node-init__section-title">改进型无证书格加密（实验版 v1）</h3>
+        <p>{{ encryptionStatus }}</p>
+        <el-button v-if="isActive" :disabled="!node.falconClCapability?.enabled || encryptionRegistered || encryptionBusy || blocked" :loading="encryptionBusy" @click="handleEncryptionInit">初始化加密密钥</el-button>
         <el-button v-if="encryptionBusy" @click="encryptionController?.abort()">取消矩阵运算</el-button>
         <el-alert
           v-if="ready"
@@ -80,7 +78,6 @@
           :closable="false"
           show-icon
           title="节点可继续使用，部分算法暂无可用密钥"
-          description="你仍可进入工作台管理其它密钥；已回收或暂无可用版本的算法会在相关业务中保持不可用，直到明确生成并登记新密钥。"
         />
 
         <!-- §4.4 设备绑定：本机不是当初生成密钥的那台设备。
@@ -94,22 +91,10 @@
           title="本机没有该节点的私钥"
         >
           <template #default>
-            <p>
-              该节点的密钥是在<strong>另一台设备</strong>上生成的。按设计，
-              私钥只留在那台设备上、<strong>不会从服务器恢复</strong> ——
-              所以本机无法解开平台已分发给该节点的任何信封。
-            </p>
-            <p>
-              若这台浏览器此前登录过该节点、后来改绑了别的节点，本机的设备凭据会被清除，
-              表现与"换了一台设备"完全相同：<strong>要在这台浏览器上重新登录，
-              需要管理员重新签发激活凭证</strong>（在「节点管理」里点「重签凭证」）。
-            </p>
-            <p>两种处置，请按实际需要选择：</p>
             <ul class="node-init__device-options">
               <li><strong>续用原设备</strong>：改回原设备登录，本机不做任何改动。</li>
               <li>
-                <strong>改用本机</strong>：先恢复原本机材料，或通过明确的新版本换钥与回收流程处置。
-                本页不会自动重新生成、替换或覆盖任何已登记密钥。
+                <strong>改用本机</strong>：恢复原本机材料，或通过密钥更新与回收流程换钥。
               </li>
             </ul>
           </template>
@@ -118,7 +103,7 @@
         <el-alert v-if="blocked" class="node-init__device" type="error" :closable="false" show-icon
           :title="isActive ? '节点已激活，但当前入口缺少密钥材料' : '密钥材料需恢复，已禁止自动初始化或覆盖'">
           <p v-for="reason in inspection.reasons" :key="reason">{{ reason }}</p>
-          <p>请返回生成这些密钥的原浏览器，或恢复当前入口对应的本机材料。{{ IS_DEMO ? '独立运行密钥不会自动复制到 Demo。' : 'Demo 密钥不会自动复制到普通模式。' }}如需换钥，应走明确的新版本更新与旧密钥回收流程。</p>
+          <p>请返回原浏览器或恢复本机材料；换钥请使用密钥更新与回收。</p>
         </el-alert>
         <el-alert v-if="!locksAvailable" class="node-init__device" type="warning" :closable="false" show-icon
           title="浏览器不支持 Web Locks，初始化已关闭；请使用支持安全锁的浏览器和可信入口" />
@@ -157,9 +142,7 @@
              ⚠️ 模板里**不能写 Markdown**（`**粗体**` 会原样显示成星号），
                 强调要用 <strong>。 -->
         <p v-if="!isActive" class="node-init__hint">
-          初始化会生成改进型双份额 KEM / 签名（实验版 v1）及 SSCL、SM2 四套密钥；后量子新材料使用经认证的 KGC 秘密贡献与浏览器独立秘密共同派生，
-          并把<strong>公钥</strong>登记到平台（私钥留在本机，不上传）。
-          已完成的算法会跳过，未登记材料会复用，只有缺失算法才会生成。期间请勿关闭页面或重复点击。
+          初始化期间请勿关闭页面或重复点击。
         </p>
       </template>
       </el-card>

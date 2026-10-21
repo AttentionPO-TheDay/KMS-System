@@ -38,19 +38,9 @@
         :closable="false"
         show-icon
         title="当前账号未关联任何节点"
-        description="密钥是节点自己产生并保管的。请用节点账号登录，或在「节点管理」里创建节点后再由节点自行登录。"
       />
 
       <template v-else>
-        <p class="user-keys__lead">
-          这里列的是<strong>本节点</strong>在平台上登记的长期密钥，含已被取代与已回收的历史版本。
-          私钥<strong>只保存在生成它的那台设备</strong>的浏览器加密存储里，平台从来不收 ——
-          所以本页只有公开信息，不显示也不导出任何私钥。
-        </p>
-        <p class="user-keys__lead">
-          换新版本请走<strong>「密钥更新」</strong>，整把作废请走<strong>「密钥回收」</strong>；
-          密钥生命周期仍是只读的。这里可以为 ACTIVE 公钥生成 DID SDK 参数交接包，但不会提交 DID 交易。
-        </p>
 
         <!-- 后端一次最多回 200 行且没有分页参数，到顶必须说出来。 -->
         <el-alert
@@ -60,7 +50,6 @@
           :closable="false"
           show-icon
           :title="`只显示了最近 ${SERVER_ROW_LIMIT} 条`"
-          description="本节点登记过的密钥行数达到接口上限，更早的版本没有列出来。需要完整历史请直接查服务端 dvadmin_pqkds_node_long_term_keys 表。"
         />
 
         <el-form inline class="user-keys__filter" @submit.prevent>
@@ -150,8 +139,7 @@
         <section class="handoff-section" aria-labelledby="handoff-title">
           <div class="handoff-section__heading">
             <div>
-              <h3 id="handoff-title">DID SDK 参数交接记录</h3>
-              <p>记录与厂商上传接口同形的公开参数。状态始终不代表上链，系统不会调用 createDidDocument。</p>
+              <h3 id="handoff-title">DID SDK 参数交接记录（未提交上链）</h3>
             </div>
             <el-button size="small" :loading="handoffLoading" @click="loadHandoffs">刷新记录</el-button>
           </div>
@@ -430,7 +418,6 @@ onMounted(load)
 .user-keys__header { display: flex; align-items: center; justify-content: space-between; }
 .user-keys__header h2 { margin: 0; font-size: 18px; }
 .user-keys__header-side { display: flex; align-items: center; gap: 8px; }
-.user-keys__lead { margin: 0 0 8px; color: var(--kms-text-secondary, #606266); line-height: 1.7; }
 .user-keys__notice { margin: 12px 0; }
 .user-keys__filter { margin: 4px 0; }
 .user-keys__filter-select { width: 160px; }

@@ -208,7 +208,7 @@ export function createNodeInitializationService(deps) {
     }
   }
 
-  async function registerMaterial(local, { nodeId, fingerprint, identity, headers, rotate, assertIdentity }) {
+  async function registerMaterial(local, { nodeId, fingerprint, identity, headers, rotate, assertIdentity, didOnchain = false }) {
     local = await readable(local, nodeId)
     let fields = registrationFields(local)
     if (fields.generation) assertGenerationIdentity(fields, identity)
@@ -218,7 +218,7 @@ export function createNodeInitializationService(deps) {
       assertIdentity()
       if (identity) await assertSnapshot(nodeId, fingerprint, identity, assertIdentity)
       return deps.registerSelfNodePublicKey(local.algorithm, fields.publicKey, fields.securityLevel,
-        fingerprint, fields.keyId, fields.version, rotate, headers, { generation: fields.generation })
+        fingerprint, fields.keyId, fields.version, rotate, headers, { generation: fields.generation, didOnchain })
     }
     try {
       return await dispatch()
@@ -358,7 +358,7 @@ export function createNodeInitializationService(deps) {
     })
   }
 
-  async function generateAndRegisterNodeKey({ algorithm, nodeId, keyId, version = 1, variant, rotate = false, confirmUnusedIssuance, signal, onStage }) {
+  async function generateAndRegisterNodeKey({ algorithm, nodeId, keyId, version = 1, variant, rotate = false, didOnchain = false, confirmUnusedIssuance, signal, onStage }) {
     // Presentation is an observer only; it must never alter the key workflow.
     const report = (id, status, label, values = {}) => {
       try { onStage?.({ id, status, label, values }) } catch { /* UI observer is non-blocking. */ }
@@ -441,7 +441,7 @@ export function createNodeInitializationService(deps) {
       report('selftest', check.ok ? 'success' : 'failed', check.ok ? '本机材料自检通过' : '本机材料自检未通过', { selfTestOk: Boolean(check.ok) })
       if (!check.ok) throw new Error(`新材料已封存，但自检未过：${check.detail}；未登记，平台生产版本不变，重试复用原材料`)
       report('register', 'running', '提交目标版本公钥，等待登记回执')
-      const result = await registerMaterial(material, { nodeId, fingerprint, identity, rotate, assertIdentity })
+      const result = await registerMaterial(material, { nodeId, fingerprint, identity, rotate, assertIdentity, didOnchain })
       report('register', 'success', '服务端公钥登记回执已收到', { keyId: result?.keyId || material.keyId, nextVersion: Number(result?.keyVersion || material.version) })
       return { material, result, check, reused }
     })

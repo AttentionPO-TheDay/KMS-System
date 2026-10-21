@@ -18,6 +18,24 @@
 
 ## 请求与执行
 
+### 用户密钥生成的独立 SysPid
+
+用户密钥／批量生成入口需要每次返回独立 SysPid，不复用上面的历史固定标识。内部新增：
+
+```http
+POST /internal/fabric-did/sys-pids/prepare
+X-Internal-Token: <内部令牌>
+Content-Type: application/json
+
+{"requestId":"<已持久化或需重试复用的UUID>"}
+```
+
+此接口需与上链相同的显式写入授权。它使用供应方 SM2 密钥生成器，取新管理公钥的 SubjectPublicKeyInfo DER 十六进制作为该次 SysPid，在受限目录保存管理私钥、请求映射及原 txId/nonce，返回 SysPid、DID、txId 和 PREPARED，不提交交易。相同 requestId 在重启后仍取得原标识；不同请求分配不同标识。响应不返回管理私钥和 nonce。
+
+随后以原 SysPid 调用下述 onchain，一次提交后仅查询原交易。用户生成服务的实现入口为 `kms-generate/go-backend/service/fabric_did.go`，以 `FABRIC_DID_KEYGEN_ENABLED=true` 显式启用。SysPid 和请求ID随生成记录写入 Kafka／MySQL，生成响应提供 `sysPid` 与 `didOnchain`；调用者使用 `GET /generate/did/query?sysPid=...` 查询，接口校验当前用户的记录归属。
+
+本接口的链上 metadata 仍是 SysPid 原文；业务密钥与该标识的映射在本地生成记录中。查询成功证明该次 DID 标识的交易和文档已确认，不额外声称链上文档包含业务密钥全部内容。
+
 认证方式与既有 Bridge 相同：请求头 `X-Internal-Token`，不对公网暴露。
 
 ```http

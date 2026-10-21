@@ -25,7 +25,7 @@
         show-icon
         class="mb16"
         title="你还没有被授权任何节点"
-        description="预分配是给某条通信线路备料，要先有通信权限。到「密钥分发 → 节点授权」挑对端发起申请，管理员批准后即可预分配。"
+        description="请先在「节点授权」中申请通信权限。"
       />
 
       <TechnicalView ref="technicalFlow" kind="preallocation" />
@@ -59,7 +59,7 @@
         <el-form-item label="数量">
           <el-input-number v-model="form.count" :min="1" :max="maxCount" />
           <span class="hint">
-            单批 1 ~ {{ maxCount }} 条；超过 {{ chunkSize }} 条会自动分批上传
+            1 ~ {{ maxCount }} 条
           </span>
         </el-form-item>
 

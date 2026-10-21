@@ -1,6 +1,6 @@
 import { reactive, computed } from 'vue'
 
-export const demoState = reactive({ context: null, available: false, stale: false, busy: false, message: '正在读取演示权威上下文…' })
+export const demoState = reactive({ context: null, available: false, stale: false, busy: false, message: '正在读取会话…' })
 export const canRunAcceptance = computed(() => demoState.available && !demoState.stale && !demoState.busy && demoState.context?.principalType === 'ADMIN')
 let bootstrapPromise = null
 let performanceBusy = false
@@ -14,21 +14,21 @@ export async function refreshDemoContext() {
     const body = await response.json()
     const next = body.data
     if (!response.ok || body.code !== 200 || next?.entryMode !== 'DEMO' || next.enabled !== true || !Number.isSafeInteger(next.revision) || !next.csrfToken) {
-      throw new Error('演示权威上下文不可用，请从统一入口重新进入')
+      throw new Error('会话不可用，请从统一入口重新进入')
     }
     const old = demoState.context
     if (old && (old.revision !== next.revision || old.principalType !== next.principalType || old.csrfToken !== next.csrfToken)) {
       demoState.stale = true
       demoState.available = false
-      demoState.message = '演示身份已改变；请刷新当前页面。不会重放旧请求。'
+      demoState.message = '身份已改变，请刷新页面。'
       return
     }
     if (!old) demoState.context = Object.freeze({ ...next })
     demoState.available = !demoState.stale
-    demoState.message = next.principalType === 'ADMIN' ? '' : '只有演示管理员可以执行验收，请在统一入口切换管理员。'
+    demoState.message = next.principalType === 'ADMIN' ? '' : '请在统一入口切换为管理员。'
   } catch (error) {
     demoState.available = false
-    demoState.message = error.message || '演示权威上下文不可用'
+    demoState.message = error.message || '会话不可用'
     throw error
   } finally {
     clearTimeout(timeout)
@@ -50,7 +50,7 @@ export async function acceptanceFetch(url, options = {}) {
   if (!demoState.context) await bootstrapDemoContext()
   if (!demoState.available || demoState.stale || demoState.context?.principalType !== 'ADMIN') throw new Error(demoState.message || '验收身份不可用')
   const mutation = options.method && options.method !== 'GET'
-  if (mutation && !canRunAcceptance.value && !url.endsWith('/cancel')) throw new Error('验收任务正在执行或上下文不可用')
+  if (mutation && !canRunAcceptance.value && !url.endsWith('/cancel')) throw new Error('任务正在执行或会话不可用')
   const headers = { 'Content-Type': 'application/json', 'X-Kms-Demo-Revision': String(demoState.context.revision) }
   if (mutation) headers['X-Kms-Demo-CSRF'] = demoState.context.csrfToken
   const wasBusy = demoState.busy

@@ -19,7 +19,6 @@
         :closable="false"
         show-icon
         title="当前账号未关联任何节点"
-        description="密钥更新是节点的动作。请用节点账号登录，或在「节点管理」里创建节点后再由节点自行登录。"
       />
 
       <template v-else>
@@ -91,8 +90,6 @@
               </el-tag>
               <el-tag v-else type="info" size="small" effect="plain">未登记</el-tag>
             </div>
-            <p class="key-update__algo-role">{{ c.role }}</p>
-            <p class="key-update__algo-role">{{ coreDetail(c.algorithm, c.active ? variantOf(c.active) : undefined) }}</p>
             <p v-if="c.active" class="key-update__algo-role">当前登记来源：{{ formatGenerationName(c.algorithm, c.active.generation) }}</p>
 
             <dl class="key-update__facts">
@@ -112,7 +109,6 @@
                 <dt>下一版</dt>
                 <dd class="is-ok">
                   已在本机封存 v{{ nextVersionOf(c) }}
-                  <span class="key-update__fact-note">上次更新没走完留下的；本次直接用它，不重新生成</span>
                 </dd>
               </div>
               <div v-if="c.active" class="key-update__fact">
@@ -130,7 +126,7 @@
               :closable="false"
               show-icon
               title="平台记着这把公钥，本机却没有对应私钥"
-              description="本机不是生成这把密钥的设备（或站点数据被清过），因此没有材料可以更新。按它分发的信封在本机解不开，换新版本也补不回来。请改回原设备，或在「节点首次初始化」里用本机重新生成一套。"
+              description="请返回原设备或恢复本机密钥材料。"
             />
             <el-alert
               v-else-if="c.reconcile && c.reconcile.state === RECONCILE.MISMATCH"
@@ -139,7 +135,7 @@
               :closable="false"
               show-icon
               title="同一 keyId 下，本机公钥与平台记录不一致"
-              description="正常路径不会出现。在这里更新会以本机这把为准，把平台上的生产版本换成一把来源不明的公钥 —— 先查清本机密钥库是否被导入或被改写过。"
+              description="请先核对本机密钥库，再更新。"
             />
             <el-alert
               v-else-if="c.reconcile && c.reconcile.state === RECONCILE.SERVER_EMPTY_PK"
@@ -148,18 +144,17 @@
               :closable="false"
               show-icon
               title="平台记录的公钥无法换算成可比对的形式"
-              description="可能是历史行（编码与当前口径不同）。无法确认本机这把就是平台在产那把，因此这里不提供更新 —— 登录服务器查该行原文。"
+              description="暂不可更新，请核查服务端公钥记录。"
             />
             <div v-else-if="c.reconcile && c.reconcile.state === RECONCILE.LOCAL_ONLY" class="key-update__pending">
               本机有材料、平台没有在产行 —— 这属于<strong>登记</strong>，请到「密钥生成」页完成。
             </div>
             <div v-else-if="c.reconcile && c.reconcile.state === RECONCILE.MATCH" class="key-update__match">
               <el-icon><CircleCheck /></el-icon>
-              <span>本机这把公钥与平台在产版本逐字节相同，可以放心更新</span>
+              <span>本机公钥与当前版本一致</span>
             </div>
             <div v-else-if="!c.active && c.latest" class="key-update__pending">
-              该算法的最后一版是「{{ c.latest.statusLabel }}」。<strong>更新救不回来</strong> ——
-              已回收是终态，要恢复服务请在「密钥生成」里生成一把新的（新 keyId）。
+              最后版本：{{ c.latest.statusLabel }}。请在「密钥生成」中生成新密钥。
             </div>
 
             <div v-if="selfTestOf(c)" class="key-update__selftest" :class="selfTestOf(c).ok ? 'is-ok' : 'is-bad'">
@@ -177,7 +172,7 @@
                 {{ updating === c.algorithm ? '更新中…' : (c.active ? `更新到 v${nextVersionOf(c)}` : '无可更新版本') }}
               </el-button>
               <span v-if="c.algorithm === 'KYBER' && c.active" class="key-update__variant-note">
-                参数继承当前生产版本：round-3 KEM · {{ variantOf(c.active) }}
+                当前参数：{{ variantOf(c.active) }}
               </span>
               <el-button
                 v-if="selfTestKeyRef(c)"
@@ -209,7 +204,6 @@
               <dt>keyId</dt>
               <dd class="mono">
                 {{ lastRotate.keyId }}
-                <span class="key-update__fact-note">与更新前是同一把 —— 更新的语义就是它不变</span>
               </dd>
             </div>
             <div class="key-update__fact">
@@ -228,7 +222,7 @@
                 <span v-else>
                   已更新，但存证未成功
                   <span class="key-update__fact-note">
-                    本次更新<strong>已经生效</strong>；少的是链上那条 KEY_UPDATED，属审计缺口，不是更新失败
+                    更新已生效，KEY_UPDATED 存证未成功
                   </span>
                 </span>
               </dd>
@@ -238,9 +232,6 @@
 
         <h3 class="key-update__section-title">
           本节点密钥版本对照
-          <span class="key-update__section-note">
-            只列 {{ node.nodeId }} 的密钥 —— 同一浏览器上其它节点的材料不会出现在这里
-          </span>
         </h3>
         <el-table :data="rows" size="small" border class="key-update__table">
           <el-table-column label="生成方案" min-width="240">
@@ -371,7 +362,7 @@ import { KYBER_PK_LENGTHS, cryptoProvider } from '@/utils/crypto/browser-provide
 import { deviceFingerprint, hasDeviceKey } from '@/utils/crypto/device-credential.js'
 import { IS_DEMO } from '@/utils/entry-mode'
 import { generateAndRegisterNodeKey } from '@/utils/node-initialization'
-import { formatGenerationName, coreDetail, GENERATION_SCHEMES } from '@/utils/crypto/generation-scheme.js'
+import { formatGenerationName, GENERATION_SCHEMES } from '@/utils/crypto/generation-scheme.js'
 import { AUTO_UPDATE_EVENT } from '@/utils/node-auto-update'
 
 const loading = ref(true)
@@ -880,7 +871,6 @@ onUnmounted(() => {
 .key-update__result-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
 .key-update__result-title { font-weight: 600; }
 .key-update__section-title { margin: 0 0 12px; font-size: 15px; }
-.key-update__section-note { margin-left: 8px; font-size: 12px; font-weight: 400; color: var(--kms-text-secondary, #909399); }
 .key-update__table { margin-bottom: 12px; }
 .key-update__empty { margin: 0; color: var(--kms-text-secondary, #909399); font-size: 13px; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }

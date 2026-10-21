@@ -19,6 +19,28 @@ from .api_contract import (
     key_status_allows_new_work,
     key_status_allows_unwrap,
 )
+class NodeKeyDidRecord(models.Model):
+    """One durable SysPid transaction for a browser-generated public-key version."""
+    key = models.OneToOneField('NodeLongTermKey', on_delete=models.CASCADE, related_name='did_record')
+    request_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    sys_pid = models.CharField(max_length=182, null=True, unique=True, blank=True)
+    chain_id = models.CharField(max_length=128, blank=True)
+    did = models.CharField(max_length=512, blank=True)
+    tx_id = models.CharField(max_length=64, blank=True)
+    status = models.CharField(max_length=32, default='PREPARING')
+    submit_started = models.BooleanField(default=False)
+    transaction_valid = models.BooleanField(null=True)
+    metadata_matches = models.BooleanField(null=True)
+    last_error = models.CharField(max_length=80, blank=True)
+    lease_token = models.CharField(max_length=36, blank=True)
+    lease_expires_at = models.DateTimeField(null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = table_prefix + 'pqkds_node_key_did'
+
+
 class GroupKeyAgreement(models.Model):
     """Independent contributory agreement. Never stores plaintext contributions or keys."""
     agreement_id = models.CharField(max_length=64, unique=True)

@@ -5,19 +5,7 @@
          · 成功/失败 = 提交轮换的结果，不是"已上链"；
          · 「送达/确认」列 = 该密钥最近一条自动更新流水，不保证属于本轮的 run；
          · 跳过 = 开着开关、还没到间隔窗口的密钥数（不是错误）。 -->
-    <el-alert
-      type="info"
-      :closable="false"
-      show-icon
-      title="自动更新任务记录"
-      class="aur-intro"
-    >
-      <template #default>
-        每轮扫描一条记录：候选 = 本轮到期的密钥（已开启自动更新且到达间隔）；
-        <b>成功/失败</b>指轮换的提交结果，「送达/确认」列展示该密钥最近一条自动更新流水的
-        链上/接收状态（不保证属于本轮的 run）。
-      </template>
-    </el-alert>
+    <h2>自动更新任务记录</h2>
 
     <el-form :model="queryParams" ref="queryRef" :inline="true" v-show="showSearch" label-width="88px">
       <el-form-item label="触发方式" prop="triggerSource">
@@ -71,21 +59,19 @@
         </template>
       </el-table-column>
       <el-table-column label="候选" align="center" prop="candidateCount" width="70" />
-      <el-table-column label="成功" align="center" width="70">
+      <el-table-column label="轮换成功" align="center" width="90">
         <template #default="scope">
           <span :class="{ 'aur-ok': scope.row.successCount > 0 }">{{ scope.row.successCount }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="失败" align="center" width="70">
+      <el-table-column label="轮换失败" align="center" width="90">
         <template #default="scope">
           <span :class="{ 'aur-fail': scope.row.failCount > 0 }">{{ scope.row.failCount }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="跳过" align="center" width="90">
+      <el-table-column label="跳过（未到期）" align="center" width="130">
         <template #default="scope">
-          <el-tooltip content="已开启自动更新、但还没到间隔窗口的密钥数（不是错误）" placement="top">
-            <span>{{ scope.row.skippedCount }}</span>
-          </el-tooltip>
+          <span>{{ scope.row.skippedCount }}</span>
         </template>
       </el-table-column>
       <el-table-column label="操作" align="center" width="100" fixed="right">
@@ -150,7 +136,7 @@
             <span v-else class="aur-muted">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="送达/确认" align="center" width="110">
+        <el-table-column label="最近送达/确认" align="center" width="130">
           <template #default="scope">
             <el-tag v-if="scope.row.chainResultStatus === '1'" type="success" size="small">已成功</el-tag>
             <el-tag v-else-if="scope.row.chainResultStatus === '2'" type="danger" size="small">失败</el-tag>
@@ -180,7 +166,6 @@
         :closable="false"
         show-icon
         title="本轮没有逐密钥明细"
-        description="候选为 0 时不会有明细行；若候选大于 0 却没有明细，说明明细写入失败，请查后端日志（轮次行上的计数仍然有效）。"
       />
     </el-drawer>
   </div>

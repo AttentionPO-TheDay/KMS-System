@@ -18,6 +18,7 @@ public interface KeymanageMapper {
      * @return 密钥管理
      */
     Keymanage selectkeymanageByKeyId(Long keyId);
+    Keymanage selectBySysPid(@Param("sysPid") String sysPid, @Param("userId") Long userId);
 
     /**
      * 查询密钥管理列表

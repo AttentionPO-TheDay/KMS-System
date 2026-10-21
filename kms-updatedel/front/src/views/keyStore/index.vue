@@ -21,7 +21,7 @@
         show-icon
         class="mb16"
         title="当前设备尚未绑定该节点"
-        description="服务端登记了这个节点，但本机找不到它的私钥材料。请联系管理员重新激活；本版本不做跨设备私钥同步（文档 §6）。"
+        description="本机缺少私钥材料，请返回原设备或联系管理员。"
       />
 
       <el-alert
@@ -31,11 +31,10 @@
         show-icon
         class="mb16"
         title="当前账号没有对应的 KMS 节点"
-        description="管理员账号不映射到节点，因此没有本地密钥库。"
       />
 
       <template v-if="nodeId">
-        <div class="section-title">本机密钥库（NodeKeyStore）</div>
+        <div class="section-title">本机密钥库</div>
         <el-descriptions :column="2" border class="mb16">
           <el-descriptions-item label="安全存储">
             <el-tag size="small" :type="storeTagType" effect="plain">{{ storeLabel }}</el-tag>
@@ -85,10 +84,8 @@
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="说明" min-width="260" prop="note" />
         </el-table>
 
-        <div class="section-title">设备认证密钥</div>
 
 
         <div class="section-title">登录绑定文件</div>
@@ -132,7 +129,6 @@
           :closable="false"
           show-icon
           title="本机还没有该节点的绑定文件"
-          description="不影响登录与密钥使用 —— 登录一次即会写上。多见于绑定功能上线之前激活的节点。"
         />
       </template>
     </el-card>
@@ -190,10 +186,10 @@ function formatTime(value) {
 const storeUnavailable = ref(false)
 
 const KEY_DEFS = [
-  { key: 'sm2', label: 'SM2', note: '无证书：秘密 u 与完整私钥能力只在本机（§7.1）' },
-  { key: 'sscl', label: 'SSCL', note: '无证书：秘密 u 与完整私钥能力只在本机（§7.1）' },
-  { key: 'kyber', label: 'Kyber', note: '浏览器 KeyGen，公钥上传、私钥留本地（§7.2）' },
-  { key: 'falcon', label: 'Falcon', note: '负责业务签名，不承担 SM4 加密（§7.3）' }
+  { key: 'sm2', label: 'SM2' },
+  { key: 'sscl', label: 'SSCL' },
+  { key: 'kyber', label: 'Kyber' },
+  { key: 'falcon', label: 'Falcon' }
 ]
 
 const keyRows = computed(() =>

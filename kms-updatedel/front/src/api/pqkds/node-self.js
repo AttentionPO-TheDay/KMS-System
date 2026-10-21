@@ -149,7 +149,16 @@ export function registerSelfNodePublicKey(
   //    而传 `rotate: undefined` 虽会被 JSON.stringify 丢掉，读代码的人却要多想一层。
   if (rotate === true) payload.rotate = true
   if (options.generation) payload.generation = publicGeneration(options.generation)
+  if (options.didOnchain === true) payload.didOnchain = true
   return http.post('/node-self/keys/', payload, { headers }).then(unwrap)
+}
+
+export function querySelfKeyDid(sysPid) {
+  return http.get('/node-self/keys/did/', { params: { sysPid } }).then(unwrap)
+}
+
+export function continueSelfKeyDid({ algorithm, keyId, keyVersion }) {
+  return http.post('/node-self/keys/did/', { algorithm, keyId, keyVersion }).then(unwrap)
 }
 
 /** Authenticated one-time KGC contribution. Never forward provider/private fields. */

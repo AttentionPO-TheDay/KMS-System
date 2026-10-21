@@ -27,7 +27,6 @@
           <el-alert
             v-if="!nodeLoading && !mapped"
             title="当前账号未关联任何节点"
-            description="分发是节点之间的动作（发送方必须有自己的长期密钥）。请用节点账号登录后再分发。"
             type="warning"
             :closable="false"
             show-icon
@@ -49,7 +48,7 @@
                 <el-radio-button value="all" label="all">全部节点</el-radio-button>
                 <el-radio-button value="cross" label="cross">仅跨域</el-radio-button>
               </el-radio-group>
-              <div class="form-hint">本节点所属域：{{ selfDomain || '未指定' }}。跨域分发仍需通信授权和有效密钥。</div>
+              <div class="form-hint">本节点所属域：{{ selfDomain || '未指定' }}</div>
               <div v-if="domainScope === 'cross' && !visibleNodes.length && !nodesLoading" class="form-hint warn-text">暂无已指定域的异域节点，请联系管理员新增域并调整节点归属。</div>
             </el-form-item>
             <el-form-item label="接收节点">
@@ -87,8 +86,7 @@
                 </el-option>
               </el-select>
               <div v-if="selectedNode && !selectedNode.relationship?.granted" class="form-hint warn-text">
-                与 {{ selectedNode.nodeCode }} 还没有通信授权 —— 点下方按钮可<b>提交授权申请</b>，
-                管理员批准后即可分发（也可以在「节点授权」页一次勾选多个对端）。
+                尚未获得与 {{ selectedNode.nodeCode }} 的通信授权。
               </div>
             </el-form-item>
 
@@ -210,8 +208,7 @@
           -->
           <el-dialog v-model="requestDialog" title="提交授权申请" width="620px">
             <p class="dialog-hint">
-              勾选想要建立会话的节点（一次最多 {{ maxSelectable }} 个）。提交后由管理员审批，
-              批准后这些节点就会出现在「接收节点」下拉里，即可直接分发。
+              一次最多选择 {{ maxSelectable }} 个节点。
             </p>
             <el-checkbox-group v-model="requestTargets" class="target-list">
               <el-checkbox
@@ -262,7 +259,7 @@
           <el-alert
             v-if="mapped && !nodeLoading && !falconReady"
             title="本机没有可用于签名的 Falcon 私钥"
-            description="信封必须由发送节点本地签名。请在本机生成一把 Falcon 密钥（「密钥生成」页），或改用当初生成密钥的那台设备。"
+            description="请生成 Falcon 签名密钥，或返回原设备。"
             type="warning"
             :closable="false"
             show-icon

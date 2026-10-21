@@ -3,7 +3,6 @@
     <div class="panel-header">
       <div>
         <h2>当前系统安全协议测试</h2>
-        <p class="subtitle">围绕生成签发、抗量子方案参数与无密码会话边界进行固定探针测试。不代表完整渗透测试或抗量子安全证明。</p>
       </div>
       <span class="badge" :class="health?.securityAvailable ? 'ok' : 'warn'">
         {{ health?.securityAvailable ? '安全引擎已就绪' : '安全引擎未就绪' }}
@@ -11,7 +10,6 @@
     </div>
 
     <p v-if="error" class="error-msg">{{ error }}</p>
-    <p v-else-if="health && !health.securityAvailable" class="warn-msg">当前仅检测到安全引擎未就绪；你仍可点击执行，由后端返回真实失败原因。</p>
 
     <div class="suite-grid">
       <article v-for="suite in securitySuites" :key="suite.id" class="suite-column">
@@ -19,7 +17,6 @@
           <h3>{{ suite.name }}</h3>
           <span class="suite-count">{{ suite.cases.length }} 个用例</span>
         </div>
-        <p class="suite-summary">{{ suite.summary }}</p>
         
         <div class="attack-list">
           <div v-for="item in suite.cases" :key="item.title" class="attack-card inner-glass">
@@ -109,7 +106,6 @@ async function doSecurityRun(caseId) {
 
 <style scoped>
 .security-wrapper { grid-column: 1 / -1; }
-.subtitle { color: var(--kms-text-tertiary); margin-top: 8px; font-size: 14px; }
 
 .suite-grid {
   display: grid;
@@ -127,7 +123,6 @@ async function doSecurityRun(caseId) {
 }
 .suite-header h3 { margin: 0; font-size: 16px; color: var(--kms-text-primary); }
 .suite-count { font-size: 11px; font-weight: bold; }
-.suite-summary { font-size: 13px; color: var(--kms-text-secondary); margin-bottom: 20px; min-height: 40px; }
 
 .accent-red { background: var(--kms-danger-subtle); border-left: 3px solid var(--kms-danger); }
 .accent-orange { background: var(--kms-warning-subtle); border-left: 3px solid var(--kms-warning); }

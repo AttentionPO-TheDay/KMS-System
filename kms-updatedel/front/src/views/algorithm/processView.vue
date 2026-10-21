@@ -43,16 +43,16 @@
             </template>
             <div class="payload-box">
               <div v-if="activeStep === 0" style="margin-bottom: 20px; display: flex; gap: 10px;">
-                <el-button type="info" size="small" @click="runStep1" :loading="isProcessing">自数据库捞取模拟更新的旧密钥配置</el-button>
-                <el-button type="primary" size="small" @click="runQuickGenerate" :loading="isGenerating">前置生成：一键调用生成系统创建模拟密钥</el-button>
+                <el-button type="info" size="small" @click="runStep1" :loading="isProcessing">获取旧密钥</el-button>
+                <el-button type="primary" size="small" @click="runQuickGenerate" :loading="isGenerating">生成测试密钥</el-button>
               </div>
 
-              <div class="label">识别到用户下的一条有效旧密钥 (Target Key) :</div>
+              <div class="label">目标密钥：</div>
               <div class="value">
                 <span v-if="step1Data.oldKeyInfo">ID: {{ step1Data.oldKeyInfo.keyId }} | 算法: {{ step1Data.oldKeyInfo.encrytName }} | 用户: {{ step1Data.oldKeyInfo.userName }} | 名称: {{ step1Data.oldKeyInfo.keyName }}</span>
                 <span v-else style="color:#666;">运行获取后展示...</span>
               </div>
-              <div class="label mt-10">需要被废除的老旧公共特征值 (旧 uA):</div>
+              <div class="label mt-10">旧 uA：</div>
               <div class="value auth" style="color: var(--kms-text-secondary)">
                 {{ step1Data.oldKeyInfo ? (step1Data.oldKeyInfo.uA || step1Data.oldKeyInfo.ua) : '运行获取后展示...' }}
               </div>
@@ -77,12 +77,12 @@
             </template>
             <div class="payload-box">
               <div v-if="activeStep === 1" style="margin-bottom: 20px;">
-                <el-button type="primary" size="small" @click="runStep2" :loading="isProcessing">第二步：执行本地参数随机轮转策略</el-button>
+                <el-button type="primary" size="small" @click="runStep2" :loading="isProcessing">生成新份额</el-button>
               </div>
 
-              <div class="label">本地新随机份额熵 (New Private Part):</div>
+              <div class="label">新本地份额：</div>
               <div class="value auth">{{ step2Data.newPrivateShare || '等待生成...' }}</div>
-              <div class="label mt-10">映射生成的新公共切片 (New uA):</div>
+              <div class="label mt-10">新 uA：</div>
               <div class="value">{{ step2Data.newUA || '等待生成...' }}</div>
             </div>
           </el-card>
@@ -101,7 +101,7 @@
             </template>
             <div class="payload-box">
               <div v-if="activeStep === 2" style="margin-bottom: 20px;">
-                <el-button type="warning" size="small" @click="runStep3" :loading="isProcessing">第三步：向服务端发起联名更新及版本替换请求</el-button>
+                <el-button type="warning" size="small" @click="runStep3" :loading="isProcessing">提交更新</el-button>
               </div>
 
               <div class="label">向中心提交轮换请求并附带新 uA 载荷：</div>
@@ -109,14 +109,14 @@
                 <pre v-if="step3Data.payload">{{ JSON.stringify(step3Data.payload, null, 2) }}</pre>
                 <pre v-else style="color:#666">等待构建...</pre>
               </div>
-              <div class="label mt-10">KGC 同步响应新配置，销毁中心侧旧切片，返回新切片：</div>
+              <div class="label mt-10">KGC 响应：</div>
               <div class="code-block response-block">
                 <pre v-if="step3Data.responseObj">{{ JSON.stringify(step3Data.responseObj, null, 2) }}</pre>
                 <pre v-else style="color:#666">等待更新确认...</pre>
               </div>
 
               <div v-if="step3Data.responseObj && step3Data.responseObj.returnedMaterial && (step3Data.responseObj.returnedMaterial.kgcRandomW || step3Data.responseObj.returnedMaterial.kgcMx)" class="math-steps-box mt-15" style="background: var(--kms-warning-subtle); padding: 15px; border-radius: 8px; border: 1px dashed var(--kms-warning-border);">
-                <div class="label" style="color: var(--kms-warning-strong); font-weight: bold; margin-bottom: 8px;">🔍 KGC 计算黑盒揭秘 (内部中间变量):</div>
+                <div class="label" style="color: var(--kms-warning-strong); font-weight: bold; margin-bottom: 8px;">KGC 计算结果：</div>
                 <div v-if="step3Data.responseObj.returnedMaterial.kgcRandomW">
                   <div style="font-family: monospace; font-size: 12px; color: var(--kms-text-primary); margin-bottom: 5px; word-break: break-all;">
                     > [SM2] KGC侧临时生成的新轮次随机构件 (w): {{ step3Data.responseObj.returnedMaterial.kgcRandomW }}
@@ -148,14 +148,13 @@
             </template>
             <div class="payload-box">
               <div v-if="activeStep === 3" style="margin-bottom: 20px;">
-                <el-button type="success" size="small" @click="runStep4" :loading="isProcessing">第四步：本地数学固化获取 Version+1 绝密凭据</el-button>
+                <el-button type="success" size="small" @click="runStep4" :loading="isProcessing">恢复新密钥</el-button>
               </div>
 
-              <div class="desc" style="color: var(--kms-text-tertiary); margin-bottom: 10px;">基于全新的中心分片与本地绝对隐秘分片，通过椭圆曲线群运算再次获取最新的绝密通道参量：</div>
 
               <!-- 中间计算过程展示 -->
               <div class="math-steps-box mt-10" style="background: var(--kms-success-subtle); padding: 15px; border-radius: 8px; border: 1px dashed var(--kms-success-border);">
-                <div class="label" style="color: var(--kms-success-strong); font-weight: bold; margin-bottom: 8px;">🔍 揭秘内部计算过程:</div>
+                <div class="label" style="color: var(--kms-success-strong); font-weight: bold; margin-bottom: 8px;">计算过程：</div>
                 <div v-if="step4Data.mathSteps && step4Data.mathSteps.length > 0">
                   <div v-for="(step, i) in step4Data.mathSteps" :key="i" style="font-family: monospace; font-size: 12px; color: var(--kms-text-primary); margin-bottom: 5px; word-break: break-all;">
                     > {{ step }}
@@ -168,7 +167,7 @@
 
               <div class="flex-box mt-15">
                 <div class="item finalize-block final-priv">
-                  <div class="title">🔐 新的最终绝对私钥 (Rotation Success)</div>
+                  <div class="title">新私钥</div>
                   <div class="content break-all">{{ step4Data.PrivateKey || '计算中...' }}</div>
                 </div>
                 <div class="item finalize-block final-pub">

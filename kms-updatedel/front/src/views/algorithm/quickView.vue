@@ -1,14 +1,14 @@
 <template>
   <div class="algorithm-container">
     <div class="page-title">
-      <h1>更新与回收算法速览</h1>
+      <h1>更新算法速览</h1>
 
     </div>
 
     <!-- Algorithm Switch -->
     <el-radio-group v-model="activeAlgo" class="algo-switch">
-      <el-radio-button label="sm2">无证书 SM2 更新/回收</el-radio-button>
-      <el-radio-button label="sscl">无证书 SSCL 更新/回收</el-radio-button>
+      <el-radio-button label="sm2">无证书 SM2</el-radio-button>
+      <el-radio-button label="sscl">无证书 SSCL</el-radio-button>
     </el-radio-group>
 
     <template v-if="activeAlgo === 'sm2'">
@@ -17,7 +17,6 @@
         <el-col :span="12">
           <div class="glass-card mode-card">
             <h3 class="title-full">全量化密钥更新 (Full-quantity)</h3>
-            <div class="mode-desc">双边防伪参数重置，彻底阻断历史妥协风险。</div>
             <div class="step-list">
               <div class="step-item">
                 <div class="step-label">用户配合 (User)</div>
@@ -44,13 +43,12 @@
         <el-col :span="12">
           <div class="glass-card mode-card">
             <h3 class="title-light">轻量化密钥更新 (Semi-quantity)</h3>
-            <div class="mode-desc">KGC 单边注入新随机熵，无须用户端进行强交互。</div>
             <div class="step-list">
               <div class="step-item">
                 <div class="step-label">单边派发 (KGC)</div>
                 <div class="step-math">
                   w<sub>new</sub> ∈<sub>R</sub> Z<sub>n</sub><sup>*</sup><br />
-                  W<sub>A</sub><sup>(i+1)</sup> = (w<sub>new</sub> · G) + U<sub>A</sub><sup>(old)</sup> <i>(复用防抵赖参数)</i><br />
+                  W<sub>A</sub><sup>(i+1)</sup> = (w<sub>new</sub> · G) + U<sub>A</sub><sup>(old)</sup><br />
                   λ<sup>(i+1)</sup> = SM3(W<sub>Ax</sub><sup>(i+1)</sup> || W<sub>Ay</sub><sup>(i+1)</sup> || H<sub>A</sub>) mod n<br />
                   T<sub>A</sub><sup>(i+1)</sup> = (w<sub>new</sub> + λ<sup>(i+1)</sup> · ms) mod n
                 </div>
@@ -58,7 +56,6 @@
               <div class="step-item">
                 <div class="step-label">无感同步 (User)</div>
                 <div class="step-math">
-                  <i>静默接收服务端下发的新周期因子</i><br />
                   S<sub>A</sub><sup>(i+1)</sup> = (T<sub>A</sub><sup>(i+1)</sup> + u<sub>A</sub><sup>(old)</sup>) mod n
                 </div>
               </div>
@@ -75,7 +72,6 @@
         <el-col :span="12">
           <div class="glass-card mode-card">
             <h3 class="title-full">全量化密钥更新 (Full-quantity)</h3>
-            <div class="mode-desc">门限多项式系数与随机盲化因子完全重建。</div>
             <div class="step-list">
               <div class="step-item">
                 <div class="step-label">用户重载 (User)</div>
@@ -87,7 +83,7 @@
               <div class="step-item">
                 <div class="step-label">多项式切割 (KGC)</div>
                 <div class="step-math">
-                  r<sup>(new)</sup> ∈<sub>R</sub> Z<sub>n</sub><sup>*</sup> <i>(全新门限扰动)</i><br />
+                  r<sup>(new)</sup> ∈<sub>R</sub> Z<sub>n</sub><sup>*</sup><br />
                   c<sub>0</sub><sup>(new)</sup> = (ms · r<sup>(new)</sup>) mod n<br />
                   P<sub>new</sub>(x) = c<sub>0</sub><sup>(new)</sup> + Σ c<sub>i</sub> · x<sup>i</sup> mod n<br />
                   M<sub>y</sub><sup>(new)</sup> = P<sub>new</sub>(M<sub>x</sub><sup>(new)</sup>) mod n
@@ -102,7 +98,6 @@
         <el-col :span="12">
           <div class="glass-card mode-card">
             <h3 class="title-light">轻量化密钥更新 (Semi-quantity)</h3>
-            <div class="mode-desc">固定结构锚点下的静默多项式常数变轨。</div>
             <div class="step-list">
               <div class="step-item">
                 <div class="step-label">切片翻转 (KGC)</div>
@@ -116,8 +111,7 @@
               <div class="step-item">
                 <div class="step-label">隐式汇聚 (User)</div>
                 <div class="step-math">
-                  <i>复用本地的 M<sub>x</sub><sup>(old)</sup> 不做额外运算开销。</i><br />
-                  无缝接入新门限轮次并生成映射。
+                  M<sub>x</sub><sup>(old)</sup>
                 </div>
               </div>
             </div>
@@ -127,35 +121,6 @@
       </el-row>
     </template>
 
-    <!-- 回收公约机制 -->
-    <div class="glass-card revoke-card">
-      <h3 class="revoke-title">无证书联邦注销与生命周期终止 (Revocation)</h3>
-      <div class="revoke-flow">
-        <div class="revoke-step">
-          <div class="r-icon">🚫</div>
-          <div class="r-text">
-            <strong>1. 权限锚点剔除 (KGC-Side)</strong>
-            <span>在 KGC 中心层级物理阻断关联 ID 的部分密钥派生权限，拒绝全部协同计算签名。</span>
-          </div>
-        </div>
-        <div class="revoke-step divider">➔</div>
-        <div class="revoke-step">
-          <div class="r-icon">⛓️</div>
-          <div class="r-text">
-            <strong>2. 联邦链上止付 (Consensus)</strong>
-            <span>针对无证书体制发出全局状态机废止广播，上链写入非溯源 CRL 与全网共识。</span>
-          </div>
-        </div>
-        <div class="revoke-step divider">➔</div>
-        <div class="revoke-step">
-          <div class="r-icon">🛡️</div>
-          <div class="r-text">
-            <strong>3. 本地静默化 (User-Side)</strong>
-            <span>本地已生成的 u<sub>A</sub> 无法与 KGC 完成协同，实现防篡改和绝对阻断控制。</span>
-          </div>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 

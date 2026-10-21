@@ -25,7 +25,6 @@
       <el-table-column label="所属域" align="center" prop="domain" width="100" />
       <el-table-column label="参数名称" align="center" prop="label" width="180" />
       <el-table-column label="参数值" align="center" prop="value" :show-overflow-tooltip="true" />
-      <el-table-column label="说明" align="center" prop="description" min-width="180" show-overflow-tooltip />
     </el-table>
 
     <pagination v-show="total > 0" :total="total" v-model:page="queryParams.pageNum" v-model:limit="queryParams.pageSize" @pagination="getList" />
@@ -56,7 +55,6 @@
 <el-descriptions :column="1" border>
         <el-descriptions-item v-for="item in currentItems" :key="item.key" :label="item.label">
           <div class="param-value">{{ item.value || '-' }}</div>
-          <div class="param-desc">{{ item.description }}</div>
         </el-descriptions-item>
       </el-descriptions>
       <template #footer>

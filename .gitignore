@@ -222,3 +222,7 @@ kms-distribute/111.7z
 /kms-ops/releases/*/*.patch
 /kms-ops/releases/*/*.diff
 /kms-ops/releases/*/security-tests
+/kms-ops/releases/ui-copy-20261020/updatedel/
+/kms-ops/releases/ui-copy-20261020/acceptance/
+/kms-ops/releases/ui-copy-20261020/baseline/
+/kms-ops/releases/acceptance-evidence-20261019/server-baseline/

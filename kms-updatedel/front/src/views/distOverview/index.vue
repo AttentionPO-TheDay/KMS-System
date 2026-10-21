@@ -30,7 +30,7 @@
               <el-table-column label="已用" width="90" prop="used" />
             </el-table>
             <div class="hint">
-              过期 {{ pool.expired ?? 0 }} 条；过期的可在「密钥池」页一键清理。
+              过期 {{ pool.expired ?? 0 }} 条
             </div>
           </el-card>
         </el-col>

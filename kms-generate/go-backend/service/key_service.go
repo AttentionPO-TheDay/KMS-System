@@ -154,8 +154,21 @@ func (s *KeyManageService) EnrollKey(km *models.Keymanage, rawPassword string) (
 		return "", errors.New("unsupported key generation algorithm")
 	}
 
+	didClient, err := keygenDIDClient()
+	if err != nil {
+		return "", err
+	}
+	if didClient != nil {
+		defer didClient.http.CloseIdleConnections()
+		if err := didClient.prepare(km); err != nil {
+			return "", err
+		}
+	}
 	if err := s.sendToKafka(km, rawPassword, ActionEnrollKey); err != nil {
 		return "", err
+	}
+	if didClient != nil {
+		didClient.submit(km)
 	}
 
 	return km.KeyValue, nil

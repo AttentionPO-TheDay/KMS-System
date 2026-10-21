@@ -2,7 +2,6 @@
   <main class="entry-page">
     <el-card class="entry-card" shadow="never" v-loading="loading">
       <h1>密钥管理系统 · 受控演示</h1>
-      <p>此入口只在已启用的受控本机网关可用。无需账号、密码或激活凭证；身份由服务端演示会话确认。</p>
       <el-alert v-if="error" :title="error" type="warning" :closable="false" show-icon />
       <el-form @submit.prevent="resolveNode" label-position="top">
         <el-form-item label="已有节点 ID">
@@ -11,9 +10,6 @@
         <el-button type="primary" :loading="loading" :disabled="!enabled" @click="resolveNode">进入节点</el-button>
         <el-button :disabled="!enabled || loading" @click="openAdmin">管理控制台</el-button>
       </el-form>
-      <p class="hint">节点不存在时不会自动创建。请进入管理控制台显式登记，再用节点 ID 进入；停用节点不能进入。</p>
-      <p class="hint">演示私钥只在当前浏览器的独立密钥库内。不会复制独立运行材料，缺失或不匹配时不会覆盖已登记公钥。</p>
-      <p class="hint">普通登录入口已关闭。切换浏览器或 HTTPS 地址会改变本机材料作用域，不会自动复制私钥或重新初始化。</p>
     </el-card>
   </main>
 </template>
@@ -70,5 +66,4 @@ onMounted(async () => {
 h1 { font-size: 22px; }
 p { line-height: 1.8; }
 .el-form { margin-top: 24px; }
-.hint { color: var(--el-text-color-secondary); font-size: 13px; }
 </style>

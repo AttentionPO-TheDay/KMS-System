@@ -35,23 +35,6 @@
       <!-- Step 1 Row -->
       <transition name="fade-slide">
       <div class="step-row" v-show="activeStep >= 0">
-        <div class="theory-col">
-          <el-card class="glass-card theory-card" :class="{'active-card': activeStep === 0, 'completed-card': activeStep > 0}">
-             <div class="card-header">
-               <h3 class="theory-title">第一步理论：用户端 (本地部分公私钥生成)</h3>
-             </div>
-             <div class="theory-content" v-if="form.encrytName === 'SM2'">
-                <p>1. 用户端本地生成安全的随机数作为本地部分私钥：u<sub>A</sub> ∈<sub>R</sub> Z<sub>n</sub><sup>*</sup></p>
-                <p>2. 在本地基于椭圆曲线计算本地部分公钥：U<sub>A</sub> = u<sub>A</sub> · G</p>
-             </div>
-             <div class="theory-content" v-else>
-                <p>1. 用户端随机产生本地秘密因子：u<sub>A</sub> ∈<sub>R</sub> Z<sub>n</sub><sup>*</sup></p>
-                <p>2. 根据椭圆曲线基点计算参数：U<sub>A</sub> = u<sub>A</sub> · G</p>
-             </div>
-             <div class="dispatch-box">发送公钥切片及标识至 KGC 中心：把 U<sub>A</sub> 与用户标识 ID<sub>A</sub> 捆绑提交</div>
-          </el-card>
-        </div>
-
         <div class="practice-col">
           <el-card class="glass-card practice-card" :class="{'active-card': activeStep === 0}">
             <div class="card-header">
@@ -85,28 +68,6 @@
       <!-- Step 2 Row -->
       <transition name="fade-slide">
       <div class="step-row" v-if="activeStep >= 1">
-        <div class="theory-col">
-          <el-card class="glass-card theory-card" :class="{'active-card': activeStep === 1, 'completed-card': activeStep > 1}">
-             <div class="card-header">
-               <h3 class="theory-title">第二步理论：KGC端 (密码中心运算)</h3>
-             </div>
-             <div class="theory-content" v-if="form.encrytName === 'SM2'">
-                <p>1. 提取标识生成哈希：H<sub>A</sub> = SM3(ENTL || ID<sub>A</sub> || params<sub>sys</sub> || P<sub>pub</sub>)</p>
-                <p>2. KGC产生安全的单次随机熵：w ∈<sub>R</sub> Z<sub>n</sub><sup>*</sup></p>
-                <p>3. 构建用户部分公钥：W<sub>A</sub> = (w · G) + U<sub>A</sub></p>
-                <p>4. 生成公钥哈希：λ = SM3(W<sub>Ax</sub> || W<sub>Ay</sub> || H<sub>A</sub>) mod n</p>
-                <p>5. 结合主私钥计算用户部分私钥：T<sub>A</sub> = (w + λ · ms) mod n</p>
-             </div>
-             <div class="theory-content" v-else>
-                <p>1. 解析生成映射哈希：M<sub>x</sub> = SM3(U<sub>Ax</sub> || U<sub>Ay</sub> || ID<sub>A</sub>) mod n</p>
-                <p>2. 调用阈值为 t 的多项式求值引擎，该多项式 P(x) 满足 P(0) = ms · r mod n</p>
-                <p class="indent">· 动态加载系数向量 coefficients</p>
-                <p class="indent">· 计算多项式映射：M<sub>y</sub> = P(M<sub>x</sub>) mod n</p>
-             </div>
-             <div class="dispatch-box">基于安全通道派发部分公私钥{ WA, TA }至用户</div>
-          </el-card>
-        </div>
-
         <div class="practice-col">
           <el-card class="glass-card practice-card" :class="{'active-card': activeStep === 1}">
             <div class="card-header">
@@ -126,7 +87,7 @@
                 </div>
 
                 <div v-if="step2Data.responseObj.returnedMaterial && (step2Data.responseObj.returnedMaterial.kgcRandomW || step2Data.responseObj.returnedMaterial.kgcMx)" class="math-steps-box mt-15" style="background: var(--kms-warning-subtle); padding: 15px; border-radius: 8px; border: 1px dashed var(--kms-warning-border);">
-                  <div class="label" style="color: var(--kms-warning-strong); font-weight: bold; margin-bottom: 8px;">🔍 KGC 计算黑盒揭秘 (内部中间变量):</div>
+                  <div class="label" style="color: var(--kms-warning-strong); font-weight: bold; margin-bottom: 8px;">KGC 计算结果：</div>
                   <div v-if="step2Data.responseObj.returnedMaterial.kgcRandomW">
                     <div class="math-line">> [SM2] KGC临时生成的随机数 (w): {{ step2Data.responseObj.returnedMaterial.kgcRandomW }}</div>
                     <div class="math-line">> [SM2] KGC结合用户信息算出的摘要 (lambda): {{ step2Data.responseObj.returnedMaterial.kgcLambda }}</div>
@@ -145,24 +106,6 @@
       <!-- Step 3 Row -->
       <transition name="fade-slide">
       <div class="step-row" v-if="activeStep >= 2">
-        <div class="theory-col">
-          <el-card class="glass-card theory-card" :class="{'active-card': activeStep === 2, 'completed-card': activeStep > 2}">
-             <div class="card-header">
-               <h3 class="theory-title">第三步理论：用户端 (部分私钥合并)</h3>
-             </div>
-             <div class="theory-content" v-if="form.encrytName === 'SM2'">
-                <p>1. 验证接收到的 { W<sub>A</sub>, T<sub>A</sub> } 的完整性与一致性</p>
-                <p>2. 本地执行无中心协议合并：最终实际私钥 S<sub>A</sub> = (T<sub>A</sub> + u<sub>A</sub>) mod n</p>
-                <p>3. 最终对外暴露的公开密钥锁定为 W<sub>A</sub></p>
-             </div>
-             <div class="theory-content" v-else>
-                <p>1. 使用秘密共享机制进行切片逆运算</p>
-                <p>2. 在无证书环境下还原最终多因子门限私钥</p>
-             </div>
-             <div class="dispatch-box result">最终获取完整的无证书公私钥对</div>
-          </el-card>
-        </div>
-
         <div class="practice-col">
           <el-card class="glass-card practice-card" :class="{'active-card': activeStep === 2}">
             <div class="card-header">
@@ -177,7 +120,7 @@
 
               <div v-if="step3Data.mathSteps.length > 0">
                 <div class="math-steps-box mt-10" style="background: var(--kms-success-subtle); padding: 15px; border-radius: 8px; border: 1px dashed var(--kms-success-border);">
-                  <div class="label" style="color: var(--kms-success-strong); font-weight: bold; margin-bottom: 8px;">🔍 揭秘内部计算过程:</div>
+                  <div class="label" style="color: var(--kms-success-strong); font-weight: bold; margin-bottom: 8px;">计算过程：</div>
                   <div class="math-line" v-for="(step, i) in step3Data.mathSteps" :key="i">> {{ step }}</div>
                 </div>
 
@@ -225,7 +168,6 @@
               <div class="line l3"></div>
             </div>
           </div>
-          <p class="muted card-desc-bottom">简介：同一生成中心掩护下，域内多终端节点共同完成高强度、无证书的密钥协商过程。</p>
         </div>
 
         <!-- Card 2 -->
@@ -245,7 +187,6 @@
               <div class="user-dot b2">💻</div>
             </div>
           </div>
-          <p class="muted card-desc-bottom">简介：全网分布式部署，各中心主密钥逻辑隔离。分散的业务终端被安全区隔在独立的密码域中。</p>
         </div>
 
         <!-- Card 3 -->
@@ -268,7 +209,6 @@
               <div class="shield">🛡️</div>
             </div>
           </div>
-          <p class="muted card-desc-bottom">简介：跨域交互时进行特征剥离与密码学混淆，实现“只知发往某域、不知对应何人”的极致隐私保护。</p>
         </div>
       </div>
     </transition>

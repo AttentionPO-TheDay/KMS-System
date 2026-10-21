@@ -104,7 +104,8 @@ func probeRejectionReason(data map[string]interface{}) string {
 	switch message {
 	case "签发只接受白名单字段，可信上下文由后端确定", "签发仅支持规范 KYBER/FALCON 家族",
 		"请求参数或 JSON 无效", "keyVersion 应为 ≥1 的整数：1.5", "生成参数集无效",
-		"公钥接口禁止上传私密生成材料", "指定的放弃来源不存在":
+		"公钥接口禁止上传私密生成材料", "指定的放弃来源不存在", "DEMO_SESSION_INVALID",
+		"缺少 Demo 会话", "DEMO_CSRF_INVALID", "DEMO_REVISION_STALE", "演示节点不能访问管理接口", "DEMO_ORIGIN_REJECTED":
 		return message
 	}
 	return ""
@@ -147,7 +148,7 @@ func (s *server) executeSystemSecurity(ctx context.Context, caseID string) Secur
 	jar, _ := cookiejar.New(nil)
 	p := securityProbe{base: strings.TrimRight(envOrDefault("ACCEPTANCE_SECURITY_GATEWAY_URL", "http://kms_gateway:8088"), "/"),
 		client: &http.Client{Jar: jar, Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
-		result: SecurityRunResult{CaseID: caseID, Status: "error", Verdict: "error", Notes: []string{"固定协议探针；只创建临时演示会话，不登记、更新或回收业务密钥。", "不证明抗量子计算能力，不覆盖节点侧私钥/密文密码学测试。"}}}
+		result: SecurityRunResult{CaseID: caseID, Status: "error", Verdict: "error", Notes: []string{"固定协议探针；只创建临时演示会话，不登记、更新或回收业务密钥。"}}}
 	p.result.EvidenceVersion = 2
 	fail := func(err error) SecurityRunResult {
 		p.result.Error = err.Error()
@@ -199,6 +200,7 @@ func (s *server) executeSystemSecurity(ctx context.Context, caseID string) Secur
 	}
 	switch caseID {
 	case "generation-identity-injection":
+		expected = "KEYGEN_IDENTITY_FIELD_FORBIDDEN"
 		payload = `{"algorithm":"KYBER","keyId":"acceptance-invalid","keyVersion":1,"variant":"768","nodeId":"foreign-node"}`
 		p.result.TestInput, p.result.ValidationRule, p.result.ExpectedReason = "KYBER / variant=768；额外注入 nodeId=foreign-node", "签发字段白名单，身份由会话决定", "签发只接受白名单字段，可信上下文由后端确定"
 	case "generation-unknown-algorithm":
@@ -206,19 +208,24 @@ func (s *server) executeSystemSecurity(ctx context.Context, caseID string) Secur
 		expected = "KEYGEN_SCHEME_INVALID"
 		p.result.TestInput, p.result.ValidationRule, p.result.ExpectedReason = "algorithm=RSA-512", "生成算法白名单", "签发仅支持规范 KYBER/FALCON 家族"
 	case "generation-malformed-json":
+		expected = "KEYGEN_JSON_INVALID"
 		payload = `{"algorithm":`
 		p.result.TestInput, p.result.ValidationRule, p.result.ExpectedReason = "残缺 JSON：缺少 algorithm 的值及闭合括号", "JSON 请求解析", "请求参数或 JSON 无效"
 	case "generation-invalid-version":
+		expected = "KEYGEN_VERSION_INVALID"
 		payload = `{"algorithm":"KYBER","keyId":"acceptance-invalid-version","keyVersion":1.5,"variant":"768"}`
 		p.result.TestInput, p.result.ValidationRule, p.result.ExpectedReason = "KYBER / variant=768 / keyVersion=1.5", "密钥版本正整数约束", "keyVersion 应为 ≥1 的整数：1.5"
 	case "pq-parameter-downgrade":
+		expected = "KYBER_KEYGEN_VARIANT_INVALID"
 		payload = `{"algorithm":"KYBER","keyId":"acceptance-invalid","keyVersion":1,"variant":"128"}`
 		p.result.TestInput, p.result.ValidationRule, p.result.ExpectedReason = "KYBER / variant=128；支持值为 512、768、1024", "算法与参数集白名单", "生成参数集无效"
 	case "pq-sign-encrypt-confusion":
+		expected = "FALCON_KEYGEN_VARIANT_INVALID"
 		payload = `{"algorithm":"FALCON","keyId":"acceptance-invalid","keyVersion":1,"variant":"768"}`
 		explanation = "标准签名家族不能使用封装家族的参数集；仅验证签发参数边界"
 		p.result.TestInput, p.result.ValidationRule, p.result.ExpectedReason = "FALCON / variant=768；该签名家族仅支持 512", "算法与参数集白名单", "生成参数集无效"
 	case "pq-secret-upload":
+		expected = "KEYGEN_PRIVATE_MATERIAL_FORBIDDEN"
 		payload = `{"algorithm":"KYBER","keyId":"acceptance-invalid","keyVersion":1,"variant":"768","secretKey":"acceptance-dummy-not-a-key"}`
 		p.result.TestInput, p.result.ValidationRule, p.result.ExpectedReason = "KYBER / variant=768；附加虚构 secretKey 字段", "私密生成材料禁入", "公钥接口禁止上传私密生成材料"
 	case "pq-issuance-source-forgery":
@@ -229,11 +236,11 @@ func (s *server) executeSystemSecurity(ctx context.Context, caseID string) Secur
 	case "network-session-forgery":
 		method, path = "GET", "/demo-api/pqkds/node-self/"
 		headers["Cookie"] = "KMS-Demo-Session=" + strings.Repeat("A", 43)
-		expected = "DEMO_CONTEXT_STALE"
+		expected = "DEMO_SESSION_INVALID"
 	case "network-missing-session":
 		method, path = "GET", "/demo-api/pqkds/node-self/"
 		headers["Cookie"] = ""
-		expected = "DEMO_CONTEXT_STALE"
+		expected = "DEMO_SESSION_REQUIRED"
 	case "network-csrf":
 		path, payload = "/demo-api/lifecycle/demo/context/admin", "{}"
 		headers["X-Kms-Demo-CSRF"] = "acceptance-invalid"
@@ -259,11 +266,16 @@ func (s *server) executeSystemSecurity(ctx context.Context, caseID string) Secur
 			"network-csrf": "错误 CSRF 请求角色切换", "network-stale-revision": "上一 revision 请求角色切换",
 			"network-role-isolation": "节点会话读取管理员接口", "network-origin": "不受信任 Origin 请求角色切换",
 		}[caseID]
-		p.result.ValidationRule = "会话与权限专用拒绝码 " + expected
-		p.result.ExpectedReason = "专用拒绝码 " + expected
-	}
-	if strings.HasPrefix(caseID, "pq-") {
-		p.result.Notes = append(p.result.Notes, "本组4个场景覆盖3条协议规则；参数降级与参数混用共用参数白名单，私密字段与来源约束也属于通用协议保护。不能据此判定抗量子算法安全通过。")
+		p.result.ValidationRule = map[string]string{
+			"network-session-forgery": "已提供会话的有效性校验", "network-missing-session": "会话存在性校验",
+			"network-csrf": "CSRF 凭据一致性校验", "network-stale-revision": "会话 revision 栅栏",
+			"network-role-isolation": "节点与管理员权限隔离", "network-origin": "请求来源白名单",
+		}[caseID]
+		p.result.ExpectedReason = map[string]string{
+			"network-session-forgery": "DEMO_SESSION_INVALID", "network-missing-session": "缺少 Demo 会话",
+			"network-csrf": "DEMO_CSRF_INVALID", "network-stale-revision": "DEMO_REVISION_STALE",
+			"network-role-isolation": "演示节点不能访问管理接口", "network-origin": "DEMO_ORIGIN_REJECTED",
+		}[caseID]
 	}
 	p.progress(ctx, "发送非法请求并核对拒绝原因")
 	status, response, err := p.request(ctx, method, path, payload, headers)
@@ -273,9 +285,6 @@ func (s *server) executeSystemSecurity(ctx context.Context, caseID string) Secur
 	actual := probeErrorCode(response)
 	p.result.ActualCode = actual
 	p.result.ActualReason = probeRejectionReason(response)
-	if strings.HasPrefix(caseID, "network-") && strings.HasPrefix(actual, "DEMO_") {
-		p.result.ActualReason = "专用拒绝码 " + actual
-	}
 	p.result.ReasonMatched = p.result.ActualReason != "" && p.result.ActualReason == p.result.ExpectedReason
 	if status == 404 || status >= 500 {
 		return fail(fmt.Errorf("目标不存在或服务异常 (HTTP %d)", status))
@@ -289,6 +298,7 @@ func (s *server) executeSystemSecurity(ctx context.Context, caseID string) Secur
 	businessCode, _ := response["code"].(float64)
 	rejected := (status >= 400 && status < 500) || (status == 200 && businessCode >= 400 && businessCode < 500)
 	p.result.Passed = rejected && actual == expected && p.result.ReasonMatched
+	p.result.ProtocolPassed = p.result.Passed
 	if p.result.Passed {
 		p.result.Verdict = "blocked"
 		p.result.Summary = explanation + "；拒绝原因已匹配：" + p.result.ActualReason + "；合法节点读取仍正常"
@@ -298,6 +308,45 @@ func (s *server) executeSystemSecurity(ctx context.Context, caseID string) Secur
 			p.result.Verdict = "insufficient_evidence"
 		}
 		p.result.Summary = fmt.Sprintf("未满足目标规则断言：HTTP %d，实际码 %s，预期码 %s；拒绝原因匹配=%t。原因缺失或不同不能证明命中本项规则。", status, actual, expected, p.result.ReasonMatched)
+	}
+	if strings.HasPrefix(caseID, "pq-") {
+		p.result.EvidenceVersion = 3
+		p.result.Notes = append(p.result.Notes, "算法验证仅使用本次生成的临时材料与公开测试向量，不读取浏览器或业务私钥；结果对应部署原生算法库，不代表自定义无证书方案的安全证明、FIPS认证或量子攻击实测。")
+		p.progress(ctx, "执行真实算法正常对照、独立实现互操作及篡改/错钥验证")
+		status, data, err := p.request(ctx, "POST", "/demo-api/pqkds/node-self/acceptance/pq/", `{"caseId":"`+caseID+`"}`, nil)
+		if err != nil || status != 200 || data["code"] != float64(200) {
+			p.result.Passed = false
+			p.result.Status, p.result.Verdict = "error", "insufficient_evidence"
+			p.result.Error = "算法验证未取得有效响应，不能计为通过"
+			return p.result
+		}
+		raw, _ := json.Marshal(data["data"])
+		var evidence AlgorithmEvidence
+		if json.Unmarshal(raw, &evidence) != nil || !validAlgorithmEvidence(caseID, &evidence) {
+			p.result.Passed = false
+			p.result.Status, p.result.Verdict = "error", "insufficient_evidence"
+			p.result.Error = "算法证据缺项或格式不符，不能计为通过"
+			return p.result
+		}
+		p.result.AlgorithmEvidence = &evidence
+		p.result.Passed = p.result.ProtocolPassed && evidence.Passed
+		p.result.Summary = fmt.Sprintf("协议校验通过=%t；算法检查 %d/%d 通过；逐项过程、预期与实际结果见下方。", p.result.ProtocolPassed, passedAlgorithmChecks(evidence.Checks), len(evidence.Checks))
+		p.result.Verdict = "blocked"
+		if !p.result.Passed {
+			p.result.Verdict = "vulnerable"
+		}
+		for _, check := range evidence.Checks {
+			if check.Status == "error" {
+				p.result.Status, p.result.Verdict = "error", "insufficient_evidence"
+				p.result.Passed = false
+				p.result.Error = "算法检查执行异常，未取得完整证据"
+			}
+		}
+		p.progress(ctx, "算法检查完成，复查合法节点读取")
+		if _, err := p.control(ctx); err != nil {
+			p.result.Passed, p.result.LegalControlPassed = false, false
+			return fail(err)
+		}
 	}
 	return p.result
 }

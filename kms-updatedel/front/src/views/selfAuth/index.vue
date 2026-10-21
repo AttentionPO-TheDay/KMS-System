@@ -29,7 +29,6 @@
         :closable="false"
         show-icon
         title="当前账号没有对应的 KMS 节点"
-        description="本页只对「区块链节点」账号有意义 —— 授权是节点与节点之间的通信权限。管理员账号不映射到节点。"
       />
 
       <template v-else>
@@ -184,15 +183,6 @@
           <span class="mono">{{ requestTargets.join('、') || '-' }}</span>
           <span class="hint">（共 {{ requestTargets.length }} 个）</span>
         </el-descriptions-item>
-        <el-descriptions-item label="批准后">
-          两个方向同时放行：你可以看到它的密钥版本并向它分发，它也可以向你分发。
-          <!--
-            ⚠️ 一次提交的 N 条申请**各自独立处置**：管理员可以只批其中几条
-               （部分批准是真实需求）。所以这里说的是"每一条都会…"，
-               而不是"这一批会…" —— 后者会让用户以为必须整批通过。
-          -->
-          <b>每一条</b>批准后都按双向放行；管理员也可以只批其中几条。
-        </el-descriptions-item>
       </el-descriptions>
       <el-form label-width="80px">
         <el-form-item label="申请理由" required>
@@ -202,7 +192,7 @@
             :rows="3"
             maxlength="200"
             show-word-limit
-            placeholder="说明用途，管理员据此审批（例如：与 X 节点同步业务密钥）"
+            placeholder="请输入申请理由"
           />
         </el-form-item>
       </el-form>

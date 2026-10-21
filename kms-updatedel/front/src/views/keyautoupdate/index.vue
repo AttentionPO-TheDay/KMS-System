@@ -141,7 +141,7 @@
           :closable="false"
           show-icon
           title="该算法不支持服务端托管轮换"
-          description="私钥不在服务端（文档 §5.3），开启后每轮都会失败。历史已开启的开关可关闭并保存，但不能重新开启；若需更新，请由节点侧重新 KeyGen 后登记新公钥，或改用支持托管轮换的算法。"
+        description="请关闭自动更新后保存；更新密钥需由节点重新生成并登记公钥。"
         />
       </el-form>
       <template #footer>

@@ -55,7 +55,7 @@
         </el-form-item>
       </el-form>
 
-      <el-table :data="rows" size="small" v-loading="loading" row-key="id" :empty-text="IS_DEMO && !isAdmin ? '暂无预分配资源，请通过「预分配保护包」创建' : '密钥池还是空的，点右上角「生成并分发」建一批'"
+      <el-table :data="rows" size="small" v-loading="loading" row-key="id" empty-text="暂无密钥池记录"
                 @selection-change="(v) => (selected = v)">
         <el-table-column type="selection" width="42" />
         <el-table-column label="批次号" min-width="200" prop="pool_id" show-overflow-tooltip />
@@ -166,9 +166,6 @@
           <el-select v-model="distForm.sender_node_id" filterable placeholder="选择发送方节点" style="width: 100%">
             <el-option v-for="n in nodes" :key="n.node_id" :label="`${n.name}（${n.node_id}）`" :value="n.node_id" />
           </el-select>
-          <div class="form-hint">
-            用该节点的 Kyber 公钥封装，只有它能解开。
-          </div>
         </el-form-item>
         <el-form-item label="接收方节点">
           <el-select v-model="distForm.receiver_node_id" filterable placeholder="选择接收方节点" style="width: 100%">

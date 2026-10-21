@@ -11,7 +11,7 @@
     <details class="evidence-details" open>
       <summary>测试过程与测量证据</summary>
       <ol v-if="run.stages?.length"><li v-for="(step, index) in run.stages" :key="index">{{ formatTime(step.at) }} · {{ step.label }}</li></ol>
-      <p v-else>此记录未采集逐阶段过程，可查看下方测量证据。</p>
+      <p v-else>未记录阶段过程</p>
       <dl>
         <div><dt>总请求数</dt><dd>{{ number(run.summary?.totalRequests) }}</dd></div>
         <div><dt>请求成功率</dt><dd>{{ value === null ? '未采集' : `${number(run.summary?.successRate)} %` }}</dd></div>

@@ -13,6 +13,7 @@ from .views import (
 from . import chat_urls
 from .domain_views import domains
 from .node_key_diagnostics import node_key_health, node_key_analysis
+from .node_key_did_views import node_self_key_did
 from .demo_context import demo_init_lease, demo_init_release
 # ⚠️ 别名不是洁癖，是**必须的**：节点侧 `node_self_views` 里也有一个
 #    `node_authorization_requests`（节点看自己的申请），而本文件后面又 import 了它 ——
@@ -36,6 +37,7 @@ from .user_distribution_views import (
     user_symmetric_keys,
 )
 # 阶段 2：节点自助（首次登录后的密钥初始化）。身份取自令牌自省，见该模块 docstring。
+from .acceptance_pq_views import node_self_acceptance_pq
 from .node_self_views import (
     node_authorization_request_cancel,
     node_authorization_requests,
@@ -125,9 +127,11 @@ urlpatterns = [
     # 现象是"接口通了但字段全 undefined"。
     path('node-self/', node_self, name='node-self'),
     path('node-self/workbench/', node_self_workbench, name='node-self-workbench'),
+    path('node-self/acceptance/pq/', node_self_acceptance_pq, name='node-self-acceptance-pq'),
     # §4.4：节点侧生成密钥后**只上传公钥**。必须与 init 分开 ——
     # 先逐个登记四套公钥，再由 init 收尾置 ACTIVE（见 node_service 的说明）。
     path('node-self/keys/', node_self_keys, name='node-self-keys'),
+    path('node-self/keys/did/', node_self_key_did, name='node-self-key-did'),
     path('node-self/auto-update/', node_self_auto_update, name='node-self-auto-update'),
     path('node-self/did-handoffs/', node_self_did_handoffs,
          name='node-self-did-handoffs'),

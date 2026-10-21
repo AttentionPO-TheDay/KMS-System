@@ -2,7 +2,6 @@
   <AdminDataPanel v-if="['keys', 'pool', 'sessions', 'distribution'].includes(props.section)" :section="props.section" />
   <div v-else class="app-container">
     <h1>{{ pageTitle }}</h1>
-    <p class="sm-note">管理员只读查看数据，不执行节点侧生成、更新、回收或分发操作。</p>
     <div class="sm-actions">
       <el-button icon="Refresh" :loading="loading" @click="load">刷新</el-button>
       <span v-if="loadedAt" class="sm-time">更新于 {{ loadedAt }}</span>
@@ -89,7 +88,6 @@
       <div class="sm-card"><span>已过期 EXPIRED</span><strong>{{ val('pool.expired') }}</strong></div>
     </div>
     <h3 class="sm-title">预分配密钥条目</h3>
-    <p class="sm-note sm-note--compact">仅展示标识、归属、算法、状态和时间，不返回密文、哈希或解封材料。</p>
     <el-table class="sm-table" :data="pagedPoolItems" size="small" empty-text="暂无预分配密钥条目（0）" aria-label="预分配密钥只读列表">
       <el-table-column prop="poolId" label="池批次" min-width="210" show-overflow-tooltip />
       <el-table-column prop="keyIndex" label="序号" width="75" />
@@ -218,10 +216,6 @@
     />
     </template>
 
-    <p v-if="props.section === 'all'" class="sm-note">
-      统计失败项显示「不可用」而非 0 —— 0 是有效值，会被误读成"确实没有"。
-      密钥统计与明细取自当前节点长期密钥模型，不包含旧用户腿验收数据。
-    </p>
   </div>
 </template>
 

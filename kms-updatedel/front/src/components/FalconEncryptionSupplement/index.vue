@@ -9,7 +9,6 @@
       <el-button size="small" :disabled="busy" :loading="loading" @click="load">检查状态</el-button>
     </div>
     <p>{{ error || state.message || '正在检查现有密钥…' }}</p>
-    <p class="falcon-supplement__note">独立加密密钥用于保护 SM4 会话密钥，现有签名密钥继续用于签名。私钥保存在本机；该加密方案为实验性。</p>
   </section>
 </template>
 
@@ -81,5 +80,4 @@ onMounted(load)
 .falcon-supplement { margin: 16px 0; padding: 12px 0; border-top: 1px solid var(--el-border-color); border-bottom: 1px solid var(--el-border-color); }
 .falcon-supplement__heading { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .falcon-supplement p { margin: 8px 0 0; line-height: 1.6; font-size: 13px; }
-.falcon-supplement__note { color: var(--el-text-color-secondary); }
 </style>

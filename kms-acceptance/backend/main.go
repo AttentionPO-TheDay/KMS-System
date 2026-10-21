@@ -172,6 +172,8 @@ type SecurityRunResult struct {
 	ExpectedReason     string                 `json:"expectedReason,omitempty"`
 	ActualReason       string                 `json:"actualReason,omitempty"`
 	ReasonMatched      bool                   `json:"reasonMatched"`
+	ProtocolPassed     bool                   `json:"protocolPassed"`
+	AlgorithmEvidence  *AlgorithmEvidence     `json:"algorithmEvidence,omitempty"`
 }
 
 type ProofRunRequest struct {
@@ -650,7 +652,7 @@ func acceptanceCriteria() []AcceptanceCriterion {
 		{ID: "abnormal-revoke", Category: "performance", Title: "异常密钥回收速率", Requirement: "成功回收 TPS ≥ 5000 条/秒", Kind: "scenario", Target: 5000, Operator: ">=", Unit: "TPS", ScenarioID: "revoke-tps", ExecutionScope: "admin", EvidenceSource: "kms-updatedel / REVOKE_KEY", Notes: []string{"只使用验收专用密钥池，不触碰生产密钥。"}},
 		{ID: "revoke-rate", Category: "performance", Title: "密钥最终回收率", Requirement: "最终状态回收率 > 98%", Kind: "scenario", Target: 98, Operator: ">", Unit: "%", ScenarioID: "revoke-rate", ExecutionScope: "admin", EvidenceSource: "生命周期最终状态查询（status=3）"},
 		{ID: "generation-attacks", Category: "security", Title: "密钥生成协议校验", Requirement: "签发入口非法请求明确拒绝", Kind: "security-suite", Target: 3, Operator: ">=", Unit: "类", CaseIDs: []string{"generation-identity-injection", "generation-unknown-algorithm", "generation-malformed-json", "generation-invalid-version"}, ExecutionScope: "admin", EvidenceSource: "system_security.go / 实际 Demo 网关"},
-		{ID: "quantum-attacks", Category: "security", Title: "抗量子生成协议安全", Requirement: "签发协议边界校验；抗量子算法安全尚待验证", Kind: "security-suite", Target: 3, Operator: ">=", Unit: "类", CaseIDs: []string{"pq-parameter-downgrade", "pq-sign-encrypt-confusion", "pq-secret-upload", "pq-issuance-source-forgery"}, ExecutionScope: "admin", EvidenceSource: "system_security.go / 实际生成签发接口", Notes: []string{"4个场景覆盖3条协议规则；参数降级与参数混用共用参数白名单。私密字段与来源存在性也是通用协议规则。全部协议场景通过不计为抗量子攻击类别指标达标。", "节点侧密文篡改、签名验签与跨密钥材料隔离尚待独立密码学验收；不证明抗 Shor/Grover 或 HNDL 能力。"}},
+		{ID: "quantum-attacks", Category: "security", Title: "抗量子算法与协议验证", Requirement: "至少3类算法负向场景及对应协议校验通过", Kind: "security-suite", Target: 3, Operator: ">=", Unit: "类", CaseIDs: []string{"pq-parameter-downgrade", "pq-sign-encrypt-confusion", "pq-secret-upload", "pq-issuance-source-forgery"}, ExecutionScope: "admin", EvidenceSource: "实际签发接口 + 部署原生 KYBER/FALCON + 独立 JS 互操作向量", Notes: []string{"4类：KYBER密文篡改、FALCON消息篡改、KYBER错误私钥、FALCON签名/公钥替换。每类必须同时满足协议断言与完整算法证据。", "范围为KYBER round-3与FALCON-512功能和负向测试，不等同于FIPS认证、自定义无证书方案安全证明或量子攻击实测。"}},
 		{ID: "network-attacks", Category: "security", Title: "无密码会话与网络边界", Requirement: "会话与权限边界请求明确拒绝", Kind: "security-suite", Target: 5, Operator: ">=", Unit: "类", CaseIDs: []string{"network-session-forgery", "network-csrf", "network-stale-revision", "network-role-isolation", "network-origin", "network-missing-session"}, ExecutionScope: "admin", EvidenceSource: "system_security.go / 实际会话与权限接口"},
 	}
 }
@@ -829,6 +831,8 @@ func (s *server) handleCreateSecurityRun(c *fiber.Ctx) error {
 	run.ExpectedReason = result.ExpectedReason
 	run.ActualReason = result.ActualReason
 	run.ReasonMatched = result.ReasonMatched
+	run.ProtocolPassed = result.ProtocolPassed
+	run.AlgorithmEvidence = result.AlgorithmEvidence
 	s.storeSecurityRun(run)
 
 	if run.Status == "error" {

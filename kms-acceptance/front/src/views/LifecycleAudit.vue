@@ -1,11 +1,9 @@
 <template>
   <section class="lifecycle-audit">
     <header class="audit-header">
-      <div><p class="eyebrow">ACCEPTANCE / LIFECYCLE AUDIT</p><h1>验收密钥生命周期</h1>
-        <p class="description">按测试批次追溯更新和回收，只展示验收专用密钥元数据。</p></div>
+      <div><h1>验收密钥生命周期</h1></div>
       <button class="btn-ghost" :disabled="loading" @click="refresh">{{ loading ? '读取中…' : '刷新记录' }}</button>
     </header>
-    <p class="scope-note">这里保留测试前后快照，不改变密钥。仅当前管理员会话及版本可见；升级前未记录的历史状态不会补造。</p>
     <nav class="audit-tabs" aria-label="测试分类">
       <button v-for="tab in tabs" :key="tab.id" :aria-pressed="scenario === tab.id" :class="{selected:scenario===tab.id}"
         @click="switchTab(tab.id)">{{ tab.label }}</button>
@@ -15,7 +13,7 @@
       <div class="panel-heading"><h2>测试批次</h2><span>{{ list ? `共 ${list.total} 批` : '数据尚未取得' }}</span></div>
       <div v-if="loading && !list" class="empty" role="status">正在读取批次…</div>
       <div v-else-if="list && !list.items.length" class="empty">
-        <strong>尚无此类生命周期快照</strong><p>升级后执行更新或回收测试，才会记录逐把密钥的前后状态。旧测试仅保留原有汇总结果。</p>
+        <strong>暂无生命周期记录</strong>
         <router-link to="/load-test">返回验收测试台</router-link>
       </div>
       <div v-else-if="list" class="table-scroll">
@@ -44,16 +42,18 @@
           <div><span>{{ detail.batch.scenarioId==='update-tps' ? '版本更新完成率' : '最终状态回收率' }}</span><strong>{{ rate(detail.batch.completionRate) }}</strong></div>
         </div>
         <dl class="audit-facts">
-          <dt>核查口径</dt><dd>{{ detail.batch.scenarioId==='update-tps' ? '同一 keyId 的版本号高于测试前版本，不使用旧有 chain_status=1 冒充更新完成。' : '测试前有效的密钥中，核验时 status=3 的数量 / 初始有效数量。' }}</dd>
-          <dt>原始吞吐</dt><dd>接口成功 {{ format(detail.batch.successfulTps) }} TPS；HTTP 请求 {{ format(detail.batch.httpRequests) }}，HTTP 错误 {{ format(detail.batch.httpErrors) }}，连接错误 {{ format(detail.batch.socketErrors) }}。这不是数据库完成速率。</dd>
+          <dt>核查口径</dt><dd>{{ detail.batch.scenarioId==='update-tps' ? '同一密钥的版本号高于测试前版本。' : '已回收数 / 初始有效数。' }}</dd>
+          <dt>接口吞吐</dt><dd>成功 {{ format(detail.batch.successfulTps) }} TPS；HTTP 请求 {{ format(detail.batch.httpRequests) }}，HTTP 错误 {{ format(detail.batch.httpErrors) }}，连接错误 {{ format(detail.batch.socketErrors) }}。</dd>
           <dt>测试配置</dt><dd>{{ detail.batch.threads }} 线程 · {{ detail.batch.connections }} 连接 · {{ detail.batch.durationSeconds }} 秒，速率目标 ≥ {{ format(detail.batch.targetTps) }} TPS</dd>
-          <template v-if="detail.batch.scenarioId==='revoke-rate'"><dt>回收率目标</dt><dd>最终状态回收率严格大于 98%；核验不可用或初始有效数量为零时，不能判定通过。</dd></template>
+          <template v-if="detail.batch.scenarioId==='revoke-rate'"><dt>回收率目标</dt><dd>最终状态回收率 &gt; 98%</dd></template>
           <dt>快照时间</dt><dd>初始 {{ time(detail.batch.beforeAt) }}；核验 {{ time(detail.batch.observedAt) }}</dd>
-          <dt>测试说明</dt><dd>测试账户 {{ detail.batch.account }}，业务域 acceptance；初始非有效密钥 {{ detail.batch.excluded }} 把不计入完成率。{{ detail.batch.scenarioId!=='update-tps' ? detail.batch.reason : '' }}</dd>
+          <dt>测试账户</dt><dd>{{ detail.batch.account }}</dd>
+          <dt>排除密钥数</dt><dd>{{ detail.batch.excluded }}</dd>
+          <template v-if="detail.batch.scenarioId!=='update-tps' && detail.batch.reason"><dt>核验结果</dt><dd>{{ detail.batch.reason }}</dd></template>
         </dl>
         <p v-if="detail.batch.error" class="audit-error" role="status">{{ detail.batch.error }}</p>
         <form class="detail-filters" @submit.prevent="queryDetails">
-          <label>密钥 ID<input v-model="query" maxlength="64" placeholder="可部分匹配" /></label>
+          <label>密钥 ID<input v-model="query" maxlength="64" /></label>
           <label>核查结果<select v-model="outcome"><option value="">全部</option><option value="COMPLETED">实际完成</option><option value="PENDING">仍未完成</option><option value="UNVERIFIED">未核验</option><option value="MISSING">记录缺失</option><option value="EXCLUDED">不计入完成率</option></select></label>
           <button class="btn-primary" :disabled="detailLoading">查询</button><button type="button" class="btn-ghost" :disabled="detailLoading" @click="showPending">查看仍未完成</button>
         </form>
@@ -65,7 +65,6 @@
         </div>
         <footer class="pager"><span>匹配 {{ format(detail.total) }} 把</span><label>每页<select v-model.number="detailSize" @change="queryDetails"><option :value="20">20</option><option :value="50">50</option><option :value="100">100</option></select></label>
           <button :disabled="detailLoading || detailPage<=1" @click="changeDetailPage(detailPage-1)">上一页</button><span>{{ detailPage }} / {{ Math.max(1,Math.ceil(detail.total/detailSize)) }}</span><button :disabled="detailLoading || detailPage*detailSize>=detail.total" @click="changeDetailPage(detailPage+1)">下一页</button></footer>
-        <p class="scope-note">这是本次压测候选池的观测快照。wrk 会轮询复用 keyId，汇总请求数不等于独立密钥数；没有逐项 HTTP 回执时，不推断每把密钥实际提交了几次。刷新只读已归档快照，不重新回收或更改验收结论。</p>
       </template>
     </section>
   </section>

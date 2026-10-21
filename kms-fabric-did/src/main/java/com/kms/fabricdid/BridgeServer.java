@@ -56,6 +56,7 @@ public final class BridgeServer {
                 else if ("bindings/submit".equals(action)) result = service.submit(body);
                 else if ("bindings/verify".equals(action)) result = service.verify(body);
                 else if ("sys-pids/onchain".equals(action)) result = sysPidService.onchain(body);
+                else if ("sys-pids/prepare".equals(action)) result = sysPidService.prepare(body);
                 else if ("sys-pids/verify".equals(action)) result = sysPidService.verify(body);
                 else throw new BridgeException(404, "NOT_FOUND");
             } else throw new BridgeException(405, "METHOD_NOT_ALLOWED");

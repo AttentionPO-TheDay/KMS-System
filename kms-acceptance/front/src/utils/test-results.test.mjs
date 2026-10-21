@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { securityOutcome, securityProgress, performanceOutcome, measuredPerformance } from './test-results.js'
+import { securityOutcome, securityProgress, performanceOutcome, measuredPerformance, algorithmCheckIds } from './test-results.js'
 
 const pass = { status: 'completed', verdict: 'blocked', passed: true, evidenceVersion: 2, reasonMatched: true,
   legalControlPassed: true, expectedCode: 'INVALID_PARAMETER', actualCode: 'INVALID_PARAMETER',
@@ -11,7 +11,7 @@ test('same rejection code with absent or different reason never counts as a pass
     assert.equal(securityOutcome({ ...pass, ...changes }).state, 'incomplete')
     assert.equal(securityProgress(['pq-test'], new Map([['pq-test', { ...pass, ...changes }]]), 1).thresholdMet, false)
   }
-  assert.equal(securityOutcome({ ...pass, caseId: 'pq-test' }).label, '协议校验通过')
+  assert.equal(securityOutcome({ ...pass, caseId: 'pq-test' }).label, '协议通过，算法待验')
 })
 test('one successful case stays visibly successful while the group is incomplete', () => {
   const result = securityProgress(['a', 'b', 'c', 'd'], new Map([['a', pass]]), 3)
@@ -23,10 +23,31 @@ test('one successful case stays visibly successful while the group is incomplete
 test('four PQ protocol scenarios cannot certify quantum resistance or satisfy its attack-class metric', () => {
   const ids = ['pq-parameter-downgrade', 'pq-sign-encrypt-confusion', 'pq-secret-upload', 'pq-issuance-source-forgery']
   const result = securityProgress(ids, new Map(ids.map(caseId => [caseId, { ...pass, caseId }])), 3)
-  assert.equal(result.passedCount, 4)
+  assert.equal(result.passedCount, 0)
   assert.equal(result.thresholdMet, false)
   assert.equal(result.state, 'incomplete')
   assert.equal(result.statusLabel, '协议通过，算法待验')
+})
+
+const algorithmPass = caseId => ({ ...pass, caseId, evidenceVersion: 3, protocolPassed: true,
+  algorithmEvidence: { version: 1, caseId, source: 'native', scope: 'functional', passed: true,
+    checks: algorithmCheckIds[caseId].map(id => ({ id, passed: true, status: 'passed', expected: 'expected', actual: 'actual', recordedAt: '2026-10-19T00:00:00Z' })) } })
+test('PQ passes only with all fixed real algorithm checks and protocol evidence', () => {
+  const ids = Object.keys(algorithmCheckIds)
+  const latest = new Map(ids.map(id => [id, algorithmPass(id)]))
+  assert.equal(securityProgress(ids, latest, 3).statusLabel, '全部验证通过')
+  assert.equal(securityProgress(ids, latest, 3).thresholdMet, true)
+  const id = ids[0], original = latest.get(id)
+  for (const change of [
+    { protocolPassed: false }, { passed: false }, { evidenceVersion: 2 },
+    { algorithmEvidence: { ...original.algorithmEvidence, checks: original.algorithmEvidence.checks.slice(1) } },
+    { algorithmEvidence: { ...original.algorithmEvidence, checks: original.algorithmEvidence.checks.map(c => ({ ...c, passed: false })) } },
+    { algorithmEvidence: { ...original.algorithmEvidence, caseId: ids[1] } }
+  ]) {
+    assert.notEqual(securityOutcome({ ...original, ...change }).state, 'passed')
+  }
+  latest.set(id, { ...original, passed: false, verdict: 'vulnerable' })
+  assert.equal(securityProgress(ids, latest, 3).state, 'failed')
 })
 test('threshold and complete coverage remain separate; a failed extra case is visible', () => {
   const results = new Map(['a', 'b', 'c'].map(id => [id, pass]))

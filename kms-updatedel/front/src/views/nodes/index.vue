@@ -56,7 +56,7 @@
         size="small"
         v-loading="loading"
         row-key="id"
-        empty-text="还没有节点，点右上角「新增演示节点」建一个"
+        empty-text="暂无节点"
         @selection-change="(v) => (selected = v)"
       >
         <el-table-column type="selection" width="42" />
@@ -182,20 +182,6 @@
           <el-input v-model="createForm.description" type="textarea" :rows="2" />
         </el-form-item>
       </el-form>
-      <el-alert type="warning" :closable="false" show-icon>
-        <!--
-          ⚠️ 这里原先写"会生成 Kyber + 国密 + Falcon 三套密钥、约需 20 秒"——
-             那是**改造前**的行为。现在 `provision_node` 只创建节点记录与登录账号，
-             四套基础密钥在节点**首次登录时于本机浏览器**生成（文档 §2.4 / §3.1）。
-             继续沿用旧文案会让人以为密钥已经在服务端了，
-             恰好与"私钥不出本机"这条边界相反。
-        -->
-        新增只创建节点与登录账号，<b>不在服务端生成任何密钥</b>。
-        四套基础密钥（SM2 / SSCL / Kyber / Falcon）由节点首次登录时在
-        <b>本机浏览器</b>生成，私钥只留在那台设备上。
-        <template v-if="!IS_DEMO">创建完成后会显示一次<b>激活凭证</b>，请交给节点操作者。</template>
-        <template v-else>受控演示不签发激活凭证。登记后可在列表点「进入节点」，或使用 /demo?nodeId=节点ID 链接。</template>
-      </el-alert>
       <div v-if="createError" class="dialog-error">{{ createError }}</div>
       <template #footer>
         <el-button @click="createOpen = false">取 消</el-button>
@@ -317,7 +303,7 @@
         :closable="false"
         show-icon
         title="此凭证只显示这一次"
-        description="服务端只保存哈希，关闭后无法再次查看。请立即交给节点操作者；遗失可随时重签（旧凭证会失效）。"
+        description="请立即保存，关闭后无法再次查看；重签会使旧凭证失效。"
         class="mb16"
       />
       <el-descriptions :column="1" border class="mb16">

@@ -178,7 +178,7 @@
                 <div v-for="entry in evidenceEntries(row)" :key="entry.label" class="evidence-entry">
                   <div>{{ entry.label }}：{{ formatTime(entry.at) }}</div><div class="mono cell-note detail-wrap">链交易：{{ entry.tx || '未记录' }}</div>
                 </div>
-                <span v-if="!evidenceEntries(row).length" class="cell-note">未记录验签、解封或确认轨迹；不由当前状态反推。</span>
+                <span v-if="!evidenceEntries(row).length" class="cell-note">暂无验签、解封或确认记录。</span>
               </template>
             </el-table-column>
           </el-table>

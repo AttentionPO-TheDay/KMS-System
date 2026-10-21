@@ -285,15 +285,15 @@ def _keygen_response(request, identity, *, renewal):
         payload = ({'deviceId': request.GET.get('deviceId')} if request.method == 'GET'
                    else json.loads(request.body or b'{}'))
         if not isinstance(payload, dict):
-            raise C.ContractError('请求体应为 JSON 对象', code=C.ERR_INVALID_PARAMETER)
-        reject_private_fields(payload)
+            raise C.ContractError('请求体应为 JSON 对象', code=C.ERR_KEYGEN_JSON_INVALID)
+        reject_private_fields(payload, error_code=C.ERR_KEYGEN_PRIVATE_MATERIAL_FORBIDDEN)
         allowed = ({'generationIssuanceId', 'publicKey', 'deviceId'} if renewal else {
             'algorithm', 'keyId', 'keyVersion', 'variant', 'deviceId',
             'abandonGenerationIssuanceId',
         })
         if set(payload) - allowed:
             raise C.ContractError('签发只接受白名单字段，可信上下文由后端确定',
-                                  code=C.ERR_INVALID_PARAMETER)
+                                  code=C.ERR_KEYGEN_IDENTITY_FIELD_FORBIDDEN)
         binding = trusted_binding(request, node, identity, payload.get('deviceId'))
         require_confidential_transport(request, demo=binding['bindingKind'] == 'DEMO')
         if request.method == 'GET':
@@ -312,6 +312,8 @@ def _keygen_response(request, identity, *, renewal):
         response = _ok(data)
     except C.ContractError as exc:
         response = _error(exc.message, 409, error_code=exc.code)
+    except json.JSONDecodeError:
+        response = _error('请求参数或 JSON 无效', error_code=C.ERR_KEYGEN_JSON_INVALID)
     except (ValueError, TypeError):
         response = _error('请求参数或 JSON 无效', error_code=C.ERR_INVALID_PARAMETER)
     except Exception:  # No payloads, trace locals or secret response in logs/errors.
@@ -389,7 +391,7 @@ def node_self_keys(request, identity):
         allowed = {
             'algorithm', 'publicKey', 'public_key', 'securityLevel', 'security_level',
             'deviceId', 'device_id', 'keyId', 'key_id', 'keyVersion', 'key_version',
-            'rotate', 'generation',
+            'rotate', 'generation', 'didOnchain',
         }
         if set(payload) - allowed:
             raise C.ContractError('登记只接受白名单公共字段', code=C.ERR_INVALID_PARAMETER)
@@ -406,6 +408,7 @@ def node_self_keys(request, identity):
     # 认不出的值一律拒绝而不是猜 —— 猜错的方向恰好是最坏的那个（见 _as_bool）。
     try:
         rotate = _as_bool(payload.get('rotate'))
+        did_requested = _as_bool(payload.get('didOnchain'), 'didOnchain')
     except C.ContractError as exc:
         return _error(exc.message, error_code=exc.code)
 
@@ -496,6 +499,12 @@ def node_self_keys(request, identity):
                         node.node_id, result.get('key_id'),
                         result.get('key_version'), chain_tx)
 
+    did_result = None
+    if did_requested:
+        from .node_key_did import register
+        key = NodeLongTermKey.objects.get(pk=result['key_pk'], node=node)
+        did_result = register(key)
+
     return _ok(
         {
             'node': _node_payload(node, identity),
@@ -510,6 +519,8 @@ def node_self_keys(request, identity):
             # 回哈希而不是布尔值。拿不到哈希时页面能如实说"已更新，但存证未成功"，
             # 而不是把两者混为一谈 —— 审计缺口必须是**可见的**。
             'chainHash': chain_tx,
+            'sysPid': (did_result or {}).get('sysPid', ''),
+            'didOnchain': did_result,
         },
         msg=result.get('message') or '公钥已登记',
     )

@@ -61,6 +61,8 @@ def iso(value):
 def long_term_key_payload(k: NodeLongTermKey) -> dict:
     """一行长期密钥 → 页面需要的形状。逐行调用，公钥只换算一次。"""
     public_key = public_key_hex(k)
+    from .node_key_did import key_payload as did_payload
+    did_onchain = did_payload(k)
     from .keygen_issuance import public_generation_payload
     from .chain_backend import is_fabric_did, chain_write_state
     chain_binding = None
@@ -79,6 +81,8 @@ def long_term_key_payload(k: NodeLongTermKey) -> dict:
         **public_generation_payload(k),
         # 密钥可用与链上确认是两个事实；尚无配置时也不能显示成“上链成功”。
         'chainBinding': chain_binding,
+        'sysPid': (did_onchain or {}).get('sysPid', ''),
+        'didOnchain': did_onchain,
         'chainWriteState': ('ENABLED' if chain_binding and chain_binding.get('provider') == 'FISCO' and chain_binding.get('writeEnabled') else chain_write_state()),
         'keyId': k.key_id,
         'keyVersion': k.key_version,

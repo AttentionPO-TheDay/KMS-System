@@ -19,6 +19,7 @@ import java.nio.file.attribute.AclFileAttributeView;
 import java.nio.file.attribute.PosixFileAttributeView;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.Map;
@@ -33,6 +34,87 @@ final class SysPidService {
         config.requireRead();
         if (instance == null) instance = factory.create();
         return instance;
+    }
+    /** Allocate a durable, distinct identifier for one key-generation request; no ledger submission. */
+    synchronized Map<String, Object> prepare(JsonNode body) {
+        config.requireWrite();
+        Binding.fields(body, Collections.singleton("requestId"));
+        String requestId = Json.text(body, "requestId");
+        if (!requestId.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"))
+            throw new BridgeException(400, "INVALID_REQUEST_ID");
+        if (config.sysPidRecordsPath == null) throw new BridgeException(503, "SYSPID_RECORDS_NOT_CONFIGURED");
+        Path request = config.sysPidRecordsPath.resolve("requests").resolve(Json.digest(config.chainId + "\n" + requestId));
+        try {
+            secureDirectory(request);
+            try (FileChannel channel = FileChannel.open(request.resolve("record.lock"), StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+                 FileLock lock = channel.lock()) {
+                Path reference = request.resolve("request.json");
+                Map<String, Object> allocated;
+                if (Files.isRegularFile(reference)) {
+                    allocated = Json.MAPPER.readValue(Files.readAllBytes(reference), Map.class);
+                    if (!requestId.equals(allocated.get("requestId")) || !config.chainId.equals(allocated.get("chainId")))
+                        throw new BridgeException(409, "SYSPID_REQUEST_MISMATCH");
+                } else {
+                    Map<String, String> key = sdk().newSystemKey();
+                    String publicKey = key.get("publicKey"), privateKey = key.get("privateKey");
+                    if (privateKey == null || !privateKey.contains("PRIVATE KEY"))
+                        throw new BridgeException(502, "INVALID_GENERATED_SYSTEM_KEY");
+                    String sysPid = publicKeyIdentifier(publicKey);
+                    save(request.resolve("controller-private.pem"), privateKey);
+                    allocated = Json.map("requestId", requestId, "chainId", config.chainId,
+                            "sysPid", sysPid, "publicKey", publicKey);
+                    // Persist the identifier before preparing a transaction. Retries retain it after a crash.
+                    save(reference, Json.encode(allocated));
+                }
+                String sysPid = (String) allocated.get("sysPid"), publicKey = (String) allocated.get("publicKey");
+                if (!sysPid.equals(publicKeyIdentifier(publicKey))) throw new BridgeException(409, "SYSPID_REQUEST_MISMATCH");
+                String did = did(sysPid, config);
+                Path folder = config.sysPidRecordsPath.resolve(Json.digest(config.chainId + "\n" + did));
+                secureDirectory(folder);
+                try (FileChannel recordChannel = FileChannel.open(folder.resolve("record.lock"), StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+                     FileLock recordLock = recordChannel.lock()) {
+                    Path record = folder.resolve("record.json");
+                    Map<String, Object> plan;
+                    if (Files.isRegularFile(record)) {
+                        plan = Json.MAPPER.readValue(Files.readAllBytes(record), Map.class);
+                        validatePlan(plan, did, sysPid);
+                        if (!publicKey.equals(plan.get("publicKey"))) throw new BridgeException(409, "SYSPID_REQUEST_MISMATCH");
+                    } else {
+                        String privateKey = new String(Files.readAllBytes(request.resolve("controller-private.pem")), StandardCharsets.UTF_8);
+                        save(folder.resolve("controller-private.pem"), privateKey);
+                        plan = newPlan(did, sysPid, publicKey);
+                        save(record, Json.encode(plan));
+                    }
+                    return Json.map("provider", "FABRIC_DID", "chainId", config.chainId, "requestId", requestId,
+                            "sysPid", sysPid, "did", did, "txId", plan.get("txId"),
+                            "status", plan.get("status"), "submitted", plan.get("submitted"));
+                }
+            }
+        } catch (BridgeException e) { throw e; }
+        catch (IOException e) { throw new BridgeException(503, "SYSPID_RECORD_STORAGE_FAILED"); }
+    }
+    private static String publicKeyIdentifier(String publicKey) {
+        try {
+            if (publicKey == null || !publicKey.contains("-----BEGIN PUBLIC KEY-----") || publicKey.contains("PRIVATE KEY"))
+                throw new IllegalArgumentException();
+            byte[] der = Base64.getMimeDecoder().decode(publicKey.replace("-----BEGIN PUBLIC KEY-----", "")
+                    .replace("-----END PUBLIC KEY-----", ""));
+            // Use an actual vendor-generated SM2 SubjectPublicKeyInfo, rather than an arbitrary UUID/hex token.
+            org.bouncycastle.asn1.x509.SubjectPublicKeyInfo info = org.bouncycastle.asn1.x509.SubjectPublicKeyInfo.getInstance(der);
+            if (!"1.2.840.10045.2.1".equals(info.getAlgorithm().getAlgorithm().getId())
+                    || !"1.2.156.10197.1.301".equals(org.bouncycastle.asn1.ASN1ObjectIdentifier.getInstance(
+                            info.getAlgorithm().getParameters()).getId())) throw new IllegalArgumentException();
+            return org.bouncycastle.util.encoders.Hex.toHexString(info.getEncoded("DER"));
+        } catch (Exception e) { throw new BridgeException(502, "INVALID_GENERATED_SYSTEM_KEY"); }
+    }
+    private Map<String, Object> newPlan(String did, String sysPid, String publicKey) {
+        Map<String, Object> tx = sdk().newTransaction();
+        String txId = String.valueOf(tx.get("txId")), nonce = String.valueOf(tx.get("nonce"));
+        if (!txId.matches("[0-9a-f]{64}") || !nonce.matches("[0-9a-f]{48}")
+                || !txId.equals(sdk().transactionId(nonce))) throw new BridgeException(502, "INVALID_SYSTEM_TRANSACTION");
+        return Json.map("provider", "FABRIC_DID", "chainId", config.chainId, "did", did,
+                "sysPid", sysPid, "metadata", sysPid, "alsoKnownAs", "ZHXUN_DID", "publicKey", publicKey,
+                "txId", txId, "nonce", nonce, "status", "PREPARED", "submitted", false);
     }
     synchronized Map<String, Object> onchain(JsonNode body) {
         config.requireWrite();

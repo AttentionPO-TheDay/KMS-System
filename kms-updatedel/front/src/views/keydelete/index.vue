@@ -18,15 +18,9 @@
         :closable="false"
         show-icon
         title="当前账号未关联任何节点"
-        description="回收是节点对自己长期密钥的动作。请用节点账号登录。"
       />
 
       <template v-else>
-        <p class="key-revoke__lead">
-          本页回收的是<strong>本节点</strong>在平台上登记的长期密钥，每次回收
-          <strong>必须同时指定 keyId 与版本</strong> —— 不存在"回收这把密钥的最新版"这种隐式操作。
-          列表里的状态与可用性都来自服务端下发，页面不另做判断。
-        </p>
 
         <!-- 后端一次最多回 200 行且没有分页参数。到顶时必须说出来：
              不说的话页面看起来"就这些"，而少掉的那些是更早的版本，可能还有在产行。 -->
@@ -37,7 +31,6 @@
           :closable="false"
           show-icon
           :title="`只显示了最近 ${SERVER_ROW_LIMIT} 条`"
-          description="本节点登记过的密钥行数达到接口上限，更早的版本没有列出来。需要完整历史请直接查服务端 dvadmin_pqkds_node_long_term_keys 表。"
         />
 
         <el-row :gutter="10" class="key-revoke__toolbar">
@@ -520,7 +513,6 @@ onMounted(refresh)
 .key-revoke__header { display: flex; align-items: center; justify-content: space-between; }
 .key-revoke__header h2 { margin: 0; font-size: 18px; }
 .key-revoke__header-side { display: flex; align-items: center; gap: 8px; }
-.key-revoke__lead { margin: 0 0 16px; color: var(--kms-text-secondary, #606266); line-height: 1.7; }
 .key-revoke__notice { margin-bottom: 12px; }
 .key-revoke__toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
 .key-revoke__toolbar-note { font-size: 12px; color: var(--kms-text-secondary, #909399); }

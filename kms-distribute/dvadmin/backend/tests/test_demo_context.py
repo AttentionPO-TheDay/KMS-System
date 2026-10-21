@@ -75,8 +75,19 @@ class DemoBoundaryTests(unittest.TestCase):
         request.COOKIES.clear()
         response, handler, rpc = self.call(request)
         self.assertEqual(response.status_code, 401)
+        self.assertEqual(json.loads(response.content)['data']['error_code'], 'DEMO_SESSION_REQUIRED')
         handler.assert_not_called()
         rpc.assert_not_called()
+
+    def test_invalid_session_and_stale_revision_have_distinct_source_codes(self):
+        for reason, expected in [('DEMO_SESSION_INVALID', 'DEMO_SESSION_INVALID'),
+                                 ('DEMO_REVISION_STALE', 'DEMO_CONTEXT_STALE')]:
+            handler = Mock(return_value=D.JsonResponse({'code': 200}))
+            with patch.object(D, 'demo_rpc', side_effect=D.kms.KmsTokenInvalid(reason)):
+                response = D.DemoContextMiddleware(handler)(self.request())
+            self.assertEqual(response.status_code, 401)
+            self.assertEqual(json.loads(response.content)['data']['error_code'], expected)
+            handler.assert_not_called()
 
     def test_revision_required(self):
         response, handler, _ = self.call(self.request(HTTP_X_KMS_DEMO_REVISION=''))

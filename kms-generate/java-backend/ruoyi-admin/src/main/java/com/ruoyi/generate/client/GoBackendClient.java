@@ -82,7 +82,7 @@ public class GoBackendClient {
             body.put("pq_mode", "demo_generated");
         }
 
-        return callGoApi("/generate/request/ENROLL_KEY", body, verifiedUserName);
+        return callGoApi("/generate/request/ENROLL_KEY", body, verifiedUserName, keymanage);
     }
 
     public String reenrollKey(Keymanage keymanage) {
@@ -103,7 +103,7 @@ public class GoBackendClient {
             body.put("pq_mode", "demo_generated");
         }
 
-        return callGoApi("/generate/request/REENROLL_KEY", body, verifiedUserName);
+        return callGoApi("/generate/request/REENROLL_KEY", body, verifiedUserName, keymanage);
     }
 
     /**
@@ -137,6 +137,10 @@ public class GoBackendClient {
      * @return 响应中 data 字段的 JSON 字符串，若无 data 则返回 code=200 时的空串
      */
     private String callGoApi(String path, Map<String, Object> body, String verifiedUserName) {
+        return callGoApi(path, body, verifiedUserName, null);
+    }
+
+    private String callGoApi(String path, Map<String, Object> body, String verifiedUserName, Keymanage generated) {
         String url = goBackendUrl + path;
         String bodyJson = JSON.toJSONString(body);
 
@@ -167,6 +171,11 @@ public class GoBackendClient {
                 throw new RuntimeException("Go 服务业务错误: " + msg);
             }
 
+            if (generated != null) {
+                generated.setSysPid(resp.getString("sysPid"));
+                generated.setDidRequestId(resp.getString("didRequestId"));
+                generated.setDidOnchain(resp.getJSONObject("didOnchain"));
+            }
             // data 可能是字符串或对象，统一转为字符串返回
             Object data = resp.get("data");
             if (data == null) {

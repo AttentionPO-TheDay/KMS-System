@@ -3,7 +3,6 @@
     <div class="panel-header">
       <div>
         <h2>树型更新与半诚实证明可视化测试</h2>
-        <p class="subtitle">小批量触发 <code>BATCH_UPDATE_KEYS</code>，自动读取批次证明记录，展示树型节点、承诺摘要、一致性摘要与批次根验证结果。</p>
       </div>
       <span class="badge" :class="latestProofRun?.passed ? 'ok' : 'warn'">
         {{ latestProofRun?.passed ? '最近一次通过' : '等待验证' }}
@@ -12,20 +11,20 @@
 
     <div class="proof-config tech-bar">
       <label class="field horizontal">
-        <span>BATCH SIZE</span>
+        <span>批量大小</span>
         <input v-model="proofForm.batchSize" type="number" min="1" max="32" class="tech-input small-input"/>
       </label>
       <label class="field horizontal">
-        <span>MERKLE FANOUT</span>
+        <span>树扇出</span>
         <input v-model="proofForm.treeFanout" type="number" min="2" max="128" class="tech-input small-input"/>
       </label>
       <label class="field horizontal">
-        <span>PROOF MODE</span>
+        <span>证明模式</span>
         <input v-model="proofForm.proofMode" class="tech-input small-input"/>
       </label>
       <label class="field horizontal" style="flex: 1">
-        <span>LIFECYCLE HOOK</span>
-        <input v-model="proofForm.lifecycleBaseUrl" placeholder="默认内部通信 URL" class="tech-input"/>
+        <span>生命周期接口</span>
+        <input v-model="proofForm.lifecycleBaseUrl" class="tech-input"/>
       </label>
       <button class="btn-primary cyber-btn" :disabled="proofLoading" @click="runProofVisualTest">
         <span class="cyber-btn-text">{{ proofLoading ? '执行中...' : '执行可视化测试' }}</span>
@@ -105,7 +104,7 @@
     
     <div v-else class="empty-state">
       <div class="empty-icon" aria-hidden="true"></div>
-      <p>证明网络空闲中。配置 Batch Size 后发起 Inject 指令。</p>
+      <p>暂无证明测试结果</p>
     </div>
   </div>
 </template>

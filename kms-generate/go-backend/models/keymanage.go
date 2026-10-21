@@ -13,25 +13,28 @@ type UserIdentity struct {
 }
 
 type Keymanage struct {
-	KeyID            int64         `json:"key_id,omitempty"`
-	UserID           int64         `json:"user_id,omitempty"`
-	UserName         string        `json:"user_name"`
-	UserIdentity     *UserIdentity `json:"user_identity"`
-	UA               string        `json:"ua"`
-	EncrytType       string        `json:"encryt_type"`
-	EncrytName       string        `json:"encryt_name"`
-	KeyName          string        `json:"key_name"`
-	KeyUse           string        `json:"key_use"`
-	KeyValue         string        `json:"key_value"`
-	CreTime          string        `json:"cre_time"`
-	UpdTime          string        `json:"upd_time"`
-	AutoUpdate       string        `json:"auto_update"`
-	Status           string        `json:"status"`
-	KeyDomain        string        `json:"key_domain,omitempty"`
-	DemoNodeID       string        `json:"demo_node_id,omitempty"`
-	DemoRecordID     string        `json:"demo_record_id,omitempty"`
-	DemoResultStatus string        `json:"demo_result_status,omitempty"`
-	PQMode           string        `json:"pq_mode,omitempty"`
+	KeyID            int64                  `json:"key_id,omitempty"`
+	UserID           int64                  `json:"user_id,omitempty"`
+	UserName         string                 `json:"user_name"`
+	UserIdentity     *UserIdentity          `json:"user_identity"`
+	UA               string                 `json:"ua"`
+	EncrytType       string                 `json:"encryt_type"`
+	EncrytName       string                 `json:"encryt_name"`
+	KeyName          string                 `json:"key_name"`
+	KeyUse           string                 `json:"key_use"`
+	KeyValue         string                 `json:"key_value"`
+	CreTime          string                 `json:"cre_time"`
+	UpdTime          string                 `json:"upd_time"`
+	AutoUpdate       string                 `json:"auto_update"`
+	Status           string                 `json:"status"`
+	KeyDomain        string                 `json:"key_domain,omitempty"`
+	DemoNodeID       string                 `json:"demo_node_id,omitempty"`
+	DemoRecordID     string                 `json:"demo_record_id,omitempty"`
+	DemoResultStatus string                 `json:"demo_result_status,omitempty"`
+	PQMode           string                 `json:"pq_mode,omitempty"`
+	SysPid           string                 `json:"sys_pid,omitempty"`
+	DidRequestID     string                 `json:"did_request_id,omitempty"`
+	DidOnchain       map[string]interface{} `json:"-"`
 }
 
 // KeyEnrollPayload Kafka 消息协议结构

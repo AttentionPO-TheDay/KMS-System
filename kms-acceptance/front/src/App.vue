@@ -13,7 +13,7 @@
     </header>
 
     <p v-if="demoState.message || error" role="status">{{ demoState.message || error }}</p>
-    <p v-if="demoState.busy" role="status">验收任务持有当前管理员租约，切换视角/退出须等待任务结束或取消。</p>
+    <p v-if="demoState.busy" role="status">测试执行中，结束或停止后可切换身份或退出。</p>
     <fieldset class="main-content" :disabled="!demoState.available || demoState.stale || demoState.context?.principalType !== 'ADMIN'">
       <router-view v-slot="{ Component }">
         <transition name="page-fade" mode="out-in">
