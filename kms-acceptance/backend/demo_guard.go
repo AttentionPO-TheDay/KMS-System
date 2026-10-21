@@ -353,7 +353,7 @@ func (g *demoGuard) authorize(c *fiber.Ctx) error {
 			return c.Status(503).JSON(fiber.Map{"message": "固定验收场景未配置"})
 		}
 		wrkPath, ok := resolveExecutable(g.server.defaultWrkPath)
-		if !ok {
+		if !ok && scenario.ID != "update-tps" && !abnormalScenario(scenario.ID) {
 			return c.Status(503).JSON(fiber.Map{"message": "wrk 不可用，无法启动性能验收"})
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(scenario.DurationSeconds+90)*time.Second)
@@ -507,15 +507,21 @@ func (g *demoGuard) executePerformance(ctx context.Context, job *demoJob, wrkPat
 	}
 
 	g.updateRunStage(job, "preparing", "准备固定性能场景与验收数据")
-	prepared, notes, err := g.server.prepareScenario(scenario)
+	if scenario.ID == "update-tps" {
+		scenario.SourceRunID, scenario.GeneratedAfter = g.latestGeneration(job.session, job.revision)
+	}
+	prepared, notes, err := g.server.prepareScenarioContext(ctx, scenario)
 	if err != nil {
 		result.Error = err.Error()
-		result.Notes = append(result.Notes, "固定场景准备失败，未启动 wrk。")
+		result.Notes = append(result.Notes, "固定场景准备失败，本轮未发起测试请求。")
 		g.finishPerformance(job, result)
 		return
 	}
 	g.updateRunStage(job, "preparing", "记录验收密钥初始状态")
 	job.audit, job.auditRows, err = g.server.beginLifecycleAudit(ctx, prepared, result, job.session, job.revision)
+	if err == nil && prepared.ID == "update-tps" && (job.audit == nil || job.audit.Batch.Eligible != fixedUpdateCount || job.audit.Batch.Excluded != 0) {
+		err = errors.New("本轮需要 6000 把有效验收密钥，当前有效数量不足")
+	}
 	if err != nil {
 		result.Error = "无法记录验收密钥初始状态，未启动压测：" + err.Error()
 		g.finishPerformance(job, result)
@@ -529,13 +535,23 @@ func (g *demoGuard) executePerformance(ctx context.Context, job *demoJob, wrkPat
 		return
 	}
 
-	g.updateRunStage(job, "running", "执行固定性能场景")
+	if abnormalScenario(prepared.ID) {
+		g.updateRunStage(job, "running", "构造异常样本并执行检测与自动回收")
+	} else {
+		g.updateRunStage(job, "running", "执行固定性能场景")
+	}
 	stopWatch, watchDone := g.watchBinding(ctx, job.session, job.revision, job.lease, job.cancel)
 	executed := g.executeRun(ctx, wrkPath, prepared)
 	g.updateRunStage(job, "running", "核验最终状态并归档测量证据")
-	if err := g.server.finishLifecycleAudit(ctx, job.audit, job.auditRows, executed); err != nil {
-		executed.Status = "failed"
-		executed.Error = "验收生命周期归档失败，结果不予采信"
+	if abnormalScenario(prepared.ID) && executed.Abnormal != nil {
+		job.audit, job.auditRows = abnormalAudit(result, executed.Abnormal, job.session, job.revision)
+		executed.Abnormal.Rows = nil
+	}
+	if !abnormalScenario(prepared.ID) {
+		if err := g.server.finishLifecycleAudit(ctx, job.audit, job.auditRows, executed); err != nil {
+			executed.Status = "failed"
+			executed.Error = "验收生命周期归档失败，结果不予采信"
+		}
 	}
 	executed = applyLifecycleAuditResult(prepared, job.audit, executed)
 	close(stopWatch)
@@ -546,6 +562,8 @@ func (g *demoGuard) executePerformance(ctx context.Context, job *demoJob, wrkPat
 	result.PassedTPS = executed.PassedTPS
 	result.Summary = executed.Summary
 	result.MetricCheck = executed.MetricCheck
+	result.Abnormal = executed.Abnormal
+	result.FixedUpdate = executed.FixedUpdate
 	result.Error = executed.Error
 	result.Notes = append(append(append([]string{}, scenario.Notes...), notes...), executed.Notes...)
 	if watchErr != nil {
@@ -686,7 +704,7 @@ func (g *demoGuard) read(c *fiber.Ctx, session string, revision int64) error {
 			"securityExecutable":            "native-http-probes",
 			"securityScriptPath":            "system_security.go",
 			"scopedExecutionAvailable":      wrkAvailable || securityAvailable,
-			"performanceExecutionAvailable": wrkAvailable,
+			"performanceExecutionAvailable": wrkAvailable || g.server.cfg.AbnormalRevocationURL != "",
 			"securityExecutionAvailable":    securityAvailable,
 			"executionUnavailableReason": func() string {
 				if wrkAvailable || securityAvailable {
@@ -700,12 +718,12 @@ func (g *demoGuard) read(c *fiber.Ctx, session string, revision int64) error {
 		list := []fiber.Map{{"id": boundaryProbeID, "name": "Demo 权威与入口边界探针", "description": "真实调用 ADMIN 权威与租约续期 RPC，校验本地固定路由白名单；不生成、更新或回收业务密钥，不代表业务 TPS 或端到端攻击验收。", "method": "POST", "path": "/runs", "durationSeconds": 3, "threads": 1, "connections": 1, "available": true, "headers": fiber.Map{}}}
 		_, wrkAvailable := resolveExecutable(g.server.defaultWrkPath)
 		for _, scenario := range g.server.scenarios {
-			available := wrkAvailable && demoScenarioAllowed(scenario.ID)
+			available := (wrkAvailable || scenario.ID == "update-tps" || (abnormalScenario(scenario.ID) && g.server.cfg.AbnormalRevocationURL != "")) && demoScenarioAllowed(scenario.ID)
 			reason := ""
 			if !available {
 				reason = "wrk 不可用或场景未进入 Demo 白名单"
 			}
-			list = append(list, fiber.Map{"id": scenario.ID, "name": scenario.Name, "description": scenario.Description, "method": scenario.Method, "path": scenario.Path, "targetTps": scenario.TargetTPS, "available": available, "unavailableReason": reason, "headers": fiber.Map{}})
+			list = append(list, fiber.Map{"id": scenario.ID, "name": scenario.Name, "description": scenario.Description, "method": scenario.Method, "path": scenario.Path, "targetTps": scenario.TargetTPS, "metricTarget": scenario.MetricTarget, "metricOperator": scenario.MetricOperator, "available": available, "unavailableReason": reason, "headers": fiber.Map{}})
 		}
 		return c.JSON(fiber.Map{"data": list})
 	case "/api/runs":

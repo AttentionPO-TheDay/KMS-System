@@ -187,8 +187,12 @@ public class InternalLifecycleController {
                                          @RequestParam("keyIds") List<Long> keyIds) {
         requireAuthorized(token);
         List<Map<String, Object>> items = new ArrayList<>();
+        Map<Long, Keymanage> keys = new LinkedHashMap<>();
+        for (Keymanage key : lifecycleService.metadataByIds(keyIds)) {
+            keys.put(key.getKeyId(), key);
+        }
         for (Long keyId : keyIds) {
-            Keymanage key = lifecycleService.findById(keyId).orElse(null);
+            Keymanage key = keys.get(keyId);
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("keyId", keyId);
             item.put("exists", key != null);
@@ -199,6 +203,7 @@ public class InternalLifecycleController {
             item.put("version", key == null ? null : key.getVersion());
             item.put("userName", key == null ? null : key.getUserName());
             item.put("keyDomain", key == null ? null : key.getKeyDomain());
+            item.put("materialDigest", key == null ? null : key.getMaterialDigest());
             items.add(item);
         }
         Map<String, Object> payload = new LinkedHashMap<>();

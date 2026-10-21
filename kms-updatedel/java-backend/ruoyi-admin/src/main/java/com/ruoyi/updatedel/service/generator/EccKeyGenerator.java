@@ -84,7 +84,9 @@ public class EccKeyGenerator implements ECConstants {
         digest.doFinal(hA, 0);
 
         BigInteger w = randomNum();
-        ECPoint wA = g.multiply(w).add(uAPoint).normalize();
+        // G is fixed: use Bouncy Castle's precomputed comb multiplication.
+        // The scalar remains a fresh cryptographically random w for every rotation.
+        ECPoint wA = new org.bouncycastle.math.ec.FixedPointCombMultiplier().multiply(g, w).add(uAPoint).normalize();
 
         byte[] conBytes2 = concatBytes(
             convertBytes(wA.getAffineXCoord().toBigInteger(), 32),

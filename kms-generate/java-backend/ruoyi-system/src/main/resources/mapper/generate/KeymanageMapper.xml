@@ -54,6 +54,21 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         order by key_id desc
     </select>
 
+    <!-- Internal metadata lookup: filter and bound in SQL; never load key material. -->
+    <select id="selectRecentKeys" resultMap="keymanageResult">
+        select key_id, sys_pid, did_request_id, user_name, encryt_name, key_name,
+               key_use, key_domain, ua, status, cre_time
+        from keymanage
+        where user_name = #{userName}
+        <if test="encrytName != null">and encryt_name = #{encrytName}</if>
+        <if test="keyName != null">and key_name = #{keyName}</if>
+        <if test="ua != null">and ua = #{ua}</if>
+        <if test="createdAfter != null">and cre_time &gt;= #{createdAfter}</if>
+        <if test="activeOnly">and status = '0' and key_domain = 'acceptance'</if>
+        order by key_id desc
+        limit #{limit}
+    </select>
+
     <select id="selectkeymanageByKeyId" parameterType="Long" resultMap="keymanageResult">
         <include refid="selectkeymanageVo"/>
         where key_id = #{keyId}

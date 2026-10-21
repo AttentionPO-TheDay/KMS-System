@@ -41,6 +41,10 @@ public class Keymanage {
     @JsonAlias("keyValue")
     private String keyValue;
 
+    /** Internal metadata fingerprint for verifying that a rotation changed material. */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private String materialDigest;
+
     @JsonProperty("cre_time")
     @JsonAlias("creTime")
     private String creTime;

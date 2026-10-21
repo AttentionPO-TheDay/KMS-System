@@ -50,14 +50,18 @@ export function securityProgress(caseIds, latest, target) {
 export function performanceOutcome(run) {
   if (!run) return { state: 'pending', label: '待执行' }
   if (isActiveRun(run)) return { state: 'running', label: '执行中' }
+  if (run.scenarioId === 'update-tps' && !run.error && (run.fixedUpdateEvidence?.version !== 2 || run.fixedUpdateEvidence?.verified !== true)) return { state: 'incomplete', label: '缺少密钥材料更新核验，需重测' }
+  if (['revoke-tps', 'revoke-rate'].includes(run.scenarioId) && run.abnormalEvidence?.version !== 2) return { state: 'incomplete', label: '缺少异常样本证据，需重测' }
   const needsFinalState = run.scenarioId === 'revoke-rate' || run.metricCheck?.enforced === true
   if (run.status === 'passed' && run.passedTps === true && (!needsFinalState || (run.metricCheck?.collected === true && run.metricCheck?.passed === true))) return { state: 'passed', label: '已通过' }
-  if (run.status === 'failed' && !run.error && Number(run.summary?.totalRequests) > 0) return { state: 'failed', label: '未达到指标' }
+  if (['failed', 'failed_threshold'].includes(run.status) && !run.error && Number(run.summary?.totalRequests) > 0) return { state: 'failed', label: '未达到指标' }
   return { state: 'incomplete', label: run.status === 'cancelled' ? '已停止' : '测试未完成' }
 }
 
 export function measuredPerformance(run, criterion) {
   if (!run || isActiveRun(run)) return null
+  if (run.scenarioId === 'update-tps' && (run.fixedUpdateEvidence?.version !== 2 || run.fixedUpdateEvidence?.verified !== true)) return null
+  if (['revoke-tps', 'revoke-rate'].includes(run.scenarioId) && run.abnormalEvidence?.version !== 2) return null
   if (criterion?.id === 'revoke-rate' || run.scenarioId === 'revoke-rate') {
     return run.metricCheck?.collected === true ? run.metricCheck.value : null
   }

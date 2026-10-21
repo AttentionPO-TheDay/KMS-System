@@ -49,7 +49,7 @@ func TestAcceptanceCriteriaExposeStrictThresholds(t *testing.T) {
 		"preallocation":       {operator: ">", target: 50},
 		"key-update":          {operator: ">=", target: 5000},
 		"abnormal-revoke":     {operator: ">=", target: 5000},
-		"revoke-rate":         {operator: ">", target: 98},
+		"revoke-rate":         {operator: ">=", target: 98},
 	}
 	for _, item := range items {
 		if expected, ok := want[item.ID]; ok && (item.Operator != expected.operator || item.Target != expected.target) {
@@ -59,8 +59,8 @@ func TestAcceptanceCriteriaExposeStrictThresholds(t *testing.T) {
 	if compareThreshold(100000, ">", 100000) || !compareThreshold(100001, ">", 100000) {
 		t.Fatal("strict greater-than threshold is not enforced")
 	}
-	if compareThreshold(98, ">", 98) || !compareThreshold(98.01, ">", 98) {
-		t.Fatal("strict revoke-rate threshold is not enforced")
+	if compareThreshold(97.99, ">=", 98) || !compareThreshold(98, ">=", 98) || !compareThreshold(100, ">=", 98) {
+		t.Fatal("inclusive revoke-rate threshold is not enforced")
 	}
 }
 

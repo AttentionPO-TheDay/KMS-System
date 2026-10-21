@@ -45,6 +45,8 @@ type Scenario struct {
 	Description     string            `json:"description"`
 	Notes           []string          `json:"notes,omitempty"`
 	PreparedKeyIDs  []int64           `json:"-"`
+	GeneratedAfter  time.Time         `json:"-"`
+	SourceRunID     string            `json:"-"`
 }
 
 type AcceptanceCriterion struct {
@@ -291,21 +293,23 @@ type ExecutionStage struct {
 }
 
 type RunResult struct {
-	ID          string           `json:"id"`
-	ScenarioID  string           `json:"scenarioId"`
-	Scenario    string           `json:"scenario"`
-	Status      string           `json:"status"`
-	Stage       string           `json:"stage,omitempty"`
-	Stages      []ExecutionStage `json:"stages,omitempty"`
-	StartedAt   string           `json:"startedAt"`
-	FinishedAt  string           `json:"finishedAt,omitempty"`
-	TargetTPS   float64          `json:"targetTps"`
-	PassedTPS   bool             `json:"passedTps"`
-	WrkCommand  []string         `json:"wrkCommand"`
-	Summary     RunSummary       `json:"summary"`
-	MetricCheck MetricCheck      `json:"metricCheck"`
-	Notes       []string         `json:"notes,omitempty"`
-	Error       string           `json:"error,omitempty"`
+	ID          string               `json:"id"`
+	ScenarioID  string               `json:"scenarioId"`
+	Scenario    string               `json:"scenario"`
+	Status      string               `json:"status"`
+	Stage       string               `json:"stage,omitempty"`
+	Stages      []ExecutionStage     `json:"stages,omitempty"`
+	StartedAt   string               `json:"startedAt"`
+	FinishedAt  string               `json:"finishedAt,omitempty"`
+	TargetTPS   float64              `json:"targetTps"`
+	PassedTPS   bool                 `json:"passedTps"`
+	WrkCommand  []string             `json:"wrkCommand"`
+	Summary     RunSummary           `json:"summary"`
+	MetricCheck MetricCheck          `json:"metricCheck"`
+	Notes       []string             `json:"notes,omitempty"`
+	Error       string               `json:"error,omitempty"`
+	Abnormal    *abnormalEvidence    `json:"abnormalEvidence,omitempty"`
+	FixedUpdate *fixedUpdateEvidence `json:"fixedUpdateEvidence,omitempty"`
 }
 
 type persistedRuns struct {
@@ -317,6 +321,7 @@ type internalKeyRecord struct {
 	UserName  string `json:"userName"`
 	Status    string `json:"status"`
 	CreatedAt string `json:"createdAt"`
+	KeyDomain string `json:"keyDomain"`
 }
 
 type internalGenerateResponse struct {
@@ -324,14 +329,15 @@ type internalGenerateResponse struct {
 }
 
 type internalVerifyRecord struct {
-	KeyID       int64  `json:"keyId"`
-	Exists      bool   `json:"exists"`
-	Status      string `json:"status"`
-	ChainStatus string `json:"chainStatus"`
-	UpdatedAt   string `json:"updatedAt"`
-	Version     *int   `json:"version"`
-	UserName    string `json:"userName"`
-	KeyDomain   string `json:"keyDomain"`
+	KeyID          int64  `json:"keyId"`
+	Exists         bool   `json:"exists"`
+	Status         string `json:"status"`
+	ChainStatus    string `json:"chainStatus"`
+	UpdatedAt      string `json:"updatedAt"`
+	Version        *int   `json:"version"`
+	UserName       string `json:"userName"`
+	KeyDomain      string `json:"keyDomain"`
+	MaterialDigest string `json:"materialDigest,omitempty"`
 }
 
 type internalVerifyResponse struct {
@@ -339,6 +345,7 @@ type internalVerifyResponse struct {
 }
 
 type acceptanceConfig struct {
+	AbnormalRevocationURL    string
 	GenerateInternalToken    string
 	GenerateKeyPoolURL       string
 	LifecycleVerifyURL       string
@@ -444,6 +451,7 @@ func main() {
 func loadAcceptanceConfig() acceptanceConfig {
 	acceptanceUser := envOrDefault("ACCEPTANCE_USER", "acceptance_user")
 	return acceptanceConfig{
+		AbnormalRevocationURL:    envOrDefault("ACCEPTANCE_ABNORMAL_REVOCATION_URL", "http://127.0.0.1:8000/api/pqkds/internal/acceptance/abnormal-revocation/"),
 		GenerateInternalToken:    envOrDefault("ACCEPTANCE_INTERNAL_TOKEN", strings.TrimSpace(os.Getenv("INTERNAL_TOKEN"))),
 		GenerateKeyPoolURL:       envOrDefault("ACCEPTANCE_GENERATE_KEY_POOL_URL", "http://127.0.0.1:9081/internal/generate/keys/recent"),
 		LifecycleVerifyURL:       envOrDefault("ACCEPTANCE_LIFECYCLE_VERIFY_URL", "http://127.0.0.1:9082/internal/lifecycle/key-status"),
@@ -511,12 +519,12 @@ func defaultScenarios(cfg acceptanceConfig) map[string]Scenario {
 			MetricKind:      "update_final_rate",
 			MetricTarget:    cfg.UpdateVerifyTarget,
 			MetricOperator:  ">=",
-			Description:     "直接压测 kms-updatedel Go 接口，自动从最新生成结果加载 key 池，目标 TPS 不低于 5000。",
-			Notes:           []string{"执行前请先跑一次生成场景，准备足够的 keyId。", "默认按 5 秒窗口控制单轮 key 需求，避免过度消耗生成结果。"},
+			Description:     "复用已生成的 6000 把 SM2 验收密钥，每把更新一次，按版本及材料变化核验落库完成；上链异步处理。",
+			Notes:           []string{"每轮固定 6000 把不同的已有 SM2 密钥，各提交一次更新；不足时明确报错。", "实际更新速率按落库完成数 / 从提交到数据库核验的耗时计算，包含排队及查询，不等待上链。"},
 		},
 		"revoke-tps": {
 			ID:              "revoke-tps",
-			Name:            "密钥回收 TPS",
+			Name:            "异常检测与自动回收",
 			TargetTPS:       5000,
 			TargetOperator:  ">=",
 			Method:          http.MethodPost,
@@ -527,13 +535,12 @@ func defaultScenarios(cfg acceptanceConfig) map[string]Scenario {
 			Connections:     50,
 			Headers:         cloneHeaders(tokenHeader),
 			BodyTemplate:    fmt.Sprintf(`{"keyId":%s,"user":"%s"}`, keyIDPlaceholder, cfg.AcceptanceUser),
-			Description:     "直接压测 kms-updatedel Go 接口，自动复用最新生成 key 池，目标 TPS 不低于 5000。",
-			Notes:           []string{"回收请求不可逆，请确保使用验收专用 key。", "默认按 5 秒窗口控制单轮 key 需求，避免和生成尾部处理相互挤压。"},
+			Description:     "构造 6000 把异常公钥记录与 4 把对照密钥，调用生产异常扫描与自动回收流程，核验检测、回收及池项和会话联动。",
+			Notes:           []string{"使用连接隔离的 MySQL 临时表，测试结束清理，业务数据不参与。", "速率按实际回收数 / 扫描回收耗时计算，包含检测与联动写入；不包含样本准备、清理和链上确认。", "这是隔离临时表环境测量，不代表生产负载下的持久化吞吐。"},
 		},
 		"revoke-rate": {
 			ID:              "revoke-rate",
-			Name:            "密钥回收率",
-			TargetTPS:       5000,
+			Name:            "异常密钥回收率",
 			TargetOperator:  ">=",
 			Method:          http.MethodPost,
 			BaseURL:         lifecycleBaseURL,
@@ -543,11 +550,11 @@ func defaultScenarios(cfg acceptanceConfig) map[string]Scenario {
 			Connections:     50,
 			Headers:         cloneHeaders(tokenHeader),
 			BodyTemplate:    fmt.Sprintf(`{"keyId":%s,"user":"%s"}`, keyIDPlaceholder, cfg.AcceptanceUser),
-			MetricKind:      "revoke_final_rate",
+			MetricKind:      "abnormal_revoke_rate",
 			MetricTarget:    98,
-			MetricOperator:  ">",
-			Description:     "先执行回收压测，再去生命周期 Java 内部查询最终状态，按 status=3 计算最终回收率。",
-			Notes:           []string{"默认等待 30 秒后核验，可通过环境变量调整。", "默认按 5 秒窗口控制单轮 key 需求，避免最终核验被生成尾部长期拖慢。"},
+			MetricOperator:  ">=",
+			Description:     "构造 6000 把异常密钥记录，按最终回收成功数 / 实际发起回收密钥数计算回收率，目标不低于 98%。",
+			Notes:           []string{"使用连接隔离的 MySQL 临时表，测试结束清理，业务数据不参与。", "分母来自扫描器实际回收候选集，按密钥去重；发起后失败的密钥计入分母，未发起和4把对照单独展示。", "回收率与每秒 5000 条的速率要求独立，不按速率或固定秒数截断；所有已发起操作成功时如实显示 100%。"},
 		},
 	}
 }
@@ -648,9 +655,9 @@ func acceptanceCriteria() []AcceptanceCriterion {
 	return []AcceptanceCriterion{
 		{ID: "certless-generation", Category: "performance", Title: "无证书密钥生成速率", Requirement: "成功生成 TPS > 100000 条/秒", Kind: "scenario", Target: 100000, Operator: ">", Unit: "TPS", ScenarioID: "generate-tps", ExecutionScope: "admin", EvidenceSource: "kms-generate / ENROLL_KEY（SSCL 最快路径）", Notes: []string{"仅统计 2xx 成功请求，不以请求发出数代替成功数。"}},
 		{ID: "preallocation", Category: "performance", Title: "预分配密钥速率", Requirement: "节点侧本机封装吞吐 > 50 条/秒", Kind: "evidence", Target: 50, Operator: ">", Unit: "条/秒", ExecutionScope: "node", EvidenceSource: "独立节点侧预分配验收流程（需单独发起）", Notes: []string{"日常预分配不作为验收样本，也不自动回传量化结果。管理端未发起任务时状态为未执行。"}},
-		{ID: "key-update", Category: "performance", Title: "密钥更新速率", Requirement: "成功更新 TPS ≥ 5000 条/秒", Kind: "scenario", Target: 5000, Operator: ">=", Unit: "TPS", ScenarioID: "update-tps", ExecutionScope: "admin", EvidenceSource: "kms-updatedel / UPDATE_KEY"},
-		{ID: "abnormal-revoke", Category: "performance", Title: "异常密钥回收速率", Requirement: "成功回收 TPS ≥ 5000 条/秒", Kind: "scenario", Target: 5000, Operator: ">=", Unit: "TPS", ScenarioID: "revoke-tps", ExecutionScope: "admin", EvidenceSource: "kms-updatedel / REVOKE_KEY", Notes: []string{"只使用验收专用密钥池，不触碰生产密钥。"}},
-		{ID: "revoke-rate", Category: "performance", Title: "密钥最终回收率", Requirement: "最终状态回收率 > 98%", Kind: "scenario", Target: 98, Operator: ">", Unit: "%", ScenarioID: "revoke-rate", ExecutionScope: "admin", EvidenceSource: "生命周期最终状态查询（status=3）"},
+		{ID: "key-update", Category: "performance", Title: "密钥更新速率", Requirement: "成功更新 TPS ≥ 5000 条/秒", Kind: "scenario", Target: 5000, Operator: ">=", Unit: "TPS", ScenarioID: "update-tps", ExecutionScope: "admin", EvidenceSource: "kms-updatedel / 固定 6000 条版本变化核验"},
+		{ID: "abnormal-revoke", Category: "performance", Title: "异常密钥回收速率", Requirement: "实际异常自动回收 ≥ 5000 条/秒", Kind: "scenario", Target: 5000, Operator: ">=", Unit: "TPS", ScenarioID: "revoke-tps", ExecutionScope: "admin", EvidenceSource: "node auto-revoke / isolated MySQL", Notes: []string{"先写入异常样本，再检测、自动回收并验证正常对照与依赖失效。"}},
+		{ID: "revoke-rate", Category: "performance", Title: "异常密钥回收率", Requirement: "异常密钥回收率 ≥ 98%", Kind: "scenario", Target: 98, Operator: ">=", Unit: "%", ScenarioID: "revoke-rate", ExecutionScope: "admin", EvidenceSource: "node auto-revoke / isolated MySQL 状态快照"},
 		{ID: "generation-attacks", Category: "security", Title: "密钥生成协议校验", Requirement: "签发入口非法请求明确拒绝", Kind: "security-suite", Target: 3, Operator: ">=", Unit: "类", CaseIDs: []string{"generation-identity-injection", "generation-unknown-algorithm", "generation-malformed-json", "generation-invalid-version"}, ExecutionScope: "admin", EvidenceSource: "system_security.go / 实际 Demo 网关"},
 		{ID: "quantum-attacks", Category: "security", Title: "抗量子算法与协议验证", Requirement: "至少3类算法负向场景及对应协议校验通过", Kind: "security-suite", Target: 3, Operator: ">=", Unit: "类", CaseIDs: []string{"pq-parameter-downgrade", "pq-sign-encrypt-confusion", "pq-secret-upload", "pq-issuance-source-forgery"}, ExecutionScope: "admin", EvidenceSource: "实际签发接口 + 部署原生 KYBER/FALCON + 独立 JS 互操作向量", Notes: []string{"4类：KYBER密文篡改、FALCON消息篡改、KYBER错误私钥、FALCON签名/公钥替换。每类必须同时满足协议断言与完整算法证据。", "范围为KYBER round-3与FALCON-512功能和负向测试，不等同于FIPS认证、自定义无证书方案安全证明或量子攻击实测。"}},
 		{ID: "network-attacks", Category: "security", Title: "无密码会话与网络边界", Requirement: "会话与权限边界请求明确拒绝", Kind: "security-suite", Target: 5, Operator: ">=", Unit: "类", CaseIDs: []string{"network-session-forgery", "network-csrf", "network-stale-revision", "network-role-isolation", "network-origin", "network-missing-session"}, ExecutionScope: "admin", EvidenceSource: "system_security.go / 实际会话与权限接口"},
@@ -929,7 +936,7 @@ func (s *server) handleCreateRun(c *fiber.Ctx) error {
 		wrkPath = s.defaultWrkPath
 	}
 	resolvedWrkPath, ok := resolveExecutable(wrkPath)
-	if !ok {
+	if !ok && prepared.ID != "update-tps" && !abnormalScenario(prepared.ID) {
 		return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{"message": "wrk not found or not executable, set WRK_PATH or provide wrkPath"})
 	}
 	wrkPath = resolvedWrkPath
@@ -946,13 +953,41 @@ func (s *server) handleCreateRun(c *fiber.Ctx) error {
 	}
 	s.storeRun(run)
 
+	var updateAudit *lifecycleArchive
+	var updateRows []lifecycleRow
+	if prepared.ID == "update-tps" {
+		updateAudit, updateRows, err = s.beginLifecycleAudit(context.Background(), prepared, *run, "standalone", 0)
+		if err == nil && (updateAudit == nil || updateAudit.Batch.Eligible != fixedUpdateCount || updateAudit.Batch.Excluded != 0) {
+			err = fmt.Errorf("本轮有效密钥不足 6000 把")
+		}
+		if err != nil {
+			run.Status, run.Error = "failed", "无法记录更新前的密钥状态"
+			s.storeRun(run)
+			return c.Status(http.StatusBadGateway).JSON(run)
+		}
+	}
 	result := s.executeRun(context.Background(), wrkPath, prepared)
+	if updateAudit != nil {
+		if err := s.finishLifecycleAudit(context.Background(), updateAudit, updateRows, result); err != nil {
+			result.Status, result.Error = "failed", "更新状态核验归档失败"
+		}
+		result = applyLifecycleAuditResult(prepared, updateAudit, result)
+		updateAudit.Batch.Status, updateAudit.Batch.FinishedAt = result.Status, time.Now().Format(time.RFC3339)
+		if err := s.saveLifecycleAudit(*updateAudit, updateRows); err != nil {
+			result.Status, result.Error = "failed", "更新测量归档失败"
+		}
+	}
 	run.Status = result.Status
 	run.FinishedAt = time.Now().Format(time.RFC3339)
 	run.PassedTPS = result.PassedTPS
 	run.Summary = result.Summary
 	run.WrkCommand = result.WrkCommand
 	run.Error = result.Error
+	run.Abnormal = result.Abnormal
+	run.FixedUpdate = result.FixedUpdate
+	if run.Abnormal != nil {
+		run.Abnormal.Rows = nil
+	}
 	run.MetricCheck = result.MetricCheck
 	if len(result.Notes) > 0 {
 		run.Notes = append(run.Notes, result.Notes...)
@@ -966,35 +1001,66 @@ func (s *server) handleCreateRun(c *fiber.Ctx) error {
 }
 
 func (s *server) prepareScenario(base Scenario) (Scenario, []string, error) {
+	return s.prepareScenarioContext(context.Background(), base)
+}
+
+func (s *server) prepareScenarioContext(ctx context.Context, base Scenario) (Scenario, []string, error) {
 	prepared := base
 	var notes []string
+	if abnormalScenario(base.ID) {
+		return prepared, notes, nil
+	}
 
 	if !strings.Contains(prepared.BodyTemplate, keyIDPlaceholder) {
 		return prepared, notes, nil
 	}
 
 	requiredKeys := s.cfg.LifecycleRequiredKeys
-	if requiredKeys <= 0 {
+	if base.ID == "update-tps" {
+		requiredKeys = fixedUpdateCount
+	} else if requiredKeys <= 0 {
 		requiredKeys = int(prepared.TargetTPS * float64(prepared.DurationSeconds))
 	}
 	if requiredKeys <= 0 {
 		requiredKeys = prepared.Connections
 	}
 
-	createdAfter := s.latestGenerateStartedAt()
+	createdAfter := base.GeneratedAfter
+	if base.ID == "update-tps" {
+		// Generation throughput uses SSCL. Its timestamp does not identify the
+		// separately prepared SM2 rotation pool, which is reused on every run.
+		createdAfter = time.Time{}
+		prepared.SourceRunID = ""
+	}
+	if createdAfter.IsZero() && base.ID != "update-tps" {
+		createdAfter = s.latestGenerateStartedAt()
+	}
 	if createdAfter.IsZero() {
-		createdAfter = time.Now().Add(-time.Duration(s.cfg.KeyPoolLookbackMinutes) * time.Minute)
-		notes = append(notes, fmt.Sprintf("未找到最近一次生成压测记录，回退到最近 %d 分钟生成数据取 key 池。", s.cfg.KeyPoolLookbackMinutes))
+		if base.ID == "update-tps" {
+			notes = append(notes, "复用验收用户已生成的最新 6000 把有效验收密钥，不重新生成。")
+		} else {
+			createdAfter = time.Now().Add(-time.Duration(s.cfg.KeyPoolLookbackMinutes) * time.Minute)
+			notes = append(notes, fmt.Sprintf("未找到最近一次生成压测记录，回退到最近 %d 分钟生成数据取 key 池。", s.cfg.KeyPoolLookbackMinutes))
+		}
 	} else {
 		notes = append(notes, fmt.Sprintf("复用最近一次生成压测开始时间 %s 之后的 key 池。", createdAfter.Format(time.RFC3339)))
 	}
 
-	keyIDs, err := s.fetchGeneratedKeyIDs(requiredKeys, createdAfter, "")
+	algorithm := ""
+	if base.ID == "update-tps" {
+		algorithm = "SM2"
+		notes = append(notes, "使用 SM2 随机刷新 KGC 份额，落库完成即计更新，上链异步处理。")
+	}
+	keyIDs, err := s.fetchGeneratedKeyIDsContext(ctx, requiredKeys, createdAfter, algorithm, base.ID == "update-tps")
 	if err != nil {
 		return prepared, notes, err
 	}
 	prepared.PreparedKeyIDs = keyIDs
-	notes = append(notes, fmt.Sprintf("已装载 %d 个 keyId 作为 wrk 轮换池。", len(keyIDs)))
+	if base.ID == "update-tps" {
+		notes = append(notes, "已装载 6000 把不同密钥，本轮每把更新一次。")
+	} else {
+		notes = append(notes, fmt.Sprintf("已装载 %d 个 keyId 作为 wrk 轮换池。", len(keyIDs)))
+	}
 	return prepared, notes, nil
 }
 
@@ -1013,6 +1079,10 @@ func (s *server) latestGenerateStartedAt() time.Time {
 }
 
 func (s *server) fetchGeneratedKeyIDs(limit int, createdAfter time.Time, encrytName string) ([]int64, error) {
+	return s.fetchGeneratedKeyIDsContext(context.Background(), limit, createdAfter, encrytName, false)
+}
+
+func (s *server) fetchGeneratedKeyIDsContext(ctx context.Context, limit int, createdAfter time.Time, encrytName string, activeOnly bool) ([]int64, error) {
 	if limit <= 0 {
 		return nil, fmt.Errorf("invalid key pool size")
 	}
@@ -1024,19 +1094,23 @@ func (s *server) fetchGeneratedKeyIDs(limit int, createdAfter time.Time, encrytN
 
 	var lastErr error
 	for {
-		keyIDs, err := s.fetchGeneratedKeyIDsOnce(limit, createdAfter, encrytName)
+		keyIDs, err := s.fetchGeneratedKeyIDsOnce(ctx, limit, createdAfter, encrytName, activeOnly)
 		if err == nil {
 			return keyIDs, nil
 		}
 		lastErr = err
-		if time.Now().After(deadline) {
+		if ctx.Err() != nil || time.Now().After(deadline) {
 			return nil, lastErr
 		}
-		time.Sleep(2 * time.Second)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
 	}
 }
 
-func (s *server) fetchGeneratedKeyIDsOnce(limit int, createdAfter time.Time, encrytName string) ([]int64, error) {
+func (s *server) fetchGeneratedKeyIDsOnce(ctx context.Context, limit int, createdAfter time.Time, encrytName string, activeOnly bool) ([]int64, error) {
 	endpoint, err := url.Parse(s.cfg.GenerateKeyPoolURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid generate key pool url: %w", err)
@@ -1044,6 +1118,9 @@ func (s *server) fetchGeneratedKeyIDsOnce(limit int, createdAfter time.Time, enc
 	query := endpoint.Query()
 	query.Set("userName", s.cfg.AcceptanceUser)
 	query.Set("limit", strconv.Itoa(limit))
+	if activeOnly {
+		query.Set("activeOnly", "true")
+	}
 	if !createdAfter.IsZero() {
 		query.Set("createdAfter", createdAfter.Format(time.RFC3339))
 	}
@@ -1052,7 +1129,7 @@ func (s *server) fetchGeneratedKeyIDsOnce(limit int, createdAfter time.Time, enc
 	}
 	endpoint.RawQuery = query.Encode()
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, endpoint.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1078,6 +1155,9 @@ func (s *server) fetchGeneratedKeyIDsOnce(limit int, createdAfter time.Time, enc
 	keyIDs := make([]int64, 0, limit)
 	seen := make(map[int64]struct{}, limit)
 	for _, item := range payload.Data {
+		if activeOnly && (item.UserName != s.cfg.AcceptanceUser || item.Status != "0" || item.KeyDomain != "acceptance") {
+			return nil, fmt.Errorf("generated key pool contains an invalid or non-acceptance key")
+		}
 		if item.KeyID == 0 {
 			continue
 		}
@@ -1097,6 +1177,12 @@ func (s *server) fetchGeneratedKeyIDsOnce(limit int, createdAfter time.Time, enc
 }
 
 func (s *server) executeRun(parentCtx context.Context, wrkPath string, scenario Scenario) RunResult {
+	if scenario.ID == "update-tps" {
+		return s.executeFixedUpdate(parentCtx, scenario)
+	}
+	if abnormalScenario(scenario.ID) {
+		return s.executeAbnormalRevocation(parentCtx, scenario)
+	}
 	runDir := filepath.Join(s.dataDir, strings.ReplaceAll(s.nextID(), ":", "-"))
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		return RunResult{Status: "failed", Error: "create run temp dir failed: " + err.Error()}

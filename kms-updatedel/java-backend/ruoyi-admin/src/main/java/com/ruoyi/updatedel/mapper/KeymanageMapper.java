@@ -19,6 +19,13 @@ public interface KeymanageMapper {
      */
     Keymanage selectkeymanageByKeyId(Long keyId);
 
+    List<Keymanage> selectMetadataByIds(@Param("keyIds") List<Long> keyIds);
+
+    List<Keymanage> selectRotationCandidates(@Param("userName") String userName,
+                                             @Param("keyIds") List<Long> keyIds);
+
+    int archiveRotationBatch(@Param("keyIds") List<Long> keyIds);
+
     /**
      * 查询密钥管理列表
      *

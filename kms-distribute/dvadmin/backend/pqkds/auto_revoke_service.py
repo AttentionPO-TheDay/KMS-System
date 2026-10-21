@@ -295,10 +295,10 @@ def _revoke_batch(cursor, batch_id, now):
     cursor.execute(f"""
         INSERT INTO {INSPECTION_TABLE}
           (key_id, rule, severity, action, detected_at, action_at, batch_id, handled_by)
-        SELECT id, rule, 'ERROR', '{C.INSPECTION_AUTO_REVOKED}', %s, %s, %s, ''
-        FROM kms_auto_revoke_candidates
+        SELECT t.id, t.rule, 'ERROR', '{C.INSPECTION_AUTO_REVOKED}', %s, %s, %s, ''
+        FROM kms_auto_revoke_candidates t
         ON DUPLICATE KEY UPDATE
-          rule = IF(disposition IN ('confirmed','dismissed','manual_revoked'), rule, VALUES(rule)),
+          rule = IF(disposition IN ('confirmed','dismissed','manual_revoked'), {INSPECTION_TABLE}.rule, VALUES(rule)),
           severity = IF(disposition IN ('confirmed','dismissed','manual_revoked'), severity, 'ERROR'),
           action = IF(disposition IN ('confirmed','dismissed','manual_revoked'), action, '{C.INSPECTION_AUTO_REVOKED}'),
           action_at = IF(disposition IN ('confirmed','dismissed','manual_revoked'), action_at, VALUES(action_at)),

@@ -16,7 +16,7 @@ import (
 )
 
 func auditTestRecord(id int64, status string, version int) internalVerifyRecord {
-	return internalVerifyRecord{KeyID: id, Exists: true, Status: status, Version: &version, UserName: "acceptance_user", KeyDomain: "acceptance", ChainStatus: "1"}
+	return internalVerifyRecord{KeyID: id, Exists: true, Status: status, Version: &version, UserName: "acceptance_user", KeyDomain: "acceptance", ChainStatus: "1", MaterialDigest: fmt.Sprint("material-", version)}
 }
 
 func TestAuditUpdateDoesNotCountPreexistingChainSuccess(t *testing.T) {
@@ -28,6 +28,11 @@ func TestAuditUpdateDoesNotCountPreexistingChainSuccess(t *testing.T) {
 	}
 	if auditOutcome("update-tps", before, &changed) != "COMPLETED" {
 		t.Fatal("version change not counted")
+	}
+	unchangedMaterial := changed
+	unchangedMaterial.MaterialDigest = before.MaterialDigest
+	if auditOutcome("update-tps", before, &unchangedMaterial) != "PENDING" {
+		t.Fatal("a version increment without new material must not count as an update")
 	}
 	revoked := auditTestRecord(1, "3", 1)
 	if auditOutcome("revoke-rate", revoked, &revoked) != "EXCLUDED" {

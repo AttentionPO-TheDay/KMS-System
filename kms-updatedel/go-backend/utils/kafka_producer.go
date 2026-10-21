@@ -71,7 +71,8 @@ func newSaramaConfig() *sarama.Config {
 	config := sarama.NewConfig()
 	config.Producer.RequiredAcks = sarama.WaitForLocal
 	config.Producer.Compression = sarama.CompressionSnappy
-	config.Producer.Flush.Frequency = 500 * time.Millisecond
+	// Bound low-volume tail latency while retaining byte/message batching under load.
+	config.Producer.Flush.Frequency = 20 * time.Millisecond
 	config.Producer.Flush.Bytes = 16 * 1024
 	config.Producer.Flush.Messages = 1000
 	config.Producer.Return.Errors = true

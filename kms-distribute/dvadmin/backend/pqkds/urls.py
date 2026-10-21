@@ -38,6 +38,7 @@ from .user_distribution_views import (
 )
 # 阶段 2：节点自助（首次登录后的密钥初始化）。身份取自令牌自省，见该模块 docstring。
 from .acceptance_pq_views import node_self_acceptance_pq
+from .acceptance_revoke_views import internal_abnormal_revocation
 from .node_self_views import (
     node_authorization_request_cancel,
     node_authorization_requests,
@@ -233,6 +234,8 @@ urlpatterns = [
     path('internal/pool/revoke-by-key/', revoke_pool_by_key, name='revoke-pool-by-key'),
     path('internal/acceptance/preallocation-evidence/', internal_preallocation_evidence,
          name='internal-acceptance-preallocation-evidence'),
+    path('internal/acceptance/abnormal-revocation/', internal_abnormal_revocation,
+         name='internal-acceptance-abnormal-revocation'),
 
     # 阶段 7 §8.7：安全监控总览（管理员视角聚合统计，需登录态）
     path('security-monitor/summary/', security_summary, name='security-summary'),

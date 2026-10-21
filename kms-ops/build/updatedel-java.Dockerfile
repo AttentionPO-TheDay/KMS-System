@@ -13,7 +13,8 @@ ENV TZ=Asia/Shanghai
 ENV LANG=C.UTF-8
 # 同 generate-java：java.io.tmpdir 必须对运行用户可写，
 # 否则 Webank 原生加密库无法解压 .so，SM2/SSCL 相关功能全部失败。
-ENV JAVA_OPTS="-Xms256m -Xmx512m -Duser.timezone=Asia/Shanghai -Djava.io.tmpdir=/app/tmp -Duser.home=/app"
+# Bound GC workers on large hosts and leave room for batch rotation and audit/outbox buffers.
+ENV JAVA_OPTS="-Xms2g -Xmx4g -XX:+UseG1GC -XX:ParallelGCThreads=8 -XX:ConcGCThreads=2 -XX:MaxGCPauseMillis=50 -XX:InitiatingHeapOccupancyPercent=30 -Duser.timezone=Asia/Shanghai -Djava.io.tmpdir=/app/tmp -Duser.home=/app"
 
 WORKDIR /app
 

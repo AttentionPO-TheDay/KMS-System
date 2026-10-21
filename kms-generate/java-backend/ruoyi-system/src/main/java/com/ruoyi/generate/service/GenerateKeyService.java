@@ -23,6 +23,9 @@ public interface GenerateKeyService {
      */
     List<Keymanage> selectKeyList(Keymanage keymanage);
 
+    List<Keymanage> selectRecentKeys(String userName, String encrytName, String keyName,
+        String ua, String createdAfter, int limit, boolean activeOnly);
+
     /**
      * 批量新增密钥
      * @param list 密钥列表

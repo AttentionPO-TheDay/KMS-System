@@ -27,6 +27,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         <result property="msKeyId" column="ms_key_id"/>
         <result property="algorithmVersion" column="algorithm_version"/>
         <result property="keyMaterialState" column="key_material_state"/>
+        <result property="materialDigest" column="material_digest"/>
     </resultMap>
 
     <sql id="selectKeymanageVo">
@@ -41,6 +42,32 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         <include refid="selectKeymanageVo"/>
         where key_id = #{keyId}
     </select>
+
+    <select id="selectMetadataByIds" resultMap="keymanageResult">
+        select key_id, status, chain_status, upd_time, version, user_name, key_domain,
+               sha2(key_value, 256) as material_digest
+        from keymanage where key_id in
+        <foreach collection="keyIds" item="id" open="(" close=")" separator=",">#{id}</foreach>
+    </select>
+
+    <select id="selectRotationCandidates" resultMap="keymanageResult">
+        <include refid="selectKeymanageVo"/>
+        where user_name = #{userName} and key_id in
+        <foreach collection="keyIds" item="id" open="(" close=")" separator=",">#{id}</foreach>
+        order by key_id for update
+    </select>
+
+    <insert id="archiveRotationBatch">
+        insert into keymanage_version_history
+            (key_id, version, ua, key_value, encryt_type, encryt_name, key_domain,
+             status, ms_key_id, algorithm_version, chain_hash, block_height, chain_status,
+             archived_at, archived_reason, archived_by)
+        select key_id, version, ua, key_value, encryt_type, encryt_name, key_domain,
+               status, ms_key_id, algorithm_version, chain_hash, block_height, chain_status,
+               now(), 'ROTATE', 'MANUAL'
+        from keymanage where key_id in
+        <foreach collection="keyIds" item="id" open="(" close=")" separator=",">#{id}</foreach>
+    </insert>
 
     <select id="selectkeymanageList" parameterType="com.ruoyi.updatedel.domain.Keymanage" resultMap="keymanageResult">
         <include refid="selectKeymanageVo"/>

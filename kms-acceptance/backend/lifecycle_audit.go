@@ -11,19 +11,28 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 )
 
 type lifecycleRow struct {
-	KeyID   int64                 `json:"keyId"`
-	Before  internalVerifyRecord  `json:"before"`
-	After   *internalVerifyRecord `json:"after,omitempty"`
-	Outcome string                `json:"outcome"`
+	NodeID      string                `json:"nodeId,omitempty"`
+	Algorithm   string                `json:"algorithm,omitempty"`
+	AnomalyRule string                `json:"anomalyRule,omitempty"`
+	Action      string                `json:"action,omitempty"`
+	KeyID       int64                 `json:"keyId"`
+	Before      internalVerifyRecord  `json:"before"`
+	After       *internalVerifyRecord `json:"after,omitempty"`
+	Outcome     string                `json:"outcome"`
 }
 
 type lifecycleBatch struct {
+	EvidenceSource  string   `json:"evidenceSource,omitempty"`
+	Injected        int      `json:"injected,omitempty"`
+	Attempted       int      `json:"attempted,omitempty"`
+	NotAttempted    int      `json:"notAttempted,omitempty"`
 	ID              string   `json:"id"`
 	ScenarioID      string   `json:"scenarioId"`
 	StartedAt       string   `json:"startedAt"`
@@ -40,6 +49,8 @@ type lifecycleBatch struct {
 	Unknown         int      `json:"unknown"`
 	CompletionRate  *float64 `json:"completionRate"`
 	SuccessfulTPS   float64  `json:"successfulTps"`
+	AcceptedTPS     float64  `json:"acceptedTps,omitempty"`
+	ElapsedMs       float64  `json:"elapsedMs,omitempty"`
 	TargetTPS       float64  `json:"targetTps"`
 	HTTPRequests    int64    `json:"httpRequests"`
 	HTTPErrors      int64    `json:"httpErrors"`
@@ -103,6 +114,35 @@ func (s *server) saveLifecycleAudit(archive lifecycleArchive, rows []lifecycleRo
 }
 
 func (s *server) captureLifecycle(ctx context.Context, ids []int64) (map[int64]internalVerifyRecord, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	type chunkResult struct {
+		items []internalVerifyRecord
+		err   error
+	}
+	chunks := (len(ids) + 199) / 200
+	responses := make([]chunkResult, chunks)
+	jobs := make(chan int, chunks)
+	for index := 0; index < chunks; index++ {
+		jobs <- index
+	}
+	close(jobs)
+	var workers sync.WaitGroup
+	for worker := 0; worker < min(6, chunks); worker++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				start, end := index*200, min((index+1)*200, len(ids))
+				responses[index].items, responses[index].err = s.fetchLifecycleStatusesContext(ctx, ids[start:end])
+				if responses[index].err != nil {
+					cancel()
+					return
+				}
+			}
+		}()
+	}
+	workers.Wait()
 	records := make(map[int64]internalVerifyRecord, len(ids))
 	for start := 0; start < len(ids); start += 200 {
 		if err := ctx.Err(); err != nil {
@@ -112,7 +152,7 @@ func (s *server) captureLifecycle(ctx context.Context, ids []int64) (map[int64]i
 		if end > len(ids) {
 			end = len(ids)
 		}
-		items, err := s.fetchLifecycleStatusesContext(ctx, ids[start:end])
+		items, err := responses[start/200].items, responses[start/200].err
 		if err != nil {
 			return nil, err
 		}
@@ -142,7 +182,7 @@ func (s *server) captureLifecycle(ctx context.Context, ids []int64) (map[int64]i
 }
 
 func (s *server) beginLifecycleAudit(ctx context.Context, scenario Scenario, run RunResult, session string, revision int64) (*lifecycleArchive, []lifecycleRow, error) {
-	if !lifecycleScenario(scenario.ID) {
+	if !lifecycleScenario(scenario.ID) || abnormalScenario(scenario.ID) {
 		return nil, nil, nil
 	}
 	records, err := s.captureLifecycle(ctx, scenario.PreparedKeyIDs)
@@ -153,7 +193,10 @@ func (s *server) beginLifecycleAudit(ctx context.Context, scenario Scenario, run
 		ID: run.ID, ScenarioID: scenario.ID, StartedAt: run.StartedAt, BeforeAt: time.Now().Format(time.RFC3339),
 		Status: "running", Account: s.cfg.AcceptanceUser, PoolSize: len(scenario.PreparedKeyIDs), TargetTPS: scenario.TargetTPS,
 		Threads: scenario.Threads, Connections: scenario.Connections, DurationSeconds: scenario.DurationSeconds,
-		Reason: "异常回收速率使用验收专用密钥进行回收，不代表系统真实检测到泄漏。"}}
+		Reason: "使用验收专用密钥，按前后状态核验生命周期操作结果。"}}
+	if scenario.ID == "update-tps" {
+		archive.Batch.Reason = "复用 6000 把已生成验收密钥，每把提交一次更新，按版本实际变化核验。"
+	}
 	rows := make([]lifecycleRow, 0, len(scenario.PreparedKeyIDs))
 	for _, id := range scenario.PreparedKeyIDs {
 		row := lifecycleRow{KeyID: id, Before: records[id], Outcome: "UNVERIFIED"}
@@ -183,7 +226,8 @@ func auditOutcome(id string, before internalVerifyRecord, after *internalVerifyR
 		return "MISSING"
 	}
 	if id == "update-tps" {
-		if before.Version != nil && after.Version != nil && *after.Version > *before.Version {
+		if before.Version != nil && after.Version != nil && *after.Version > *before.Version &&
+			before.MaterialDigest != "" && after.MaterialDigest != "" && before.MaterialDigest != after.MaterialDigest {
 			return "COMPLETED"
 		}
 	} else if after.Status == "3" {
@@ -232,6 +276,11 @@ func (s *server) finishLifecycleAudit(ctx context.Context, archive *lifecycleArc
 		ids[i] = row.KeyID
 	}
 	deadline := time.Now().Add(time.Duration(s.cfg.VerifyWaitSeconds) * time.Second)
+	if result.FixedUpdate != nil {
+		// A finite update batch can finish after the legacy revocation wait.
+		// Keep waiting for its versions, and include all of that time in TPS.
+		deadline = time.Now().Add(60 * time.Second)
+	}
 	for {
 		records, err := s.captureLifecycle(ctx, ids)
 		if err != nil {
@@ -248,7 +297,7 @@ func (s *server) finishLifecycleAudit(ctx context.Context, archive *lifecycleArc
 		case <-ctx.Done():
 			b.Error = "状态核验被取消或超时"
 			b.CompletionRate = nil
-		case <-time.After(2 * time.Second):
+		case <-time.After(lifecyclePollInterval(result)):
 		}
 		if ctx.Err() != nil {
 			break
@@ -256,6 +305,13 @@ func (s *server) finishLifecycleAudit(ctx context.Context, archive *lifecycleArc
 	}
 	archive.Phase = "final"
 	return s.saveLifecycleAudit(*archive, rows)
+}
+
+func lifecyclePollInterval(result RunResult) time.Duration {
+	if result.FixedUpdate != nil {
+		return 20 * time.Millisecond
+	}
+	return 2 * time.Second
 }
 
 func auditPage(c *fiber.Ctx) (int, int, error) {
@@ -268,10 +324,14 @@ func auditPage(c *fiber.Ctx) (int, int, error) {
 }
 
 func applyLifecycleAuditResult(scenario Scenario, archive *lifecycleArchive, result RunResult) RunResult {
-	if archive == nil || (scenario.ID != "update-tps" && scenario.ID != "revoke-rate") {
+	if archive == nil || archive.Batch.EvidenceSource == abnormalSource || (scenario.ID != "update-tps" && scenario.ID != "revoke-rate") {
 		return result
 	}
 	b := archive.Batch
+	if scenario.ID == "update-tps" && result.FixedUpdate != nil {
+		result = finalizeFixedUpdate(scenario, archive, result)
+		b = archive.Batch
+	}
 	check := MetricCheck{Kind: scenario.MetricKind, Target: scenario.MetricTarget, Operator: scenario.MetricOperator,
 		Enforced: true, Source: "acceptance-lifecycle-snapshots", ReportedAt: b.ObservedAt,
 		Message: fmt.Sprintf("初始有效池实际完成 %d/%d；排除初始无效 %d 把", b.Completed, b.Eligible, b.Excluded)}

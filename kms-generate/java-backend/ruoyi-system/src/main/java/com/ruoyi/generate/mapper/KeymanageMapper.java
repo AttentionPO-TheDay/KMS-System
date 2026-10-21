@@ -27,6 +27,11 @@ public interface KeymanageMapper {
      */
     List<Keymanage> selectkeymanageList(Keymanage keymanage);
 
+    List<Keymanage> selectRecentKeys(@Param("userName") String userName,
+        @Param("encrytName") String encrytName, @Param("keyName") String keyName,
+        @Param("ua") String ua, @Param("createdAfter") String createdAfter,
+        @Param("limit") int limit, @Param("activeOnly") boolean activeOnly);
+
     /**
      * 新增密钥管理
      * @param keymanage 密钥管理

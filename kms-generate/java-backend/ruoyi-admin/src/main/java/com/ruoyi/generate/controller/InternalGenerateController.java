@@ -45,36 +45,17 @@ public class InternalGenerateController {
                                           @RequestParam(required = false) String createdAfter,
                                           @RequestParam(required = false) String encrytName,
                                           @RequestParam(required = false) String keyName,
-                                          @RequestParam(required = false) String ua) {
+                                          @RequestParam(required = false) String ua,
+                                          @RequestParam(defaultValue = "false") boolean activeOnly) {
         requireAuthorized(token);
 
-        Keymanage query = new Keymanage();
-        query.setUserName(userName);
-        if (encrytName != null && !encrytName.trim().isEmpty()) {
-            query.setEncrytName(encrytName.trim());
-        }
-        if (keyName != null && !keyName.trim().isEmpty()) {
-            query.setKeyName(keyName.trim());
-        }
-
-        String expectedKeyName = trimToNull(keyName);
-        String expectedUa = trimToNull(ua);
         LocalDateTime createdAfterTime = parseTime(createdAfter);
-        List<Keymanage> all = generateKeyService.selectKeyList(query);
+        List<Keymanage> all = generateKeyService.selectRecentKeys(userName,
+            trimToNull(encrytName), trimToNull(keyName), trimToNull(ua),
+            createdAfterTime == null ? null : createdAfterTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")),
+            Math.max(1, Math.min(limit, 25000)), activeOnly);
         List<Map<String, Object>> items = new ArrayList<>();
         for (Keymanage key : all) {
-            if (createdAfterTime != null) {
-                LocalDateTime createdAt = parseTime(key.getCreTime());
-                if (createdAt == null || createdAt.isBefore(createdAfterTime)) {
-                    continue;
-                }
-            }
-            if (expectedKeyName != null && !expectedKeyName.equals(key.getKeyName())) {
-                continue;
-            }
-            if (expectedUa != null && !expectedUa.equals(key.getuA())) {
-                continue;
-            }
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("keyId", key.getKeyId());
             item.put("sysPid", key.getSysPid());
@@ -88,9 +69,6 @@ public class InternalGenerateController {
             item.put("status", key.getStatus());
             item.put("createdAt", key.getCreTime());
             items.add(item);
-            if (items.size() >= Math.max(1, limit)) {
-                break;
-            }
         }
 
         Map<String, Object> payload = new LinkedHashMap<>();

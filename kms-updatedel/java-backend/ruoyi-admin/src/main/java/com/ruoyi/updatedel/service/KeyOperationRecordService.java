@@ -18,6 +18,7 @@ import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.TransientDataAccessException;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,10 +30,13 @@ public class KeyOperationRecordService {
 
     private final KeyOperationRecordMapper keyOperationRecordMapper;
     private final KeymanageMapper keymanageMapper;
+    private final JdbcTemplate jdbcTemplate;
 
-    public KeyOperationRecordService(KeyOperationRecordMapper keyOperationRecordMapper, KeymanageMapper keymanageMapper) {
+    public KeyOperationRecordService(KeyOperationRecordMapper keyOperationRecordMapper, KeymanageMapper keymanageMapper,
+                                     JdbcTemplate jdbcTemplate) {
         this.keyOperationRecordMapper = keyOperationRecordMapper;
         this.keymanageMapper = keymanageMapper;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     @Transactional
@@ -83,7 +87,9 @@ public class KeyOperationRecordService {
             records.add(record);
         }
         for (List<KeyOperationRecord> chunk : chunks(records, 500)) {
-            keyOperationRecordMapper.insertKeyOperationRecordBatch(chunk);
+            if (RotationBatchWriter.insertAudit(jdbcTemplate, chunk) != chunk.size()) {
+                throw new IllegalStateException("audit affected row count mismatch");
+            }
         }
     }
 
@@ -122,6 +128,12 @@ public class KeyOperationRecordService {
                 sleepBeforeRetry(attempt);
             }
         }
+    }
+
+    /** Commit a bounded group together instead of fsyncing every one-leaf proof separately. */
+    @Transactional
+    public void refreshBatchProofs(List<String> batchIds, String actionType) {
+        for (String batchId : batchIds) refreshBatchProof(batchId, actionType);
     }
 
     @Transactional

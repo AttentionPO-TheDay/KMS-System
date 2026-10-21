@@ -17,8 +17,7 @@ class InternalLifecycleMetadataTest {
         key.setKeyId(1L); key.setVersion(2); key.setStatus("0");
         key.setUserName("acceptance_user"); key.setKeyDomain("acceptance");
         key.setKeyValue("NEVER_EXPOSE_MATERIAL");
-        when(service.findById(1L)).thenReturn(Optional.of(key));
-        when(service.findById(2L)).thenReturn(Optional.empty());
+        when(service.metadataByIds(Arrays.asList(1L, 2L))).thenReturn(Collections.singletonList(key));
         assertThrows(IllegalArgumentException.class, () -> controller.keyStatus(null, Arrays.asList(1L)));
         Map<String, Object> result = controller.keyStatus("test-internal", Arrays.asList(1L, 2L));
         List<Map<String, Object>> rows = (List<Map<String, Object>>) result.get("data");
@@ -28,5 +27,7 @@ class InternalLifecycleMetadataTest {
         assertEquals(false, rows.get(1).get("exists"));
         assertFalse(result.toString().contains("NEVER_EXPOSE"));
         assertFalse(rows.get(0).containsKey("keyValue"));
+        verify(service).metadataByIds(Arrays.asList(1L, 2L));
+        verify(service, never()).findById(anyLong());
     }
 }

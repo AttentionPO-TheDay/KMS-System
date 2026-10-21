@@ -2,9 +2,44 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { securityOutcome, securityProgress, performanceOutcome, measuredPerformance, algorithmCheckIds } from './test-results.js'
 
+test('old revoke throughput without abnormal samples cannot certify abnormal revocation', () => {
+  const old = { scenarioId: 'revoke-tps', status: 'passed', passedTps: true, summary: { totalRequests: 10000, successfulRequestsPerSec: 10000 } }
+  assert.equal(performanceOutcome(old).state, 'incomplete')
+  assert.equal(measuredPerformance(old), null)
+  const actual = { ...old, abnormalEvidence: { version: 2 }, metricCheck: { enforced: true, collected: true, passed: true } }
+  assert.equal(performanceOutcome(actual).state, 'passed')
+  assert.equal(measuredPerformance(actual), 10000)
+  assert.notEqual(performanceOutcome({ ...actual, metricCheck: { ...actual.metricCheck, passed: false } }).state, 'passed')
+  assert.equal(performanceOutcome({ ...actual, status: 'failed_threshold', passedTps: false }).state, 'failed')
+})
+
+test('abnormal recovery percentage reports real counts and rejects legacy normal-key results', () => {
+  const old = { scenarioId: 'revoke-rate', status: 'passed', passedTps: true, summary: { totalRequests: 5000 }, metricCheck: { collected: true, passed: true, value: 100 } }
+  assert.equal(performanceOutcome(old).state, 'incomplete')
+  assert.equal(measuredPerformance(old), null)
+  for (const value of [97.98, 98, 100]) {
+    const run = { ...old, abnormalEvidence: { version: 2 }, status: value >= 98 ? 'passed' : 'failed_threshold',
+      metricCheck: { collected: true, passed: value >= 98, value } }
+    assert.equal(measuredPerformance(run), value)
+    assert.equal(performanceOutcome(run).state, value >= 98 ? 'passed' : 'failed')
+  }
+})
+
 const pass = { status: 'completed', verdict: 'blocked', passed: true, evidenceVersion: 2, reasonMatched: true,
   legalControlPassed: true, expectedCode: 'INVALID_PARAMETER', actualCode: 'INVALID_PARAMETER',
   expectedReason: '生成参数集无效', actualReason: '生成参数集无效' }
+
+test('fixed update requires version verification and never substitutes accepted request throughput', () => {
+  const old = { scenarioId: 'update-tps', status: 'passed', passedTps: true, summary: { totalRequests: 6000, successfulRequestsPerSec: 20000 } }
+  assert.equal(measuredPerformance(old), null)
+  assert.equal(performanceOutcome(old).state, 'incomplete')
+  const actual = { ...old, fixedUpdateEvidence: { version: 2, verified: true, acceptedTps: 20000 },
+    summary: { totalRequests: 6000, successfulRequestsPerSec: 600 }, metricCheck: { collected: true, passed: true, enforced: true }, passedTps: false, status: 'failed_threshold' }
+  assert.equal(measuredPerformance(actual), 600)
+  assert.equal(performanceOutcome(actual).state, 'failed')
+  assert.equal(measuredPerformance({ ...actual, fixedUpdateEvidence: { version: 2, verified: false } }), null)
+  assert.equal(measuredPerformance({ ...actual, fixedUpdateEvidence: { version: 1, verified: true } }), null)
+})
 test('same rejection code with absent or different reason never counts as a pass', () => {
   for (const changes of [{ evidenceVersion: undefined }, { reasonMatched: false }, { legalControlPassed: false },
     { actualReason: '公钥接口禁止上传私密生成材料' }, { actualReason: '' }, { actualCode: 'NOT_AUTHORIZED' }]) {
@@ -69,7 +104,7 @@ test('missing performance evidence is not shown as zero; measured zero remains v
   assert.equal(measuredPerformance({ status: 'failed', summary: { totalRequests: 0 } }), null)
   assert.equal(measuredPerformance({ status: 'failed', summary: { totalRequests: 10, successfulRequestsPerSec: 0 } }), 0)
   assert.equal(measuredPerformance({ status: 'passed', scenarioId: 'revoke-rate', metricCheck: { collected: false, value: 100 } }), null)
-  assert.equal(measuredPerformance({ status: 'passed', scenarioId: 'revoke-rate', metricCheck: { collected: true, value: 99 } }), 99)
+  assert.equal(measuredPerformance({ status: 'passed', scenarioId: 'revoke-rate', abnormalEvidence: { version: 2 }, metricCheck: { collected: true, value: 99 } }), 99)
   assert.equal(performanceOutcome({ status: 'error', error: 'pool unavailable' }).state, 'incomplete')
   assert.equal(performanceOutcome({ status: 'passed', passedTps: true, scenarioId: 'revoke-rate', metricCheck: { collected: false, passed: true } }).state, 'incomplete')
 })

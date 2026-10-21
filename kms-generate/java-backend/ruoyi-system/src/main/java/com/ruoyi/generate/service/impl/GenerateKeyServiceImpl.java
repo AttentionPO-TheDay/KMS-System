@@ -52,6 +52,12 @@ public class GenerateKeyServiceImpl implements GenerateKeyService {
     }
 
     @Override
+    public List<Keymanage> selectRecentKeys(String userName, String encrytName, String keyName,
+            String ua, String createdAfter, int limit, boolean activeOnly) {
+        return keymanageMapper.selectRecentKeys(userName, encrytName, keyName, ua, createdAfter, limit, activeOnly);
+    }
+
+    @Override
     public int insertKeyBatch(List<Keymanage> list) {
         if (list == null || list.isEmpty()) {
             return 0;

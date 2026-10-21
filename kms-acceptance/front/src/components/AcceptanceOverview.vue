@@ -44,7 +44,7 @@ const steps = computed(() => {
     { id: 'generate-tps', title: '生成 TPS' },
     { id: 'update-tps', title: '更新 TPS' },
     { id: 'revoke-tps', title: '回收 TPS' },
-    { id: 'revoke-rate', title: '最终回收率' }
+    { id: 'revoke-rate', title: '异常密钥回收率' }
   ]
   return config.map((item) => {
     const scenario = scenarioMap.value.get(item.id)

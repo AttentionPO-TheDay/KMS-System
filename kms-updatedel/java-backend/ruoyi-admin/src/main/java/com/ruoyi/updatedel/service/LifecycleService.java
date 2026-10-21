@@ -36,6 +36,7 @@ import java.util.Map;
 @Service
 public class LifecycleService {
     private static final Logger log = LoggerFactory.getLogger(LifecycleService.class);
+    private static final Logger rotationMetrics = LoggerFactory.getLogger("kms.metrics.rotation");
     private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final String PENDING_RESULT_MESSAGE = "处理中，请稍后刷新";
 
@@ -53,6 +54,7 @@ public class LifecycleService {
     private final ObjectMapper objectMapper;
     private final KeyOperationRecordService keyOperationRecordService;
     private final JdbcTemplate jdbcTemplate;
+    private final java.util.concurrent.atomic.AtomicInteger activeRotations = new java.util.concurrent.atomic.AtomicInteger();
 
     @Value("${kms.lifecycle.kafka.chain-task-topic:key_chain_task}")
     private String chainTaskTopic;
@@ -89,6 +91,13 @@ public class LifecycleService {
 
     public List<Keymanage> list(Keymanage query) {
         return keymanageMapper.selectkeymanageList(query);
+    }
+
+    public List<Keymanage> metadataByIds(List<Long> keyIds) {
+        if (keyIds == null || keyIds.isEmpty() || keyIds.size() > 1000) {
+            throw new IllegalArgumentException("keyIds must contain 1..1000 entries");
+        }
+        return keymanageMapper.selectMetadataByIds(keyIds);
     }
 
     @Transactional
@@ -460,6 +469,121 @@ public class LifecycleService {
     @Transactional
     public Keymanage rotateKey(Keymanage request, String actionSource) {
         Keymanage current = requireExistingKey(request.getKeyId());
+        Keymanage next = prepareRotation(current, request, actionSource);
+        keymanageMapper.archiveCurrentVersion(current.getKeyId(), "ROTATE", normalizeActionSource(actionSource));
+        keymanageMapper.updatekeymanage(next);
+        resetPendingChainState(next.getKeyId());
+        keyOperationRecordService.createPendingRecord(next, "UPDATE", normalizeActionSource(actionSource), PENDING_RESULT_MESSAGE);
+        enqueueUpdateFollowup(Collections.singletonList(next));
+        return next;
+    }
+
+    /** One atomic database transaction; proofs and chain writes run from the durable outbox. */
+    @Transactional
+    public int rotateKeys(String userName, List<Keymanage> requests) {
+        activeRotations.incrementAndGet();
+        boolean releaseAfterTransaction = false;
+        try {
+            if (TransactionSynchronizationManager.isSynchronizationActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override public void afterCompletion(int status) {
+                        activeRotations.decrementAndGet();
+                    }
+                });
+                releaseAfterTransaction = true;
+            }
+            return rotateKeysInTransaction(userName, requests);
+        } finally {
+            if (!releaseAfterTransaction) activeRotations.decrementAndGet();
+        }
+    }
+
+    public boolean hasActiveRotation() {
+        return activeRotations.get() > 0;
+    }
+
+    private int rotateKeysInTransaction(String userName, List<Keymanage> requests) {
+        final long started = System.nanoTime();
+        if (requests == null || requests.isEmpty()) {
+            return 0;
+        }
+        if (requests.size() > 500) {
+            throw new IllegalArgumentException("rotation batch exceeds 500 keys");
+        }
+        Map<Long, Keymanage> byId = new java.util.LinkedHashMap<>();
+        for (Keymanage request : requests) {
+            if (request.getKeyId() == null || byId.put(request.getKeyId(), request) != null) {
+                throw new IllegalArgumentException("duplicate or missing rotation key identity");
+            }
+        }
+        List<Keymanage> current = keymanageMapper.selectRotationCandidates(userName, new ArrayList<>(byId.keySet()));
+        final long locked = System.nanoTime();
+        if (current.size() != requests.size()) {
+            throw new IllegalStateException("rotation key missing or ownership mismatch");
+        }
+        boolean groupedProof = requests.stream().allMatch(r -> isBlank(r.getBatchId()));
+        String batchId = "update-" + java.util.UUID.randomUUID();
+        List<Keymanage> next = new ArrayList<>(current.size());
+        for (Keymanage key : current) {
+            Keymanage request = new Keymanage();
+            org.springframework.beans.BeanUtils.copyProperties(byId.get(key.getKeyId()), request);
+            if (request.getUserName() != null && !userName.equals(request.getUserName())) {
+                throw new IllegalArgumentException("rotation owner cannot be changed");
+            }
+            if (groupedProof) {
+                request.setBatchId(batchId);
+                request.setRootBatchId(batchId);
+                request.setParentBatchId(batchId);
+                request.setNodeIndex(next.size());
+                request.setExpectedCount(current.size());
+                request.setTreeFanout(current.size());
+                request.setTreePath(batchId + "/" + next.size());
+            }
+            next.add(prepareRotation(key, request, "MANUAL"));
+        }
+        List<Long> ids = new ArrayList<>(byId.keySet());
+        final long generated = System.nanoTime();
+        keymanageMapper.archiveRotationBatch(ids);
+        final long archived = System.nanoTime();
+        if (RotationBatchWriter.rotate(jdbcTemplate, next) != next.size()) {
+            throw new IllegalStateException("rotation affected row count mismatch");
+        }
+        final long updated = System.nanoTime();
+        keyOperationRecordService.createPendingRecords(next, "UPDATE", "MANUAL", PENDING_RESULT_MESSAGE);
+        final long audited = System.nanoTime();
+        enqueueUpdateFollowup(next);
+        final long queued = System.nanoTime();
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override public void afterCommit() {
+                    rotationMetrics.info("UPDATE_DB_BATCH count={} lockMs={} generateMs={} historyMs={} updateMs={} auditMs={} outboxMs={} commitMs={} committedEpochMs={}",
+                        next.size(), millis(locked-started), millis(generated-locked), millis(archived-generated),
+                        millis(updated-archived), millis(audited-updated), millis(queued-audited), millis(System.nanoTime()-queued), System.currentTimeMillis());
+                }
+            });
+        }
+        return next.size();
+    }
+
+    private static double millis(long nanos) {
+        return nanos / 1000000.0;
+    }
+
+    private void enqueueUpdateFollowup(List<Keymanage> keys) {
+        try {
+            // Written in the same transaction as key material, history and audit records.
+            // A process restart or Kafka outage cannot discard a committed update's follow-up work.
+            Map<String, Object> event = new java.util.LinkedHashMap<>();
+            event.put("actionType", ChainSyncEvent.TYPE_KEY_UPDATED);
+            event.put("keyList", keys);
+            jdbcTemplate.update("INSERT INTO key_update_outbox (event_json) VALUES (?)",
+                objectMapper.writeValueAsString(event));
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException("update follow-up serialization failed", ex);
+        }
+    }
+
+    private Keymanage prepareRotation(Keymanage current, Keymanage request, String actionSource) {
         if (KeyStatus.REVOKED.getCode().equals(current.getStatus())) {
             throw new IllegalStateException("该密钥已被回收，无法更新");
         }
@@ -521,7 +645,7 @@ public class LifecycleService {
             // 而 §5.3 的整条协议正是建立在"uA 不变"之上。
             next.setUa(currentUa);
 
-            log.info("rotateKey 开始（{} 部分刷新）: keyId={}, ua={} 保留不变，"
+            log.debug("rotateKey 开始（{} 部分刷新）: keyId={}, ua={} 保留不变，"
                     + "将由 KGC 重新生成随机 w 与部分密钥，节点侧 u 与完整私钥 d_A 需在客户端重算",
                 algorithm, current.getKeyId(),
                 currentUa.substring(0, Math.min(8, currentUa.length())) + "...");
@@ -540,20 +664,7 @@ public class LifecycleService {
         String normalizedActionSource = normalizeActionSource(actionSource);
         applyUpdateProofMetadata(next, request, current, normalizedActionSource);
 
-        // 阶段 4（文档 §5.2）：**覆盖之前**先把当前版本归档。
-        // 位置很关键 —— 必须在 updatekeymanage 之前，否则旧版的 key_value / ua
-        // 已被新值覆盖，归档到的是新内容，"历史版本"就名存实亡了。
-        // 归档用 INSERT...SELECT 从库里取当前行，不读内存对象（见 Mapper 注释）。
-        keymanageMapper.archiveCurrentVersion(
-            current.getKeyId(), "ROTATE", normalizedActionSource);
-
-        keymanageMapper.updatekeymanage(next);
-        resetPendingChainState(next.getKeyId());
-        keyOperationRecordService.createPendingRecord(next, "UPDATE", normalizedActionSource, PENDING_RESULT_MESSAGE);
-        refreshBatchProofAfterCommit(next.getBatchId(), "UPDATE");
-        publishChainEvent(ChainSyncEvent.TYPE_KEY_UPDATED, Collections.singletonList(next));
-        log.info("rotateKey 完成: keyId={}, newVersion={}", next.getKeyId(), next.getVersion());
-        return requireExistingKey(next.getKeyId());
+        return next;
     }
 
     @Transactional
@@ -801,7 +912,7 @@ public class LifecycleService {
 
         // SM2 certificateless asymmetric encryption
         if ((encrytType.contains("非对称") || "SM2".equals(encrytName)) && "SM2".equals(encrytName)) {
-            log.info("generateKeyValue: SM2 密钥生成, keyId={}, ua={}", key.getKeyId(),
+            log.debug("generateKeyValue: SM2 密钥生成, keyId={}, ua={}", key.getKeyId(),
                 key.getUa() != null ? key.getUa().substring(0, Math.min(8, key.getUa().length())) + "..." : "null");
             if (key.getUa() == null || key.getUa().trim().isEmpty()) {
                 throw new IllegalStateException("SM2 密钥更新失败: 用户部分公钥(ua)缺失，keyId=" + key.getKeyId());
@@ -810,7 +921,7 @@ public class LifecycleService {
         }
         // SSCL certificateless asymmetric encryption
         if ((encrytType.contains("非对称") || "SSCL".equals(encrytName)) && "SSCL".equals(encrytName)) {
-            log.info("generateKeyValue: SSCL 密钥生成, keyId={}", key.getKeyId());
+            log.debug("generateKeyValue: SSCL 密钥生成, keyId={}", key.getKeyId());
             if (key.getUa() == null || key.getUa().trim().isEmpty()) {
                 throw new IllegalStateException("SSCL 密钥更新失败: 用户部分公钥(ua)缺失，keyId=" + key.getKeyId());
             }
@@ -938,8 +1049,9 @@ public class LifecycleService {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] bytes = digest.digest(value.getBytes(StandardCharsets.UTF_8));
             StringBuilder builder = new StringBuilder(bytes.length * 2);
+            final char[] hex = "0123456789abcdef".toCharArray();
             for (byte current : bytes) {
-                builder.append(String.format("%02x", current));
+                builder.append(hex[(current & 0xff) >>> 4]).append(hex[current & 0x0f]);
             }
             return builder.toString();
         } catch (NoSuchAlgorithmException ex) {
