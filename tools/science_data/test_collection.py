@@ -18,6 +18,7 @@ def module(name, path):
 HERE = Path(__file__).resolve().parent
 worker = module('science_worker', HERE / 'worker.py')
 runner = module('science_runner', HERE.parent / 'run_science_collection.py')
+packager = module('science_packager', HERE / 'package_collection.py')
 
 
 class CollectionChecks(unittest.TestCase):
@@ -69,6 +70,35 @@ class CollectionChecks(unittest.TestCase):
             with (root / 'datasets' / 'samples.csv').open(encoding='utf-8-sig', newline='') as f:
                 self.assertEqual(next(csv.DictReader(f))['name'], "'=1+1")
             self.assertEqual(manifest['files'][0]['records'], 1)
+
+    def test_package_keeps_same_table_counts_separate_by_dataset(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            snapshot = root / 'snapshot'
+            snapshot.mkdir()
+            (snapshot / 'metadata.json').write_text(json.dumps(dict(per_table_limit=0)), encoding='utf-8')
+            (snapshot / 'data_dictionary.csv').write_text('field\nkey_id\n', encoding='utf-8')
+            entries = []
+            for ds, total in [('001', 2), ('003', 1)]:
+                p = snapshot / (ds + '.csv')
+                p.write_text('key_id\n' + ''.join(str(i)+'\n' for i in range(total)), encoding='utf-8')
+                entries.append(dict(dataset=ds, table='kms.keymanage', path=p.name, format='csv',
+                                    records=total, sha256=packager.digest(p)))
+            with (snapshot / 'manifest.csv').open('w', newline='', encoding='utf-8') as stream:
+                writer = csv.DictWriter(stream, fieldnames=list(entries[0]))
+                writer.writeheader(); writer.writerows(entries)
+            with patch.object(packager, 'TARGETS', {'generation': 2}):
+                result = packager.build(snapshot, [], root / 'package')
+            self.assertEqual(result['observed']['generation'], 2)
+            self.assertEqual(result['database_table_rows']['003:kms.keymanage'], 1)
+            self.assertFalse((root / 'package' / 'PACKAGE_INCOMPLETE.txt').exists())
+
+    def test_incomplete_database_export_cannot_be_packaged(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'EXPORT_INCOMPLETE.txt').touch()
+            with self.assertRaisesRegex(ValueError, '数据库导出不完整'):
+                packager.build(root, [], root / 'package')
 
 
 if __name__ == '__main__':

@@ -15,6 +15,11 @@ from datetime import datetime, timezone
 NAMES = {'001': '分布式密钥生成与协商数据集', '002': '抗量子密钥预分配与分发数据集',
          '003': '密钥动态更新与回收数据集'}
 DATASETS = dict(generation='001', agreements='001', preallocation='002', update='003', revoke='003')
+TARGETS = dict(generation=3000000, agreements=3000, members=9000, preallocation=90000,
+               update_revoke=540000, normal_controls=240)
+RUN_FILES = dict(generation={'generation.csv'}, agreements={'agreements.csv', 'members.csv'},
+                 preallocation={'preallocation.csv', 'lattice_parameters.csv'},
+                 update={'updates.csv'}, revoke={'revocations.csv', 'controls.csv'})
 
 
 def read_json(path):
@@ -52,6 +57,8 @@ def build(snapshot, runs, output):
             raise ValueError('采集尚未完成：' + run.name)
         if manifest['kind'] not in DATASETS:
             raise ValueError('未知采集类别')
+        if {row['file'] for row in manifest['files']} != RUN_FILES[manifest['kind']]:
+            raise ValueError('采集文件与执行类别不一致')
         checked_runs.append((run, manifest))
     output.mkdir(parents=True, exist_ok=False)
     incomplete = output / 'PACKAGE_INCOMPLETE.txt'
@@ -114,8 +121,7 @@ def build(snapshot, runs, output):
         preallocation=counts.get('002:falcon_kds.dvadmin_pqkds_pre_distributed_keys', 0) + isolated.get('preallocation', 0),
         update_revoke=counts.get('003:kms.key_operation_record', 0) + isolated.get('revocations', 0),
         normal_controls=isolated.get('controls', 0))
-    targets = dict(generation=3000000, agreements=3000, members=9000, preallocation=90000,
-                   update_revoke=540000, normal_controls=240)
+    targets = TARGETS
     report = dict(created_at_utc=datetime.now(timezone.utc).isoformat(),
                   targets=targets, observed=observed,
                   meets_numeric_targets={key: observed[key] >= n for key, n in targets.items()},
