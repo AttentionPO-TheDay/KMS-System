@@ -5,6 +5,8 @@ function fetchJson(url, options = {}) {
 }
 
 export const API = {
+  getLattice: () => fetchJson('/lattice'),
+  runLattice: data => fetchJson('/lattice', { method: 'POST', body: JSON.stringify(data) }),
   getHealth: () => fetchJson('/health'),
   getScenarios: () => fetchJson('/scenarios'),
   getRuns: () => fetchJson('/runs'),

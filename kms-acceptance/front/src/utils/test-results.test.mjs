@@ -2,6 +2,48 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { securityOutcome, securityProgress, performanceOutcome, measuredPerformance, algorithmCheckIds } from './test-results.js'
 
+test('quantum simulation completion never counts as production resistance or three successful defenses', () => {
+  const ids = ['quantum-lwe-usvp', 'quantum-lwe-bdd', 'quantum-lwe-dual']
+  const models = ['primal_usvp', 'primal_bdd', 'dual']
+  const makeRun = i => ({ caseId: ids[i], status: 'completed', verdict: 'evaluated', passed: false,
+    evidenceVersion: 4, legalControlPassed: true, quantumEvidence: { version: 1, caseId: ids[i], model: models[i],
+      evaluationComplete: true, acceptancePassed: false, recordedAt: '2026-10-22T00:00:00Z', scope: 'test scope',
+      estimatorCommit: 'e4333d9bf9ef42fd8a29651b0c559fba7ce0d834',
+      circuit: { verified: true, qubits: 8, searchSpace: 256, shots: 256, target: '10110100', recovered: '10110100',
+        norm: 1, successProbability: .99994, baselineProbability: 1 / 256 },
+      estimates: [512, 768, 1024].map(n => ({ variant: n, n, m: n, q: 3329, beta: 400, log2Rop: 106 })) } })
+  const runs = new Map(ids.map((id, i) => [id, makeRun(i)]))
+  assert.equal(securityOutcome(runs.get(ids[0])).state, 'evaluated')
+  const progress = securityProgress(ids, runs, 3)
+  assert.equal(progress.evaluatedCount, 3)
+  assert.equal(progress.statusLabel, '仿真与评估完成')
+  assert.equal(progress.thresholdMet, false)
+  assert.equal(progress.passedCount, 0)
+  for (const mutation of [r => { r.passed = true }, r => { r.quantumEvidence.acceptancePassed = true },
+    r => { r.quantumEvidence.estimates.pop() }, r => { r.quantumEvidence.estimates[0].log2Rop = NaN },
+    r => { r.quantumEvidence.model = 'wrong' }, r => { r.quantumEvidence.circuit.verified = false },
+    r => { r.legalControlPassed = false }, r => { r.status = 'cancelled' }]) {
+    const run = makeRun(0)
+    mutation(run)
+    assert.equal(securityOutcome(run).state, 'incomplete')
+  }
+})
+
+test('symmetric reclamation requires measured SM4 evidence and retained controls', () => {
+  const run = { scenarioId: 'symmetric-reclaim-tps', status: 'passed', passedTps: true,
+    summary: { totalRequests: 12000, successfulRequestsPerSec: 10000 } }
+  assert.equal(performanceOutcome(run).state, 'incomplete')
+  assert.equal(measuredPerformance(run), null)
+  run.symmetricEvidence = { version: 1, source: 'sm4-expired-pool-isolated-mysql', isolated: true,
+    cleanupComplete: true, materialVerified: true, injected: 12000, reclaimed: 12000, controls: 4, controlsPassed: 4, elapsedMs: 1200 }
+  run.metricCheck = { kind: 'symmetric_reclamation_closure', enforced: true, collected: true, passed: true }
+  assert.equal(performanceOutcome(run).state, 'passed')
+  assert.equal(measuredPerformance(run), 10000)
+  assert.equal(performanceOutcome({ ...run, status: 'failed_threshold', passedTps: false }).state, 'failed')
+  assert.notEqual(performanceOutcome({ ...run, metricCheck: { ...run.metricCheck, passed: false } }).state, 'passed')
+  assert.equal(measuredPerformance({ ...run, symmetricEvidence: { ...run.symmetricEvidence, materialVerified: false } }), null)
+})
+
 test('old revoke throughput without abnormal samples cannot certify abnormal revocation', () => {
   const old = { scenarioId: 'revoke-tps', status: 'passed', passedTps: true, summary: { totalRequests: 10000, successfulRequestsPerSec: 10000 } }
   assert.equal(performanceOutcome(old).state, 'incomplete')

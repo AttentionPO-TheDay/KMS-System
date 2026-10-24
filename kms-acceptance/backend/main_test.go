@@ -38,18 +38,19 @@ func TestSuccessfulRateUsesCompletedHTTPRequestsOnly(t *testing.T) {
 
 func TestAcceptanceCriteriaExposeStrictThresholds(t *testing.T) {
 	items := acceptanceCriteria()
-	if len(items) != 8 {
-		t.Fatalf("criteria = %d, want 8", len(items))
+	if len(items) != 9 {
+		t.Fatalf("criteria = %d, want 9", len(items))
 	}
 	want := map[string]struct {
 		operator string
 		target   float64
 	}{
-		"certless-generation": {operator: ">", target: 100000},
+		"certless-generation": {operator: ">=", target: 100000},
 		"preallocation":       {operator: ">", target: 50},
 		"key-update":          {operator: ">=", target: 5000},
 		"abnormal-revoke":     {operator: ">=", target: 5000},
 		"revoke-rate":         {operator: ">=", target: 98},
+		"symmetric-reclaim":   {operator: ">=", target: 10000},
 	}
 	for _, item := range items {
 		if expected, ok := want[item.ID]; ok && (item.Operator != expected.operator || item.Target != expected.target) {
@@ -72,8 +73,8 @@ func TestAcceptanceSecurityCriteriaUseRequiredCaseCounts(t *testing.T) {
 				t.Fatalf("generation attacks = %d, want 4 with target 3", len(item.CaseIDs))
 			}
 		case "quantum-attacks":
-			if len(item.CaseIDs) != 4 || item.Target != 3 {
-				t.Fatalf("quantum attacks = %d, want 4 with target 3", len(item.CaseIDs))
+			if len(item.CaseIDs) != 3 || item.Target != 3 || item.Requirement != "系统能够抵御量子攻击种类不少于3种" {
+				t.Fatalf("quantum requirement changed: %+v", item)
 			}
 		case "network-attacks":
 			if len(item.CaseIDs) != 6 || item.Target != 5 {

@@ -6,6 +6,33 @@ import hashlib
 import uuid
 from typing import Dict, Any
 
+
+class LatticePreparation(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    kind = models.CharField(max_length=16)
+    parent = models.ForeignKey('self', null=True, on_delete=models.PROTECT, related_name='delegations')
+    node = models.ForeignKey('Node', null=True, on_delete=models.PROTECT, related_name='lattice_preparations')
+    public_matrix = models.JSONField()
+    public_digest = models.CharField(max_length=64)
+    norm_bound = models.FloatField()
+    encrypted_secret = models.TextField()
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = table_prefix + 'pqkds_lattice_preparation'
+        constraints = [models.UniqueConstraint(fields=['parent', 'node'], name='pqkds_lattice_node_root')]
+
+
+class LatticeTestRecord(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    owner = models.CharField(max_length=64, db_index=True)
+    case_id = models.CharField(max_length=32)
+    result = models.JSONField()
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = table_prefix + 'pqkds_lattice_test_record'
+
 # 冻结契约（KMS-002）。models 只从这里取**取值**，不取任何业务逻辑 ——
 # api_contract 不 import 任何业务模块，所以这里不会形成循环引用。
 from .api_contract import (
@@ -19,6 +46,23 @@ from .api_contract import (
     key_status_allows_new_work,
     key_status_allows_unwrap,
 )
+class ExternalNodeActivation(models.Model):
+    """One server-managed SSCL identity per external platform and exact node name."""
+    identity_hash = models.CharField(max_length=64, unique=True)
+    client_id = models.CharField(max_length=64)
+    node_name = models.CharField(max_length=100)
+    node = models.OneToOneField('Node', on_delete=models.PROTECT, related_name='external_activation')
+    key = models.OneToOneField('NodeLongTermKey', on_delete=models.PROTECT, null=True, related_name='external_activation')
+    encrypted_material = models.TextField()
+    lease_token = models.CharField(max_length=36, blank=True)
+    lease_expires_at = models.DateTimeField(null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = table_prefix + 'pqkds_external_node_activations'
+
+
 class NodeKeyDidRecord(models.Model):
     """One durable SysPid transaction for a browser-generated public-key version."""
     key = models.OneToOneField('NodeLongTermKey', on_delete=models.CASCADE, related_name='did_record')
@@ -109,6 +153,7 @@ class Domain(models.Model):
 
 class Node(CoreModel):
     node_id = models.CharField(max_length=64, unique=True, verbose_name="节点ID", help_text="唯一节点标识符")
+    initialization_profile = models.CharField(max_length=24, default='FULL', choices=[('FULL', '完整节点'), ('EXTERNAL_SSCL', '外部托管SSCL节点'), ('EXTERNAL_SM2', '外部托管SM2节点')])
     name = models.CharField(max_length=100, verbose_name="节点名称", help_text="节点显示名称")
     ip_address = models.GenericIPAddressField(verbose_name="IP地址", help_text="节点IP地址")
     port = models.IntegerField(verbose_name="端口号", help_text="节点服务端口")
@@ -1178,6 +1223,10 @@ class AcceptancePreallocationEvidence(models.Model):
 
 class PreDistributedKey(CoreModel):
     """基于格的安全密钥预分配 - 密钥池模型"""
+    lattice_preparation = models.ForeignKey(
+        LatticePreparation, null=True, blank=True, on_delete=models.PROTECT,
+        related_name='pool_items',
+    )
     ALGORITHM_CHOICES = [
         ('kyber_kem', 'Kyber KEM'),
         ('falcon_lattice', 'Falcon 格密码'),

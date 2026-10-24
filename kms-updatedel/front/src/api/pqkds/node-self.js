@@ -573,12 +573,13 @@ export function loginWithDevice(payload) {
 /**
  * 上传一批保护包（本机已生成并封好）。
  *
- * @param {{targetNodeCode: string, poolId: string, expiresAt: string,
+ * @param {{targetNodeCode: string, poolId: string, startIndex?: number, expiresAt: string,
  *          items: {envelope: object, signature: string, keyHash: string}[],
  *          falconKeyId: string, falconKeyVersion: number}} payload
  *   `poolId` 与 `expiresAt` 由**页面**生成 —— 它们进签名（`batch_id`/`expires_at`），
  *   服务端事后赋值的话，节点签的就是一份"还不知道自己属于哪个池子"的信。
- * @returns {Promise<{poolId, generated, requested, failed: {index,errorCode,message}[],
+ *   `startIndex` 是分片在整池中的起始序号，单片请求默认 0；`failed.index` 仍是分片内序号。
+ * @returns {Promise<{poolId, startIndex, generated, requested, failed: {index,errorCode,message}[],
  *                    serverMs, serverThroughputPerSec, avgServerLatencyMs, expiresAt}>}
  *   `failed` 是**逐条**的（部分成功语义）：一条坏了不该让另外 199 条一起作废。
  */

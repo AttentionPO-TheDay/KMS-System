@@ -161,7 +161,7 @@ func adminIdentity(data map[string]json.RawMessage, nested bool, revision int64)
 func canonicalDemoRoute(method, path string) bool {
 	if method == http.MethodGet {
 		switch path {
-		case "/api/health", "/api/scenarios", "/api/runs", "/api/security/runs", "/api/proof/runs", "/api/acceptance/criteria", "/api/acceptance/evidence", "/api/acceptance/lifecycle":
+		case "/api/health", "/api/scenarios", "/api/runs", "/api/security/runs", "/api/proof/runs", "/api/acceptance/criteria", "/api/acceptance/evidence", "/api/acceptance/lifecycle", "/api/lattice":
 			return true
 		}
 		match := demoRunPath.FindStringSubmatch(path)
@@ -173,7 +173,7 @@ func canonicalDemoRoute(method, path string) bool {
 	}
 	if method == http.MethodPost {
 		switch path {
-		case "/api/runs", "/api/security/runs", "/api/proof/runs", "/api/acceptance/evidence":
+		case "/api/runs", "/api/security/runs", "/api/proof/runs", "/api/acceptance/evidence", "/api/lattice":
 			return true
 		}
 		match := demoRunPath.FindStringSubmatch(path)
@@ -188,7 +188,7 @@ func canonicalDemoRoute(method, path string) bool {
 
 func demoScenarioAllowed(id string) bool {
 	switch id {
-	case "generate-tps", "update-tps", "revoke-tps", "revoke-rate":
+	case "generate-tps", "update-tps", "revoke-tps", "revoke-rate", "symmetric-reclaim-tps":
 		return true
 	default:
 		return false
@@ -299,6 +299,15 @@ func (g *demoGuard) authorize(c *fiber.Ctx) error {
 	if !adminIdentity(data, true, revision) {
 		return c.Status(403).JSON(fiber.Map{"message": "租约身份必须为 ADMIN"})
 	}
+	if path == "/api/lattice" {
+		if !validLatticeRequest(c.Body()) {
+			return c.Status(400).JSON(fiber.Map{"message": "只允许三个固定格测试项和有界参数"})
+		}
+		if err := g.validateBinding(context.Background(), session, revision, lease); err != nil {
+			return demoFailure(c, err)
+		}
+		return g.latticeRPC(c, session)
+	}
 	if path == "/api/acceptance/evidence" {
 		var req AcceptanceEvidenceRequest
 		decoder := json.NewDecoder(bytes.NewReader(c.Body()))
@@ -353,7 +362,7 @@ func (g *demoGuard) authorize(c *fiber.Ctx) error {
 			return c.Status(503).JSON(fiber.Map{"message": "固定验收场景未配置"})
 		}
 		wrkPath, ok := resolveExecutable(g.server.defaultWrkPath)
-		if !ok && scenario.ID != "update-tps" && !abnormalScenario(scenario.ID) {
+		if !ok && scenario.ID != "update-tps" && !abnormalScenario(scenario.ID) && !symmetricScenario(scenario.ID) {
 			return c.Status(503).JSON(fiber.Map{"message": "wrk 不可用，无法启动性能验收"})
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(scenario.DurationSeconds+90)*time.Second)
@@ -488,6 +497,10 @@ func (g *demoGuard) sanitizeRunResult(result RunResult) RunResult {
 func (g *demoGuard) sanitizeSecurityResult(result SecurityRunResult) SecurityRunResult {
 	result.RawOutput = g.redact(result.RawOutput, 6000)
 	result.Error = g.redact(result.Error, 1000)
+	result.ProbeSteps = append([]SecurityProbeStep(nil), result.ProbeSteps...)
+	for index := range result.ProbeSteps {
+		result.ProbeSteps[index].Detail = g.redact(result.ProbeSteps[index].Detail, 1000)
+	}
 	for index := range result.Requests {
 		result.Requests[index].ResponseBody = g.redact(result.Requests[index].ResponseBody, 1000)
 		result.Requests[index].Message = g.redact(result.Requests[index].Message, 500)
@@ -537,6 +550,8 @@ func (g *demoGuard) executePerformance(ctx context.Context, job *demoJob, wrkPat
 
 	if abnormalScenario(prepared.ID) {
 		g.updateRunStage(job, "running", "构造异常样本并执行检测与自动回收")
+	} else if symmetricScenario(prepared.ID) {
+		g.updateRunStage(job, "running", "生成并校验12000条SM4到期样本，执行回收")
 	} else {
 		g.updateRunStage(job, "running", "执行固定性能场景")
 	}
@@ -547,7 +562,11 @@ func (g *demoGuard) executePerformance(ctx context.Context, job *demoJob, wrkPat
 		job.audit, job.auditRows = abnormalAudit(result, executed.Abnormal, job.session, job.revision)
 		executed.Abnormal.Rows = nil
 	}
-	if !abnormalScenario(prepared.ID) {
+	if symmetricScenario(prepared.ID) && executed.Symmetric != nil {
+		job.audit, job.auditRows = symmetricAudit(result, executed.Symmetric, job.session, job.revision)
+		executed.Symmetric.Rows = nil
+	}
+	if !abnormalScenario(prepared.ID) && !symmetricScenario(prepared.ID) {
 		if err := g.server.finishLifecycleAudit(ctx, job.audit, job.auditRows, executed); err != nil {
 			executed.Status = "failed"
 			executed.Error = "验收生命周期归档失败，结果不予采信"
@@ -564,6 +583,8 @@ func (g *demoGuard) executePerformance(ctx context.Context, job *demoJob, wrkPat
 	result.MetricCheck = executed.MetricCheck
 	result.Abnormal = executed.Abnormal
 	result.FixedUpdate = executed.FixedUpdate
+	result.Symmetric = executed.Symmetric
+	result.Generation = executed.Generation
 	result.Error = executed.Error
 	result.Notes = append(append(append([]string{}, scenario.Notes...), notes...), executed.Notes...)
 	if watchErr != nil {
@@ -630,6 +651,7 @@ func (g *demoGuard) executeSecurity(ctx context.Context, job *demoSecurityJob) {
 		}
 		job.result.Stage = snapshot.Stage
 		job.result.Requests = snapshot.Requests
+		job.result.ProbeSteps = snapshot.ProbeSteps
 		job.result.ExpectedCode = snapshot.ExpectedCode
 		job.result.ActualCode = snapshot.ActualCode
 		job.result.EvidenceVersion = snapshot.EvidenceVersion
@@ -640,6 +662,7 @@ func (g *demoGuard) executeSecurity(ctx context.Context, job *demoSecurityJob) {
 		job.result.ReasonMatched = snapshot.ReasonMatched
 		job.result.ProtocolPassed = snapshot.ProtocolPassed
 		job.result.AlgorithmEvidence = snapshot.AlgorithmEvidence
+		job.result.QuantumEvidence = snapshot.QuantumEvidence
 	})
 	executed := g.executeSecurityRun(progressCtx, job.result.CaseID)
 	close(stopWatch)
@@ -688,6 +711,9 @@ func (g *demoGuard) finishSecurity(job *demoSecurityJob, result SecurityRunResul
 }
 
 func (g *demoGuard) read(c *fiber.Ctx, session string, revision int64) error {
+	if c.Path() == "/api/lattice" {
+		return g.latticeRPC(c, session)
+	}
 	if c.Path() == "/api/acceptance/lifecycle" || demoLifecyclePath.MatchString(c.Path()) {
 		return g.readLifecycleAudit(c, session, revision)
 	}
@@ -704,7 +730,7 @@ func (g *demoGuard) read(c *fiber.Ctx, session string, revision int64) error {
 			"securityExecutable":            "native-http-probes",
 			"securityScriptPath":            "system_security.go",
 			"scopedExecutionAvailable":      wrkAvailable || securityAvailable,
-			"performanceExecutionAvailable": wrkAvailable || g.server.cfg.AbnormalRevocationURL != "",
+			"performanceExecutionAvailable": wrkAvailable || g.server.cfg.AbnormalRevocationURL != "" || g.server.cfg.SymmetricReclamationURL != "",
 			"securityExecutionAvailable":    securityAvailable,
 			"executionUnavailableReason": func() string {
 				if wrkAvailable || securityAvailable {
@@ -718,7 +744,7 @@ func (g *demoGuard) read(c *fiber.Ctx, session string, revision int64) error {
 		list := []fiber.Map{{"id": boundaryProbeID, "name": "Demo 权威与入口边界探针", "description": "真实调用 ADMIN 权威与租约续期 RPC，校验本地固定路由白名单；不生成、更新或回收业务密钥，不代表业务 TPS 或端到端攻击验收。", "method": "POST", "path": "/runs", "durationSeconds": 3, "threads": 1, "connections": 1, "available": true, "headers": fiber.Map{}}}
 		_, wrkAvailable := resolveExecutable(g.server.defaultWrkPath)
 		for _, scenario := range g.server.scenarios {
-			available := (wrkAvailable || scenario.ID == "update-tps" || (abnormalScenario(scenario.ID) && g.server.cfg.AbnormalRevocationURL != "")) && demoScenarioAllowed(scenario.ID)
+			available := (wrkAvailable || scenario.ID == "update-tps" || (abnormalScenario(scenario.ID) && g.server.cfg.AbnormalRevocationURL != "") || (symmetricScenario(scenario.ID) && g.server.cfg.SymmetricReclamationURL != "")) && demoScenarioAllowed(scenario.ID)
 			reason := ""
 			if !available {
 				reason = "wrk 不可用或场景未进入 Demo 白名单"

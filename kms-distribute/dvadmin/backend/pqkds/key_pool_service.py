@@ -464,11 +464,14 @@ class KeyPoolService:
         # 必须把历史值 'unused' 一并纳入 —— 库里已有按旧值写入的行，
         # 只查 'READY' 会让它们永远取不出来（表现为"池子里有货却说没有"）。
         # ⚠️ 常量写**类限定名**：裸名解析不到类属性（见 docstring 断口 1）。
+        pair_ids = dict(Node.objects.filter(node_id__in=(node1_id, node2_id)).values_list('node_id', 'pk'))
+        if node1_id not in pair_ids or node2_id not in pair_ids:
+            return {'success': False, 'code': C.ERR_POOL_ITEM_UNAVAILABLE, 'message': '预分配节点不存在'}
         q = PreDistributedKey.objects.filter(
             status__in=KeyPoolService.POOL_STATUS_READY_VALUES, expires_at__gt=now
         ).filter(
-            models.Q(node1__node_id=node1_id, node2__node_id=node2_id) |
-            models.Q(node1__node_id=node2_id, node2__node_id=node1_id)
+            models.Q(node1_id=pair_ids[node1_id], node2_id=pair_ids[node2_id]) |
+            models.Q(node1_id=pair_ids[node2_id], node2_id=pair_ids[node1_id])
         )
         if algorithm:
             q = q.filter(algorithm=algorithm)
@@ -520,6 +523,10 @@ class KeyPoolService:
                     contested += 1
                     continue
                 candidate = locked[0]
+                from .lattice_preallocation import verify_pool_row
+                if not verify_pool_row(candidate):
+                    return {'success': False, 'code': C.ERR_ENVELOPE_TAMPERED,
+                            'message': '预分配格证明校验失败，拒绝取用该保护包'}
                 # 状态机守卫：消费只允许从 READY 出发（旧拼写归一后判定）。
                 # 走到的行已经是 READY（WHERE 只放行它），这里防的是"将来有人
                 # 把 WHERE 放宽"—— 表在 `api_contract.POOL_TRANSITIONS`。
@@ -765,7 +772,7 @@ class KeyPoolService:
     #  过期清理（自动删除）
     # ================================================================
     @staticmethod
-    def cleanup_expired() -> Dict[str, Any]:
+    def cleanup_expired(*, cleanup_local: bool = True) -> Dict[str, Any]:
         """删除过期的未使用/已下发密钥，同时清理本地文件中的过期密钥。
 
         ⚠️ 删除范围**刻意不含** RESERVED / REVOKED：前者是保留值（当前恒空，
@@ -798,7 +805,8 @@ class KeyPoolService:
         local_cleaned = 0
         try:
             from .key_pool_local_storage import cleanup_expired_local_pools
-            local_cleaned = cleanup_expired_local_pools()
+            if cleanup_local:
+                local_cleaned = cleanup_expired_local_pools()
         except Exception as e:
             logger.warning(f"[KeyPool] 清理本地过期密钥池失败: {e}")
 

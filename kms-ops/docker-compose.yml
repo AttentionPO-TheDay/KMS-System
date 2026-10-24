@@ -591,6 +591,7 @@ services:
       - ACCEPTANCE_LIFECYCLE_JAVA_BASE_URL=http://updatedel-java:9082
       - ACCEPTANCE_PREALLOCATION_EVIDENCE_URL=http://dvadmin3-django:8000/api/pqkds/internal/acceptance/preallocation-evidence/
       - ACCEPTANCE_ABNORMAL_REVOCATION_URL=http://dvadmin3-django:8000/api/pqkds/internal/acceptance/abnormal-revocation/
+      - ACCEPTANCE_SYMMETRIC_RECLAMATION_URL=http://dvadmin3-django:8000/api/pqkds/internal/acceptance/symmetric-reclamation/
       - ACCEPTANCE_INTERNAL_TOKEN=${INTERNAL_TOKEN:?必须设置 INTERNAL_TOKEN，参见 kms-ops/.env.example}
     depends_on:
       - generate-go

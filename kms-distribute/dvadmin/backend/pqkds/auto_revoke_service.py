@@ -326,7 +326,11 @@ def scan_once():
         node_ids = sorted({row[0] for row in cursor.fetchall()})
         if not node_ids:
             _inspect_warnings(cursor, started_at)
-            return {'keys': 0, 'pool': 0, 'sessions': 0, 'elapsed_ms': 0}
+            observed_at = timezone.now()
+            return {'keys': 0, 'pool': 0, 'sessions': 0, 'elapsed_ms': 0,
+                    'detection_elapsed_ms': max(0, (time.monotonic_ns() - started_ns) / 1_000_000),
+                    'detection_at': observed_at.isoformat(), 'revoke_started_at': '',
+                    'auto_revoked': False}
 
         with transaction.atomic():
             # Registrations and rotations serialize on the Node row. Lock in ID
@@ -348,8 +352,11 @@ def scan_once():
                   AND {_severe_condition()}
                 ORDER BY k.id LIMIT %s
             """, [*node_ids, BATCH_LIMIT])
+            detection_at = timezone.now()
+            detection_elapsed_ms = max(0, (time.monotonic_ns() - started_ns) / 1_000_000)
+            revoke_started_at = timezone.now()
             key_count, pool_count, session_count, phases = _revoke_batch(
-                cursor, batch_id, timezone.now())
+                cursor, batch_id, revoke_started_at)
             if key_count:
                 elapsed_ms = max(1, (time.monotonic_ns() - started_ns) // 1_000_000)
                 NodeKeyAutoRevocationBatch.objects.create(
@@ -363,7 +370,10 @@ def scan_once():
     return {'keys': key_count, 'pool': pool_count, 'sessions': session_count,
             'elapsed_ms': elapsed_ms, 'batch_id': batch_id,
             'keys_per_second': round(key_count * 1000 / elapsed_ms, 1),
-            'phases_ms': phases}
+            'phases_ms': phases, 'detection_elapsed_ms': detection_elapsed_ms,
+            'detection_at': detection_at.isoformat(),
+            'revoke_started_at': revoke_started_at.isoformat(),
+            'auto_revoked': key_count > 0}
 
 
 def run_once():

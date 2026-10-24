@@ -120,6 +120,7 @@ __pycache__/
 /doc/
 /kms-ops/nginx/logs/
 /kms-ops/nginx/tls/
+/kms-ops/external-sscl-secrets/
 /kms-ops/runtime/
 /kms-ops/front/generate/
 /kms-ops/front/updatedel/

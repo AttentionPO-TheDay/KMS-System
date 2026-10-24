@@ -9,6 +9,12 @@ def _keygen_audit_payload(path, data):
     Only this narrow public-key/issuance surface changes. Requests passed to the
     view retain their original body; audit records use a validated public whitelist.
     """
+    if path.rstrip('/') == '/external-api/v1/nodes/activate':
+        safe = {'redacted': True}
+        value = data.get('nodeName') if isinstance(data, dict) else None
+        if isinstance(value, str) and 1 <= len(value) <= 100 and value == value.strip() and not re.search(r'[\x00-\x1f\x7f-\x9f]', value):
+            safe['nodeName'] = value
+        return safe
     if '/node-self/keygen/' not in path and not path.rstrip('/').endswith('/node-self/keys'):
         return data
     if not isinstance(data, dict):

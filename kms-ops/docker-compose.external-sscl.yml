@@ -1,0 +1,8 @@
+# Add AFTER existing deployment overlays. Existing DID configuration remains authoritative.
+services:
+  dvadmin3-django:
+    environment:
+      KMS_EXTERNAL_SSCL_ENABLED: 'true'
+      KMS_EXTERNAL_SSCL_CONFIG: /run/kms-external-sscl/config.json
+    volumes:
+      - ./external-sscl-secrets/config.json:/run/kms-external-sscl/config.json:ro

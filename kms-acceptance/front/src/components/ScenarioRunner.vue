@@ -21,7 +21,7 @@
       </label>
       <div class="target-panel" v-if="activeScenario">
         <span>脚本目标</span>
-        <strong>{{ activeScenario.id === 'demo-boundary-probe' ? '会话与入口校验' : activeScenario.id === 'revoke-rate' ? `${activeScenario.metricOperator} ${formatTps(activeScenario.metricTarget)} %` : `${formatTps(activeScenario.targetTps)} TPS` }}</strong>
+        <strong>{{ activeScenario.id === 'demo-boundary-probe' ? '会话与入口校验' : activeScenario.id === 'symmetric-reclaim-tps' ? '≥ 10000 条/秒' : activeScenario.id === 'revoke-rate' ? `${activeScenario.metricOperator} ${formatTps(activeScenario.metricTarget)} %` : `${formatTps(activeScenario.targetTps)} TPS` }}</strong>
       </div>
       <div class="runner-actions">
         <button class="btn-primary cyber-btn" :disabled="loading || !canRunAcceptance || activeScenario?.available !== true" @click="doRun">
@@ -36,6 +36,7 @@
       <strong>自动构造隔离异常样本并测试检测与回收，结束后清理样本。</strong>
     </div>
     <p v-if="form.scenarioId === 'update-tps'" class="scenario-note">每轮复用 6000 把已生成密钥，每把更新一次，再核查版本变化和实际更新速率。</p>
+    <p v-if="form.scenarioId === 'symmetric-reclaim-tps'" class="scenario-note">每轮构造12000条到期SM4密钥及4条对照，执行过期回收，要求 ≥10000条/秒。</p>
 
     <details v-if="activeScenario?.configurable === true" class="advanced-panel">
       <summary>高级参数</summary>

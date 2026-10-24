@@ -21,8 +21,8 @@ func TestCurrentSecurityCatalogAndLegacyRejection(t *testing.T) {
 			seen[id] = true
 		}
 	}
-	if len(seen) != 14 {
-		t.Fatalf("want 14 current cases, got %d", len(seen))
+	if len(seen) != 13 {
+		t.Fatalf("want 13 current cases, got %d", len(seen))
 	}
 	result := (&server{}).executeSecurityRunContext(context.Background(), "platform-bruteforce")
 	if result.Passed || result.Verdict != "not_applicable" {
@@ -170,6 +170,9 @@ func TestCurrentSecurityLiveGateway(t *testing.T) {
 	seenCodes := map[string]string{}
 	for _, group := range acceptanceCriteria() {
 		for _, id := range group.CaseIDs {
+			if quantumModels[id] != "" {
+				continue // Quantum evidence has a separate live test and no rejection code.
+			}
 			t.Run(id, func(t *testing.T) {
 				result := (&server{}).executeSystemSecurity(context.Background(), id)
 				if !result.Passed {

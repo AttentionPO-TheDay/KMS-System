@@ -8,6 +8,7 @@
       </div>
       <nav class="nav-links">
         <router-link to="/load-test" class="nav-item">验收测试台</router-link>
+        <router-link to="/lattice" class="nav-item" :class="{ 'router-link-active': $route.path.startsWith('/lattice') }">格预分配测试</router-link>
         <router-link to="/lifecycle" class="nav-item">验收密钥生命周期</router-link>
       </nav>
     </header>

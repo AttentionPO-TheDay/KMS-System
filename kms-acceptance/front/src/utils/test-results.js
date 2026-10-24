@@ -17,6 +17,9 @@ export function algorithmPassed(run) {
 export function securityOutcome(run) {
   if (!run) return { state: 'pending', label: '待测试' }
   if (isActiveRun(run)) return { state: 'running', label: run.status === 'cancelling' ? '正在停止' : '执行中' }
+  if (run.caseId?.startsWith('quantum-lwe-')) return quantumEvaluated(run)
+    ? { state: 'evaluated', label: '仿真与评估完成' }
+    : { state: 'incomplete', label: run.status === 'cancelled' ? '已停止' : '仿真未完成' }
   if (run.status === 'completed' && run.verdict === 'blocked' && run.passed === true &&
       [2, 3].includes(run.evidenceVersion) && run.reasonMatched === true && run.legalControlPassed === true &&
       run.expectedCode && run.expectedCode === run.actualCode && run.expectedReason && run.expectedReason === run.actualReason) {
@@ -29,7 +32,32 @@ export function securityOutcome(run) {
   return { state: 'incomplete', label: run.status === 'cancelled' ? '已停止' : '测试未完成' }
 }
 
+export function quantumEvaluated(run) {
+  const models = { 'quantum-lwe-usvp': 'primal_usvp', 'quantum-lwe-bdd': 'primal_bdd', 'quantum-lwe-dual': 'dual' }
+  const e = run?.quantumEvidence, c = e?.circuit
+  return Boolean(models[run?.caseId] && run.status === 'completed' && run.verdict === 'evaluated' && run.passed === false &&
+    run.evidenceVersion === 4 && run.legalControlPassed === true && e?.version === 1 && e.caseId === run.caseId &&
+    e.model === models[run.caseId] && e.evaluationComplete === true && e.acceptancePassed === false &&
+    e.estimatorCommit === 'e4333d9bf9ef42fd8a29651b0c559fba7ce0d834' && e.recordedAt && e.scope &&
+    c?.verified === true && c.qubits === 8 && c.searchSpace === 256 && c.shots === 256 &&
+    c.target?.length === 8 && c.recovered === c.target && c.successProbability >= .99 && c.successProbability <= 1 &&
+    Math.abs(c.norm - 1) < 1e-9 && Math.abs(c.baselineProbability - 1 / 256) < 1e-9 &&
+    e.estimates?.length === 3 && e.estimates.every((r, i) => r.variant === [512, 768, 1024][i] &&
+      r.n === r.variant && r.m === r.variant && r.q === 3329 && Number.isFinite(r.log2Rop) && r.log2Rop > 0 && r.beta >= 2))
+}
+
 export function securityProgress(caseIds, latest, target) {
+  if (caseIds.length && caseIds.every(id => id.startsWith('quantum-lwe-'))) {
+    const outcomes = caseIds.map(id => securityOutcome(latest.get(id)))
+    const evaluatedCount = outcomes.filter(o => o.state === 'evaluated').length
+    const runningCount = outcomes.filter(o => o.state === 'running').length
+    const incompleteCount = outcomes.filter(o => o.state === 'incomplete').length
+    const pendingCount = outcomes.filter(o => o.state === 'pending').length
+    const state = runningCount ? 'running' : incompleteCount ? 'incomplete' : evaluatedCount === caseIds.length ? 'evaluated' : evaluatedCount ? 'partial' : 'pending'
+    return { state, statusLabel: state === 'running' ? '执行中' : state === 'evaluated' ? '仿真与评估完成' : state === 'incomplete' ? '仿真未完成' : `已评估 ${evaluatedCount}/${caseIds.length} 项`,
+      evaluatedCount, passedCount: 0, pendingCount, runningCount, failedCount: 0, incompleteCount, thresholdMet: false,
+      note: '弱参数电路为正向对照；生产参数结果为成本估计，需确认任务书验收口径。' }
+  }
   const outcomes = caseIds.map(id => securityOutcome(latest.get(id)))
   const count = state => outcomes.filter(item => item.state === state).length
   const passedCount = count('passed'), pendingCount = count('pending')
@@ -50,6 +78,7 @@ export function securityProgress(caseIds, latest, target) {
 export function performanceOutcome(run) {
   if (!run) return { state: 'pending', label: '待执行' }
   if (isActiveRun(run)) return { state: 'running', label: '执行中' }
+  if (run.scenarioId === 'symmetric-reclaim-tps' && !validSymmetricRun(run)) return { state: 'incomplete', label: '缺少对称密钥回收核验，需重测' }
   if (run.scenarioId === 'update-tps' && !run.error && (run.fixedUpdateEvidence?.version !== 2 || run.fixedUpdateEvidence?.verified !== true)) return { state: 'incomplete', label: '缺少密钥材料更新核验，需重测' }
   if (['revoke-tps', 'revoke-rate'].includes(run.scenarioId) && run.abnormalEvidence?.version !== 2) return { state: 'incomplete', label: '缺少异常样本证据，需重测' }
   const needsFinalState = run.scenarioId === 'revoke-rate' || run.metricCheck?.enforced === true
@@ -60,10 +89,19 @@ export function performanceOutcome(run) {
 
 export function measuredPerformance(run, criterion) {
   if (!run || isActiveRun(run)) return null
+  if (run.scenarioId === 'symmetric-reclaim-tps' && !validSymmetricRun(run)) return null
   if (run.scenarioId === 'update-tps' && (run.fixedUpdateEvidence?.version !== 2 || run.fixedUpdateEvidence?.verified !== true)) return null
   if (['revoke-tps', 'revoke-rate'].includes(run.scenarioId) && run.abnormalEvidence?.version !== 2) return null
   if (criterion?.id === 'revoke-rate' || run.scenarioId === 'revoke-rate') {
     return run.metricCheck?.collected === true ? run.metricCheck.value : null
   }
   return Number(run.summary?.totalRequests) > 0 ? run.summary.successfulRequestsPerSec : null
+}
+
+function validSymmetricRun(run) {
+  const e = run.symmetricEvidence, check = run.metricCheck
+  return e?.version === 1 && e.source === 'sm4-expired-pool-isolated-mysql' && e.isolated === true &&
+    e.cleanupComplete === true && e.materialVerified === true && e.injected === 12000 && e.controls === 4 &&
+    Number.isFinite(e.elapsedMs) && e.elapsedMs > 0 && check?.enforced === true && check.collected === true &&
+    check.kind === 'symmetric_reclamation_closure'
 }

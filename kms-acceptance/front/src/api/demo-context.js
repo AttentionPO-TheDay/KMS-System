@@ -46,7 +46,7 @@ export async function acceptanceFetch(url, options = {}) {
   const path = url.split('?')[0]
   const hasQuery = url.includes('?')
   const isLifecycle = /^\/acceptance\/lifecycle(?:\/run-[A-Za-z0-9-]+)?$/.test(path)
-  if (!/^\/(health|scenarios|runs(?:\/run-[A-Za-z0-9-]+(?:\/cancel)?)?|security\/runs(?:\/run-[A-Za-z0-9-]+(?:\/cancel)?)?|proof\/runs|acceptance\/(criteria|evidence|lifecycle(?:\/run-[A-Za-z0-9-]+)?))$/.test(path) || (hasQuery && !isLifecycle)) throw new Error('未开放的验收端点')
+  if (!/^\/(health|lattice|scenarios|runs(?:\/run-[A-Za-z0-9-]+(?:\/cancel)?)?|security\/runs(?:\/run-[A-Za-z0-9-]+(?:\/cancel)?)?|proof\/runs|acceptance\/(criteria|evidence|lifecycle(?:\/run-[A-Za-z0-9-]+)?))$/.test(path) || (hasQuery && !isLifecycle)) throw new Error('未开放的验收端点')
   if (!demoState.context) await bootstrapDemoContext()
   if (!demoState.available || demoState.stale || demoState.context?.principalType !== 'ADMIN') throw new Error(demoState.message || '验收身份不可用')
   const mutation = options.method && options.method !== 'GET'

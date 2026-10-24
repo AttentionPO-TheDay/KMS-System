@@ -28,14 +28,14 @@ SAMPLE_COUNT = 6000
 
 
 @contextmanager
-def isolated_tables():
+def isolated_tables(models=MODELS):
     if connection.vendor != 'mysql' or connection.in_atomic_block:
         raise RuntimeError('异常回收验收需要独立的 MySQL 自动提交连接')
     connection.close()
     created = []
     try:
         with connection.cursor() as cursor:
-            for model in MODELS:
+            for model in models:
                 table = connection.ops.quote_name(model._meta.db_table)
                 # MySQL rejects CREATE TEMPORARY t LIKE t (1066). Reuse its
                 # canonical DDL, retaining indexes/defaults but omitting FKs:
@@ -125,6 +125,10 @@ def run_abnormal_revocation(count=SAMPLE_COUNT):
         # successful writes. Count unique keys, including attempted failures.
         scan_started = time.monotonic_ns()
         batches, attempted_ids = [], set()
+        detection_elapsed_ms = 0.0
+        detection_at = ''
+        revoke_started_at = ''
+        auto_revoked = False
         while len(attempted_ids) < count:
             measured = scan_once()
             with connection.cursor() as cursor:
@@ -132,8 +136,14 @@ def run_abnormal_revocation(count=SAMPLE_COUNT):
                 candidates = {row[0] for row in cursor.fetchall()}
             previous = len(attempted_ids)
             attempted_ids.update(candidates)
+            detection_elapsed_ms += float(measured.get('detection_elapsed_ms') or 0)
+            detection_at = detection_at or measured.get('detection_at', '')
+            revoke_started_at = revoke_started_at or measured.get('revoke_started_at', '')
+            auto_revoked = auto_revoked or bool(measured.get('auto_revoked'))
             batches.append(dict(batchId=measured.get('batch_id', ''), attempted=len(candidates), revoked=measured['keys'],
-                poolRevoked=measured['pool'], sessionsRevoked=measured['sessions'], elapsedMs=measured['elapsed_ms']))
+                poolRevoked=measured['pool'], sessionsRevoked=measured['sessions'], elapsedMs=measured['elapsed_ms'],
+                detectionElapsedMs=measured.get('detection_elapsed_ms', 0), detectionAt=measured.get('detection_at', ''),
+                revokeStartedAt=measured.get('revoke_started_at', ''), autoRevoked=bool(measured.get('auto_revoked'))))
             if not candidates or (len(attempted_ids) == previous and not measured['keys']):
                 break  # No pending dispatch or no progress: report actual outcomes, never loop forever.
         elapsed_ms = max(1, (time.monotonic_ns() - scan_started) / 1_000_000)
@@ -176,7 +186,9 @@ def run_abnormal_revocation(count=SAMPLE_COUNT):
             injected=count, attempted=len(attempted_ids), detected=sum(i['detected'] for i in by_rule.values()),
             revoked=completed, controls=4, controlsPassed=controls_ok, poolRevoked=pool_count,
             sessionsRevoked=session_count, invalidations=invalidations, passed=passed,
-            elapsedMs=elapsed_ms, beforeAt=before_at, observedAt=timezone.now().isoformat(),
+            elapsedMs=elapsed_ms, detectionElapsedMs=detection_elapsed_ms, detectionAt=detection_at,
+            revokeStartedAt=revoke_started_at, autoRevoked=auto_revoked,
+            beforeAt=before_at, observedAt=timezone.now().isoformat(),
             rules=list(by_rule.values()), rows=rows)
     evidence['cleanupComplete'] = True
     evidence['totalMs'] = (time.monotonic_ns() - started) / 1_000_000

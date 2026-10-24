@@ -15,8 +15,8 @@ import (
 )
 
 var systemSecurityCases = map[string]bool{
+	"quantum-lwe-usvp": true, "quantum-lwe-bdd": true, "quantum-lwe-dual": true,
 	"generation-identity-injection": true, "generation-unknown-algorithm": true, "generation-malformed-json": true, "generation-invalid-version": true,
-	"pq-parameter-downgrade": true, "pq-sign-encrypt-confusion": true, "pq-secret-upload": true, "pq-issuance-source-forgery": true,
 	"network-session-forgery": true, "network-csrf": true, "network-stale-revision": true,
 	"network-role-isolation": true, "network-origin": true, "network-missing-session": true,
 }
@@ -37,6 +37,7 @@ func (p *securityProbe) progress(ctx context.Context, stage string) {
 	if report, ok := ctx.Value(securityProgressKey{}).(func(SecurityRunResult)); ok {
 		snapshot := p.result
 		snapshot.Requests = append([]SecurityRequestTrace(nil), p.result.Requests...)
+		snapshot.ProbeSteps = append([]SecurityProbeStep(nil), p.result.ProbeSteps...)
 		report(snapshot)
 	}
 }
@@ -69,6 +70,8 @@ func (p *securityProbe) request(ctx context.Context, method, path, body string, 
 		copyClient := *client
 		copyClient.Jar = nil
 		client = &copyClient
+		p.recordStep(ctx, "TRANSPORT", "隔离本次请求的 Cookie 发送", "本次请求禁用 CookieJar，避免合法会话自动附加；原客户端保持不变", "info")
+		p.progress(ctx, trace.Name)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -125,8 +128,24 @@ func probeErrorCode(data map[string]interface{}) string {
 	return ""
 }
 
-func (p *securityProbe) control(ctx context.Context) (map[string]interface{}, error) {
+func (p *securityProbe) control(ctx context.Context) (result map[string]interface{}, controlErr error) {
+	name := "攻击后合法节点读取"
+	if strings.Contains(p.result.Stage, "攻击前") {
+		name = "攻击前合法节点读取"
+	}
 	status, data, err := p.request(ctx, "GET", "/demo-api/pqkds/node-self/", "", nil)
+	defer func() {
+		d, _ := data["data"].(map[string]interface{})
+		node, _ := d["node"].(map[string]interface{})
+		actualNode, _ := node["nodeId"].(string)
+		state := "failed"
+		if controlErr == nil {
+			state = "success"
+		}
+		p.recordStep(ctx, "CONTROL", name,
+			fmt.Sprintf("GET /demo-api/pqkds/node-self/; HTTP=%d; businessCode=%v; expectedNodeId=%s; actualNodeId=%s; mapped=%t; identityMatched=%t",
+				status, data["code"], p.node, actualNode, d["mapped"] == true, actualNode != "" && actualNode == p.node), state)
+	}()
 	if err != nil {
 		return nil, err
 	}
@@ -201,19 +220,29 @@ func (s *server) executeSystemSecurity(ctx context.Context, caseID string) Secur
 	switch caseID {
 	case "generation-identity-injection":
 		expected = "KEYGEN_IDENTITY_FIELD_FORBIDDEN"
-		payload = `{"algorithm":"KYBER","keyId":"acceptance-invalid","keyVersion":1,"variant":"768","nodeId":"foreign-node"}`
+		input := map[string]interface{}{"algorithm": "KYBER", "keyId": "acceptance-invalid", "keyVersion": 1, "variant": "768"}
+		p.recordStep(ctx, "BUILD", "构造正常格式的 KYBER 签发参数", "algorithm=KYBER; variant=768; keyVersion=1", "info")
+		input["nodeId"] = "foreign-node"
+		p.recordStep(ctx, "MUTATE", "注入外部节点身份", "新增 nodeId=foreign-node，尝试覆盖服务端可信身份", "info")
+		encoded, _ := json.Marshal(input)
+		payload = string(encoded)
+		p.recordStep(ctx, "BUILD", "序列化身份注入请求", fmt.Sprintf("JSON 编码完成，%d 字节；包含额外身份字段", len(encoded)), "info")
 		p.result.TestInput, p.result.ValidationRule, p.result.ExpectedReason = "KYBER / variant=768；额外注入 nodeId=foreign-node", "签发字段白名单，身份由会话决定", "签发只接受白名单字段，可信上下文由后端确定"
 	case "generation-unknown-algorithm":
 		payload = `{"algorithm":"RSA-512","keyId":"acceptance-invalid","keyVersion":1,"variant":"512"}`
+		p.recordStep(ctx, "BUILD", "构造非白名单算法请求", "algorithm=RSA-512; variant=512; keyVersion=1", "info")
 		expected = "KEYGEN_SCHEME_INVALID"
 		p.result.TestInput, p.result.ValidationRule, p.result.ExpectedReason = "algorithm=RSA-512", "生成算法白名单", "签发仅支持规范 KYBER/FALCON 家族"
 	case "generation-malformed-json":
 		expected = "KEYGEN_JSON_INVALID"
 		payload = `{"algorithm":`
+		p.recordStep(ctx, "BUILD", "构造残缺 JSON 字节串", "保留 algorithm 字段前缀，省略字段值和闭合括号", "info")
+		p.recordStep(ctx, "CHECK", "检查畸形样本语法", fmt.Sprintf("json.Valid=%t；不经 JSON 序列化修复，按原始字节发送", json.Valid([]byte(payload))), "info")
 		p.result.TestInput, p.result.ValidationRule, p.result.ExpectedReason = "残缺 JSON：缺少 algorithm 的值及闭合括号", "JSON 请求解析", "请求参数或 JSON 无效"
 	case "generation-invalid-version":
 		expected = "KEYGEN_VERSION_INVALID"
 		payload = `{"algorithm":"KYBER","keyId":"acceptance-invalid-version","keyVersion":1.5,"variant":"768"}`
+		p.recordStep(ctx, "BUILD", "构造小数版本号请求", "keyVersion=1.5，以 JSON 数值发送，不转换为整数或字符串", "info")
 		p.result.TestInput, p.result.ValidationRule, p.result.ExpectedReason = "KYBER / variant=768 / keyVersion=1.5", "密钥版本正整数约束", "keyVersion 应为 ≥1 的整数：1.5"
 	case "pq-parameter-downgrade":
 		expected = "KYBER_KEYGEN_VARIANT_INVALID"
@@ -236,25 +265,33 @@ func (s *server) executeSystemSecurity(ctx context.Context, caseID string) Secur
 	case "network-session-forgery":
 		method, path = "GET", "/demo-api/pqkds/node-self/"
 		headers["Cookie"] = "KMS-Demo-Session=" + strings.Repeat("A", 43)
+		p.recordStep(ctx, "MUTATE", "构造伪造会话 Cookie", "KMS-Demo-Session 使用固定虚构值，长度 43；不使用真实会话凭据", "info")
 		expected = "DEMO_SESSION_INVALID"
 	case "network-missing-session":
 		method, path = "GET", "/demo-api/pqkds/node-self/"
 		headers["Cookie"] = ""
+		p.recordStep(ctx, "MUTATE", "移除请求会话", "Cookie 设为空，测试匿名读取节点资料", "info")
 		expected = "DEMO_SESSION_REQUIRED"
 	case "network-csrf":
 		path, payload = "/demo-api/lifecycle/demo/context/admin", "{}"
 		headers["X-Kms-Demo-CSRF"] = "acceptance-invalid"
+		p.recordStep(ctx, "MUTATE", "替换 CSRF 请求头", "X-Kms-Demo-CSRF 使用固定错误值；保留当前会话与 revision", "info")
 		expected = "DEMO_CSRF_INVALID"
 	case "network-stale-revision":
 		path, payload = "/demo-api/lifecycle/demo/context/admin", "{}"
-		headers["X-Kms-Demo-Revision"] = strconv.Itoa(p.revision - 1)
+		stale := p.revision - 1
+		p.recordStep(ctx, "BUILD", "计算旧会话版本", fmt.Sprintf("当前 revision=%d；重放版本=%d", p.revision, stale), "info")
+		headers["X-Kms-Demo-Revision"] = strconv.Itoa(stale)
+		p.recordStep(ctx, "MUTATE", "替换版本请求头", "X-Kms-Demo-Revision 写入上一版本；保留合法会话和 CSRF", "info")
 		expected = "DEMO_REVISION_STALE"
 	case "network-role-isolation":
 		method, path = "GET", "/demo-api/pqkds/admin/users/"
+		p.recordStep(ctx, "BUILD", "选择管理员资源作为访问目标", "GET /demo-api/pqkds/admin/users/；使用现有 NODE 身份，不执行管理员角色切换", "info")
 		expected = "DEMO_FORBIDDEN"
 	case "network-origin":
 		path, payload = "/demo-api/lifecycle/demo/context/admin", "{}"
 		headers["Origin"] = "https://acceptance-invalid.example"
+		p.recordStep(ctx, "MUTATE", "替换请求来源", "Origin=https://acceptance-invalid.example；保留原会话、CSRF 和 revision", "info")
 		expected = "DEMO_ORIGIN_REJECTED"
 	default:
 		return fail(fmt.Errorf("未知当前系统用例"))
@@ -286,6 +323,13 @@ func (s *server) executeSystemSecurity(ctx context.Context, caseID string) Secur
 	p.result.ActualCode = actual
 	p.result.ActualReason = probeRejectionReason(response)
 	p.result.ReasonMatched = p.result.ActualReason != "" && p.result.ActualReason == p.result.ExpectedReason
+	businessCode, _ := response["code"].(float64)
+	rejected := (status >= 400 && status < 500) || (status == 200 && businessCode >= 400 && businessCode < 500)
+	assertionState := "failed"
+	if rejected && actual == expected && p.result.ReasonMatched {
+		assertionState = "success"
+	}
+	p.recordStep(ctx, "ASSERT", "核对本项防御断言", fmt.Sprintf("HTTP=%d; actualCode=%s; expectedCode=%s; reasonMatched=%t", status, actual, expected, p.result.ReasonMatched), assertionState)
 	if status == 404 || status >= 500 {
 		return fail(fmt.Errorf("目标不存在或服务异常 (HTTP %d)", status))
 	}
@@ -295,8 +339,6 @@ func (s *server) executeSystemSecurity(ctx context.Context, caseID string) Secur
 	}
 	p.result.LegalControlPassed = true
 	p.result.Status = "completed"
-	businessCode, _ := response["code"].(float64)
-	rejected := (status >= 400 && status < 500) || (status == 200 && businessCode >= 400 && businessCode < 500)
 	p.result.Passed = rejected && actual == expected && p.result.ReasonMatched
 	p.result.ProtocolPassed = p.result.Passed
 	if p.result.Passed {

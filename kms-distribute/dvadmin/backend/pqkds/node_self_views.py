@@ -48,6 +48,8 @@ from .node_service import NodeService
 from .node_permission import (
     CAP_DISTRIBUTE,
     CAP_GENERATE,
+    CAP_ROTATE,
+    CAP_REVOKE,
     LEVEL_LABELS,
     NodePermissionError,
     capabilities_of,
@@ -282,6 +284,8 @@ def _keygen_response(request, identity, *, renewal):
     try:
         if node is None:
             raise C.ContractError('当前账号未关联节点', code=C.ERR_NOT_AUTHORIZED)
+        if request.method != 'GET':
+            require_capability(node, CAP_GENERATE)
         payload = ({'deviceId': request.GET.get('deviceId')} if request.method == 'GET'
                    else json.loads(request.body or b'{}'))
         if not isinstance(payload, dict):
@@ -310,6 +314,8 @@ def _keygen_response(request, identity, *, renewal):
                 abandon_generation_issuance_id=payload.get('abandonGenerationIssuanceId'),
             )
         response = _ok(data)
+    except NodePermissionError as exc:
+        response = _error(str(exc), 403, error_code=C.ERR_NODE_CAPABILITY_REQUIRED)
     except C.ContractError as exc:
         response = _error(exc.message, 409, error_code=exc.code)
     except json.JSONDecodeError:
@@ -411,6 +417,12 @@ def node_self_keys(request, identity):
         did_requested = _as_bool(payload.get('didOnchain'), 'didOnchain')
     except C.ContractError as exc:
         return _error(exc.message, error_code=exc.code)
+
+    try:
+        version = payload.get('keyVersion', payload.get('key_version', 1))
+        require_capability(node, CAP_ROTATE if rotate or str(version) != '1' else CAP_GENERATE)
+    except NodePermissionError as exc:
+        return _error(str(exc), 403, error_code=C.ERR_NODE_CAPABILITY_REQUIRED)
 
     if identity.get('entryMode') == 'DEMO' and _public_status(node) == 'PENDING_INIT':
         from .demo_context import validate_init_lease
@@ -540,6 +552,10 @@ def node_self_auto_update(request, identity):
                     'policies': [service.payload(row) for row in
                                  NodeKeyAutoUpdate.objects.filter(node=node).order_by('algorithm')]})
     try:
+        require_capability(node, CAP_ROTATE)
+    except NodePermissionError as exc:
+        return _error(str(exc), 403, error_code=C.ERR_NODE_CAPABILITY_REQUIRED)
+    try:
         data = json.loads(request.body or b'{}')
         if not isinstance(data, dict):
             raise ValueError('请求体应为 JSON 对象')
@@ -646,6 +662,11 @@ def node_self_revoke_key(request, identity):
     node = _find_node(identity)
     if node is None:
         return _error('当前账号未关联任何节点，无法回收密钥', 403)
+
+    try:
+        require_capability(node, CAP_REVOKE)
+    except NodePermissionError as exc:
+        return _error(str(exc), 403, error_code=C.ERR_NODE_CAPABILITY_REQUIRED)
 
     if _public_status(node) == 'DISABLED':
         return _error('该节点已被停用，无法回收密钥', 403)
@@ -1342,6 +1363,7 @@ def node_authorization_request_cancel(request, request_id, identity):
 @csrf_exempt
 @require_http_methods(['POST'])
 @require_kms_user
+@transaction.atomic
 def node_pool_preallocate(request, identity):
     """**上传一批保护包**（节点侧生成并封好的预分配资源）。
 
@@ -1349,6 +1371,7 @@ def node_pool_preallocate(request, identity):
     ```json
     { "targetNodeCode": "KRB-XXXX",       // 接收方（业务编号）
       "poolId": "pool_<32hex>",           // 由**节点侧**生成：它进签名，服务端不能事后赋值
+      "startIndex": 200,                  // 本次分片在整个池中的起始序号；旧单片请求默认 0
       "expiresAt": "2026-10-09T15:30:12+08:00",
       "items": [ { "envelope": {...}, "signature": "<base64>", "keyHash": "<64hex>" }, ... ] }
     ```
@@ -1377,6 +1400,10 @@ def node_pool_preallocate(request, identity):
     if node is None:
         return _error('当前账号未关联任何节点，无法上传预分配资源', 403,
                       error_code=C.ERR_NOT_AUTHORIZED)
+    try:
+        require_capability(node, CAP_DISTRIBUTE)
+    except NodePermissionError as exc:
+        return _error(str(exc), 403, error_code=C.ERR_NODE_CAPABILITY_REQUIRED)
 
     try:
         payload = json.loads(request.body or b'{}')
@@ -1420,6 +1447,11 @@ def node_pool_preallocate(request, identity):
         return _error('items 应为非空数组（每条是一个保护包 + 签名）')
     if len(raw_items) > MAX_POOL_ITEMS_PER_BATCH:
         return _error(f'单次最多上传 {MAX_POOL_ITEMS_PER_BATCH} 条（收到 {len(raw_items)} 条）')
+
+    # 分片内的 index 仍用于错误回执；入库序号必须在整个池内连续，不能每片重置为 0。
+    start_index = payload.get('startIndex', 0)
+    if type(start_index) is not int or not 0 <= start_index <= 2147483647 - (len(raw_items) - 1):
+        return _error('startIndex 必须是非负整数，且分片末序号不能超过 2147483647')
 
     # 接收方**当前可用**的那一版 Kyber 长期密钥：封装用的就是它，引用必须如实落库
     # （回收时的精确失效全靠这两列，见 KMS-007 D3）。
@@ -1511,9 +1543,9 @@ def node_pool_preallocate(request, identity):
 
         try:
             with transaction.atomic():
-                PreDistributedKey.objects.create(
+                created_row = PreDistributedKey.objects.create(
                     pool_id=pool_id,
-                    key_index=index,
+                    key_index=start_index + index,
                     # 方向：`node1` = 收件方（与现场分发的信封腿同一列语义），
                     # 这样"谁取信封"的既有查询不用改。
                     node1=receiver,
@@ -1550,20 +1582,24 @@ def node_pool_preallocate(request, identity):
             continue
 
         generated += 1
-        created_rows.append(index)
+        created_rows.append(created_row)
         latencies.append((_time.perf_counter() - t0) * 1000)
 
     # 任务书 §20 的六项读数（服务端只度量**管理侧**这一步：验签 + 落库）。
     # ⚠️ 节点侧的封装耗时不在服务端 —— 它由页面自己度量并显示（`localMs`），
     #    两者不混成一句"吞吐"（服务端的 2933 条/秒与浏览器的 2600 条/秒
     #    说的是两件不同的事，合成一个数就没人能解释了）。
-    total_sec = sum(latencies) / 1000.0
+    from .lattice_preallocation import protect_pool_rows
+    lattice_started = _time.perf_counter()
+    lattice_result = protect_pool_rows(created_rows, receiver.node_id)
+    total_sec = sum(latencies) / 1000.0 + (_time.perf_counter() - lattice_started)
     # 审计流水（「分发记录」页的数据源）。上传这一步在**取用之前**，
     # 链上存证留给取用那条（`KEY_DISTRIBUTED` 的口径是"一把密钥被用于建立会话"，
     # 上传时还没有会话 —— 为它上链会把"存证"变成一笔糊涂账）。
     if generated:
         _write_pool_log(node, 'pool_prealloc', {
             'poolId': pool_id, 'targetNodeCode': receiver.node_id,
+            'startIndex': start_index,
             'generated': generated, 'requested': len(raw_items),
             'algorithm': 'kyber_kem',
             'recipientKeyId': recipient_key.key_id,
@@ -1571,10 +1607,12 @@ def node_pool_preallocate(request, identity):
         })
     return _ok({
         'poolId': pool_id,
+        'startIndex': start_index,
         'targetNodeCode': receiver.node_id,
         'generated': generated,
         'requested': len(raw_items),
         'failed': failed,
+        'lattice': lattice_result,
         'serverMs': round(total_sec * 1000, 1),
         'serverThroughputPerSec': round(generated / total_sec, 1) if total_sec > 0 else 0,
         'avgServerLatencyMs': round(sum(latencies) / len(latencies), 2) if latencies else 0,
@@ -1660,6 +1698,10 @@ def node_pool_consume(request, identity):
     if node is None:
         return _error('当前账号未关联任何节点，无法取用预分配资源', 403,
                       error_code=C.ERR_NOT_AUTHORIZED)
+    try:
+        require_capability(node, CAP_DISTRIBUTE)
+    except NodePermissionError as exc:
+        return _error(str(exc), 403, error_code=C.ERR_NODE_CAPABILITY_REQUIRED)
 
     try:
         payload = json.loads(request.body or b'{}')

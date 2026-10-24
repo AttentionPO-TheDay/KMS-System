@@ -212,11 +212,15 @@ func TestDemoIngressAndCanonicalRoutes(t *testing.T) {
 }
 
 func TestDemoRoleAuthorityFailuresAndSafeCapabilities(t *testing.T) {
-	app, _, authority := demoTestApp(t)
+	app, guard, authority := demoTestApp(t)
 	status, body := demoResponse(t, app, demoRequest("GET", "/api/scenarios", ""))
 	if status != 200 || strings.Contains(body, "private-must-not-leak") || !strings.Contains(body, `"available":false`) || !strings.Contains(body, boundaryProbeID) {
 		t.Fatalf("unsafe scenarios %d %s", status, body)
 	}
+	// Legacy wrk-only scenarios still reject startup when the binary is absent.
+	legacy := guard.server.scenarios["generate-tps"]
+	legacy.ID = "wrk-only-test"
+	guard.server.scenarios["generate-tps"] = legacy
 	status, _ = demoResponse(t, app, demoRequest("POST", "/api/runs", `{"scenarioId":"generate-tps"}`))
 	if status != 503 {
 		t.Fatalf("legacy start status=%d", status)

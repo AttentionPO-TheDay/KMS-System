@@ -164,6 +164,7 @@ type SecurityRunResult struct {
 	Error              string                 `json:"error,omitempty"`
 	Notes              []string               `json:"notes,omitempty"`
 	Requests           []SecurityRequestTrace `json:"requests,omitempty"`
+	ProbeSteps         []SecurityProbeStep    `json:"probeSteps,omitempty"`
 	RawOutput          string                 `json:"rawOutput,omitempty"`
 	ExpectedCode       string                 `json:"expectedCode,omitempty"`
 	ActualCode         string                 `json:"actualCode,omitempty"`
@@ -176,6 +177,7 @@ type SecurityRunResult struct {
 	ReasonMatched      bool                   `json:"reasonMatched"`
 	ProtocolPassed     bool                   `json:"protocolPassed"`
 	AlgorithmEvidence  *AlgorithmEvidence     `json:"algorithmEvidence,omitempty"`
+	QuantumEvidence    *QuantumEvidence       `json:"quantumEvidence,omitempty"`
 }
 
 type ProofRunRequest struct {
@@ -310,6 +312,8 @@ type RunResult struct {
 	Error       string               `json:"error,omitempty"`
 	Abnormal    *abnormalEvidence    `json:"abnormalEvidence,omitempty"`
 	FixedUpdate *fixedUpdateEvidence `json:"fixedUpdateEvidence,omitempty"`
+	Symmetric   *symmetricEvidence   `json:"symmetricEvidence,omitempty"`
+	Generation  *generationEvidence  `json:"generationEvidence,omitempty"`
 }
 
 type persistedRuns struct {
@@ -317,11 +321,14 @@ type persistedRuns struct {
 }
 
 type internalKeyRecord struct {
-	KeyID     int64  `json:"keyId"`
-	UserName  string `json:"userName"`
-	Status    string `json:"status"`
-	CreatedAt string `json:"createdAt"`
-	KeyDomain string `json:"keyDomain"`
+	KeyID      int64  `json:"keyId"`
+	UserName   string `json:"userName"`
+	Status     string `json:"status"`
+	CreatedAt  string `json:"createdAt"`
+	KeyDomain  string `json:"keyDomain"`
+	UA         string `json:"ua"`
+	EncrytName string `json:"encrytName"`
+	KeyName    string `json:"keyName"`
 }
 
 type internalGenerateResponse struct {
@@ -346,6 +353,7 @@ type internalVerifyResponse struct {
 
 type acceptanceConfig struct {
 	AbnormalRevocationURL    string
+	SymmetricReclamationURL  string
 	GenerateInternalToken    string
 	GenerateKeyPoolURL       string
 	LifecycleVerifyURL       string
@@ -452,6 +460,7 @@ func loadAcceptanceConfig() acceptanceConfig {
 	acceptanceUser := envOrDefault("ACCEPTANCE_USER", "acceptance_user")
 	return acceptanceConfig{
 		AbnormalRevocationURL:    envOrDefault("ACCEPTANCE_ABNORMAL_REVOCATION_URL", "http://127.0.0.1:8000/api/pqkds/internal/acceptance/abnormal-revocation/"),
+		SymmetricReclamationURL:  envOrDefault("ACCEPTANCE_SYMMETRIC_RECLAMATION_URL", "http://127.0.0.1:8000/api/pqkds/internal/acceptance/symmetric-reclamation/"),
 		GenerateInternalToken:    envOrDefault("ACCEPTANCE_INTERNAL_TOKEN", strings.TrimSpace(os.Getenv("INTERNAL_TOKEN"))),
 		GenerateKeyPoolURL:       envOrDefault("ACCEPTANCE_GENERATE_KEY_POOL_URL", "http://127.0.0.1:9081/internal/generate/keys/recent"),
 		LifecycleVerifyURL:       envOrDefault("ACCEPTANCE_LIFECYCLE_VERIFY_URL", "http://127.0.0.1:9082/internal/lifecycle/key-status"),
@@ -487,11 +496,17 @@ func defaultScenarios(cfg acceptanceConfig) map[string]Scenario {
 	}
 
 	return map[string]Scenario{
+		"symmetric-reclaim-tps": {
+			ID: "symmetric-reclaim-tps", Name: "对称密钥回收速率", TargetTPS: 10000, TargetOperator: ">=",
+			Method: http.MethodPost, DurationSeconds: 5, Threads: 1, Connections: 1,
+			Description: "构造12000条到期SM4预分配密钥及4条对照，调用实际过期清理逻辑，按独立密钥删除数量计速。",
+			Notes:       []string{"计时包含数据库过期筛选、删除及提交，不含样本生成入库、回收后快照核验、临时表清理和HTTP通信。", "使用隔离MySQL临时表测量数据库池项清理，不包含节点本地文件销毁，也不代表生产持久化吞吐。"},
+		},
 		"generate-tps": {
 			ID:              "generate-tps",
 			Name:            "密钥生成 TPS",
 			TargetTPS:       100000,
-			TargetOperator:  ">",
+			TargetOperator:  ">=",
 			Method:          http.MethodPost,
 			BaseURL:         generateBaseURL,
 			Path:            "/generate/request/ENROLL_KEY",
@@ -500,8 +515,8 @@ func defaultScenarios(cfg acceptanceConfig) map[string]Scenario {
 			Connections:     340,
 			Headers:         cloneHeaders(tokenHeader),
 			BodyTemplate:    fmt.Sprintf(`{"user":"%s","encryt_type":"无证书非对称加密","encryt_name":"SSCL","ua":"04e5df58dcdd1d8bba99bc62b825fd1abbb8b4c2d32aa4ed79f48bb5b1dd2e14e09f5d47296df715dd748951b6e22805b0e71bfd4097e7db93cd6528cb68870f2a","key_domain":"acceptance","key_name":"acceptance-load","key_use":"性能验收","auto_update":"false"}`, cfg.AcceptanceUser),
-			Description:     "直接压测 kms-generate Go 接口，默认携带内部 token，目标 TPS 不低于 100000。",
-			Notes:           []string{"默认使用 1 秒短压，优先控制总生成量，同时保持明显高于 10 万 TPS 的余量。", "更新和回收场景会复用该用户最新生成的 key 池。"},
+			Description:     "并发调用SSCL密钥生成接口，以HTTP成功响应数量除以测试时长计算接口成功响应速率。",
+			Notes:           []string{"本项按HTTP成功响应吞吐测量，成功数为完成请求数扣除非成功响应数。", "计时不等待异步登记、状态查询、材料摘要核验及上链确认。"},
 		},
 		"update-tps": {
 			ID:              "update-tps",
@@ -653,14 +668,15 @@ func (s *server) handleScenarios(c *fiber.Ctx) error {
 
 func acceptanceCriteria() []AcceptanceCriterion {
 	return []AcceptanceCriterion{
-		{ID: "certless-generation", Category: "performance", Title: "无证书密钥生成速率", Requirement: "成功生成 TPS > 100000 条/秒", Kind: "scenario", Target: 100000, Operator: ">", Unit: "TPS", ScenarioID: "generate-tps", ExecutionScope: "admin", EvidenceSource: "kms-generate / ENROLL_KEY（SSCL 最快路径）", Notes: []string{"仅统计 2xx 成功请求，不以请求发出数代替成功数。"}},
+		{ID: "symmetric-reclaim", Category: "performance", Title: "对称密钥回收速率", Requirement: "到期SM4对称密钥回收 ≥ 10000 条/秒", Kind: "scenario", Target: 10000, Operator: ">=", Unit: "条/秒", ScenarioID: "symmetric-reclaim-tps", ExecutionScope: "admin", EvidenceSource: symmetricSource},
+		{ID: "certless-generation", Category: "performance", Title: "密钥生成接口成功响应速率", Requirement: "HTTP成功响应速率每秒不少于100000次", Kind: "scenario", Target: 100000, Operator: ">=", Unit: "次每秒", ScenarioID: "generate-tps", ExecutionScope: "admin", EvidenceSource: "SSCL生成接口HTTP成功响应统计", Notes: []string{"HTTP成功响应数除以测试时长，不含异步登记及后续核验时间。"}},
 		{ID: "preallocation", Category: "performance", Title: "预分配密钥速率", Requirement: "节点侧本机封装吞吐 > 50 条/秒", Kind: "evidence", Target: 50, Operator: ">", Unit: "条/秒", ExecutionScope: "node", EvidenceSource: "独立节点侧预分配验收流程（需单独发起）", Notes: []string{"日常预分配不作为验收样本，也不自动回传量化结果。管理端未发起任务时状态为未执行。"}},
 		{ID: "key-update", Category: "performance", Title: "密钥更新速率", Requirement: "成功更新 TPS ≥ 5000 条/秒", Kind: "scenario", Target: 5000, Operator: ">=", Unit: "TPS", ScenarioID: "update-tps", ExecutionScope: "admin", EvidenceSource: "kms-updatedel / 固定 6000 条版本变化核验"},
 		{ID: "abnormal-revoke", Category: "performance", Title: "异常密钥回收速率", Requirement: "实际异常自动回收 ≥ 5000 条/秒", Kind: "scenario", Target: 5000, Operator: ">=", Unit: "TPS", ScenarioID: "revoke-tps", ExecutionScope: "admin", EvidenceSource: "node auto-revoke / isolated MySQL", Notes: []string{"先写入异常样本，再检测、自动回收并验证正常对照与依赖失效。"}},
 		{ID: "revoke-rate", Category: "performance", Title: "异常密钥回收率", Requirement: "异常密钥回收率 ≥ 98%", Kind: "scenario", Target: 98, Operator: ">=", Unit: "%", ScenarioID: "revoke-rate", ExecutionScope: "admin", EvidenceSource: "node auto-revoke / isolated MySQL 状态快照"},
 		{ID: "generation-attacks", Category: "security", Title: "密钥生成协议校验", Requirement: "签发入口非法请求明确拒绝", Kind: "security-suite", Target: 3, Operator: ">=", Unit: "类", CaseIDs: []string{"generation-identity-injection", "generation-unknown-algorithm", "generation-malformed-json", "generation-invalid-version"}, ExecutionScope: "admin", EvidenceSource: "system_security.go / 实际 Demo 网关"},
-		{ID: "quantum-attacks", Category: "security", Title: "抗量子算法与协议验证", Requirement: "至少3类算法负向场景及对应协议校验通过", Kind: "security-suite", Target: 3, Operator: ">=", Unit: "类", CaseIDs: []string{"pq-parameter-downgrade", "pq-sign-encrypt-confusion", "pq-secret-upload", "pq-issuance-source-forgery"}, ExecutionScope: "admin", EvidenceSource: "实际签发接口 + 部署原生 KYBER/FALCON + 独立 JS 互操作向量", Notes: []string{"4类：KYBER密文篡改、FALCON消息篡改、KYBER错误私钥、FALCON签名/公钥替换。每类必须同时满足协议断言与完整算法证据。", "范围为KYBER round-3与FALCON-512功能和负向测试，不等同于FIPS认证、自定义无证书方案安全证明或量子攻击实测。"}},
-		{ID: "network-attacks", Category: "security", Title: "无密码会话与网络边界", Requirement: "会话与权限边界请求明确拒绝", Kind: "security-suite", Target: 5, Operator: ">=", Unit: "类", CaseIDs: []string{"network-session-forgery", "network-csrf", "network-stale-revision", "network-role-isolation", "network-origin", "network-missing-session"}, ExecutionScope: "admin", EvidenceSource: "system_security.go / 实际会话与权限接口"},
+		{ID: "quantum-attacks", Category: "security", Title: "量子攻击仿真与参数评估", Requirement: "系统能够抵御量子攻击种类不少于3种", Kind: "security-suite", Target: 3, Operator: ">=", Unit: "种", CaseIDs: []string{"quantum-lwe-usvp", "quantum-lwe-bdd", "quantum-lwe-dual"}, ExecutionScope: "admin", EvidenceSource: "弱参数Grover电路 + lattice-estimator量子筛法成本模型 + 部署原生KYBER业务对照", Notes: []string{"三项为不同格攻击成本模型，共用弱参数电路正向对照。评估完成不自动判定任务书抗攻击指标通过。"}},
+		{ID: "network-attacks", Category: "security", Title: "网络攻击", Requirement: "会话与权限边界请求明确拒绝", Kind: "security-suite", Target: 5, Operator: ">=", Unit: "类", CaseIDs: []string{"network-session-forgery", "network-csrf", "network-stale-revision", "network-role-isolation", "network-origin", "network-missing-session"}, ExecutionScope: "admin", EvidenceSource: "system_security.go / 实际会话与权限接口"},
 	}
 }
 
@@ -828,6 +844,7 @@ func (s *server) handleCreateSecurityRun(c *fiber.Ctx) error {
 	run.Error = result.Error
 	run.Notes = append([]string{}, result.Notes...)
 	run.Requests = append([]SecurityRequestTrace{}, result.Requests...)
+	run.ProbeSteps = append([]SecurityProbeStep{}, result.ProbeSteps...)
 	run.RawOutput = result.RawOutput
 	run.ExpectedCode = result.ExpectedCode
 	run.ActualCode = result.ActualCode
@@ -840,6 +857,7 @@ func (s *server) handleCreateSecurityRun(c *fiber.Ctx) error {
 	run.ReasonMatched = result.ReasonMatched
 	run.ProtocolPassed = result.ProtocolPassed
 	run.AlgorithmEvidence = result.AlgorithmEvidence
+	run.QuantumEvidence = result.QuantumEvidence
 	s.storeSecurityRun(run)
 
 	if run.Status == "error" {
@@ -936,7 +954,7 @@ func (s *server) handleCreateRun(c *fiber.Ctx) error {
 		wrkPath = s.defaultWrkPath
 	}
 	resolvedWrkPath, ok := resolveExecutable(wrkPath)
-	if !ok && prepared.ID != "update-tps" && !abnormalScenario(prepared.ID) {
+	if !ok && prepared.ID != "update-tps" && !abnormalScenario(prepared.ID) && !symmetricScenario(prepared.ID) {
 		return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{"message": "wrk not found or not executable, set WRK_PATH or provide wrkPath"})
 	}
 	wrkPath = resolvedWrkPath
@@ -967,6 +985,14 @@ func (s *server) handleCreateRun(c *fiber.Ctx) error {
 		}
 	}
 	result := s.executeRun(context.Background(), wrkPath, prepared)
+	if result.Symmetric != nil {
+		archive, rows := symmetricAudit(*run, result.Symmetric, "standalone", 0)
+		archive.Batch.Status, archive.Batch.FinishedAt = result.Status, time.Now().Format(time.RFC3339)
+		if err := s.saveLifecycleAudit(*archive, rows); err != nil {
+			result.Status, result.Error = "failed", "对称密钥回收证据归档失败"
+		}
+		result.Symmetric.Rows = nil
+	}
 	if updateAudit != nil {
 		if err := s.finishLifecycleAudit(context.Background(), updateAudit, updateRows, result); err != nil {
 			result.Status, result.Error = "failed", "更新状态核验归档失败"
@@ -985,6 +1011,8 @@ func (s *server) handleCreateRun(c *fiber.Ctx) error {
 	run.Error = result.Error
 	run.Abnormal = result.Abnormal
 	run.FixedUpdate = result.FixedUpdate
+	run.Symmetric = result.Symmetric
+	run.Generation = result.Generation
 	if run.Abnormal != nil {
 		run.Abnormal.Rows = nil
 	}
@@ -1007,7 +1035,7 @@ func (s *server) prepareScenario(base Scenario) (Scenario, []string, error) {
 func (s *server) prepareScenarioContext(ctx context.Context, base Scenario) (Scenario, []string, error) {
 	prepared := base
 	var notes []string
-	if abnormalScenario(base.ID) {
+	if abnormalScenario(base.ID) || symmetricScenario(base.ID) {
 		return prepared, notes, nil
 	}
 
@@ -1177,6 +1205,9 @@ func (s *server) fetchGeneratedKeyIDsOnce(ctx context.Context, limit int, create
 }
 
 func (s *server) executeRun(parentCtx context.Context, wrkPath string, scenario Scenario) RunResult {
+	if symmetricScenario(scenario.ID) {
+		return s.executeSymmetricReclamation(parentCtx, scenario)
+	}
 	if scenario.ID == "update-tps" {
 		return s.executeFixedUpdate(parentCtx, scenario)
 	}
@@ -1653,6 +1684,9 @@ func (s *server) executeSecurityRun(caseID string) SecurityRunResult {
 }
 
 func (s *server) executeSecurityRunContext(parentCtx context.Context, caseID string) SecurityRunResult {
+	if quantumModels[caseID] != "" {
+		return s.executeQuantumSecurity(parentCtx, caseID)
+	}
 	if systemSecurityCases[caseID] {
 		return s.executeSystemSecurity(parentCtx, caseID)
 	}

@@ -11,6 +11,10 @@
       </div>
     </header>
 
+    <section class="lattice-entry" aria-labelledby="lattice-heading">
+      <h2 id="lattice-heading">格预分配功能测试</h2>
+      <nav aria-label="三个格预分配测试项"><router-link v-for="item in latticeCases" :key="item.id" :to="`/lattice/${item.id}`">{{ item.title }} <span aria-hidden="true">↗</span></router-link></nav>
+    </section>
     <section class="console-panel" aria-labelledby="performance-heading">
       <div class="section-heading">
         <div><h2 id="performance-heading">性能测试</h2></div>
@@ -25,7 +29,7 @@
             <button v-if="item.running" class="btn-ghost small" @click="cancelItem(item)">停止任务</button>
             <button v-else class="btn-ghost small" :disabled="busy || !canRunAcceptance || !item.available" @click="runItem(item)">执行项目 <span aria-hidden="true">↗</span></button>
           </div>
-          <PerformanceResult v-if="item.run" :run="item.run" :criterion="item" />
+          <PerformanceResult v-if="item.run" :run="item.run" :criterion="item" :scenario="scenarios.find(s => s.id === item.scenarioId)" />
           <p v-if="item.note" class="item-note">{{ item.note }}</p>
         </article>
       </div>
@@ -63,12 +67,18 @@
 
     <p v-if="error" class="error-msg" role="alert">{{ error }}</p>
     <section v-if="nodeItems.length" class="node-panel" aria-label="节点侧测试">
-      <article v-for="item in nodeItems" :key="item.id" class="node-item"><div><span class="node-label">节点侧测试</span><h3>{{ item.title }}</h3></div><span class="target-value">{{ item.targetLabel }}</span><span class="item-status" :class="item.state">{{ item.statusLabel }}</span></article>
+      <article v-for="item in nodeItems" :key="item.id" class="node-item"><div><span class="node-label">节点侧测试</span><h3>{{ item.title }}</h3></div><span class="target-value">{{ item.targetLabel }}</span><span class="item-status" :class="item.state">{{ item.statusLabel }}</span>
+        <details class="node-measurement"><summary>预分配流程与测量范围</summary>
+          <ol><li>在节点侧发起独立预分配验收，准备接收节点的 Kyber 公钥。</li><li>本机生成并封装 SM4 会话密钥，使用 Falcon 签名后上传保护包。</li><li>分别统计本机封装和服务端入池的有效数量及耗时。</li></ol>
+          <ExecutionTrace v-if="item.observation" :events="preallocationExecution(item.observation)" />
+          <p>本项展示节点本机封装吞吐；服务端处理及完整端到端流程分别记录，不混合作为同一速率。</p>
+        </details>
+      </article>
     </section>
 
     <section class="dashboard-panel">
       <div class="section-heading"><h2>结果总览</h2><span class="updated-at">{{ updatedAt ? `更新于 ${updatedAt}` : '尚无执行结果' }}</span></div>
-      <div class="summary-strip"><div><span>全部通过</span><strong>{{ summary.passed }}</strong></div><div><span>部分通过</span><strong>{{ summary.partial }}</strong></div><div><span>执行中</span><strong>{{ summary.running }}</strong></div><div><span>待执行</span><strong>{{ summary.pending }}</strong></div><div><span>测试未完成</span><strong>{{ summary.incomplete }}</strong></div><div><span>未通过</span><strong>{{ summary.failed }}</strong></div></div>
+      <div class="summary-strip"><div><span>全部通过</span><strong>{{ summary.passed }}</strong></div><div><span>已评估</span><strong>{{ summary.evaluated }}</strong></div><div><span>部分通过</span><strong>{{ summary.partial }}</strong></div><div><span>执行中</span><strong>{{ summary.running }}</strong></div><div><span>待执行</span><strong>{{ summary.pending }}</strong></div><div><span>测试未完成</span><strong>{{ summary.incomplete }}</strong></div><div><span>未通过</span><strong>{{ summary.failed }}</strong></div></div>
       <div class="result-table-wrap">
         <table class="result-table"><thead><tr><th>指标</th><th>目标</th><th>实测</th><th>状态</th><th>证据来源</th><th>执行时间</th><th>说明</th></tr></thead>
           <tbody><tr v-for="row in resultRows" :key="row.id" :class="row.state"><td><strong>{{ row.title }}</strong><small>{{ row.categoryLabel }}</small></td><td>{{ row.targetLabel }}</td><td>{{ row.valueLabel || '—' }}</td><td><span class="status-badge">{{ row.statusLabel }}</span></td><td>{{ row.source }}</td><td>{{ row.timeLabel }}</td><td>{{ row.note || '—' }}</td></tr></tbody>
@@ -87,6 +97,9 @@ import { securitySuites } from '../config/securityCases'
 import { securityProgress, performanceOutcome, measuredPerformance } from '../utils/test-results'
 import SecurityResult from './SecurityResult.vue'
 import PerformanceResult from './PerformanceResult.vue'
+import ExecutionTrace from './ExecutionTrace.vue'
+import { preallocationExecution } from '../utils/execution-trace.js'
+import { latticeCases } from '../config/latticeCases'
 
 const loading = ref(false)
 const busy = ref(false)
@@ -114,17 +127,17 @@ const executableItems = computed(() => acceptanceCriteria.value.filter(c => c.ki
   const outcome = progress || performanceOutcome(run)
   const available = c.kind === 'scenario' ? scenario?.available === true : securityAvailable.value
   const caseOptions = (c.caseIds || []).map(caseId => ({ ...(securityCaseCatalog.get(caseId) || { caseId, title: caseId }), run: latestSecurity.value.get(caseId) }))
-  return { ...c, key: c.id, category: c.kind === 'security-suite' ? '安全用例组' : '性能场景', categoryLabel: c.kind === 'security-suite' ? '安全防御' : '性能验收', targetLabel: `${c.operator} ${formatValue(c.target, c.unit)}`, source: c.evidenceSource, caseOptions, available, running, run, progress, activeRunId: run && ['running', 'preparing'].includes(run.status) ? run.id : activeSecurityRun?.id, state: outcome.state, statusLabel: outcome.statusLabel || outcome.label, note: scenario?.unavailableReason || run?.error || caseResults.find(r => r.error)?.error || '' }
+  return { ...c, title: c.id === 'quantum-attacks' ? securitySuites.find(suite => suite.id === 'quantum-models').name : c.title, key: c.id, category: c.kind === 'security-suite' ? '安全用例组' : '性能场景', categoryLabel: c.kind === 'security-suite' ? '安全防御' : '性能验收', targetLabel: `${c.operator} ${formatValue(c.target, c.unit)}`, source: c.evidenceSource, caseOptions, available, running, run, progress, activeRunId: run && ['running', 'preparing'].includes(run.status) ? run.id : activeSecurityRun?.id, state: outcome.state, statusLabel: outcome.statusLabel || outcome.label, note: scenario?.unavailableReason || run?.error || caseResults.find(r => r.error)?.error || '' }
 }))
 const performanceItems = computed(() => executableItems.value.filter(item => item.kind === 'scenario'))
 const securityItems = computed(() => executableItems.value.filter(item => item.kind === 'security-suite'))
 const securityAvailable = computed(() => health.value?.securityExecutionAvailable === true || health.value?.securityAvailable === true)
-const nodeItems = computed(() => acceptanceCriteria.value.filter(c => c.kind === 'evidence').map(c => { const item = latestEvidence.value.get(c.id); return { ...c, state: item?.verified ? (item.passed ? 'passed' : 'failed') : 'pending', statusLabel: item?.verified ? (item.passed ? '已通过' : '未达到') : '需节点验收', targetLabel: `${c.operator} ${formatValue(c.target, c.unit)}`, valueLabel: item ? formatValue(item.value, c.unit) : '', note: item?.evidence || '尚未执行独立节点验收' } }))
+const nodeItems = computed(() => acceptanceCriteria.value.filter(c => c.kind === 'evidence').map(c => { const item = latestEvidence.value.get(c.id); return { ...c, observation: item, state: item?.verified ? (item.passed ? 'passed' : 'failed') : 'pending', statusLabel: item?.verified ? (item.passed ? '已通过' : '未达到') : '需节点验收', targetLabel: `${c.operator} ${formatValue(c.target, c.unit)}`, valueLabel: item ? formatValue(item.value, c.unit) : '', note: item?.evidence || '尚未执行独立节点验收' } }))
 const resultRows = computed(() => [...executableItems.value, ...nodeItems.value].map(row => ({ ...row, valueLabel: row.valueLabel || valueFor(row), timeLabel: timeFor(row), source: row.source || row.evidenceSource })))
-const summary = computed(() => resultRows.value.reduce((s, r) => { s[r.state] = (s[r.state] || 0) + 1; return s }, { passed: 0, partial: 0, running: 0, pending: 0, incomplete: 0, failed: 0 }))
+const summary = computed(() => resultRows.value.reduce((s, r) => { s[r.state] = (s[r.state] || 0) + 1; return s }, { passed: 0, evaluated: 0, partial: 0, running: 0, pending: 0, incomplete: 0, failed: 0 }))
 
 function formatValue(value, unit) { return `${Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 2 })} ${unit || ''}`.trim() }
-function valueFor(row) { if (row.kind === 'scenario') { const value = measuredPerformance(latestRuns.value.get(row.scenarioId), row); return value === null ? '尚无有效测量' : formatValue(value, row.unit) } return row.progress?.passedCount ? `${row.progress.passedCount} 项${row.id === 'quantum-attacks' ? '算法与协议验证通过' : '防御成功'}` : '—' }
+function valueFor(row) { if (row.kind === 'scenario') { const value = measuredPerformance(latestRuns.value.get(row.scenarioId), row); return value === null ? '尚无有效测量' : formatValue(value, row.unit) } if (row.id === 'quantum-attacks') return `${row.progress?.evaluatedCount || 0}/3 项模型已评估`; return row.progress?.passedCount ? `${row.progress.passedCount} 项防御成功` : '—' }
 function timeFor(row) { const run = row.scenarioId ? latestRuns.value.get(row.scenarioId) : (row.caseIds || []).map(id => latestSecurity.value.get(id)).filter(Boolean).sort((a, b) => String(b.finishedAt || '').localeCompare(String(a.finishedAt || '')))[0]; return run?.finishedAt || latestEvidence.value.get(row.id)?.measuredAt || '' }
 function selectedSecurityCase(item) { return selectedSecurityCases.value[item.id] || '' }
 function securityCaseIds(item, forceAll = false) { const selected = selectedSecurityCase(item); return item.kind === 'security-suite' ? (!forceAll && selected ? [selected] : item.caseIds) : [] }
@@ -162,6 +175,11 @@ async function waitForCompletion(ids) {
 
 <style scoped>
 .acceptance-workbench { max-width: 1280px; margin: 0 auto; }
+.lattice-entry { margin-bottom: 32px; padding-bottom: 24px; border-bottom: 1px solid var(--kms-border); }
+.lattice-entry nav { display: flex; flex-wrap: wrap; gap: 12px 28px; margin-top: 16px; }
+.lattice-entry a { color: var(--kms-brand-text); text-decoration: none; font-size: 13px; padding: 8px 0; }
+.lattice-entry a span { margin-left: 8px; }
+.lattice-entry a:focus-visible { outline: 2px solid var(--kms-brand); outline-offset: 3px; }
 .workbench-header, .section-heading, .header-actions, .item-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
 .workbench-header { margin-bottom: 36px; align-items: flex-start; }
 h1, h2, h3, p { margin: 0; }
@@ -186,7 +204,7 @@ button:focus-visible, select:focus-visible { outline: 2px solid var(--kms-brand)
 .target-value { font-size: 13px; color: var(--kms-text-primary); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .item-status { display: inline-flex; align-items: center; justify-content: center; gap: 6px; justify-self: start; width: fit-content; font-size: 11px; font-weight: 500; color: var(--kms-text-secondary); background: var(--kms-surface-3); padding: 4px 9px; border-radius: 6px; white-space: nowrap; }
 .item-status::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
-.item-status.passed { color: var(--kms-success-strong); background: var(--kms-success-subtle); }
+.item-status.passed, .item-status.evaluated { color: var(--kms-success-strong); background: var(--kms-success-subtle); }
 .item-status.failed { color: var(--kms-danger-strong); background: var(--kms-danger-subtle); }
 .item-status.running, .item-status.partial, .item-status.incomplete { color: var(--kms-warning-strong); background: var(--kms-warning-subtle); }
 .security-suites { display: flex; flex-direction: column; gap: 16px; }
@@ -214,6 +232,9 @@ button:focus-visible, select:focus-visible { outline: 2px solid var(--kms-brand)
 .node-item { display: grid; grid-template-columns: 1fr 190px 130px; gap: 24px; align-items: center; padding: 20px 24px; }
 .node-label { font-size: 11px; color: var(--kms-text-tertiary); }
 .node-item h3 { margin-top: 3px; }
+.node-measurement { grid-column: 1 / -1; font-size: 12px; color: var(--kms-text-secondary); }
+.node-measurement summary { cursor: pointer; color: var(--kms-brand-text); }
+.node-measurement ol { padding-left: 20px; line-height: 1.8; margin: 12px 0; }
 .node-item p { font-size: 12px; color: var(--kms-text-secondary); margin-top: 4px; line-height: 1.6; }
 .dashboard-panel { padding-top: 4px; }
 .updated-at { font-size: 11px; color: var(--kms-text-tertiary); }
@@ -229,7 +250,7 @@ button:focus-visible, select:focus-visible { outline: 2px solid var(--kms-brand)
 .result-table tbody tr:last-child td { border-bottom: 0; }
 .result-table td strong { display: block; color: var(--kms-text-primary); font-weight: 550; }
 .result-table td small { display: block; color: var(--kms-text-tertiary); font-size: 10px; margin-top: 3px; }
-.result-table tr.passed .status-badge { color: var(--kms-success-strong); }
+.result-table tr.passed .status-badge, .result-table tr.evaluated .status-badge { color: var(--kms-success-strong); }
 .result-table tr.failed .status-badge { color: var(--kms-danger-strong); }
 .result-table tr.running .status-badge, .result-table tr.incomplete .status-badge, .result-table tr.partial .status-badge { color: var(--kms-warning-strong); }
 .empty-state { padding: 24px; font-size: 13px; color: var(--kms-text-tertiary); }

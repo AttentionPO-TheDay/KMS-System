@@ -14,10 +14,10 @@ import (
 
 func abnormalFixture() *abnormalEvidence {
 	e := &abnormalEvidence{Version: 2, Source: abnormalSource, Isolated: true, CleanupComplete: true, BatchID: "batch", BatchLimit: 5000,
-		Batches: []abnormalBatch{{BatchID: "first", Attempted: 5000, Revoked: 5000, PoolRevoked: 5000, SessionsRevoked: 5000, ElapsedMs: 400},
-			{BatchID: "second", Attempted: 1000, Revoked: 1000, PoolRevoked: 1000, SessionsRevoked: 1000, ElapsedMs: 100}},
+		Batches: []abnormalBatch{{BatchID: "first", Attempted: 5000, Revoked: 5000, PoolRevoked: 5000, SessionsRevoked: 5000, ElapsedMs: 400, DetectionElapsedMs: 40, DetectionAt: "2026-10-21T16:00:00.100+08:00", RevokeStartedAt: "2026-10-21T16:00:00.101+08:00", AutoRevoked: true},
+			{BatchID: "second", Attempted: 1000, Revoked: 1000, PoolRevoked: 1000, SessionsRevoked: 1000, ElapsedMs: 100, DetectionElapsedMs: 10, DetectionAt: "2026-10-21T16:00:00.200+08:00", RevokeStartedAt: "2026-10-21T16:00:00.201+08:00", AutoRevoked: true}},
 		Injected: 6000, Attempted: 6000, Detected: 6000, Revoked: 6000, Controls: 4, ControlsPassed: 4, PoolRevoked: 6000,
-		SessionsRevoked: 6000, Invalidations: 6000, ElapsedMs: 500, TotalMs: 1000, Passed: true,
+		SessionsRevoked: 6000, Invalidations: 6000, ElapsedMs: 500, DetectionElapsedMs: 50, DetectionAt: "2026-10-21T16:00:00.100+08:00", RevokeStartedAt: "2026-10-21T16:00:00.101+08:00", AutoRevoked: true, TotalMs: 1000, Passed: true,
 		BeforeAt: "2026-10-21T16:00:00+08:00", ObservedAt: "2026-10-21T16:00:01+08:00"}
 	for _, rule := range []string{"PUBLIC_KEY_MISSING", "PUBLIC_KEY_HASH_MISSING", "PUBLIC_KEY_HASH_MISMATCH"} {
 		e.Rules = append(e.Rules, abnormalRule{Rule: rule})

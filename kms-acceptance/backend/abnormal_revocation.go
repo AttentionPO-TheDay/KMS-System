@@ -29,6 +29,10 @@ type abnormalBatch struct {
 	PoolRevoked     int     `json:"poolRevoked"`
 	SessionsRevoked int     `json:"sessionsRevoked"`
 	ElapsedMs       float64 `json:"elapsedMs"`
+	DetectionElapsedMs float64 `json:"detectionElapsedMs"`
+	DetectionAt     string  `json:"detectionAt"`
+	RevokeStartedAt string  `json:"revokeStartedAt"`
+	AutoRevoked     bool    `json:"autoRevoked"`
 }
 
 type abnormalRow struct {
@@ -63,6 +67,10 @@ type abnormalEvidence struct {
 	SessionsRevoked int             `json:"sessionsRevoked"`
 	Invalidations   int             `json:"invalidations"`
 	ElapsedMs       float64         `json:"elapsedMs"`
+	DetectionElapsedMs float64      `json:"detectionElapsedMs"`
+	DetectionAt     string          `json:"detectionAt"`
+	RevokeStartedAt string          `json:"revokeStartedAt"`
+	AutoRevoked     bool            `json:"autoRevoked"`
 	TotalMs         float64         `json:"totalMs"`
 	BeforeAt        string          `json:"beforeAt"`
 	ObservedAt      string          `json:"observedAt"`
@@ -76,6 +84,7 @@ func validateAbnormalEvidence(e *abnormalEvidence) error {
 		e.BatchID == "" || e.Injected != 6000 || e.BatchLimit != 5000 || len(e.Batches) == 0 || len(e.Batches) > e.Injected+1 ||
 		e.Attempted < 0 || e.Attempted > e.Injected || e.Controls != 4 || len(e.Rows) != e.Injected+e.Controls ||
 		e.ElapsedMs <= 0 || math.IsNaN(e.ElapsedMs) || math.IsInf(e.ElapsedMs, 0) ||
+		e.DetectionElapsedMs < 0 || e.DetectionElapsedMs > e.ElapsedMs || e.DetectionAt == "" || e.RevokeStartedAt == "" || !e.AutoRevoked ||
 		e.TotalMs < e.ElapsedMs || e.BeforeAt == "" || e.ObservedAt == "" {
 		return fmt.Errorf("异常样本、隔离清理或测量证据不完整")
 	}
@@ -83,7 +92,7 @@ func validateAbnormalEvidence(e *abnormalEvidence) error {
 	batchRevoked, batchPool, batchSessions, batchAttempted, batchMs := 0, 0, 0, 0, 0.0
 	for _, batch := range e.Batches {
 		if batch.Revoked < 0 || batch.Revoked > batch.Attempted || batch.Attempted > e.BatchLimit || batch.Attempted > e.Attempted || batch.PoolRevoked < 0 || batch.SessionsRevoked < 0 ||
-			batch.ElapsedMs < 0 || math.IsNaN(batch.ElapsedMs) || math.IsInf(batch.ElapsedMs, 0) ||
+			batch.ElapsedMs < 0 || math.IsNaN(batch.ElapsedMs) || math.IsInf(batch.ElapsedMs, 0) || batch.DetectionElapsedMs < 0 || batch.DetectionElapsedMs > batch.ElapsedMs || batch.DetectionAt == "" || batch.RevokeStartedAt == "" ||
 			(batch.Revoked > 0 && (batch.BatchID == "" || batchIDs[batch.BatchID])) {
 			return fmt.Errorf("跨批次扫描证据无效")
 		}

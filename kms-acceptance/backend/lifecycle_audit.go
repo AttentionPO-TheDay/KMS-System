@@ -18,6 +18,9 @@ import (
 )
 
 type lifecycleRow struct {
+	PoolID      string                `json:"poolId,omitempty"`
+	KeyHash     string                `json:"keyHash,omitempty"`
+	ExpiresAt   string                `json:"expiresAt,omitempty"`
 	NodeID      string                `json:"nodeId,omitempty"`
 	Algorithm   string                `json:"algorithm,omitempty"`
 	AnomalyRule string                `json:"anomalyRule,omitempty"`
@@ -70,7 +73,7 @@ type lifecycleArchive struct {
 }
 
 func lifecycleScenario(id string) bool {
-	return id == "update-tps" || id == "revoke-tps" || id == "revoke-rate"
+	return id == "update-tps" || id == "revoke-tps" || id == "revoke-rate" || symmetricScenario(id)
 }
 
 func lifecycleOwner(session string) string { return fmt.Sprintf("%x", sha256.Sum256([]byte(session))) }
@@ -182,7 +185,7 @@ func (s *server) captureLifecycle(ctx context.Context, ids []int64) (map[int64]i
 }
 
 func (s *server) beginLifecycleAudit(ctx context.Context, scenario Scenario, run RunResult, session string, revision int64) (*lifecycleArchive, []lifecycleRow, error) {
-	if !lifecycleScenario(scenario.ID) || abnormalScenario(scenario.ID) {
+	if !lifecycleScenario(scenario.ID) || abnormalScenario(scenario.ID) || symmetricScenario(scenario.ID) {
 		return nil, nil, nil
 	}
 	records, err := s.captureLifecycle(ctx, scenario.PreparedKeyIDs)

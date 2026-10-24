@@ -304,6 +304,7 @@ async function submit() {
       const data = await preallocatePool({
         targetNodeCode: peerNodeId,
         poolId,
+        startIndex: start,
         expiresAt,
         items: chunk,
         falconKeyId: falconKey.value.keyId,

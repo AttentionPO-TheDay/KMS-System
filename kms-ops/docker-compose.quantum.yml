@@ -1,0 +1,25 @@
+# Optional evaluator; no database, business keys or host Docker socket.
+# Apply alongside docker-compose.yml after rebuilding acceptance-backend/frontend.
+services:
+  quantum-evaluator:
+    build:
+      context: ../kms-acceptance/quantum
+      dockerfile: evaluator.Dockerfile
+    image: kms-quantum-evaluator:local
+    environment:
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?必须设置 INTERNAL_TOKEN}
+    networks:
+      - kms_net
+    cpus: 2
+    mem_limit: 4g
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+  acceptance-backend:
+    environment:
+      - ACCEPTANCE_QUANTUM_URL=http://quantum-evaluator:8800/evaluate
+    depends_on:
+      - quantum-evaluator

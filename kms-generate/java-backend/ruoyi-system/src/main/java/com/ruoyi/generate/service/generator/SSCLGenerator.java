@@ -70,7 +70,6 @@ public class SSCLGenerator implements ECConstants {
     private final BigInteger[] xIndexs = new BigInteger[T];
     private final BigInteger[] yIndexs = new BigInteger[T];
     private final BigInteger[] coefficients = new BigInteger[T + 1];
-    private final SM3Digest hash256 = new SM3Digest();
 
     public SSCLGenerator() {
         coefficients[0] = ms.multiply(deriveDomainScalar(DOMAIN_LABEL_PREFIX + "wa")).mod(n);
@@ -97,6 +96,7 @@ public class SSCLGenerator implements ECConstants {
         }
 
         byte[] merged = concatBytes(convertBytes(ux, 32), convertBytes(uy, 32), userIdentity.getIdentityData().getBytes(StandardCharsets.UTF_8));
+        SM3Digest hash256 = new SM3Digest();
         hash256.update(merged, 0, merged.length);
         byte[] hA = new byte[hash256.getDigestSize()];
         hash256.doFinal(hA, 0);

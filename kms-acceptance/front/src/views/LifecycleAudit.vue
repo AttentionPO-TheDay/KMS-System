@@ -17,7 +17,7 @@
         <router-link to="/load-test">返回验收测试台</router-link>
       </div>
       <div v-else-if="list" class="table-scroll">
-        <table><thead><tr><th>批次 ID</th><th>测试项目</th><th>执行结果</th><th>{{ scenario==='revoke-rate' ? '异常密钥回收率' : scenario==='revoke-tps' ? '实际自动回收速率' : '实际更新速率' }}</th><th>实际完成 / 待核查数</th><th>测试开始</th><th>明细</th></tr></thead>
+        <table><thead><tr><th>批次 ID</th><th>测试项目</th><th>执行结果</th><th>{{ symmetric ? '实际对称密钥回收速率（条/秒）' : scenario==='revoke-rate' ? '异常密钥回收率' : scenario==='revoke-tps' ? '实际自动回收速率' : '实际更新速率' }}</th><th>实际完成 / 待核查数</th><th>测试开始</th><th>明细</th></tr></thead>
           <tbody><tr v-for="batch in list.items" :key="batch.id" :class="{active:batch.id===selected}">
             <td class="identifier">{{ batch.id }}</td><td>{{ title(batch.scenarioId) }}</td><td>{{ statusText(batch.status) }}</td>
             <td>{{ scenario==='revoke-rate' ? (batch.evidenceSource ? rate(batch.completionRate) : '旧版口径，需重测') : format(batch.successfulTps) }}</td><td>{{ batch.completed }} / {{ batch.eligible }}</td><td>{{ time(batch.startedAt) }}</td>
@@ -35,16 +35,17 @@
       <template v-if="detail">
         <div class="audit-metrics" aria-label="批次统计">
           <div><span>候选密钥池</span><strong>{{ format(detail.batch.poolSize) }}</strong></div>
-          <div><span>{{ detail.batch.evidenceSource ? (detail.batch.scenarioId==='revoke-rate' ? '实际发起回收' : '已注入异常样本') : '初始有效，可核查' }}</span><strong>{{ format(detail.batch.eligible) }}</strong></div>
+          <div><span>{{ symmetric ? '到期SM4样本' : detail.batch.evidenceSource ? (detail.batch.scenarioId==='revoke-rate' ? '实际发起回收' : '已注入异常样本') : '初始有效，可核查' }}</span><strong>{{ format(detail.batch.eligible) }}</strong></div>
           <div><span>实际完成</span><strong>{{ format(detail.batch.completed) }}</strong></div>
           <div><span>仍未完成</span><strong>{{ format(detail.batch.pending) }}</strong></div>
           <div><span>缺失 / 未核验</span><strong>{{ format(detail.batch.unknown) }}</strong></div>
-          <div><span>{{ detail.batch.scenarioId==='update-tps' ? '版本更新完成率' : detail.batch.evidenceSource ? '异常密钥回收率' : '最终状态回收率' }}</span><strong>{{ rate(detail.batch.completionRate) }}</strong></div>
+          <div><span>{{ symmetric ? '到期样本回收比例' : detail.batch.scenarioId==='update-tps' ? '版本更新完成率' : detail.batch.evidenceSource ? '异常密钥回收率' : '最终状态回收率' }}</span><strong>{{ rate(detail.batch.completionRate) }}</strong></div>
         </div>
         <dl class="audit-facts">
-          <dt>核查口径</dt><dd>{{ detail.batch.evidenceSource ? (detail.batch.scenarioId==='revoke-rate' ? '最终回收成功数 / 实际发起回收密钥数；已发起但失败的计入分母，与速率及固定秒数无关。' : '实际自动回收异常数 / 注入异常数；正常及仅告警对照不得被回收。') : detail.batch.scenarioId==='update-tps' ? '同一密钥的版本号高于测试前版本。' : '已回收数 / 初始有效数。' }}</dd>
-          <template v-if="detail.batch.evidenceSource"><dt>异常样本 / 实际发起 / 未发起</dt><dd>{{ format(detail.batch.injected) }} / {{ format(detail.batch.attempted) }} / {{ format(detail.batch.notAttempted) }}</dd></template>
-          <template v-if="detail.batch.evidenceSource"><dt>实际回收速率</dt><dd>{{ format(detail.batch.successfulTps) }} 条/秒，包含检测与依赖失效写入；不含样本准备、清理和链上确认。</dd></template>
+          <dt>核查口径</dt><dd>{{ symmetric ? '实际删除的独立到期SM4密钥数量 / 数据库回收耗时；未到期及保留状态对照不得删除。' : detail.batch.evidenceSource ? (detail.batch.scenarioId==='revoke-rate' ? '最终回收成功数 / 实际发起回收密钥数；已发起但失败的计入分母，与速率及固定秒数无关。' : '实际自动回收异常数 / 注入异常数；正常及仅告警对照不得被回收。') : detail.batch.scenarioId==='update-tps' ? '同一密钥的版本号高于测试前版本。' : '已回收数 / 初始有效数。' }}</dd>
+          <template v-if="detail.batch.evidenceSource && !symmetric"><dt>异常样本 / 实际发起 / 未发起</dt><dd>{{ format(detail.batch.injected) }} / {{ format(detail.batch.attempted) }} / {{ format(detail.batch.notAttempted) }}</dd></template>
+          <template v-if="symmetric"><dt>回收速率 / 耗时</dt><dd>{{ format(detail.batch.successfulTps) }} 条/秒 / {{ format(detail.batch.elapsedMs) }} ms，要求 ≥10000条/秒。计时包含数据库筛选、删除及提交，不含样本准备、回收后核验和临时表清理。</dd></template>
+          <template v-else-if="detail.batch.evidenceSource"><dt>实际回收速率</dt><dd>{{ format(detail.batch.successfulTps) }} 条/秒，包含检测与依赖失效写入；不含样本准备、清理和链上确认。</dd></template>
           <template v-else-if="detail.batch.elapsedMs"><dt>实际更新速率</dt><dd>{{ format(detail.batch.successfulTps) }} 条/秒；版本实际变化数除以提交至最终状态核验耗时。</dd>
             <dt>固定更新数量 / 耗时</dt><dd>{{ format(detail.batch.poolSize) }} 把 / {{ format(detail.batch.elapsedMs) }} ms；请求受理速率 {{ format(detail.batch.acceptedTps) }} TPS。</dd></template>
           <template v-else><dt>接口吞吐</dt><dd>成功 {{ format(detail.batch.successfulTps) }} TPS；HTTP 请求 {{ format(detail.batch.httpRequests) }}，HTTP 错误 {{ format(detail.batch.httpErrors) }}，连接错误 {{ format(detail.batch.socketErrors) }}。</dd>
@@ -62,9 +63,9 @@
           <button class="btn-primary" :disabled="detailLoading">查询</button><button type="button" class="btn-ghost" :disabled="detailLoading" @click="showPending">查看仍未完成</button>
         </form>
         <div class="table-scroll" :aria-busy="detailLoading">
-          <table><thead><tr><th>密钥 ID</th><th v-if="detail.batch.evidenceSource">异常依据 / 算法</th><th>测试前状态</th><th>核验时状态</th><th>版本变化</th><th>核查结果</th><th>数据库更新时间</th></tr></thead>
-            <tbody><tr v-for="row in detail.items" :key="row.keyId"><td class="identifier">{{ row.keyId }}</td><td v-if="detail.batch.evidenceSource">{{ row.anomalyRule || '正常对照' }} / {{ row.algorithm }}</td><td>{{ keyStatus(row.before?.status) }}</td><td>{{ row.after ? (row.after.exists ? keyStatus(row.after.status) : '记录不存在') : '未核验' }}</td>
-              <td>{{ row.before?.version ?? '未记录' }} → {{ row.after?.version ?? '未记录' }}</td><td><span :class="['outcome', row.outcome.toLowerCase()]">{{ outcomeText(row.outcome) }}</span></td><td>{{ time(row.after?.updatedAt) }}</td></tr></tbody></table>
+          <table><thead><tr><th>密钥 ID</th><th v-if="detail.batch.evidenceSource">{{ symmetric ? '资源 / 算法' : '异常依据 / 算法' }}</th><th>测试前状态</th><th>核验时状态</th><th>{{ symmetric ? '有效期' : '版本变化' }}</th><th>核查结果</th><th>{{ symmetric ? '快照时间' : '数据库更新时间' }}</th></tr></thead>
+            <tbody><tr v-for="row in detail.items" :key="row.keyId"><td class="identifier">{{ row.keyId }}</td><td v-if="detail.batch.evidenceSource"><template v-if="symmetric"><span :title="row.keyHash">{{ row.poolId }} / {{ row.algorithm }}</span></template><template v-else>{{ row.anomalyRule || '正常对照' }} / {{ row.algorithm }}</template></td><td>{{ keyStatus(row.before?.status) }}</td><td>{{ row.after ? (row.after.exists ? keyStatus(row.after.status) : symmetric ? '已删除' : '记录不存在') : '未核验' }}</td>
+              <td><template v-if="symmetric">{{ time(row.expiresAt) }}</template><template v-else>{{ row.before?.version ?? '未记录' }} → {{ row.after?.version ?? '未记录' }}</template></td><td><span :class="['outcome', row.outcome.toLowerCase()]">{{ outcomeText(row.outcome) }}</span></td><td>{{ time(row.after?.updatedAt) }}</td></tr></tbody></table>
           <p v-if="!detail.items.length" class="empty">没有符合筛选条件的密钥记录。</p>
         </div>
         <footer class="pager"><span>匹配 {{ format(detail.total) }} 把</span><label>每页<select v-model.number="detailSize" @change="queryDetails"><option :value="20">20</option><option :value="50">50</option><option :value="100">100</option></select></label>
@@ -75,12 +76,15 @@
 </template>
 
 <script setup>
-import { onMounted, onBeforeUnmount, ref } from 'vue'
+import { onMounted, onBeforeUnmount, ref, computed } from 'vue'
+import { useRoute } from 'vue-router'
 import { acceptanceFetch } from '../api/demo-context'
-const tabs=[{id:'update-tps',label:'更新测试'},{id:'revoke-tps',label:'异常回收测试'},{id:'revoke-rate',label:'异常密钥回收率'}]
-const scenario=ref('update-tps'),list=ref(null),page=ref(1),size=20,loading=ref(false),error=ref('')
+const tabs=[{id:'update-tps',label:'更新测试'},{id:'revoke-tps',label:'异常回收测试'},{id:'revoke-rate',label:'异常密钥回收率'},{id:'symmetric-reclaim-tps',label:'对称密钥回收'}]
+const route=useRoute()
+const scenario=ref(tabs.some(t=>t.id===route.query.scenario)?route.query.scenario:'update-tps'),list=ref(null),page=ref(1),size=20,loading=ref(false),error=ref('')
 const selected=ref(''),detail=ref(null),detailPage=ref(1),detailSize=ref(20),detailLoading=ref(false),detailError=ref(''),query=ref(''),outcome=ref('')
 let listRevision=0,detailRevision=0
+const symmetric=computed(()=>scenario.value==='symmetric-reclaim-tps')
 const title=id=>tabs.find(t=>t.id===id)?.label || id
 const format=v=>Number(v||0).toLocaleString('zh-CN',{maximumFractionDigits:2})
 const rate=v=>v==null?'尚不可核定':`${format(v)}%`

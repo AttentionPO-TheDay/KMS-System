@@ -39,6 +39,8 @@ from .user_distribution_views import (
 # 阶段 2：节点自助（首次登录后的密钥初始化）。身份取自令牌自省，见该模块 docstring。
 from .acceptance_pq_views import node_self_acceptance_pq
 from .acceptance_revoke_views import internal_abnormal_revocation
+from .acceptance_symmetric_reclaim_views import internal_symmetric_reclamation
+from .lattice_test_views import internal_lattice_tests
 from .node_self_views import (
     node_authorization_request_cancel,
     node_authorization_requests,
@@ -102,6 +104,7 @@ router.register(r'logs', KeyDistributionLogViewSet, basename='logs')
 router.register(r'stats', SystemStatsViewSet, basename='stats')
 router.register(r'key-pool', KeyPoolViewSet, basename='keypool')
 urlpatterns = [
+    path('internal/acceptance/lattice/', internal_lattice_tests, name='internal-lattice-tests'),
     path('node-self/group-agreements/', agreements, name='node-group-agreements'),
     path('node-self/group-agreements/<str:agreement_id>/', agreement, name='node-group-agreement'),
     path('node-self/key-health/', node_key_health, name='node-key-health'),
@@ -236,6 +239,8 @@ urlpatterns = [
          name='internal-acceptance-preallocation-evidence'),
     path('internal/acceptance/abnormal-revocation/', internal_abnormal_revocation,
          name='internal-acceptance-abnormal-revocation'),
+    path('internal/acceptance/symmetric-reclamation/', internal_symmetric_reclamation,
+         name='internal-acceptance-symmetric-reclamation'),
 
     # 阶段 7 §8.7：安全监控总览（管理员视角聚合统计，需登录态）
     path('security-monitor/summary/', security_summary, name='security-summary'),
