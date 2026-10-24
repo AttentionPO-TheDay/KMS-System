@@ -46,3 +46,17 @@ datasets 中的 CSV 和 manifest.json 是公开候选材料。complete 为 false
 ## 导出数据库
 
 先使用 `output/汇交计划/导出工具/export_kms.py` 检查小样，再进行全量导出。导出器用同一只读事务读取公开字段，并保存表行数、文件字节数、SHA256 和字段字典。数据库快照与隔离实验分别归档，批次结果不能与对应数据库行重复计数。
+
+完成全量导出和所有采集后，可用打包器生成汇交候选目录。它只接收完整数据库快照和 complete 为 true 的运行目录，生成来源核验报告和最终校验清单。
+
+```bash
+python tools/science_data/package_collection.py \
+  --snapshot output/science-export \
+  --run output/science-collection-20261024/generation-target \
+  --run output/science-collection-20261024/update-target \
+  --run output/science-collection-20261024/agreements \
+  --run output/science-collection-20261024/preallocation-target \
+  --run output/science-collection-20261024/preallocation \
+  --run output/science-collection-20261024/revoke \
+  --output output/汇交候选包
+```
